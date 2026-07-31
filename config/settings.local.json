@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude mcp add:*)",
+      "Bash(source:*)",
+      "Bash(claude mcp list:*)",
+      "Bash(echo \"grep exit: $?\")"
+    ]
+  }
+}
