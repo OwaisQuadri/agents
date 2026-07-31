@@ -22,6 +22,12 @@ introduce one without its inline expansion. Never guess an unresolved one: when 
 
 End-user-facing text follows the /mouthpiece skill (voice rules live there, not here).
 
+## code style
+
+Before writing code, read ~/Documents/agents/docs/code-style.md: the user's manual style
+overrides, one rule per bullet. Rules there beat default style judgment and language
+convention.
+
 ## code comments
 
 Before writing any code comment, read ~/Documents/agents/docs/comment-style.md. Comments
