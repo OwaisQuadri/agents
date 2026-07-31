@@ -1,4 +1,4 @@
-# CLAUDE.md — global guidance
+# CLAUDE.md: global guidance
 
 ## working style: startup, not enterprise
 
