@@ -82,4 +82,7 @@ link "$HOME/.codex/skills" "$SKILLS_ROOT"
 # 5. global CLAUDE.md
 link "$HOME/.claude/CLAUDE.md" "$REPO_TARGET/CLAUDE.md"
 
+# 6. agents fleet: one directory symlink, definitions resolve from the repo
+link "$HOME/.claude/agents" "$REPO_TARGET/agents"
+
 plan "done"
