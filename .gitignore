@@ -2,4 +2,8 @@
 docs/audits/
 skills/*/logs/
 agents/*/logs/
+workflows/*/logs/
+skills/*/votes/
+agents/*/votes/
+workflows/*/votes/
 skills/mouthpiece/examples.md

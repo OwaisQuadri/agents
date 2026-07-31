@@ -85,4 +85,10 @@ link "$HOME/.claude/CLAUDE.md" "$REPO_TARGET/CLAUDE.md"
 # 6. agents fleet: one directory symlink, definitions resolve from the repo
 link "$HOME/.claude/agents" "$REPO_TARGET/agents"
 
+# 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer
+if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
+  link "$REPO_TARGET/.git/hooks/post-merge" "$REPO_TARGET/install.sh"
+  link "$REPO_TARGET/.git/hooks/post-rewrite" "$REPO_TARGET/install.sh"
+fi
+
 plan "done"
