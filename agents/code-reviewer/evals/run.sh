@@ -99,7 +99,9 @@ cp "$DEF" "$WORKDIR/.claude/agents/code-reviewer.md"
 trap 'rm -rf "$WORKDIR"' EXIT
 
 dispatch() {
-  ( cd "$WORKDIR" && claude --agent code-reviewer -p "$1" --allowedTools "Read,Grep,Glob,Bash" 2>/dev/null )
+  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
+  # case loop's remaining lines without it
+  ( cd "$WORKDIR" && claude --agent code-reviewer -p "$1" --allowedTools "Read,Grep,Glob,Bash" 2>/dev/null < /dev/null )
 }
 
 section() {

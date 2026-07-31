@@ -63,7 +63,9 @@ while IFS= read -r line; do
   scratch="$(mktemp -d)"
   mkdir -p "$scratch/.claude/agents"
   cp "$DEF" "$scratch/.claude/agents/web-research-summarizer.md"
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null)"
+  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
+  # case loop's remaining lines without it
+  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
   writes="$(find "$scratch" -type f ! -path "*/.claude/*" | wc -l | tr -d ' ')"
   rm -rf "$scratch"
 

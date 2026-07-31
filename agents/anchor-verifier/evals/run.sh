@@ -53,10 +53,12 @@ if [ -n "$CANDIDATE" ]; then
   AGENTS_JSON="$(jq -n --arg d "$DESC" --arg p "$BODY" --arg t "$TOOLS" --arg m "$MODEL" \
     '{"anchor-verifier-candidate":{description:$d,prompt:$p,tools:($t|split(",")|map(gsub("^ +| +$";""))),model:$m}}')"
   AGENT_NAME="anchor-verifier-candidate"
-  dispatch() { claude --agents "$AGENTS_JSON" --agent "$AGENT_NAME" --allowedTools "Read,Grep,Glob,Bash" -p "$1" 2>/dev/null; }
+  # < /dev/null in both dispatchers is load-bearing: claude -p reads piped stdin and
+  # would swallow the case loop's remaining lines without it
+  dispatch() { claude --agents "$AGENTS_JSON" --agent "$AGENT_NAME" --allowedTools "Read,Grep,Glob,Bash" -p "$1" 2>/dev/null < /dev/null; }
 else
   AGENT_NAME="anchor-verifier"
-  dispatch() { claude --agent "$AGENT_NAME" --allowedTools "Read,Grep,Glob,Bash" -p "$1" 2>/dev/null; }
+  dispatch() { claude --agent "$AGENT_NAME" --allowedTools "Read,Grep,Glob,Bash" -p "$1" 2>/dev/null < /dev/null; }
 fi
 # --allowedTools breadth is a deliberate exception to the minimal-grant rule, eval
 # runs only: headless dispatches must not stall on permission prompts, and the
