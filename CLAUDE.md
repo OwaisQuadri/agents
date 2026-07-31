@@ -22,6 +22,12 @@ introduce one without its inline expansion. Never guess an unresolved one: when 
 
 End-user-facing text follows the /mouthpiece skill (voice rules live there, not here).
 
+## code comments
+
+Before writing any code comment, read ~/Documents/agents/docs/comment-style.md. Comments
+are a last resort and only its whitelisted shapes ship; a shape not on the list is
+proposed there first, never written ad hoc.
+
 ## moves and deletes
 
 Never rm before a verified move. Verifying the destination (file counts match) is a separate step that happens before any delete.
