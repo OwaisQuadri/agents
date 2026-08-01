@@ -33,7 +33,7 @@ Progressive disclosure · Navigation · Mental model · Hierarchy · Empty state
 Microcopy · CTA · Error message · Placeholder · Sentence case · Front-loading · Inline error · Voice · Tone · Success message · Destructive language · Scannability · Truncation strategy · Contextual help · Numeric formatting
 
 ## Tools — how design is made and shared
-Design system · Source of truth · Variables · Tokens · Visual language · Artboard / Frame · Prototype · Handoff · Redline / annotation · Moodboard · HiDPI / Retina · Open Graph
+Design system · Source of truth · Variables · Tokens · Visual language · Artboard / Frame · Prototype · Handoff · Redline / annotation · Moodboard · HiDPI / Retina · Open Graph · Skeuomorphism
 
 ## Analysis — how design decisions are measured
 A/B test · Heatmap · Session recording · Funnel · Conversion · Bounce rate · Retention · Churn · NPS · Scroll depth
