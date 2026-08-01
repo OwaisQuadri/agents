@@ -19,6 +19,8 @@ versioned in one repo with a symlink installer.
 | `workflows/` | multi-agent graph specs |
 | `config/` | tracked copies of `settings.json` / `settings.local.json`; the live files are never symlinked, never written by the installer |
 | `docs/` | code style, comment style, the executed reset spec, fleet research |
+| `hooks/` | `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip; `test.sh` is its regression suite |
+| `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
 | `install.sh` | symlink-only installer; `--dry-run` prints every mutation through the real code path |
 | `CLAUDE.md` | global guidance loaded every session |
 
@@ -56,3 +58,8 @@ versioned in one repo with a symlink installer.
   into it, so a new tool costs one line.
 - Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
   cases from real use; blind judge votes land the same way.
+- A worktree or branch checked out clean at main's tip inherits the live checkout's
+  uncommitted work via the `post-checkout` hook: tracked changes (staged, unstaged,
+  deletions) arrive as a 3-way apply so tip drift surfaces as conflict markers, untracked
+  non-ignored files arrive by copy, and a dirty destination or in-flight rebase is never
+  touched — nor is the live tree.
