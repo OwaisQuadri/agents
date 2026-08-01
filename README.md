@@ -1,34 +1,7 @@
 # agents
 
-The versioned home of my agentic workflows: the skills, config, and installer that drive
-my coding agents (Claude Code, Codex), kept in one repo to version, share, and reuse.
-
-## layout
-
-- `skills/` — one directory per skill, each a `SKILL.md` the agent loads on trigger:
-  - `agent-config-reset` — audit a sprawling agent setup and, gated on approval, reset it
-  - `ai-author` — decides whether a skill/agent/workflow should exist at all; owns the
-    eval + logging contract and the GEPA (Genetic-Pareto prompt evolution) tuning loop
-  - `skill-author` / `agent-author` / `workflow-author` — deep authoring craft per type
-  - `mouthpiece` — voice rules for end-user-facing replies, scored by `eval/check.py`
-    (the personal voice examples live in a gitignored file; the skill asks for them
-    if missing)
-  - `vocabulary` — precise design and UI terminology
-- `config/` — tracked copies of `settings.json` / `settings.local.json`; the live files
-  are never symlinked and never written by the installer
-- `install.sh` — symlink-only installer; `--dry-run` prints every mutation through the
-  same code path as the real run
-- `docs/` — the executed reset spec; audit records stay local (gitignored)
-- `CLAUDE.md` — global guidance loaded every session
-
-## how it works
-
-One canonical skills root at `~/.agents/skills` holds a symlink per skill into this
-repo. Each tool root (`~/.claude/skills`, `~/.codex/skills`) is a single directory
-symlink into it, so a new tool costs one line.
-
-Skills log their own usage to `skills/<name>/logs/` (local, gitignored) and grow their
-eval cases from real use; blind judge votes land the same way.
+Skills, subagents, workflows, and config for my coding agents (Claude Code, Codex),
+versioned in one repo with a symlink installer.
 
 ## install
 
@@ -36,3 +9,50 @@ eval cases from real use; blind judge votes land the same way.
 ./install.sh --dry-run   # print the plan
 ./install.sh             # symlink for real; pre-write backups land outside the skills root
 ```
+
+## layout
+
+| path | holds |
+| --- | --- |
+| `skills/` | one `SKILL.md` per skill, loaded on trigger |
+| `agents/` | subagent definitions, each with its own tools and model |
+| `workflows/` | multi-agent graph specs |
+| `config/` | tracked copies of `settings.json` / `settings.local.json`; the live files are never symlinked, never written by the installer |
+| `docs/` | code style, comment style, the executed reset spec, fleet research |
+| `install.sh` | symlink-only installer; `--dry-run` prints every mutation through the real code path |
+| `CLAUDE.md` | global guidance loaded every session |
+
+### skills
+
+| skill | job |
+| --- | --- |
+| `ai-author` | decides whether a skill/agent/workflow should exist at all; owns the eval + logging contract and GEPA (Genetic-Pareto prompt evolution) tuning |
+| `skill-author` / `agent-author` / `workflow-author` | deep authoring craft per artifact type |
+| `agent-config-reset` | audit a sprawling agent setup and, gated on approval, reset it |
+| `create-pr` | commit, push, and open the pull request |
+| `mouthpiece` | voice rules for end-user-facing replies, scored by `eval/check.py` |
+| `vocabulary` | precise design and UI terms: exact lookup, near-synonym boundaries, reverse lookup from a vague ramble |
+
+### agents
+
+| agent | job |
+| --- | --- |
+| `anchor-verifier` | grade one worker's finished product against a dispatch rubric, on executed-command and file:line anchors only |
+| `code-reviewer` | fresh-context diff review; ranked findings anchored to file:line |
+| `debugger` | root-cause a failure with a named repro, apply the minimal fix |
+| `maestro-tester` | one flow objective → Maestro YAML run → junit-anchored verdict |
+| `web-research-summarizer` | fan out over web sources, return a cited findings block |
+
+### workflows
+
+| workflow | job |
+| --- | --- |
+| `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
+
+## how it works
+
+- `~/.agents/skills` is the canonical root: one symlink per skill into this repo.
+- Each tool root (`~/.claude/skills`, `~/.codex/skills`) is a single directory symlink
+  into it, so a new tool costs one line.
+- Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
+  cases from real use; blind judge votes land the same way.
