@@ -32,6 +32,7 @@ versioned in one repo with a symlink installer.
 | `skill-author` / `agent-author` / `workflow-author` | deep authoring craft per artifact type |
 | `agent-config-reset` | audit a sprawling agent setup and, gated on approval, reset it |
 | `create-pr` | commit, push, and open the pull request |
+| `hq` | front door over every project: gates-first digest, worktree-isolated dispatch, drill-down into any project agent; two-stage launchd heartbeat keeps quiet cycles at zero tokens |
 | `mouthpiece` | voice rules for end-user-facing replies, scored by `eval/check.py` |
 | `vocabulary` | precise design and UI terms: exact lookup, near-synonym boundaries, reverse lookup from a vague ramble |
 

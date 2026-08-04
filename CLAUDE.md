@@ -22,6 +22,12 @@ introduce one without its inline expansion. Never guess an unresolved one: when 
 
 End-user-facing text follows the /mouthpiece skill (voice rules live there, not here).
 
+## default runner
+
+Cross-project asks — status across agents, workspaces, or this machine's automations;
+dispatching work into another project; digging into a project agent — route through the
+/hq skill.
+
 ## code style
 
 Before writing code, read ~/Documents/agents/docs/code-style.md: the user's manual style
