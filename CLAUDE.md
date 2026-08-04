@@ -12,6 +12,13 @@ Default to the simplest thing that works and ships today. When in doubt, write l
 Expand every abbreviation, shortform, acronym, or pseudonym at first use in each conversation so its easy to search for (Example first use: "RAG(Retrieval Augmented Generation)" ). Never
 introduce one without its inline expansion. Never guess an unresolved one: when in doubt, repeat the above example format.
 
+## personal RAG store
+
+When a task references past work, prior decisions, personal notes, or conversation
+history, search first: the `search_memory` tool (rag MCP server), or via shell
+`rag search "query" --json`. It covers ~/Documents, agent memories, and Claude Code
+transcripts. `rag ingest` refreshes the index; `rag status` shows coverage.
+
 ## agent communication
 
 - quoted content passes through unaltered.
