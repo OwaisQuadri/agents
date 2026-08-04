@@ -53,6 +53,16 @@
       "args": [
         "/opt/homebrew/lib/node_modules/icon-composer-mcp/dist/server.js"
       ]
+    },
+    "rag": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/owaisquadri/rag",
+        "python",
+        "server.py"
+      ]
     }
   }
 }
