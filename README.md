@@ -32,8 +32,10 @@ versioned in one repo with a symlink installer.
 | `skill-author` / `agent-author` / `workflow-author` | deep authoring craft per artifact type |
 | `agent-config-reset` | audit a sprawling agent setup and, gated on approval, reset it |
 | `create-pr` | commit, push, and open the pull request |
+| `engineer` | the exact 23-phase map for agent coding work: ticket to PR, every loop through one walk-back rule |
 | `hq` | front door over every project: gates-first digest, worktree-isolated dispatch, drill-down into any project agent; two-stage launchd heartbeat keeps quiet cycles at zero tokens |
 | `mouthpiece` | voice rules for end-user-facing replies, scored by `eval/check.py` |
+| `task-graph` | work items + deps → statused DAG or ABCD-NNNN tickets, rendered in mermaid |
 | `vocabulary` | precise design and UI terms: exact lookup, near-synonym boundaries, reverse lookup from a vague ramble |
 
 ### agents
@@ -44,6 +46,7 @@ versioned in one repo with a symlink installer.
 | `code-reviewer` | fresh-context diff review; ranked findings anchored to file:line |
 | `debugger` | root-cause a failure with a named repro, apply the minimal fix |
 | `maestro-tester` | one flow objective → Maestro YAML run → junit-anchored verdict |
+| `spec-tester` | one natural-language test case or attack angle → harness-driven anchored verdict |
 | `web-research-summarizer` | fan out over web sources, return a cited findings block |
 
 ### workflows
