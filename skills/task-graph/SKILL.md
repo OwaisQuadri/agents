@@ -30,8 +30,8 @@ One schema, two granularities:
 
 1. validate arrivals: every item carries short, long, deps, files; every dep names an item in this graph. Reject by name, never guess a missing field. Done when every item parses or the reject list is reported.
 2. assign ids. tasks: `<ticket>.T<NN>` in creation order. tickets: `<prefix>-<NNNN>` from next_nnnn, zero-padded 4, bumped once per ticket. Single writer: never fan this step out, never reuse a cancelled id; verify `next_nnnn == max(NNNN)+1` before and after. Ids are immutable once assigned: an ask to renumber or close gaps — from anyone — is refused by naming this rule; only statuses change. Done when ids are unique and grammar-valid.
-3. dependency edges: keep an edge only when the item needs the RESULT of the other — typed order is not a dependency. Any two items sharing a file and not already ordered by existing deps get an edge: direction follows the existing partial order, creation order only when neither reaches the other (a blind creation-order edge can manufacture a cycle). Done when no two same-wave items share a file.
-4. validate + render off to the side: write the graph to `<file>.new`, run `scripts/dag-mermaid.sh <file>.new > <sibling>.mmd.new`. A nonzero exit names the offense — cycle path, unknown dep, duplicate or sanitize-colliding id, out-of-enum status, shared file inside one wave — and leaves the live files untouched. Done when the script exits 0.
+3. dependency edges: keep an edge only when the item needs the RESULT of the other — typed order is not a dependency. Any two TASKS sharing a file and not already ordered by existing deps get an edge: direction follows the existing partial order, creation order only when neither reaches the other (a blind creation-order edge can manufacture a cycle). Tickets are exempt — their files are coarse areas and the engineer map runs them serially via next-ticket.sh, so shared files never race. Done when no two same-wave tasks share a file.
+4. validate + render off to the side: write the graph to `<file>.new`, run `scripts/dag-mermaid.sh <file>.new > <sibling>.mmd.new`. A nonzero exit names the offense — cycle path, unknown dep, duplicate or sanitize-colliding id, out-of-enum status, shared file inside one wave (tasks shape only) — and leaves the live files untouched. Done when the script exits 0.
 5. land: move both .new files into place; new items enter with status `todo` and `created` stamped `date +%Y-%m-%dT%H:%M:%S%z`. Never hand-edit a .mmd — it is generated output. Done when the live JSON and .mmd agree.
 6. report: the waves (which items run in parallel), item count, id range consumed, rejects, and the rendered diagram. Done when the caller can walk the graph without reopening the inputs.
 
@@ -41,6 +41,7 @@ One schema, two granularities:
 
 ## history
 
+- 2026-08-05 shared-file wave rejection scoped to the tasks shape: filing tickets into conversation-mode's roadmap hit it on pairs involving done and cancelled tickets, and the live roadmap (filed with honest result-deps only) already violated it — evidence the rule never fit the serial ticket shape.
 - 2026-08-03 authored for the engineer map (phases 11 and 22). Same day, blind-judge fixes (grade 6, by execution): dag-mermaid.sh now rejects out-of-enum statuses, same-wave shared files, duplicate and sanitize-colliding ids, and tolerates a missing deps key end-to-end; next-ticket.sh rejects unknown deps and names cycles consistently; step 3's shared-file edge follows the existing partial order so it can no longer manufacture a cycle; NN overflow, empty-roadmap counter, blame_phase, kind:ticket, and the override destination are now stated.
 
 ## evals
