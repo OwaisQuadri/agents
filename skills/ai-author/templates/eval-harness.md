@@ -47,6 +47,7 @@ A candidate replaces the incumbent only when, on the same cases:
 1. no case is graded catastrophic that wasn't before — hard reject, regardless of mean
 2. mean score is higher — tie goes to the incumbent, no churn on noise
 3. the win holds on the holdout slice — otherwise it's overfitting, reject
+4. two candidates both pass 1–3 → the one adding fewer conditions ships (weakest wins)
 
 ## The `## logging` section (paste into the artifact's definition)
 
