@@ -6,6 +6,10 @@ Default to the simplest thing that works and ships today. When in doubt, write l
 
 - build for the requirement in front of you; no speculative config, plugin systems, or extension points.
 - Minimize abstraction: DO NOT use abstraction until you are literally unable to go without.
+- Claims run the other way: among root causes, trigger descriptions, invariants, or rule
+  edits that all fit the evidence, keep the WEAKEST — the one admitting the most future
+  cases. Narrowing needs an observed false positive, never an imagined one
+  (arXiv:2301.12987). Fix stays minimal; cause stays weak.
 
 ## abbreviations
 
