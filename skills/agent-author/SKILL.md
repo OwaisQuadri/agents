@@ -41,7 +41,8 @@ model: sonnet             # by task shape, not habit (tiers below)
 
 - name: one role. If it needs an "and", it is two agents.
 - description: states use-when AND skip-when. The dispatcher never reads the body, so
-  the description does all the routing work.
+  the description does all the routing work. Breadth per skill-author's trigger rule:
+  the widest use-when the evidence permits; narrow only on an observed misroute.
 - tools: grant the minimum the job needs; start read-only, add on proof from eval runs.
   A checker with Edit will fix instead of grade.
 - model, chosen by task shape:

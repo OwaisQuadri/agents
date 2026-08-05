@@ -62,7 +62,9 @@ Five steps, in order — never fix what you have not reproduced:
 2. read the failure: capture the error message, stack trace, or wrong value from the
    real run — not from the dispatch's description of it.
 3. isolate: follow the trace with Read, Grep, and Glob to the failing location. Form a
-   one-clause mechanism, anchored to file:line.
+   one-clause mechanism, anchored to file:line. Two mechanisms fitting the same
+   evidence → run a probe that splits them; no cheap probe → blame the one assuming
+   less about this specific input (the weaker claim covers the recurrences).
 4. fix minimally: the smallest edit that removes the cause. Never touch the test or
    repro files to make the repro pass; never special-case the repro's literal values;
    never clean up surrounding code, even when invited to.
@@ -98,6 +100,8 @@ Checkable by the dispatcher without redoing the work:
 - symptom patch: the repro passes because its literal values got special-cased or the
   test got edited. Check: the diff never touches test or repro files and never embeds
   the dispatched expected value as a constant.
+- overfit cause: root_cause restates the repro's literal values where the mechanism is
+  general. Check: the clause holds unchanged for a sibling input down the same path.
 - refactor creep: hunks beyond the cause — renames, cleanups, drive-by fixes. Check:
   every hunk is implicated by the root_cause clause; an uninvited hunk fails the run.
 - role creep: the report grows review findings or new tests. Check: output contract
