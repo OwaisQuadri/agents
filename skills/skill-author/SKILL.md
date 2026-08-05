@@ -42,6 +42,9 @@ The one part loaded into context every turn, so it pays rent every turn: prune h
 - Front-load the leading word (section 3) — invocation is where it earns most.
 - One trigger per branch. Synonyms restating one branch are duplication; collapse them.
 - Always a "Skip when …" clause fencing off the nearest false positive.
+- Widest "Use when" the evidence permits. Narrowing an existing trigger costs an
+  observed false fire from the logs, never an imagined one — the Skip-when fence for a
+  sibling is routing, not narrowing.
 - Hand-only skill, never fired by the model or another skill? Set
   `disable-model-invocation: true` — the description becomes a human one-liner and costs
   zero context.
@@ -102,7 +105,8 @@ Copy skills/ai-author/templates/eval-harness.md into `<skill>/evals/`:
 - `run.sh` — convention: `./run.sh [candidate]` grades every non-holdout case, one JSON
   line per case to stdout, summary to stderr; `--holdout` runs the held-out slice.
 - Holdout gating: a candidate replaces the incumbent only when no new catastrophic,
-  higher mean, AND the win holds on the holdout slice. Ties go to the incumbent.
+  higher mean, AND the win holds on the holdout slice. Ties go to the incumbent; two
+  passing candidates tie → the one adding fewer conditions ships.
 
 The authored skill's own "## evals" section is 2-4 lines: what run.sh checks, how to
 invoke it.
@@ -131,6 +135,9 @@ Diagnose a misbehaving skill against these, in order of frequency:
 
 - Trigger too broad — fires on the topic instead of the situation, or on a neighboring
   skill's territory. Fix: sharpen "Use when", add the missing "Skip when".
+- Trigger too narrow — never fires while its territory keeps coming up; qualifiers
+  piled up against imagined misfires. Fix: delete every qualifier no logged false fire
+  paid for; re-widen "Use when" to the situation class.
 - Description no-ops — trigger words nobody ever types, identity restated from the body.
   Fix: rewrite triggers in the words actually used when the skill is wanted.
 - Premature-completion drift — runs end before the criterion is met. Fix: sharpen the
@@ -144,7 +151,7 @@ prompt evolution) — the GEPA loop in skills/ai-author: reflect over logs and v
 one-concern mutations, accept only on a harness win that holds on holdout. Concrete
 tripwires: the same human correction in 2+ usage lines, `failure`/`partial` outcomes
 clustering, a judge vote naming the same lack twice, or a skill that never fires while
-its territory keeps coming up (description drift).
+its territory keeps coming up (trigger too narrow).
 
 ## Done when
 
