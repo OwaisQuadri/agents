@@ -98,11 +98,14 @@ Run per artifact, on demand or once logs/votes accumulate:
 1. **Reflect**: read `logs/usage.jsonl` + `votes/votes.jsonl`. Build a failure histogram —
    which criteria fail most, which complaints repeat.
 2. **Propose**: targeted mutations aimed at the top failure modes (sharpen the trigger,
-   add a skip-when, tighten a step). Small, named, one concern each.
+   add a skip-when, tighten a step — or widen a trigger the logs show never firing).
+   Small, named, one concern each. A narrowing mutation names the logged false positive
+   it answers; none logged → don't narrow.
 3. **Test**: run `evals/run.sh` — incumbent vs candidate on the same cases.
 4. **Decide**: accept ONLY on a harness win — no new catastrophic failure, higher mean
-   score, and the win holds on the holdout slice. Ties go to the incumbent; no churn on
-   noise.
+   score, and the win holds on the holdout slice. Ties go to the incumbent; two
+   candidates tying each other → the one adding fewer conditions ships (weakest wins).
+   No churn on noise.
 5. **Record**: note the accepted mutation and its rationale in the artifact so history is
    auditable and reversible.
 
