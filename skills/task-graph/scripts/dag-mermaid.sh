@@ -10,7 +10,8 @@ def depth($deps; $id; $seen):
     else ([.[] | depth($deps; .; $seen + [$id])] | max) + 1
     end
   end;
-(.tasks // .tickets) as $items
+(.tasks != null) as $is_tasks
+| (.tasks // .tickets) as $items
 | ($items | map(.id)) as $ids
 | ($ids | group_by(.) | map(select(length > 1) | .[0])) as $dups
 | if ($dups | length) > 0 then error("duplicate id: " + ($dups | join(" "))) else . end
@@ -26,7 +27,7 @@ def depth($deps; $id; $seen):
     | range($i + 1; length) as $j
     | select(($w[$i].files // []) | any(. as $f | (($w[$j].files // []) | index($f)) != null))
     | "\($w[$i].id)+\($w[$j].id)"]) as $overlap
-| if ($overlap | length) > 0 then error("shared file inside one wave: " + ($overlap | join(" "))) else . end
+| if $is_tasks and (($overlap | length) > 0) then error("shared file inside one wave: " + ($overlap | join(" "))) else . end
 | ["flowchart TD",
    "  classDef todo fill:#eeeeee,stroke:#999999",
    "  classDef inprogress fill:#fff3cd,stroke:#b8860b",
