@@ -8,6 +8,19 @@
   "skipDangerousModePermissionPrompt": true,
   "editorMode": "normal",
   "teammateMode": "in-process",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/owaisquadri/Documents/agents/hooks/rag-recall",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
   "mcpServers": {
     "linear": {
       "type": "url",

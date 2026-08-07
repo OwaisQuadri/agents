@@ -19,7 +19,7 @@ versioned in one repo with a symlink installer.
 | `workflows/` | multi-agent graph specs |
 | `config/` | tracked copies of `settings.json` / `settings.local.json`; the live files are never symlinked, never written by the installer |
 | `docs/` | code style, comment style, the executed reset spec, fleet research |
-| `hooks/` | `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip; `test.sh` is its regression suite |
+| `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
 | `install.sh` | symlink-only installer; `--dry-run` prints every mutation through the real code path |
 | `CLAUDE.md` | global guidance loaded every session |

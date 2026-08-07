@@ -46,7 +46,9 @@ Before writing the digest or any NOTIFY line, invoke the mouthpiece skill and fo
 If and only if at least one gate has urgency notify_now, print as your final line exactly one line starting with NOTIFY: followed by one short lowercase sentence. Otherwise print no line starting with NOTIFY."
 
 cd /Users/owaisquadri/Documents/agents
-"$CLAUDE_BIN" -p "$TRIAGE_PROMPT" --allowedTools Read Glob Grep Write Edit Skill > "$TRIAGE_OUT" || true
+# RAG_RECALL=0: triage is machine-written and works only from files named in the prompt,
+# so the UserPromptSubmit recall hook would bill ~3k tokens per cycle for nothing
+RAG_RECALL=0 "$CLAUDE_BIN" -p "$TRIAGE_PROMPT" --allowedTools Read Glob Grep Write Edit Skill > "$TRIAGE_OUT" || true
 
 NOTIFY_LINE="$(grep -m1 '^NOTIFY:' "$TRIAGE_OUT" || true)"
 if [ -n "$NOTIFY_LINE" ] && [ -x "$NOTIFIER" ]; then
