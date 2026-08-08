@@ -11,3 +11,5 @@ agents/*/votes/
 skills/mouthpiece/examples.md
 workflows/*/logs/
 workflows/*/votes/
+skills/mouthpiece/evals/candidates/
+skills/byline/evals/candidates/

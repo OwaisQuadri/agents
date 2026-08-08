@@ -6,9 +6,9 @@ OUT: `.map/<ID>/research.md` — `## summary` (≤500 chars), `## links`, `## pr
 
 ## steps
 
-1. [FRESH] dispatch web-research-summarizer with objective ("for <ticket long>: common implementations, known problems and pitfalls, bleeding-edge approaches"), boundaries, source guidance, recency (default: within 12 months). Multi-angle need → workflows/research-sweep instead. The dispatch must NOT carry the session transcript, plan drafts, or repo paths — repository questions are out of that agent's trigger. Done when a cited findings block returns.
-2. survey the current project state with the built-in Explore agent: what exists, where this feature lands, what it can reuse. Repo questions never go to the web researcher. Done when project-state cites real file paths.
-3. write research.md: `## summary` ≤500 characters (links live OUTSIDE the counted summary), `## links` carrying every claim's URL(Uniform Resource Locator), `## project-state`. Verify the cap: `awk '/^## summary/{f=1;next} /^## links/{f=0} f' research.md | wc -c` ≤ 500. Done when the gate passes.
+1. [FRESH] dispatch web-research-summarizer. The dispatch carries an objective, boundaries, source guidance, and recency. The objective is "for <ticket long>: common implementations, known problems and pitfalls, bleeding-edge approaches". Recency defaults to within 12 months. A multi-angle need goes to workflows/research-sweep instead. The dispatch must NOT carry the session transcript, the plan drafts, or repo paths. Repository questions are outside that agent's trigger. Done when a cited findings block returns.
+2. survey the current project state with the built-in Explore agent. Ask what exists, where this feature lands, and what it can reuse. Repo questions never go to the web researcher. Done when project-state cites real file paths.
+3. write research.md with three sections: `## summary`, `## links`, `## project-state`. Cap the summary at 500 characters. The links live OUTSIDE the counted summary. `## links` carries the URL(Uniform Resource Locator) behind every claim. Verify the cap with `awk '/^## summary/{f=1;next} /^## links/{f=0} f' research.md | wc -c` ≤ 500. Done when the gate passes.
 4. commit `map(<ID>): phase 02 research`.
 
 ## blame tags

@@ -6,11 +6,11 @@ OUT: roadmap.json status flips; `.map/<ID>/state.json` created; branch `map/<ID>
 
 ## steps
 
-1. bootstrap when roadmap.json is missing: look for a connected task system — Linear MCP(Model Context Protocol) tools, `gh issue list`, TODO or BACKLOG files — and offer to import selected items as tickets (ask the 2-4 letter prefix once, uppercase); nothing found → ask the user to create the roadmap. HUMAN GATE either way. Done when roadmap.json parses with prefix + next_nnnn + tickets.
-2. close out the past: every `resolved` ticket whose `map/<ID>` branch is merged into the default branch (`git branch --merged`, `gh pr list --state merged`) flips to `done`. Done when no merged ticket is still resolved.
-3. pick: run `skills/task-graph/scripts/next-ticket.sh .map/roadmap.json`. Accept the pick, or override with a one-line reason stored in `state.json.next_override`. Needs-replan tickets (cancelled dep) go to the user, never auto-selected. Done when one ticket is chosen with its unlock count known.
-4. open the run: set the ticket `in progress`; create `.map/<ID>/` and state.json (`phase: 1`, empty ledgers); create or check out branch `map/<ID>`. Take-over (branch exists, map never ran): create the run dir, then follow the take-over entry point instead of re-initializing. Done when dir + branch + pointer exist.
-5. HUMAN GATE A: present the chosen ticket, its unlock reasoning, and any override. Commit `map(<ID>): phase 01 setup`. Done when the user has seen the pick and the commit exists.
+1. bootstrap when roadmap.json is missing. Look for a connected task system: Linear MCP(Model Context Protocol) tools, `gh issue list`, TODO or BACKLOG files. Offer to import the found items as tickets, and let the user select which ones. Ask the user for the 2-4 letter prefix once, uppercase. Found nothing → ask the user to create the roadmap. HUMAN GATE either way. Done when roadmap.json parses with prefix + next_nnnn + tickets.
+2. close out the past. Flip a `resolved` ticket to `done` when its `map/<ID>` branch is merged into the default branch. Check the merge with `git branch --merged` and `gh pr list --state merged`. Done when no merged ticket is still resolved.
+3. pick the ticket. Run `skills/task-graph/scripts/next-ticket.sh .map/roadmap.json`. Accept the pick, or override it with a one-line reason stored in `state.json.next_override`. A needs-replan ticket has a cancelled dep. Take it to the user, and never auto-select it. Done when one ticket is chosen with its unlock count known.
+4. open the run. Set the ticket `in progress`. Create `.map/<ID>/` and state.json, with `phase: 1` and empty ledgers. Create or check out the branch `map/<ID>`. A take-over is a run where the branch exists and the map never ran. On a take-over, create the run dir, then follow the take-over entry point. Never re-initialize. Done when dir + branch + pointer exist.
+5. HUMAN GATE A. Present the chosen ticket, its unlock reasoning, and any override. Commit `map(<ID>): phase 01 setup`. Done when the user has seen the pick, `state.json.gates.A` records their verdict, and the commit exists.
 
 ## blame tags
 
