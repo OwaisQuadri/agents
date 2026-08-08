@@ -148,6 +148,10 @@ Non-negotiable lines in every authored spec: VERIFY (fresh context), CAP on the 
 run, ON FAIL. A spec fanning out wider than ~40 results also states its MERGE batching
 (the layered fan-in from break mode 1).
 
+Write every line of the spec under ~/Documents/agents/docs/prompt-style.md — the
+Simplified Technical English (ASD-STE100) rules that leave a sentence one reading. A
+GOAL or RULE line with two readings fans out into N agents holding N interpretations.
+
 ## cost discipline
 
 A graph costs more than a chat; the coordination gets cheaper, the work does not.

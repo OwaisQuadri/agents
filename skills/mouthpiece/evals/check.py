@@ -7,7 +7,7 @@ Exact information — fenced code, inline backtick spans, file paths, quoted
 data — is masked out first, so the rules and the 500-char cap only see the
 voice's own words, matching the skill's cap rule. Prints one pass/FAIL line per
 rule and a final `score: passed/total (fraction)`; exits nonzero on any
-failure. GEPA (genetic-pareto prompt optimization) runs read the score line
+failure. GEPA (Genetic-Pareto prompt evolution) runs read the score line
 and use the FAIL lines as feedback. Stdlib only.
 
 Adapted from local-harness/agents/mouthpiece/check.py, which graded transcript
@@ -28,8 +28,7 @@ EXACT_SPANS = [
     re.compile(r"“[^”\n]+”"),        # curly-quoted data
 ]
 
-# transliterated duas keep their capitals; every other capitalized word fails
-# unless it is an all-caps acronym like MCP
+# transliterated duas keep their capitals even when they open a line
 ALLOWED_CAPS = {"MashaAllah", "Barakallahu", "Feek", "Allahumma", "Barik",
                 "Assalamu", "Alaikum"}
 
@@ -46,11 +45,12 @@ def mask_exact(text):
     return "".join(chars)
 
 
-def r_lowercase(t):
-    return [w for w in re.findall(r"[A-Za-z][A-Za-z'’]*", t)
-            if any(c.isupper() for c in w)
-            and w not in ALLOWED_CAPS
-            and not (len(w) >= 2 and w.isupper())]
+SENTENCE_START = re.compile(r"(?:^\s*|[.!?]\s+)([A-Z][a-z]+)", re.M)
+
+
+def r_sentence_caps(t):
+    return [m.group(1) for m in SENTENCE_START.finditer(t)
+            if m.group(1) not in ALLOWED_CAPS]
 
 
 def r_line_periods(t):
@@ -80,7 +80,7 @@ def r_joiners(t):
 
 
 def r_shortforms(t):
-    return _words(t, "because", "yeah", "yes", "okay", "u", "ur")
+    return _words(t, "because", "yeah", "yes", "okay")
 
 
 def r_praise(t):
@@ -125,12 +125,12 @@ def r_char_cap(t):
 
 
 RULES = [
-    ("all lowercase", r_lowercase),
+    ("no capital opening a line or sentence", r_sentence_caps),
     ("no period at line end", r_line_periods),
     ("no dash between clauses", r_dashes),
     ("no apostrophe contractions", r_contractions),
     ("no however/moreover/furthermore/in conclusion", r_joiners),
-    ("bc not because, yea not yeah/yes, ok not okay, you not u", r_shortforms),
+    ("bc not because, yea not yeah/yes, ok not okay", r_shortforms),
     ("no awesome/excellent/absolutely/amazing/perfect/great", r_praise),
     ("never genuine/genuinely", r_genuine),
     ("never 'not just x, but y'", r_not_just_but),

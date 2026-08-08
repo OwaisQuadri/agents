@@ -12,18 +12,21 @@ workflow
 GOAL:     every task status resolved, with code matching plan or a disclosed
           deviation line
 FAN OUT:  one FRESH builder per ready branch (all deps resolved), disjoint files
-          only; each carries its task objects, the relevant data-structures and
-          interfaces excerpts, its paths glob, and the deviation-line shape —
-          never another branch's diff or the planning transcript
-MERGE:    the orchestrator alone writes .map/**: flips statuses, appends reported
-          deviations to deviations.jsonl, runs the todo.sh steps a branch names
+          only. Each builder carries its task objects, the relevant
+          data-structures and interfaces excerpts, its paths glob, and the
+          deviation-line shape. A builder never receives another branch's diff
+          or the planning transcript
+MERGE:    the orchestrator alone writes .map/**. It flips the statuses, appends
+          the reported deviations to deviations.jsonl, and runs the todo.sh
+          steps a branch names
 VERIFY:   anchor-verifier per branch, fresh context: work_product_paths = the
           branch's files, verify_command = build + the branch's targeted tests,
           rubric = [TODO(<id>) markers for the branch gone; zero edits outside
           the glob; booleans is-prefixed]
 LOOP:     next wave when the current wave's verifies pass
-RULE:     any divergence from plan → a deviation line BEFORE proceeding; gaps
-          classify back to the phase that owns them, never patched over silently
+RULE:     any divergence from plan → a deviation line BEFORE proceeding. A gap
+          classifies back to the phase that owns it, and is never patched over
+          silently
 CAP:      3 concurrent builders; 3 walk-back cycles then human escalation
 ON FAIL:  a dead builder's tasks revert to todo and are named in the report
 REPORT:   per-task statuses + open-deviation count + verifier verdicts
@@ -37,7 +40,7 @@ Anchors: the verifier's executed build and test commands; the diff on disk.
 
 ## exit
 
-Open deviations → the walk-back rule (SKILL.md), to the earliest blamed phase. Leave only at: all non-cancelled tasks resolved, `jq 'select(.status=="open")' deviations.jsonl` counts 0, phase committed `map(<ID>): phase 13 implement`.
+Open deviations route through the walk-back rule in SKILL.md, to the earliest blamed phase. Leave only when all non-cancelled tasks are resolved, `jq 'select(.status=="open")' deviations.jsonl` counts 0, and the phase is committed as `map(<ID>): phase 13 implement`.
 
 ## blame tags
 

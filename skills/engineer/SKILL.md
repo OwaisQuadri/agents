@@ -9,7 +9,7 @@ metadata:
 
 JOB: drive one tracked coding task through the 23-phase map, ticket selection to merged-ready PR plus a refilled roadmap, every loop through the one walk-back rule
 IN:  a target project repo; its .map/ dir (bootstrapped on first run); optionally a forced ticket id, a resume ask, a branch to adopt, or an ideation ask
-OUT: an open PR, the ticket resolved in .map/roadmap.json, new tickets plus a refreshed roadmap.mmd, a human sign-off checklist, and the full .map/<TICKET-ID>/ run record (state, plan docs, DAG, ledgers, test results)
+OUT: an open PR, the ticket resolved in .map/roadmap.json, new tickets plus a refreshed roadmap.mmd, a human sign-off checklist, every gate verdict recorded in state.json.gates, and the full .map/<TICKET-ID>/ run record (state, plan docs, DAG, ledgers, test results)
 
 ## Files
 
@@ -28,7 +28,7 @@ Task scale sets the pace, never the route. A one-line fix walks all 23 phases in
 |----|-------|----------|------------|
 | 01 | setup | flip merged tickets done; pick by unlock count; branch; GATE A | task-graph scripts |
 | 02 | research | ≤500-char cited summary + project state | web-research-summarizer or research-sweep |
-| 03 | ux-research | precise terms; existing + novel options | /vocabulary |
+| 03 | ux-research | precise terms; experience brief; GATE UX — user selects the direction | /vocabulary |
 | 04 | testability | drive matrix; data-only engine plan; gaps become tasks | — |
 | 05 | env-check | read-only audit; gaps → todos, never fixed | — |
 | 06 | data-structures | declarations only; DO NOT BUILD or TEST | — |
@@ -36,7 +36,7 @@ Task scale sets the pace, never the route. A one-line fix walks all 23 phases in
 | 08 | task-breakdown | smallest atomic tasks, files ownership mandatory | — |
 | 09 | dependencies | result-edges only; shared file forces an edge | — |
 | 10 | test-cases | natural-language cases, security + edges, stranger-runnable | — |
-| 11 | dag | tasks.json + dag.mmd; fresh plan review; GATE B | /task-graph, anchor-verifier |
+| 11 | dag | tasks.json + dag.mmd; fresh plan review; GATE B (incl. ux) | /task-graph, anchor-verifier |
 | 12 | todos | TODO(task-id) markers + todo.sh; the stash-anchor commit | — |
 | 13 | implement | fan out disjoint branches; deviations disclosed, never absorbed | fresh builders, anchor-verifier |
 | 14 | agent-test | fresh testers execute the cases; failures collected | spec-tester, maestro-tester |
@@ -47,8 +47,8 @@ Task scale sets the pace, never the route. A one-line fix walks all 23 phases in
 | 19 | break-panel | 5 fresh breakers, task-picked angles | spec-tester, anchor-verifier |
 | 20 | signoff | 6-8 manual bullets under 75 chars; GATE C | — |
 | 21 | roadmap | work/right/fast + iron-man candidates | web-research-summarizer |
-| 22 | tickets | ABCD-NNNN filed; roadmap.mmd regenerated and shown | /task-graph |
-| 23 | close | comment + style pass; fresh review; PR | code-reviewer, /simplify, create-pr |
+| 22 | tickets | candidates to GATE D, then survivors filed; roadmap.mmd shown | /task-graph |
+| 23 | close | comment + style pass; fresh review; GATE E; PR | code-reviewer, /simplify, create-pr |
 
 ## the walk-back rule (the only loop in this map)
 
@@ -63,7 +63,7 @@ CAP: 3 walks per trigger family (`state.json.loop_counts`) — the 4th STOPS the
 
 ## state
 
-`.map/<ID>/state.json`: `{"ticket","phase","walk","phase_commits":{"12":"<sha>"},"stash":{"label","sha","attempt","backup_branch"},"loop_counts":{},"next_override"}`. One commit per phase: `map(<ID>): phase NN <slug>`. Git history is truth; state.json is the pointer — on disagreement, reconcile the pointer to git before proceeding. A walk-back that reworks phase 12 replaces `phase_commits["12"]` with the rework commit — but only while `stash.sha` is empty; once a stash is outstanding the anchor is frozen until phase 18 consumes it. Never push before phase 23: phase 16 rewrites local history, and a pushed branch would then need a force-push, which is banned. While `stash.sha` is set, commits are append-only — no amend, no rebase — and `git stash clear` is banned outright. Stash and reset operations run in this session; they are never delegated to a reviewer (a stash or checkout by code-reviewer is catastrophic in its own rubric).
+`.map/<ID>/state.json`: `{"ticket","phase","walk","phase_commits":{"12":"<sha>"},"stash":{"label","sha","attempt","backup_branch"},"loop_counts":{},"next_override","gates":{"A":{"ts","verdict"},…}}`. Every human gate writes its own `gates.<letter>` entry — the local timestamp and the human's verdict in their words — the moment it clears. A gate with no entry did not happen: that is the same evidence-not-self-report rule the mechanical gates below run on, and it is what lets a resume trust a gate and a walk-back blame one. One commit per phase: `map(<ID>): phase NN <slug>`. Git history is truth; state.json is the pointer — on disagreement, reconcile the pointer to git before proceeding. A walk-back that reworks phase 12 replaces `phase_commits["12"]` with the rework commit — but only while `stash.sha` is empty; once a stash is outstanding the anchor is frozen until phase 18 consumes it. Never push before phase 23: phase 16 rewrites local history, and a pushed branch would then need a force-push, which is banned. While `stash.sha` is set, commits are append-only — no amend, no rebase — and `git stash clear` is banned outright. Stash and reset operations run in this session; they are never delegated to a reviewer (a stash or checkout by code-reviewer is catastrophic in its own rubric).
 
 ## entry points
 
@@ -76,10 +76,19 @@ Dispatched roles resolve from this repo's fleet: spec-tester, anchor-verifier, d
 
 ## gates
 
-HUMAN GATE A (end of 01): chosen ticket + unlock reasoning. HUMAN GATE B (end of 11): the plan bundle — plan docs, test-cases.md, tasks.json, dag.mmd. HUMAN GATE C (20): the sign-off checklist; wait for the manual-testing verdict. Standing: a difficult contract, or a walk-back CAP hit, stops the run for user discussion. Mechanical exit gates, evidence = files and exit codes, never self-report: leave 13 only at 0 open deviations; 15 only at 0 failures; 17 only at invariant fixpoint; 18 only at 0 TODO(<TICKET>) markers by grep; 19 only on an empty panel failure list.
+Five lettered gates bracket the decisions the run does not get to make alone: what to build (A), how (B), whether it works (C), what to build NEXT (D), and whether to publish (E). Two more human stops are conditional and unlettered: phase 01's roadmap bootstrap (no roadmap.json exists yet) and phase 03's sourced-findings check (only when that phase ran a web search). Each writes its `gates` entry the same way.
+
+HUMAN GATE A (end of 01): chosen ticket + unlock reasoning. HUMAN GATE UX (end of 03, ALWAYS — fires with or without a web search): the experience brief — before→after, lineage-tagged directions, intended feeling and action — and the USER selects the direction; `state.json.gates.UX`. HUMAN GATE B (end of 11): the plan bundle — ux.md's chosen pattern and rejected alternates, plan docs, test-cases.md, tasks.json, dag.mmd. HUMAN GATE C (20): the sign-off checklist; wait for the manual-testing verdict. HUMAN GATE D (22): the ticket CANDIDATES, before anything is written to roadmap.json — ids are immutable once assigned and the filed set IS the project's next scope. HUMAN GATE E (23): the push, before the branch leaves the machine — the run's first outward-facing act, and /create-pr does not gate on its own (it stops only on an empty diff or a rejected push). Standing: a difficult contract, or a walk-back CAP hit, stops the run for user discussion.
+
+The test for any gate added later, both arms required. ONE: does the action bind the human to something they cannot cheaply undo — a permanent id, a published artifact, a scope commitment? TWO: would a human answer change what the run does next, and is there no cheaper stop already covering it? A phase that already escalates on its own cap (13, 15, 17, 19) fails arm two — it stops for the human exactly when stopping is informative, and a standing gate there would fire on every clean run and train rubber-stamping. Local and rewindable fails arm one: phase 16's history rewrite is guarded mechanically by the attempt-numbered backup branch and phase 18's three checks, not by a human stop. Correctness is the mechanical gates' job, below. Mechanical exit gates, evidence = files and exit codes, never self-report: leave 13 only at 0 open deviations; 15 only at 0 failures; 17 only at invariant fixpoint; 18 only at 0 TODO(<TICKET>) markers by grep; 19 only on an empty panel failure list.
 
 ## history
 
+- 2026-08-06 gate refinement round 2 (user, at the live CPU-0003 run): GATE UX made UNCONDITIONAL — fires at end of 03 with or without a web search, the user selects the direction, `state.json.gates.UX`; phase 21's candidate pool gains a mandatory first source (the run's own accumulation: in-session ideas, parked gate outcomes, adopted inspirations) and its web scan a second angle (commonly-built-next alongside bleeding-edge); confirmed GATE D (22) and GATE E (23) match the user's asked-for roadmap-signoff and pre-PR gates.
+- 2026-08-06 gate audit (user-triggered: a run filed 12 tickets into roadmap.json unreviewed). Added GATE D (22, candidates before any roadmap write — ids are immutable, the filed set is next scope) and GATE E (23, the push — verified /create-pr does not gate, it stops only on an empty diff or a rejected push); widened GATE B to carry ux.md's chosen pattern (phase 03 picks an interaction pattern that was reaching implementation unshown). Declined gates at 16 (local, rewindable, mechanically guarded) and 13/15/17/19 (already escalate on their caps). Blind judge (grade 7) then drove: every gate writes `state.json.gates.<letter>` so a gate leaves evidence rather than a claim — phase 23's IN now requires D's entry; GATE E gained its consequence sentence and the unrecoverable-push rule (force-push is banned, so a premature push cannot be retracted); the gate test grew its second arm (a phase that already escalates on a cap fails it, which is what actually produced the declines); phase 22 gained a re-entry reconcile so a redo cannot mint a second permanent id for the same work.
+
+- 2026-08-06 user corrections to the day-old gate, three at one live gate B: (1) the phase-03 gate presents an EXPERIENCE BRIEF (before→after experience, lineage-tagged directions, intended feeling and action), never a raw findings dump — first delivery was a term-definition list, rejected; (2) "prior inspiration" means what has inspired THE USER before when designing interfaces (rag search + .map/inspiration.md + inspiration-seed.md), not a shipped example — second delivery guessed generic products, rejected; (3) his history anchors one direction but the brief ALWAYS offers options beyond it, including a new-to-him fresh-inspiration candidate; one he adopts is appended to .map/inspiration.md.
+- 2026-08-05 user-mandated (owner directive via ai-author, GEPA bypassed by authority): phase 03 gains a conditional HUMAN GATE — a web search in the UX phase always stops for the user before options are drafted.
 - 2026-08-03 authored (user-designed 23-phase map; prime-agent mechanics absorbed). Same-day blind-judge fixes (grade 6): phase 16 stashes with `:(exclude).map` so the run ledgers survive for 17 and ride the phase-16 commit; phase-17 walks declared plan-only (06-12); the phase-12 anchor freezes while a stash is outstanding; phase 18's content check is untracked-aware and its suite rerun uses fresh testers; the panel re-attacks after fixes; resume honors open walks; take-over's phase 12 marks only unimplemented sites; plan-review loops got their own counter.
 
 ## evals

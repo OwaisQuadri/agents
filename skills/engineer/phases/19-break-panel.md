@@ -6,7 +6,29 @@ OUT: `.map/<ID>/panel.md` (angle selection + per-angle verdicts); failures.jsonl
 
 ## the angle library
 
-Pick exactly 5 for this ticket — the angles change with the task, the count does not. Record the pick and one line of why per angle in panel.md before dispatching. Defaults that partition the failure space (input / transitions / blast radius / time / environment): `hostile-input`, `state-machine-abuse` (drives the phase-04 data-only engine directly), `regression-sweep` (exercises everything the ticket did NOT touch; gets the app's feature inventory — built from the README plus roadmap.json ticket titles), `concurrency-timing`, `resource-persistence` (kill/relaunch, corrupt or full storage, offline). Swap-ins when the ticket's surface warrants: `auth-permissions`, `offline-network`, `data-migration` (old-version data opened by the new code), `accessibility-input-modes`, `locale-formats`. A security-relevant surface always keeps at least one of hostile-input or auth-permissions — security is never skimped.
+Pick exactly 5 angles for this ticket. The angles change with the task. The count does not.
+Record the 5 picks in panel.md before you dispatch. Write one line of why for each pick.
+
+The default 5 partition the failure space, one angle per region:
+
+- `hostile-input` — input
+- `state-machine-abuse` — transitions. It drives the data-only engine from phase 04 directly
+- `regression-sweep` — blast radius. It exercises every feature the ticket did NOT touch.
+  Build its feature inventory from the README and the ticket titles in roadmap.json
+- `concurrency-timing` — time
+- `resource-persistence` — environment. It kills and relaunches the app, it corrupts
+  storage, it fills storage, and it goes offline
+
+Swap in another angle when the ticket's surface warrants it:
+
+- `auth-permissions`
+- `offline-network`
+- `data-migration` — the new code opens data written by an old version
+- `accessibility-input-modes`
+- `locale-formats`
+
+A security-relevant surface always keeps `hostile-input` or `auth-permissions`. Never skimp
+on security.
 
 ## the graph
 

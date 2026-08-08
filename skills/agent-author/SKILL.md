@@ -65,6 +65,10 @@ The body opens with the protocol, three blocks in order:
    agent must NOT receive (the worker's chat, prior votes, the session transcript);
    an exclusion you don't write down is one the dispatcher will violate.
 
+Before writing the body, read ~/Documents/agents/docs/prompt-style.md — the Simplified
+Technical English (ASD-STE100) rules that leave a sentence one reading. A system prompt
+is read once by a fresh context, so a second reading of a line is a second behavior.
+
 ## the embedded contract
 
 Every authored agent ships these three sections in its body — the exact gap the old

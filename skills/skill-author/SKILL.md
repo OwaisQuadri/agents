@@ -85,6 +85,9 @@ Name each file for what it holds. Never disclose a step every run executes.
   tokens and inflates the meaning's apparent importance.
 - Match the register of the config it lives in. Terse imperative gets executed;
   enterprise documentation gets skimmed.
+- Before writing step prose, exit criteria, or dispatch text, read
+  ~/Documents/agents/docs/prompt-style.md — the Simplified Technical English
+  (ASD-STE100) rules that leave a sentence one reading.
 
 ## 4. The authoring contract — every skill ships it
 

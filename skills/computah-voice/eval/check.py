@@ -6,7 +6,7 @@ usage: python3 check.py line.txt   (or pipe the line on stdin)
 Unlike mouthpiece, this skill wants ordinary sentence case and punctuation, so
 those rules check for their PRESENCE rather than their absence. Prints one
 pass/FAIL line per rule and a final `score: passed/total (fraction)`; exits
-nonzero on any failure. GEPA (genetic-pareto prompt optimization) runs read the
+nonzero on any failure. GEPA (Genetic-Pareto prompt evolution) runs read the
 score line and use the FAIL lines as feedback. Stdlib only.
 """
 import re

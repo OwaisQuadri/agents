@@ -39,8 +39,15 @@ for case in cases:
         "\n\nEXPECT:\n" + case["expect"] +
         "\n\nWould an agent following the skill on this input meet EXPECT? Grade per the rubric."
     )
-    out = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, check=True).stdout
-    verdict = json.loads(out[out.find("{"):out.rfind("}") + 1])
+    verdict = None
+    for model_args in ([], ["--model", "opus"]):
+        run = subprocess.run(["claude", "-p", *model_args, prompt], capture_output=True, text=True)
+        start, end = run.stdout.find("{"), run.stdout.rfind("}")
+        if run.returncode == 0 and start != -1:
+            verdict = json.loads(run.stdout[start:end + 1])
+            break
+    if verdict is None:
+        sys.exit(f"grader failed on the default model and on opus (case {case['id']})")
     print(json.dumps({"id": case["id"], "score": verdict["score"], "failure_mode": verdict.get("failure_mode")}))
     scores.append(verdict["score"])
 
