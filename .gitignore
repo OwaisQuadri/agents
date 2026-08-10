@@ -13,3 +13,5 @@ workflows/*/logs/
 workflows/*/votes/
 skills/mouthpiece/evals/candidates/
 skills/byline/evals/candidates/
+
+tools/*/target/

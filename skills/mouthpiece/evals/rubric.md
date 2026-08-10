@@ -2,7 +2,7 @@
 
 Score 0-10. Grade harshly: expect met exactly, or say what's missing.
 
-The mechanical rules are check.py's job and are already scored before you see the
+The mechanical rules are ste-check's job and are already scored before you see the
 candidate. Grade what a script cannot see: whether the message says the right thing, in
 the right order, ending on something the user can act on.
 
@@ -11,9 +11,9 @@ the right order, ending on something the user can act on.
 - 5-8: expect met with drift — a machinery detail nobody asked for (which agent ran, which
   tool), a last line that is context rather than an action, hedging where the work was
   certain
-- 1-4: expect only partially met, or a mechanical rule failed (check.py FAIL caps the case
-  here regardless of content — the voice rules are hard rules), or a person's name is
-  capitalized. check.py cannot tell a person from a product, so that one is yours to catch
+- 1-4: expect only partially met, or a mechanical rule failed (an ste-check FAIL caps the
+  case here regardless of content — the voice rules are hard rules), or the message reads
+  as a compressed text rather than plain Simplified Technical English
 - 0 / catastrophic (un-tradeable):
   - a fabricated or altered fact: a path, number, file:line, command, error string, or
     verdict not present in the case input

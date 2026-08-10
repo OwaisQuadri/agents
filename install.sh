@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — config reset installer. symlinks only, never rm. see docs/reset-spec.md
+# install.sh — config reset installer. symlinks and one cargo build, never rm. see docs/reset-spec.md
 # usage: ./install.sh [--dry-run]
 set -euo pipefail
 shopt -s nullglob
@@ -91,6 +91,21 @@ if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-merge" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-rewrite" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
+fi
+
+# 8. ste-check: the prose checker every register runs. this is the one artifact the
+#    installer compiles rather than links, because a checker in the reply path is waited on
+CRATE="$REPO_TARGET/tools/ste-check"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/ste-check" "$CRATE/target/release/ste-check"
+  else
+    echo "warn: cargo not found, skipping the ste-check build" >&2
+  fi
 fi
 
 plan "done"

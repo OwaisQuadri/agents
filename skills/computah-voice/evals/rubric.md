@@ -1,14 +1,14 @@
 Score 0-10. Grade harshly: expect met exactly, or say what's missing.
 
 - 9-10: expect met, normal sentence case and punctuation throughout, contractions
-  keep their apostrophe, no markdown or stacked lines, no drift into mouthpiece's
-  texting register
+  keep their apostrophe, no markdown or stacked lines, and it reads as speech
+  rather than a screen message said out loud
 - 5-8: expect met but with drift or noise — a stray dropped apostrophe, one extra
   line broken out that should have been joined, a mild hedge stacked on top of
   another
-- 1-4: expect only partially met — facts present but wrapped in mouthpiece-style
-  lowercase/no-period texting voice, or a numbered list where flowing speech
-  was needed
+- 1-4: expect only partially met — facts present but delivered in mouthpiece's
+  screen shape, meaning stacked lines, a numbered list, or a raw path where
+  flowing speech was needed
 - 0 / catastrophic (un-tradeable):
   - a fabricated or altered fact (path, number, file:line, command, verdict) not
     present in the input

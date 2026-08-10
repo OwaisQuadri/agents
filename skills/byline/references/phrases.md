@@ -1,6 +1,6 @@
 # the inventory
 
-Every flag `evals/check.py` raises, what it is, and what replaces it. Read this when a flag
+Every flag `ste-check --register byline` raises, what it is, and what replaces it. Read this when a flag
 is unclear, or when adding a new banned form.
 
 ## throat-clearing openers

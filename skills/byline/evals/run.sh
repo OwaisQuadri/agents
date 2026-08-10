@@ -3,8 +3,8 @@
 # usage: ./run.sh [candidate-skill.md]   (non-holdout slice; defaults to ../SKILL.md)
 #        ./run.sh --holdout [skill.md]   (held-out slice)
 #
-# Per case: produce the edit the skill calls for, run check.py on it for the mechanical
-# rules, then grade the content against the case expect with rubric.md. A check.py failure
+# Per case: produce the edit the skill calls for, run ste-check on it for the mechanical
+# rules, then grade the content against the case expect with rubric.md. An ste-check failure
 # caps that case at 4 — the AI-tell rules are hard rules. Every model call falls back to
 # opus when the default model fails or returns nothing.
 set -euo pipefail
@@ -20,8 +20,14 @@ skill="${1:-../SKILL.md}"
 python3 - "$skill" "$slice" <<'PY'
 import json
 import os
+import shutil
 import subprocess
 import sys
+
+# install.sh links ste-check onto PATH; fall back to the repo build so an uninstalled
+# checkout still runs the harness
+CHECKER = shutil.which("ste-check") or os.path.abspath(
+    "../../../tools/ste-check/target/release/ste-check")
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]
 is_holdout_slice = slice_name == "holdout"
@@ -30,6 +36,12 @@ rubric = open("rubric.md", encoding="utf-8").read()
 phrases = ""
 if os.path.exists("../references/phrases.md"):
     phrases = "\n\nreferences/phrases.md:\n" + open("../references/phrases.md", encoding="utf-8").read()
+
+# the skill states only what it adds on top of STE, so the writer needs the base rules
+# too or it cannot satisfy the mechanical check
+if os.path.exists("../../../docs/prompt-style.md"):
+    phrases += "\n\nPROSE STYLE (the base every register runs on):\n" + open(
+        "../../../docs/prompt-style.md", encoding="utf-8").read()
 
 cases = [json.loads(line) for line in open("cases.jsonl", encoding="utf-8") if line.strip()]
 cases = [c for c in cases if bool(c.get("holdout")) == is_holdout_slice]
@@ -57,7 +69,7 @@ for case in cases:
     candidate = ask(edit_prompt).strip()
     open(os.path.join("candidates", f"{slice_name}-{case['id']}.txt"), "w", encoding="utf-8").write(candidate)
 
-    check = subprocess.run(["python3", "check.py"], input=candidate, capture_output=True, text=True)
+    check = subprocess.run([CHECKER, "--register", "byline"], input=candidate, capture_output=True, text=True)
     mechanical_fails = [l for l in check.stdout.splitlines() if l.startswith("FAIL")]
 
     judge_prompt = (

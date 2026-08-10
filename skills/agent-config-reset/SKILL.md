@@ -63,7 +63,7 @@ HUMAN GATE: the user approves the spec before any build. Commit the spec at this
 
 PARALLEL JOBS: one per surviving artifact, run at once. The approved spec owns the job
 list; this skill does not. Durable constraints on two recurring artifacts:
-- install.sh: symlinks only, a --dry-run mode where every mutation goes through a run() wrapper and every announcement through a plan() wrapper so dry-run and the real run cannot diverge, a pre-write backup phase, and backups NEVER land inside a live skills root — a backup inside one surfaces in the tool catalog as a phantom skill.
+- install.sh: symlinks plus any compiled tool the config needs, a --dry-run mode where every mutation goes through a run() wrapper and every announcement through a plan() wrapper so dry-run and the real run cannot diverge, a pre-write backup phase, and backups NEVER land inside a live skills root — a backup inside one surfaces in the tool catalog as a phantom skill.
 - tracked copies at config/settings.json and config/settings.local.json (the installer never touches the live ones).
 
 RULE: the user hand-edits artifacts between gates; before any fix pass, `git diff` for manual edits and never revert them. Gate feedback arrives as a punch list plus hand edits — both are canon.

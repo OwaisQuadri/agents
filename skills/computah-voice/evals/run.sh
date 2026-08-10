@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # run.sh — computah-voice eval runner
-# usage: ./run.sh [candidate-line-file]   (mechanical pass over eval/check.py)
+# usage: ./run.sh [candidate-line-file]   (mechanical pass over ste-check)
 #        ./run.sh --holdout               (runs the holdout slice instead)
 #
-# Mechanical ceiling: eval/check.py only grades the syntactic voice rules
-# (punctuation present, apostrophes kept, no markdown, line count, banned
-# words, sentence-count guidance) against a single candidate spoken line
+# Mechanical ceiling: ste-check --register computah only grades the syntactic
+# rules (the shared STE set, plus no markdown, line count, banned words,
+# sentence-count guidance) against a single candidate spoken line
 # passed on argv or stdin. It cannot judge whether the line actually answers
 # a case's "expect" in cases.jsonl — that's the rubric.md judge's job, run
 # separately over real logged output, same split as the hq skill's evals.
@@ -24,7 +24,7 @@ while IFS= read -r line; do
   if [[ "$HOLDOUT" == "1" && "$is_holdout" != "True" ]]; then continue; fi
   if [[ "$HOLDOUT" == "0" && "$is_holdout" == "True" ]]; then continue; fi
   total=$((total + 1))
-  echo "{\"id\":\"$id\",\"note\":\"mechanical check.py only; run this case's actual spoken output through eval/check.py by hand, then grade against rubric.md\"}"
+  echo "{\"id\":\"$id\",\"note\":\"mechanical ste-check only; run this case's actual spoken output through ste-check --register computah by hand, then grade against rubric.md\"}"
 done < "$CASES"
 
 echo "cases listed: $total (mechanical structure only; judge rubric.md separately)" >&2

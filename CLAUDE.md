@@ -40,9 +40,27 @@ the index; `rag status` shows coverage; `RAG_RECALL=0` disables the hook for a s
 - be verbose between agents. always use the verbose version of functions
 - each dispatch carries only context that its step needs.
 
-## user-facing replies
+## prose style
 
-End-user-facing text follows the /mouthpiece skill (voice rules live there, not here).
+All prose runs on ASD-STE100 (Simplified Technical English), per docs/prompt-style.md. That
+covers agent-facing text, the replies the user reads, spoken replies, and prose that ships
+under his name. Each register skill adds its medium rules on top of that base. /mouthpiece
+owns the message the user reads. /computah-voice owns anything spoken aloud.
+/byline owns prose a stranger reads. Code comments are the one exception, and
+comment-style.md owns them.
+
+`ste-check --register <mouthpiece|computah|byline|agent>` grades the mechanical part. It
+reads a file argument or stdin, and it exits nonzero on any failure.
+
+## tooling language
+
+New tooling in this repo is Rust. A Python or shell script that needs a change gets
+rewritten in Rust, and never patched in place.
+
+This binds computation: checkers, parsers, scanners, anything whose runtime is its own
+work. It does not bind shell that only orchestrates other processes. install.sh, the
+evals/run.sh harnesses, and the git hooks spend their time inside claude and git, so a Rust
+rewrite there buys nothing.
 
 ## default runner
 
