@@ -2,7 +2,8 @@
   "model": "haiku",
   "enabledPlugins": {
     "vercel@claude-plugins-official": true,
-    "lua-lsp@claude-plugins-official": true
+    "lua-lsp@claude-plugins-official": true,
+    "plannotator@plannotator": true
   },
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
@@ -67,6 +68,14 @@
         "/opt/homebrew/lib/node_modules/icon-composer-mcp/dist/server.js"
       ]
     },
+    "computer-use": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "--prefer-offline",
+        "@zavora-ai/computer-use-mcp"
+      ]
+    },
     "rag": {
       "command": "uv",
       "args": [
@@ -76,6 +85,14 @@
         "python",
         "server.py"
       ]
+    }
+  },
+  "extraKnownMarketplaces": {
+    "plannotator": {
+      "source": {
+        "source": "github",
+        "repo": "backnotprop/plannotator"
+      }
     }
   }
 }
