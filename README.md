@@ -35,6 +35,7 @@ versioned in one repo with a symlink installer.
 | `create-pr` | commit, push, and open the pull request |
 | `engineer` | the exact 23-phase map for agent coding work: ticket to PR, every loop through one walk-back rule |
 | `hq` | front door over every project: gates-first digest, worktree-isolated dispatch, drill-down into any project agent; two-stage launchd heartbeat keeps quiet cycles at zero tokens |
+| `bro` | re-explains the last reply in plain words when it lost you; jargon goes, facts stay verbatim, no length cap |
 | `byline` | de-slops prose that ships under your name: commits, PR bodies, tickets, READMEs; facts stay verbatim |
 | `mouthpiece` | voice rules for end-user-facing replies, scored by `ste-check --register mouthpiece` |
 | `task-graph` | work items + deps → statused DAG or ABCD-NNNN tickets, rendered in mermaid |

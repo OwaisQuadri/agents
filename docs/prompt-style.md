@@ -50,7 +50,8 @@ fresh-context agent reads once.
 
 `ste-check` grades the mechanical part of these rules, plus whatever the register adds on
 top. Run `ste-check --register agent FILE` over agent-facing prose. The other registers are
-`mouthpiece`, `computah`, and `byline`. Source and rule list live in `tools/ste-check`.
+`mouthpiece`, `computah`, `byline`, and `bro`. Source and rule list live in
+`tools/ste-check`.
 
 Two rules above are guidance for a human, and the checker does not grade them. The
 noun-stack rule shipped once and came back out. It flagged four good clauses for every one
