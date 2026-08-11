@@ -194,6 +194,33 @@ place.
   every author. Dispatching someone else to type the exam no longer satisfies the fence if they
   can see the answer.
 
+### deferred verdicts
+
+Verdicts this skill reached but did not execute. The routing section names this heading as one
+of the two destinations that count. This heading tracks a verdict parked here. Nothing tracks a
+verdict left in a log line.
+
+- **2026-08-11, propagate the session preamble to the symlink target.** The run routed at
+  branch 1, authored no artifact, and shipped `## every session is on the record` into the
+  repo `CLAUDE.md`. A dispatched subagent then listed all 11 pre-change H2 headings and not
+  the new one. That result proves two things. Subagents do receive `CLAUDE.md`, and a
+  workspace edit alone does not reach them. The section reaches background sessions only after
+  the branch merges and `~/Documents/agents/CLAUDE.md` refreshes. Owais asked for background
+  sessions by name, so this half of his ask stays unverified until that run happens. Owner:
+  the merge of this branch.
+- **2026-08-11, branch 1 names three destinations and no rule for picking one.** The routing
+  section sends always-on guidance to "CLAUDE.md, memory, or settings" and stops. The operator
+  had to invent the whole comparison, then credit it to the skill. That comparison ran on three
+  facts the skill never supplies. A static string needs no process. A hook earns its keep on
+  dynamic content. The installer never symlinks the live `settings.json`, so a hook edit lands
+  in two places and drifts. A blind judge graded the run 5 and named this the
+  gap it exposes. The fix belongs in the routing section. It needs the GEPA loop plus a fenced
+  case author, so this entry does not write it.
+- **2026-08-11, the `gate` field has no documentation.** The `## open, measured` list calls a
+  gate field in the logging format the highest-value next mutation. The 2026-08-11 run emitted
+  one ad hoc rather than adding it to the format. That leaves c1 open while it looks closed. A
+  format change is a mutation, so it routes through the GEPA loop, and this entry defers it.
+
 ### open, measured, not yet fixed
 
 The new harness scores the incumbent at 7.80 on both slices, and it does not sweep its own
