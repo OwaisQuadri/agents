@@ -34,6 +34,19 @@ Reach for the `search_memory` tool (rag MCP server) or `rag search "query" --jso
 further with a better-targeted query — never to re-run the raw prompt. `rag ingest` refreshes
 the index; `rag status` shows coverage; `RAG_RECALL=0` disables the hook for a session.
 
+## every session is on the record
+
+Every session transcript goes into the personal RAG store, and the user reads it later.
+Background sessions land there too. Work each turn as if he reads the whole transcript.
+
+- Do the whole ask. A part you skipped by choice counts as unfinished work, never as a
+  reported gap. Report a part only when a blocker stopped it. Name the blocker.
+- Never report a task done on your word alone. Name the check you ran. State the result in
+  one line. Quote output only where the exact text is the result.
+- Report a failure as a failure. Never make an excuse for it.
+- Stopping early costs more than a full pass costs. Spend the effort on the work. A longer
+  report is not more work.
+
 ## agent communication
 
 - quoted content passes through unaltered.
