@@ -18,7 +18,7 @@ versioned in one repo with a symlink installer.
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
 | `config/` | tracked copies of `settings.json` / `settings.local.json`; the live files are never symlinked, never written by the installer |
-| `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, the executed reset spec, fleet research |
+| `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
 | `tools/` | `ste-check`, the zero-dependency Rust binary that grades prose against the STE rules plus whatever the register adds |
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
@@ -39,6 +39,7 @@ versioned in one repo with a symlink installer.
 | `mouthpiece` | voice rules for end-user-facing replies, scored by `ste-check --register mouthpiece` |
 | `task-graph` | work items + deps → statused DAG or ABCD-NNNN tickets, rendered in mermaid |
 | `vocabulary` | precise design and UI terms: exact lookup, near-synonym boundaries, reverse lookup from a vague ramble |
+| `volley` | short-turn mode: every turn ends inside 30 seconds, anything longer is dispatched to the background and reported on the next turn |
 
 ### agents
 
