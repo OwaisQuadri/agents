@@ -5,6 +5,7 @@
 //! skills/*/evals/run.sh read `FAIL  <rule>: <offenders>` lines to cap a case at 4, and
 //! read the trailing `score:` line for the GEPA feedback loop.
 
+mod bro;
 mod byline;
 mod computah;
 mod mask;
@@ -17,13 +18,14 @@ use ste::Rule;
 use std::io::Read;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: ste-check --register <mouthpiece|computah|byline|agent> [file]";
+const USAGE: &str = "usage: ste-check --register <mouthpiece|computah|byline|bro|agent> [file]";
 
 fn register_rules(name: &str) -> Option<(&'static [Rule], Profile)> {
     match name {
         "mouthpiece" => Some((mouthpiece::RULES, Profile::Spoken)),
         "computah" => Some((computah::RULES, Profile::Spoken)),
         "byline" => Some((byline::RULES, Profile::Shipped)),
+        "bro" => Some((bro::RULES, Profile::Shipped)),
         "agent" => Some((&[], Profile::Shipped)),
         _ => None,
     }
@@ -242,6 +244,23 @@ mod tests {
         assert!(ste::simple_word(&shipped(text)).is_empty());
         assert!(ste::sentence_case(&shipped("# heading\n\nThe pass is short.")).is_empty());
         assert!(ste::sentence_length(&shipped("| a | b |\n\nThe pass is short.")).is_empty());
+    }
+
+    #[test]
+    fn bro_rules() {
+        let clean = "Basically, the check runs twice. The first run finds the words that \
+                     lose a reader, and the second run proves they are gone.";
+        assert!(bro::RULES.iter().all(|(_, rule)| rule(&shipped(clean)).is_empty()));
+        let dirty = shipped("It is worth noting that the DAG is idempotent.");
+        assert!(bro::RULES.iter().any(|(_, rule)| !rule(&dirty).is_empty()));
+    }
+
+    /// An acronym inside a path or a backticked command is exact information, and the
+    /// expansion rule must not reach it. Only the prose copy is graded.
+    #[test]
+    fn bro_expansion_rule_skips_exact_information() {
+        let text = shipped("Read /tmp/DAG/notes and run `ls RAG` now.");
+        assert!(bro::RULES.iter().all(|(_, rule)| rule(&text).is_empty()));
     }
 
     #[test]

@@ -46,10 +46,11 @@ All prose runs on ASD-STE100 (Simplified Technical English), per docs/prompt-sty
 covers agent-facing text, the replies the user reads, spoken replies, and prose that ships
 under his name. Each register skill adds its medium rules on top of that base. /mouthpiece
 owns the message the user reads. /computah-voice owns anything spoken aloud.
-/byline owns prose a stranger reads. Code comments are the one exception, and
-comment-style.md owns them.
+/byline owns prose a stranger reads. /bro owns the re-explanation of a reply that lost him,
+and it replaces the register it rewrites rather than stacking on it. Code comments are the
+one exception, and comment-style.md owns them.
 
-`ste-check --register <mouthpiece|computah|byline|agent>` grades the mechanical part. It
+`ste-check --register <mouthpiece|computah|byline|bro|agent>` grades the mechanical part. It
 reads a file argument or stdin, and it exits nonzero on any failure.
 
 ## tooling language

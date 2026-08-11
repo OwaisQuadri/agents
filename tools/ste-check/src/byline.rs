@@ -38,7 +38,7 @@ const LY_EXCEPTIONS: &[&str] = &[
     "monthly", "yearly", "ugly", "italy", "assembly", "anomaly",
 ];
 
-fn openers(text: &str) -> Vec<String> {
+pub fn openers(text: &str) -> Vec<String> {
     find_phrases(text, OPENERS)
 }
 
@@ -48,7 +48,7 @@ fn hedges(text: &str) -> Vec<String> {
     hits
 }
 
-fn vague(text: &str) -> Vec<String> {
+pub fn vague(text: &str) -> Vec<String> {
     find_words(text, VAGUE)
 }
 
