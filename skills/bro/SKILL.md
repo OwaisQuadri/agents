@@ -64,6 +64,11 @@ them, because they are the plain-talk joins this register asks for.
 - Any turn where the user types `/bro` after a reply that lost him.
 - Never inside another skill's phase. Bro re-explains a finished message, and it never
   writes the message in the first place.
+- The plain-words rules travel, and this skill does not. The mouthpiece register grades
+  every message on steps 2 and 3 above, under the rule names `plain words, no term of art`
+  and `every abbreviation expanded at first use`. A borrowed rule is not a bro run. That
+  message keeps its 600-character cap and its own structure rules, and the uncapped rewrite
+  stays the `/bro` turn alone.
 
 ## evals
 
@@ -83,6 +88,29 @@ modes as feedback.
   says a plain message returns nearly unchanged. The non-holdout mean went from 7.33 to
   8.22 over the same nine cases, and `r4` went from 2 to 9. The case list predates the
   mutation, so no expect paraphrases it.
+
+- 2026-08-11, the plain-words rules went to the mouthpiece register. That run measured two
+  false positives in `bare_acronym`, and this pass narrows both. `GATE` joined
+  `NOT_ACRONYMS`. The engineer skill names its gates GATE A through GATE E, and three
+  messages quote one as a fact. The rule also demanded the acronym first. It took
+  `MCP (Model Context Protocol)` and rejected `Model Context Protocol (MCP)`. Five more
+  messages paid for that, and both orders count as expanded now. Neither narrowing rests on
+  a guess. All 8 failures over 22 real messages were one of these two, and none was a real
+  miss.
+- 2026-08-11, the rule finally means "at first use". A second run of 22 messages found the
+  third false positive, and it was the worst one. The name carries the words "at first use",
+  and the code never did. It flagged each bare use, so a message that expands a term once and
+  then uses the short form failed on the second use. Step 3 above asks for exactly that
+  shape, and so does the repo `CLAUDE.md`. Two messages failed this way, on `STE` and on
+  `GEPA`. The rule reads the whole text now. It flags a term that no expansion covers
+  anywhere, in either order.
+- 2026-08-11, the fourth false positive: a hyphenated identifier. The rule flagged the
+  leading run of `CPU-0003`, of `ABCD-1204`, and of `ASD-STE100`. No in-prose form could
+  clear it, because the parenthesis would have to follow the digits, so even
+  `CPU-0003 (the migration branch)` failed. Two mouthpiece cases hand the writer
+  `map/CPU-0003` in the input, so the harness would have manufactured that failure. A blind
+  judge found this one and measured it three ways. The rule now skips an uppercase run that
+  a hyphen joins to a digit or to another uppercase run.
 
 ### open, measured, not yet fixed
 

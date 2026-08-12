@@ -1,3 +1,4 @@
+use crate::bro::{bare_acronym, jargon};
 use crate::ste::Rule;
 use crate::text::{dashes, find_words, is_emoji, MASK};
 
@@ -162,4 +163,8 @@ pub const RULES: &[Rule] = &[
     ("relative time, no timestamps", timestamps),
     ("numbered lists capped at 5", list_cap),
     ("body <= 600 chars excluding exact info", char_cap),
+    // The bro register owns these two, and the end-user message is graded on them because
+    // bro runs on a message that already shipped and cannot un-ship it.
+    ("plain words, no term of art", jargon),
+    ("every abbreviation expanded at first use", bare_acronym),
 ];

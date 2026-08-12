@@ -230,6 +230,26 @@ mod tests {
     }
 
     #[test]
+    fn mouthpiece_grades_the_bro_plain_words_pair() {
+        check(bro::jargon, "I sent the checker over every register.", "I dispatched the checker.");
+        check(bro::bare_acronym, "The pull request is open.", "The PR is open.");
+        check(bro::bare_acronym, "All checks pass on pull request (PR) 412.", "All checks pass on PR 412.");
+        check(bro::bare_acronym, "The push landed before GATE E cleared.", "The push landed before ACK E.");
+        check(
+            bro::bare_acronym,
+            "Simplified Technical English (STE) is a standard. Every reply runs on STE.",
+            "Every reply runs on STE, and the sweep covers STE too.",
+        );
+        check(
+            bro::bare_acronym,
+            "The branch map/CPU-0003 landed, and ASD-STE100 is the standard.",
+            "The CI run is red on the CI-driven branch.",
+        );
+        let exact = spoken("Read /tmp/DAG/notes and run `ls RAG` now.");
+        assert!(mouthpiece::RULES.iter().all(|(_, rule)| rule(&exact).is_empty()));
+    }
+
+    #[test]
     fn exact_information_escapes_every_rule() {
         let text = "Run `python3 dont.py --utilize` and read /tmp/a/b now.";
         assert!(ste::texting_shortforms(&spoken(text)).is_empty());

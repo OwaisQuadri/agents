@@ -216,6 +216,45 @@ verdict left in a log line.
   in two places and drifts. A blind judge graded the run 5 and named this the
   gap it exposes. The fix belongs in the routing section. It needs the GEPA loop plus a fenced
   case author, so this entry does not write it.
+- **2026-08-11, step 4 clause 3 fights step 4's own same-pass case author.** The defect-fix
+  path demands a fenced case author in the SAME pass. Clause 3 demands the win hold on the
+  holdout slice. Put both in one pass and the holdout gate answers itself, because the case
+  author adds a holdout case for that defect. The mouthpiece run measured it. Its clean pair
+  gained 0.85 over the whole holdout slice. Now split that slice by case age. The 5 holdout
+  cases that predate the mutation score 5.40 in both arms. Their per-case scores match
+  exactly, at 9, 2, 8, 4, and 4. So the whole gain sits in the 2 holdout cases this same pass
+  added. The non-holdout split reads 5.91 against 6.27 over 11 old cases, and 4.75 against
+  6.50 over 4 new ones. A blind judge graded that run 5 and named this first. The operator
+  then confirmed the split before writing this entry. Step 4 needs one more sentence. Report
+  the two arms over the cases that predate the mutation, apart from the new ones. Judge
+  clause 3 on the old holdout cases only. `templates/eval-harness.md` carries the same hole.
+  Owner: a GEPA pass on this file with a fenced case author, because the fix is a mutation.
+- **2026-08-11, step 3 never freezes the instrument.** It says "incumbent vs candidate on the
+  same cases" and it names nothing else. The mouthpiece run graded its two arms with two
+  different checker builds, and that pair read backwards. Reading the messages found the
+  cause, which was 8 false positives, and the operator then re-ran both arms under one build.
+  The skill asked for none of that recovery. `evals/run.sh` also falls back to a second model
+  and records nothing about which model graded which case. Step 3 should name one checker
+  build, one rubric revision, and one grader model. It should also drop every number that
+  predates a change to any of the three.
+- **2026-08-11, the narrowing licence says "logged" and it should say "observed".** Step 2
+  reads "A narrowing mutation names the logged false positive it answers". The mouthpiece run
+  narrowed three times on false positives seen in harness output, not in a log line. The
+  strict reading licenses none of the three, and the strict reading is the wrong one, because
+  harness output beats a log line as evidence. The weakest fix is one word.
+- **2026-08-11, an accepted mutation's evidence lives where git cannot keep it.** The
+  mouthpiece run wrote its per-case output, its 88 graded messages, and its reproduction text
+  under `.context/`. The repository excludes that directory. It excludes `logs/` and `votes/`
+  as well. So step 1 loses its stated property, that a later pass recomputes the histogram
+  instead of trusting it. A blind judge could check every number in that run, and only from
+  files no clone holds. This is `c1` with a sharper edge, and it outranks the gate field.
+- **2026-08-11, the live clone carries a deferred verdict this file does not.** Commit
+  `3c26536` sits unpushed in `~/Documents/agents`, and it touches 11 files including this
+  one. Its copy records that `find_words` misses a quoted term, so a writer can evade every
+  word ban. The mouthpiece run borrowed a rule that runs on `find_words`, and it never saw
+  that entry. The judge proved the hole is live. The line `The word "idempotent" is banned in
+  this register.` passes both borrowed rules. Step 1 should read the artifact's deferred list
+  from the merged copy before it proposes anything. Owner: the merge of `3c26536`.
 - **2026-08-11, the `gate` field has no documentation.** The `## open, measured` list calls a
   gate field in the logging format the highest-value next mutation. The 2026-08-11 run emitted
   one ad hoc rather than adding it to the format. That leaves c1 open while it looks closed. A
