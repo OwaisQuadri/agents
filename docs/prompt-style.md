@@ -30,6 +30,9 @@ Code comments are the one exception, and comment-style.md owns them.
   is free to skip. Promote it to its own sentence.
 - The simplest word that carries the meaning. Write "use", not "utilize". Write "before", not "prior to". Write "to", not "in order to". Write "stop", not "terminate". Write "start", not "initiate". Write "about", not "approximately". Write "next", not "subsequent".
 - One topic per paragraph, and at most six sentences.
+- Never write "genuine" or "genuinely", in any form. Owner's instruction, 2026-08-11. It is
+  a hedge that adds no fact: strike it and the claim reads the same, or the claim was thin
+  and needs evidence rather than an adverb.
 
 ## why there is no approved word list
 

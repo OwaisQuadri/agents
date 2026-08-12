@@ -56,7 +56,7 @@ weeks that matter.
 
 Done when: every dimension carries a level and a stated reason, and **the red cells are
 named explicitly** — the one or two R0 dimensions that are the entire curriculum.
-Over-scoring a genuinely new dimension is the expensive error; it hides the red cell.
+Over-scoring a new dimension is the expensive error; it hides the red cell.
 
 ## 4. Adapt the loop to this technology
 

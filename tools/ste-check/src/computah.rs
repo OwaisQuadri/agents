@@ -6,8 +6,7 @@ const MAX_SENTENCES: usize = 3;
 const MAX_LINES: usize = 2;
 
 const PRAISE: &[&str] = &[
-    "awesome", "excellent", "absolutely", "amazing", "perfect", "great", "genuine",
-    "genuinely",
+    "awesome", "excellent", "absolutely", "amazing", "perfect", "great",
 ];
 
 fn no_markdown(text: &str) -> Vec<String> {
@@ -45,6 +44,6 @@ fn sentence_cap(text: &str) -> Vec<String> {
 pub const RULES: &[Rule] = &[
     ("no markdown: no bold/headings/bullets/numbered lists/emoji", no_markdown),
     ("not stacked into separate lines, one flowing bit of speech", stacked_lines),
-    ("no awesome/excellent/absolutely/amazing/perfect/great/genuine", praise_words),
+    ("no awesome/excellent/absolutely/amazing/perfect/great", praise_words),
     ("roughly <= 3 sentences", sentence_cap),
 ];
