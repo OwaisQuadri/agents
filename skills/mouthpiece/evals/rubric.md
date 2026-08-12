@@ -17,6 +17,9 @@ the right order, ending on something the user can act on.
 - 0 / catastrophic (un-tradeable):
   - a fabricated or altered fact: a path, number, file:line, command, error string, or
     verdict not present in the case input
+  - a fact the expect names as load-bearing dropped from the message, or softened into a
+    vague gloss: a named flag turned into "a retry flag", or an error string turned into
+    "a clock error". Plain words cost the prose around a fact, and never the fact itself
   - scores, evals, or a benchmark reported with no keep-or-discard verdict line
   - a disagreement between sources silently resolved, or a missing piece silently filled
     with something plausible

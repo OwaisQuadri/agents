@@ -230,6 +230,43 @@ mod tests {
     }
 
     #[test]
+    fn mouthpiece_grades_the_bro_plain_words_pair() {
+        let dirty = spoken("The PR is open and I dispatched the checker.");
+        let failed = mouthpiece::RULES.iter().filter(|(_, rule)| !rule(&dirty).is_empty());
+        assert_eq!(failed.count(), 2);
+    }
+
+    #[test]
+    fn bare_acronym_counts_both_expansion_orders() {
+        check(bro::jargon, "I sent the checker over every register.", "I dispatched the checker.");
+        check(bro::bare_acronym, "The pull request is open.", "The PR is open.");
+        check(bro::bare_acronym, "All checks pass on pull request (PR) 412.", "All checks pass on PR 412.");
+        check(bro::bare_acronym, "The push landed before GATE E cleared.", "The push landed before ACK E.");
+        check(
+            bro::bare_acronym,
+            "Simplified Technical English (STE) is a standard. Every reply runs on STE.",
+            "Every reply runs on STE, and the sweep covers STE too.",
+        );
+        check(
+            bro::bare_acronym,
+            "The branch map/CPU-0003 landed, and ASD-STE100 is the standard.",
+            "The CI run is red on the CI-Driven branch.",
+        );
+    }
+
+    /// A parenthesis alone is not an expansion, so "green (CI)" must not license CI here or
+    /// in any later sentence. Without the check the rule was weaker than it was before the
+    /// mouthpiece register borrowed it.
+    #[test]
+    fn a_parenthesis_alone_does_not_expand_an_acronym() {
+        check(
+            bro::bare_acronym,
+            "The Model Context Protocol (MCP) server died, and MCP is down.",
+            "The run is green (CI). CI is red now.",
+        );
+    }
+
+    #[test]
     fn exact_information_escapes_every_rule() {
         let text = "Run `python3 dont.py --utilize` and read /tmp/a/b now.";
         assert!(ste::texting_shortforms(&spoken(text)).is_empty());

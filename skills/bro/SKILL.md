@@ -64,6 +64,11 @@ them, because they are the plain-talk joins this register asks for.
 - Any turn where the user types `/bro` after a reply that lost him.
 - Never inside another skill's phase. Bro re-explains a finished message, and it never
   writes the message in the first place.
+- The plain-words rules travel, and this skill does not. The mouthpiece register grades
+  every message on steps 2 and 3 above, under the rule names `plain words, no term of art`
+  and `every abbreviation expanded at first use`. A borrowed rule is not a bro run. That
+  message keeps its 600-character cap and its own structure rules, and the uncapped rewrite
+  stays the `/bro` turn alone.
 
 ## evals
 
@@ -72,30 +77,6 @@ on it, then grades the content against the case expect with `evals/rubric.md`. `
 runs the held-out slice. A mechanical failure caps that case at 4, and an altered fact
 scores 0. GEPA (Genetic-Pareto prompt evolution) runs read the mean and use the failure
 modes as feedback.
-
-## history
-
-- 2026-08-11, the add-nothing rule. The seed draft split upstream rule 1 into two
-  bullets and lost "never add new information". The length bullet then invited padding on
-  top of that. The first harness run measured the cost. Four of nine cases failed on added
-  content, and `r4` scored 2 for padding a message that already read plainly. The rule came
-  back, the length bullet gained "and no sentence gets padding", and step 1 of the pass now
-  says a plain message returns nearly unchanged. The non-holdout mean went from 7.33 to
-  8.22 over the same nine cases, and `r4` went from 2 to 9. The case list predates the
-  mutation, so no expect paraphrases it.
-
-### open, measured, not yet fixed
-
-- Added detail is still the top failure mode after the fix. Five cases name a form of it.
-  They are "of records" in `r1`, a validation gloss in `r2`, and stage descriptions in
-  `r3`. A causal overclaim in `r5` and a closing gloss in `r8` complete the list. The rule
-  forbids the state, and it never
-  tells the writer what to do where a plain word needs a subject. That gap is the next
-  mutation.
-- The holdout slice holds one measurement, 8.25 after the fix, with no case under 8. No
-  pre-fix holdout run exists, so that number is a level and not a win.
-- `JARGON` in `tools/ste-check/src/bro.rs` is a seed list of 24 entries. No logged miss
-  widens it yet.
 
 ## logging
 

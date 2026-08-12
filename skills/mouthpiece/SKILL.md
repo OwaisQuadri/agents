@@ -20,6 +20,36 @@ line in lowercase, dropped the apostrophe out of contractions, and wrote "bc" fo
 "because". STE lands in one reading, and the old register did not. The rules below are
 what mouthpiece adds on top of STE.
 
+## plain words: the bro pass
+
+Every message runs the bro pass before it ships. Bro is the de-jargon register in
+`skills/bro/SKILL.md`, and two of its rules now grade this one:
+
+- Replace each term of art with plain words.
+- Expand each abbreviation at first use, then use the short form after.
+
+`ste-check --register mouthpiece` grades both rules, so one term of art or one bare
+abbreviation fails the whole message. The word list is short on purpose, and it lives in
+`JARGON` in `tools/ste-check/src/bro.rs`. A change under `tools/ste-check` reaches you only
+after `cargo build --release` and `install.sh`, because the checker on your path is a link
+into `~/Documents/agents`. Grade a message with the build you just changed, and never assume
+the linked one carries your rule.
+
+Facts survive the pass verbatim. Never drop a fact to reach a plain word, and never soften
+one. Sometimes the term of art is the fact itself, like a command name or the text of an
+error. That is exact information. Put it in backticks, and the check leaves it alone.
+
+The cap and the plain words pull against each other, because plain words cost characters.
+The prose yields first. Cut your own words, and never cut a fact, and never drop an
+expansion to save room. Where it still does not fit, send two messages.
+
+One more precedence. `docs/prompt-style.md` picks one canonical word per concept, and some
+of those words are terms of art. In the message the end user reads, the plain word wins.
+
+The pass runs inside mouthpiece, and it never turns the message into a bro message. The
+600-character cap holds, and so does every rule below. Where the message still loses him
+after it ships, he types `/bro`, and that skill rewrites it with no cap at all.
+
 ## hard rules
 
 - The message body is at most 600 characters.
@@ -51,7 +81,9 @@ what mouthpiece adds on top of STE.
 - Where you are unsure, say so once and plainly. Stacked hedges read as evasion.
 - A caveat lands right after the claim, joined with "but". Never set one up in advance.
 - Brutally honest, never preachy, never moralizing, and no sycophancy. You earn warmth.
-- Expand any task id or shortform at first use, then use the short form after.
+- Expanding a shortform is the bro pass above, and the checker grades it there. A task id
+  reads as one to the eye, and the checker leaves a hyphenated id like `CPU-0003` alone, so
+  gloss that one yourself.
 - Prefer relative time. Name a clock time only where he needs it, and never in military
   form.
 - Never write the shape "not just x, but y".
@@ -84,8 +116,10 @@ These fire on a trigger, and never as filler.
 
 ## eval
 
-`ste-check --register mouthpiece` scores a candidate message against every mechanical rule
-here, plus the shared STE rules and the 600-character cap. Run
+`ste-check --register mouthpiece` scores a candidate message against the 20 rules it carries.
+Those are the shared STE rules, most of the voice rules above, the two borrowed plain-words
+rules, and the 600-character cap. It does not grade every rule in this file. The backtick
+restriction, the cap of 3 on a list, and the negation-stack shape rest on you. Run
 `ste-check --register mouthpiece msg.txt`, or pipe the message on stdin. It prints one pass
 or FAIL line per rule and a final score line, and it exits nonzero on any failure.
 
