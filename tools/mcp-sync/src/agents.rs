@@ -63,7 +63,14 @@ pub fn parse_agent_md(path: &Path) -> Result<AgentDef, SyncError> {
     let name = name
         .filter(|field| !field.is_empty())
         .ok_or_else(|| invalid(path, "frontmatter has no name"))?;
-    if name.contains('/') || name.contains('\\') || name.contains("..") {
+    let is_too_long_for_a_filename = name.len() > 255;
+    let has_a_control_char = name.chars().any(char::is_control);
+    if name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || is_too_long_for_a_filename
+        || has_a_control_char
+    {
         return Err(invalid(
             path,
             &format!("name {name} cannot name an output file"),

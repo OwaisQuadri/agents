@@ -42,6 +42,17 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
     table
 }
 
+/// Validates that a live Codex config parses, before any write touches it.
+/// Takes the config path; returns Ok when the file is absent or holds valid
+/// TOML.
+///
+/// # Errors
+/// ParseToml on invalid TOML; Io on a read failure other than not-found.
+pub fn validate(path: &Path) -> Result<(), SyncError> {
+    let text = fsio::read_opt(path)?;
+    parse_doc(path, text.as_deref()).map(|_| ())
+}
+
 /// Converges the [mcp_servers.*] tables of config.toml onto the manifest.
 /// Touches only manifest-scoped names plus state-listed names to remove;
 /// [projects.*], [plugins.*], comments, and unmanaged server tables survive

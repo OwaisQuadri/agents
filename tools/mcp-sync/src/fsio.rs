@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::error::SyncError;
 
@@ -66,6 +66,7 @@ pub fn write_verified(
         println!("dry:  write {}", path.display());
         return Ok(());
     }
+    sweep_stale_tmp(path);
     backup(path)?;
     let tmp = suffixed(path, &unique_tmp_suffix());
     fs::write(&tmp, content).map_err(|err| SyncError::Io(tmp.clone(), err))?;
@@ -92,6 +93,44 @@ static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 fn unique_tmp_suffix() -> String {
     let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!(".{}.{n}.sync-tmp", std::process::id())
+}
+
+// 60s: a live concurrent writer's own temp file is milliseconds-fresh, so
+// this threshold never races it (that race is the D-10 collision the unique
+// per-process suffix already closed); only a crash-orphaned temp, which is
+// necessarily old by the time a later run sweeps it, ever crosses it.
+const STALE_TMP_AGE: Duration = Duration::from_secs(60);
+
+fn sweep_stale_tmp(path: &Path) {
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let Some(basename) = path.file_name().and_then(|name| name.to_str()) else {
+        return;
+    };
+    let prefix = format!("{basename}.");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) || !name.ends_with(".sync-tmp") {
+            continue;
+        }
+        let is_stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .is_some_and(|age| age >= STALE_TMP_AGE);
+        if is_stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn stamps() -> (String, String) {
@@ -235,5 +274,27 @@ mod tests {
             .filter(|name| name.contains(".sync-tmp"))
             .collect();
         assert!(leftover.is_empty(), "leftover tmp files: {leftover:?}");
+    }
+
+    #[test]
+    fn write_verified_sweeps_stale_tmp_but_keeps_fresh_tmp() {
+        let dir = fixture("sweep");
+        let target = dir.join("config.toml");
+        fs::write(&target, "old").expect("seed target");
+
+        let stale = suffixed(&target, ".9999.5.sync-tmp");
+        fs::write(&stale, "orphaned").expect("seed stale tmp");
+        let backdated = SystemTime::now() - Duration::from_secs(61);
+        fs::File::open(&stale)
+            .and_then(|file| file.set_modified(backdated))
+            .expect("backdate stale tmp");
+
+        let fresh = suffixed(&target, ".9999.6.sync-tmp");
+        fs::write(&fresh, "in-flight").expect("seed fresh tmp");
+
+        assert!(write_verified(&target, "new", Some("old"), false).is_ok());
+
+        assert!(!stale.exists(), "stale sync-tmp should be swept");
+        assert!(fresh.exists(), "fresh sync-tmp should survive the sweep");
     }
 }

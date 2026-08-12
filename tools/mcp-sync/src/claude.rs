@@ -42,6 +42,17 @@ pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
     }
 }
 
+/// Validates that the live Claude config parses, before any write touches it.
+/// Takes the config path; returns Ok when the file is absent or holds a
+/// valid JSON object.
+///
+/// # Errors
+/// Io when the file is absent (Claude creates its own config); ParseJson on
+/// invalid JSON or a non-object top level.
+pub fn validate(path: &Path) -> Result<(), SyncError> {
+    read_doc(path).map(|_| ())
+}
+
 /// Converges the mcpServers key of the Claude config onto the manifest.
 /// Touches only manifest-scoped names plus state-listed names to remove;
 /// every other key in the file survives byte-for-byte modulo reserialization.
