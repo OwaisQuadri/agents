@@ -9,6 +9,7 @@ use crate::error::SyncError;
 /// Io on any read failure other than not-found.
 pub fn read_opt(path: &Path) -> Result<Option<String>, SyncError> {
     let _ = path;
+    // TODO(AGNT-0001.T01): body lands in the phase-13 build; contract: interfaces.md fsio section
     unimplemented!()
 }
 
@@ -19,6 +20,7 @@ pub fn read_opt(path: &Path) -> Result<Option<String>, SyncError> {
 /// BackupFailed when the copy is missing after the write; Io on read failure.
 pub fn backup(path: &Path) -> Result<Option<PathBuf>, SyncError> {
     let _ = path;
+    // TODO(AGNT-0001.T01): body lands in the phase-13 build; contract: interfaces.md fsio section
     unimplemented!()
 }
 
@@ -40,5 +42,6 @@ pub fn write_verified(
     is_dry_run: bool,
 ) -> Result<(), SyncError> {
     let _ = (path, content, snapshot, is_dry_run);
+    // TODO(AGNT-0001.T01): body lands in the phase-13 build; contract: interfaces.md fsio section
     unimplemented!()
 }

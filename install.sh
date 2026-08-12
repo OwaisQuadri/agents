@@ -108,4 +108,5 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   fi
 fi
 
+# TODO(AGNT-0001.T11): steps 9-11 land in the phase-13 build (AGENTS.md link, mcp-sync build, sync run)
 plan "done"

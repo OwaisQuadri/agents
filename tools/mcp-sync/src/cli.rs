@@ -31,6 +31,7 @@ pub struct Targets {
 /// unknown mode word.
 pub fn parse_args(args: impl Iterator<Item = String>) -> Result<CliArgs, String> {
     let _ = args;
+    // TODO(AGNT-0001.T08): body lands in the phase-13 build; contract: interfaces.md cli section
     unimplemented!()
 }
 
@@ -42,6 +43,7 @@ impl Targets {
     /// none
     pub fn from_roots(repo_root: &Path, home: &Path) -> Targets {
         let _ = (repo_root, home);
-        unimplemented!()
+        // TODO(AGNT-0001.T08): body lands in the phase-13 build; contract: interfaces.md cli section
+    unimplemented!()
     }
 }

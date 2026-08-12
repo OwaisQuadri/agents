@@ -49,6 +49,7 @@ pub struct SyncState {
 /// unknown tools entry.
 pub fn load_manifest(path: &Path) -> Result<Manifest, SyncError> {
     let _ = path;
+    // TODO(AGNT-0001.T02): body lands in the phase-13 build; contract: interfaces.md manifest section
     unimplemented!()
 }
 
@@ -59,6 +60,7 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, SyncError> {
 /// Io on an unreadable existing file; ParseToml on invalid TOML.
 pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
     let _ = path;
+    // TODO(AGNT-0001.T02): body lands in the phase-13 build; contract: interfaces.md manifest section
     unimplemented!()
 }
 
@@ -69,6 +71,7 @@ pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
 /// Io on write failure; VerifyFailed when the re-read does not match.
 pub fn save_state(path: &Path, state: &SyncState, is_dry_run: bool) -> Result<(), SyncError> {
     let _ = (path, state, is_dry_run);
+    // TODO(AGNT-0001.T02): body lands in the phase-13 build; contract: interfaces.md manifest section
     unimplemented!()
 }
 
@@ -84,5 +87,6 @@ pub fn append_servers(
     is_dry_run: bool,
 ) -> Result<(), SyncError> {
     let _ = (path, entries, is_dry_run);
+    // TODO(AGNT-0001.T02): body lands in the phase-13 build; contract: interfaces.md manifest section
     unimplemented!()
 }

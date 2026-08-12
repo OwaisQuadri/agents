@@ -11,5 +11,6 @@ mod hooks;
 mod manifest;
 
 fn main() -> ExitCode {
+    // TODO(AGNT-0001.T08): body lands in the phase-13 build; contract: interfaces.md cli section
     unimplemented!()
 }

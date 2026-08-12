@@ -36,6 +36,7 @@ pub struct Change {
 /// none
 pub fn render_plan(changes: &[Change], is_dry_run: bool) -> String {
     let _ = (changes, is_dry_run);
+    // TODO(AGNT-0001.T07): body lands in the phase-13 build; contract: interfaces.md drift section
     unimplemented!()
 }
 
@@ -47,6 +48,7 @@ pub fn render_plan(changes: &[Change], is_dry_run: bool) -> String {
 /// none
 pub fn render_check(rows: &[DriftRow]) -> String {
     let _ = rows;
+    // TODO(AGNT-0001.T07): body lands in the phase-13 build; contract: interfaces.md drift section
     unimplemented!()
 }
 
@@ -57,5 +59,6 @@ pub fn render_check(rows: &[DriftRow]) -> String {
 /// none
 pub fn has_drift(rows: &[DriftRow]) -> bool {
     let _ = rows;
+    // TODO(AGNT-0001.T07): body lands in the phase-13 build; contract: interfaces.md drift section
     unimplemented!()
 }

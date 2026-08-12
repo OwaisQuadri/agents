@@ -12,6 +12,8 @@ versioned in one repo with a symlink installer.
 
 ## layout
 
+<!-- TODO(AGNT-0001.T12): layout rows + how-it-works updates land in the phase-13 build per tasks.json T12 -->
+
 | path | holds |
 | --- | --- |
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |

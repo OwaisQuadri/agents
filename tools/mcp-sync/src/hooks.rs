@@ -22,5 +22,6 @@ pub fn sync_codex_hook(
     is_dry_run: bool,
 ) -> Result<Vec<Change>, SyncError> {
     let _ = (path, reg, is_dry_run);
+    // TODO(AGNT-0001.T06): body lands in the phase-13 build; contract: interfaces.md hooks section
     unimplemented!()
 }

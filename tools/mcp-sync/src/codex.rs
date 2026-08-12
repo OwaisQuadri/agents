@@ -11,6 +11,7 @@ use crate::manifest::{Manifest, ServerEntry, SyncState};
 /// none
 pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
     let _ = entry;
+    // TODO(AGNT-0001.T04): body lands in the phase-13 build; contract: interfaces.md codex adapter section
     unimplemented!()
 }
 
@@ -30,6 +31,7 @@ pub fn sync(
     is_dry_run: bool,
 ) -> Result<Vec<Change>, SyncError> {
     let _ = (path, manifest, state, is_dry_run);
+    // TODO(AGNT-0001.T04): body lands in the phase-13 build; contract: interfaces.md codex adapter section
     unimplemented!()
 }
 
@@ -45,6 +47,7 @@ pub fn check(
     state: &SyncState,
 ) -> Result<Vec<DriftRow>, SyncError> {
     let _ = (path, manifest, state);
+    // TODO(AGNT-0001.T04): body lands in the phase-13 build; contract: interfaces.md codex adapter section
     unimplemented!()
 }
 
@@ -55,5 +58,6 @@ pub fn check(
 /// Io, ParseToml.
 pub fn unmanaged(path: &Path, manifest: &Manifest) -> Result<Vec<ServerEntry>, SyncError> {
     let _ = (path, manifest);
+    // TODO(AGNT-0001.T04): body lands in the phase-13 build; contract: interfaces.md codex adapter section
     unimplemented!()
 }

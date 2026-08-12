@@ -9,3 +9,4 @@ pub enum SyncError {
     VerifyFailed(PathBuf, String),
     ChangedSinceRead(PathBuf),
 }
+// TODO(AGNT-0001.T17): Display and std::error::Error impls land in the phase-13 build; contract: interfaces.md + ux.md Error state

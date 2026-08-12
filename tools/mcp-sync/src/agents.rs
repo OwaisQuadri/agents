@@ -19,6 +19,7 @@ pub struct AgentDef {
 /// name or description key.
 pub fn parse_agent_md(path: &Path) -> Result<AgentDef, SyncError> {
     let _ = path;
+    // TODO(AGNT-0001.T05): body lands in the phase-13 build; contract: interfaces.md agents section
     unimplemented!()
 }
 
@@ -29,6 +30,7 @@ pub fn parse_agent_md(path: &Path) -> Result<AgentDef, SyncError> {
 /// none
 pub fn render_agent_toml(def: &AgentDef) -> String {
     let _ = def;
+    // TODO(AGNT-0001.T05): body lands in the phase-13 build; contract: interfaces.md agents section
     unimplemented!()
 }
 
@@ -41,5 +43,6 @@ pub fn render_agent_toml(def: &AgentDef) -> String {
 /// Io, ManifestInvalid, BackupFailed, VerifyFailed.
 pub fn sync_agents(src_dir: &Path, dest_dir: &Path, is_dry_run: bool) -> Result<Vec<Change>, SyncError> {
     let _ = (src_dir, dest_dir, is_dry_run);
+    // TODO(AGNT-0001.T05): body lands in the phase-13 build; contract: interfaces.md agents section
     unimplemented!()
 }
