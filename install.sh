@@ -127,18 +127,23 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
 fi
 
 # 11. converge the live configs onto the repo manifest. the binary bypasses run() on
-#     purpose: its own --dry-run prints the sync plan a dry-echoed command would hide
+#     purpose: its own --dry-run prints the sync plan a dry-echoed command would hide.
+#     mcp-sync errors on a missing $HOME/.claude.json by design (Claude, not this
+#     installer, creates that file on first launch) — skip the sync on a fresh machine
+#     rather than fail the install; the next pull re-runs the installer and converges
 SYNC_BIN="$HOME/.local/bin/mcp-sync"
 run mkdir -p "$HOME/.codex/agents"
-if [[ -x "$SYNC_BIN" ]]; then
+if [[ ! -x "$SYNC_BIN" ]]; then
+  echo "warn: mcp-sync not built, skipping the config sync" >&2
+elif [[ ! -f "$HOME/.claude.json" ]]; then
+  echo "warn: $HOME/.claude.json not found yet, skipping the config sync" >&2
+else
   plan "sync configs: MCP_SYNC_REPO=$REPO_TARGET $SYNC_BIN"
   if (( DRY )); then
     MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN" --dry-run
   else
     MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN"
   fi
-else
-  echo "warn: mcp-sync not built, skipping the config sync" >&2
 fi
 
 plan "done"

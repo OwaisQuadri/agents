@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::SyncError;
@@ -66,7 +67,7 @@ pub fn write_verified(
         return Ok(());
     }
     backup(path)?;
-    let tmp = suffixed(path, ".sync-tmp");
+    let tmp = suffixed(path, &unique_tmp_suffix());
     fs::write(&tmp, content).map_err(|err| SyncError::Io(tmp.clone(), err))?;
     fs::rename(&tmp, path).map_err(|err| SyncError::Io(path.to_path_buf(), err))?;
     let reread =
@@ -84,6 +85,13 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
     os.push(suffix);
     PathBuf::from(os)
+}
+
+static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn unique_tmp_suffix() -> String {
+    let n = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!(".{}.{n}.sync-tmp", std::process::id())
 }
 
 fn stamps() -> (String, String) {
@@ -201,5 +209,31 @@ mod tests {
     fn civil_from_days_matches_known_dates() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(20_677), (2026, 8, 12));
+    }
+
+    #[test]
+    fn unique_tmp_suffix_differs_across_calls_and_embeds_pid() {
+        let pid = std::process::id().to_string();
+        let first = unique_tmp_suffix();
+        let second = unique_tmp_suffix();
+        assert_ne!(first, second);
+        assert!(first.contains(&pid));
+        assert!(second.contains(&pid));
+        assert!(first.ends_with(".sync-tmp"));
+        assert!(second.ends_with(".sync-tmp"));
+    }
+
+    #[test]
+    fn write_verified_leaves_no_sync_tmp_residue() {
+        let dir = fixture("no-residue");
+        let target = dir.join("config.toml");
+        fs::write(&target, "old").expect("seed target");
+        assert!(write_verified(&target, "new", Some("old"), false).is_ok());
+        let leftover: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".sync-tmp"))
+            .collect();
+        assert!(leftover.is_empty(), "leftover tmp files: {leftover:?}");
     }
 }

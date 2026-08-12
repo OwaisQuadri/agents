@@ -45,6 +45,7 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
     match args.mode {
         Mode::Apply => {
             let state = manifest::load_state(&targets.state_path)?;
+            agents::parse_agents_dir(&targets.agents_src_dir)?;
             let mut changes =
                 claude::sync(&targets.claude_json_path, &manifest, &state, args.is_dry_run)?;
             changes.extend(codex::sync(
@@ -109,4 +110,90 @@ fn managed_state(manifest: &Manifest) -> SyncState {
         }
     }
     SyncState { claude_managed, codex_managed }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cli::Targets;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    const CLAUDE_JSON: &str = "{\n  \"unrelatedKey\": \"keepme\",\n  \"mcpServers\": {}\n}\n";
+    const CODEX_TOML: &str = "# a comment that must survive\n[projects.foo]\ntrust = true\n";
+    const MANIFEST_TOML: &str =
+        "[servers.demo]\ncommand = \"echo\"\nargs = [\"hi\"]\ntools = [\"claude\", \"codex\"]\n";
+
+    fn fixture(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mcp-sync-main-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create fixture dir");
+        dir
+    }
+
+    fn write_agent(src_dir: &Path, name: &str, md: &str) {
+        let dir = src_dir.join(name);
+        fs::create_dir_all(&dir).expect("create agent dir");
+        fs::write(dir.join(format!("{name}.md")), md).expect("seed agent md");
+    }
+
+    fn apply_targets(dir: &Path) -> Targets {
+        Targets {
+            manifest_path: dir.join("manifest.toml"),
+            state_path: dir.join("state.toml"),
+            claude_json_path: dir.join("claude.json"),
+            codex_toml_path: dir.join("config.toml"),
+            codex_hooks_json_path: dir.join("hooks.json"),
+            agents_src_dir: dir.join("agents"),
+            codex_agents_dir: dir.join("codex-agents"),
+            hook_command: dir.join("hooks/rag-recall"),
+        }
+    }
+
+    #[test]
+    fn apply_refuses_before_any_write_on_an_invalid_agent_name() {
+        let dir = fixture("invalid-agent");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed claude.json");
+        fs::write(dir.join("config.toml"), CODEX_TOML).expect("seed codex config.toml");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+        write_agent(
+            &dir.join("agents"),
+            "dotdir",
+            "---\nname: ..\ndescription: name is all dots\n---\nbody\n",
+        );
+
+        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let err = run(&args).expect_err("invalid agent name aborts apply");
+        assert!(err.to_string().contains("cannot name an output file"), "{err}");
+
+        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
+        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
+        assert!(!dir.join("state.toml").exists());
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+    }
+
+    #[test]
+    fn apply_converges_a_valid_agent_set() {
+        let dir = fixture("valid-agent");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed claude.json");
+        fs::write(dir.join("config.toml"), CODEX_TOML).expect("seed codex config.toml");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+        write_agent(
+            &dir.join("agents"),
+            "alpha",
+            "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
+        );
+
+        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        run(&args).expect("valid agent set applies");
+
+        assert!(dir.join("codex-agents/alpha.toml").exists());
+        assert!(dir.join("state.toml").exists());
+    }
 }

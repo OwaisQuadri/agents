@@ -99,6 +99,17 @@ pub fn render_agent_toml(def: &AgentDef) -> String {
     doc.to_string()
 }
 
+/// Parses and validates every agents/<name>/<name>.md under a source dir.
+/// Takes the source dir; returns the parsed AgentDefs in source order, or
+/// the first ManifestInvalid found.
+///
+/// # Errors
+/// Io on a directory read failure; ManifestInvalid on the first agent file
+/// that fails name-safety or required-field validation.
+pub fn parse_agents_dir(src_dir: &Path) -> Result<Vec<AgentDef>, SyncError> {
+    agent_md_paths(src_dir)?.iter().map(|path| parse_agent_md(path)).collect()
+}
+
 /// Converges the Codex agents dir onto the repo agents dir.
 /// Renders every agents/<name>/<name>.md into <dest>/<name>.toml and removes
 /// dest files whose source agent no longer exists.
