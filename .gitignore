@@ -16,3 +16,5 @@ skills/byline/evals/candidates/
 skills/bro/evals/candidates/
 
 tools/*/target/
+
+.map/AGNT-*/
