@@ -1,1 +1,81 @@
-# TODO(AGNT-0001.T09): manifest content lands in the phase-13 build; server set + scopes per tasks.json T09
+# Edit MCP (Model Context Protocol) servers for Claude Code and Codex CLI here, and only here.
+# install.sh renders this file into ~/.claude.json and ~/.codex/config.toml through mcp-sync.
+# The file mcp-sync-state.toml next to this one is machine-written; do not edit it.
+
+[servers.XcodeBuildMCP]
+command = "npx"
+args = ["-y", "xcodebuildmcp@latest", "mcp"]
+env = { XCODEBUILDMCP_ENABLED_WORKFLOWS = "session-management,simulator,ui-automation" }
+
+[servers.playwright]
+command = "npx"
+args = ["@playwright/mcp@latest"]
+
+[servers.shadcn]
+command = "npx"
+args = ["shadcn@latest", "mcp"]
+
+[servers.lottiefiles-creator]
+command = "npx"
+args = ["-y", "@lottiefiles/creator-mcp@latest"]
+
+[servers.lottiefiles-search]
+command = "npx"
+args = ["-y", "mcp-server-lottiefiles"]
+
+[servers.apple-docs]
+command = "npx"
+args = ["-y", "@kimsungwhee/apple-docs-mcp"]
+
+[servers.icon-composer]
+command = "/opt/homebrew/bin/node"
+args = ["/opt/homebrew/lib/node_modules/icon-composer-mcp/dist/server.js"]
+
+[servers.rag]
+command = "uv"
+args = ["run", "--directory", "/Users/owaisquadri/rag", "python", "server.py"]
+
+[servers.computer-use]
+command = "npx"
+args = ["--yes", "--prefer-offline", "@zavora-ai/computer-use-mcp"]
+tools = ["claude"]
+
+[servers.mobbin]
+url = "https://api.mobbin.com/mcp"
+
+[servers.supermemory]
+url = "https://mcp.supermemory.ai/mcp"
+
+[servers.linear]
+url = "https://mcp.linear.app/mcp"
+
+[servers.context7]
+url = "https://mcp.context7.com/mcp"
+
+[servers.godaddy]
+url = "https://api.godaddy.com/v1/domains/mcp"
+
+[servers.apollo]
+url = "https://mcp.apollo.io/mcp"
+
+[servers.supabase]
+url = "https://mcp.supabase.com/mcp"
+
+[servers.sosumi]
+url = "https://sosumi.ai/mcp"
+
+[servers.lastminute]
+url = "https://mcp.lastminute.com/mcp"
+
+[servers.turkish-airlines]
+url = "https://mcp.turkishtechlab.com/mcp"
+
+# The Google Workspace servers are in Developer Preview; make a Google Cloud OAuth client of your own, then uncomment them.
+# [servers.gmail]
+# url = "https://gmailmcp.googleapis.com/mcp/v1"
+#
+# [servers.gcal]
+# url = "https://calendarmcp.googleapis.com/mcp/v1"
+#
+# [servers.gdrive]
+# url = "https://drivemcp.googleapis.com/mcp/v1"

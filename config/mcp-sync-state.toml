@@ -1,1 +1,2 @@
-# TODO(AGNT-0001.T09): machine-written managed-names state; seeded empty in the phase-13 build
+claude_managed = []
+codex_managed = []

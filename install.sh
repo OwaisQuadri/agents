@@ -93,8 +93,8 @@ if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
 fi
 
-# 8. ste-check: the prose checker every register runs. this is the one artifact the
-#    installer compiles rather than links, because a checker in the reply path is waited on
+# 8. ste-check: the prose checker every register runs. an artifact the installer
+#    compiles rather than links, because a checker in the reply path is waited on
 CRATE="$REPO_TARGET/tools/ste-check"
 if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
@@ -108,5 +108,37 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   fi
 fi
 
-# TODO(AGNT-0001.T11): steps 9-11 land in the phase-13 build (AGENTS.md link, mcp-sync build, sync run)
+# 9. global AGENTS.md for codex
+link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/AGENTS.md"
+
+# 10. mcp-sync: the claude/codex config sync step 11 runs; rebuilt every pass so the
+#     binary stays current with the manifest it syncs from
+CRATE="$REPO_TARGET/tools/mcp-sync"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
+  else
+    echo "warn: cargo not found, skipping the mcp-sync build" >&2
+  fi
+fi
+
+# 11. converge the live configs onto the repo manifest. the binary bypasses run() on
+#     purpose: its own --dry-run prints the sync plan a dry-echoed command would hide
+SYNC_BIN="$HOME/.local/bin/mcp-sync"
+run mkdir -p "$HOME/.codex/agents"
+if [[ -x "$SYNC_BIN" ]]; then
+  plan "sync configs: MCP_SYNC_REPO=$REPO_TARGET $SYNC_BIN"
+  if (( DRY )); then
+    MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN" --dry-run
+  else
+    MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN"
+  fi
+else
+  echo "warn: mcp-sync not built, skipping the config sync" >&2
+fi
+
 plan "done"

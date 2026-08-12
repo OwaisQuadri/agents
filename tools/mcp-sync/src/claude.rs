@@ -1,8 +1,13 @@
 use std::path::Path;
 
-use crate::drift::{Change, DriftRow};
+use serde_json::{Map, Value};
+
+use crate::drift::{Change, ChangeKind, DriftRow, DriftState, Tool};
 use crate::error::SyncError;
-use crate::manifest::{Manifest, ServerEntry, SyncState};
+use crate::fsio;
+use crate::manifest::{
+    Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
+};
 
 /// Renders one manifest entry as a Claude mcpServers JSON value.
 /// Takes the entry; returns the JSON object for that server.
@@ -10,9 +15,31 @@ use crate::manifest::{Manifest, ServerEntry, SyncState};
 /// # Errors
 /// none
 pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
-    let _ = entry;
-    // TODO(AGNT-0001.T03): body lands in the phase-13 build; contract: interfaces.md claude adapter section
-    unimplemented!()
+    match &entry.transport {
+        Transport::Stdio(spec) => {
+            let mut object = Map::new();
+            object.insert("command".to_string(), Value::String(spec.command.clone()));
+            object.insert(
+                "args".to_string(),
+                Value::Array(spec.args.iter().cloned().map(Value::String).collect()),
+            );
+            if !spec.env.is_empty() {
+                let env = spec
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+                    .collect();
+                object.insert("env".to_string(), Value::Object(env));
+            }
+            Value::Object(object)
+        }
+        Transport::Remote(spec) => {
+            let mut object = Map::new();
+            object.insert("type".to_string(), Value::String("http".to_string()));
+            object.insert("url".to_string(), Value::String(spec.url.clone()));
+            Value::Object(object)
+        }
+    }
 }
 
 /// Converges the mcpServers key of the Claude config onto the manifest.
@@ -29,9 +56,47 @@ pub fn sync(
     state: &SyncState,
     is_dry_run: bool,
 ) -> Result<Vec<Change>, SyncError> {
-    let _ = (path, manifest, state, is_dry_run);
-    // TODO(AGNT-0001.T03): body lands in the phase-13 build; contract: interfaces.md claude adapter section
-    unimplemented!()
+    let (snapshot, mut doc) = read_doc(path)?;
+    let mut servers = live_servers(path, &doc)?;
+    let is_key_present = doc.contains_key("mcpServers");
+    let mut changes = Vec::new();
+    for entry in manifest.servers.iter().filter(|entry| is_claude_scoped(entry)) {
+        let rendered = render_entry(entry);
+        let kind = match servers.get(&entry.name) {
+            Some(live) if *live == rendered => continue,
+            Some(_) => ChangeKind::Update,
+            None => ChangeKind::Add,
+        };
+        servers.insert(entry.name.clone(), rendered);
+        changes.push(Change { tool: Tool::Claude, server: entry.name.clone(), kind });
+    }
+    for name in &state.claude_managed {
+        if manifest
+            .servers
+            .iter()
+            .any(|entry| is_claude_scoped(entry) && entry.name == *name)
+        {
+            continue;
+        }
+        if servers.shift_remove(name).is_some() {
+            changes.push(Change {
+                tool: Tool::Claude,
+                server: name.clone(),
+                kind: ChangeKind::Remove,
+            });
+        }
+    }
+    if is_key_present || !servers.is_empty() {
+        doc.insert("mcpServers".to_string(), Value::Object(servers));
+    }
+    let mut rendered_doc = serde_json::to_string_pretty(&Value::Object(doc))
+        .expect("a string-keyed Value always serializes");
+    rendered_doc.push('\n');
+    if rendered_doc == snapshot {
+        return Ok(changes);
+    }
+    fsio::write_verified(path, &rendered_doc, Some(&snapshot), is_dry_run)?;
+    Ok(changes)
 }
 
 /// Reports per-server drift between the manifest and the Claude config.
@@ -45,9 +110,33 @@ pub fn check(
     manifest: &Manifest,
     state: &SyncState,
 ) -> Result<Vec<DriftRow>, SyncError> {
-    let _ = (path, manifest, state);
-    // TODO(AGNT-0001.T03): body lands in the phase-13 build; contract: interfaces.md claude adapter section
-    unimplemented!()
+    let (_, doc) = read_doc(path)?;
+    let live = live_servers(path, &doc)?;
+    let mut rows = Vec::new();
+    for entry in manifest.servers.iter().filter(|entry| is_claude_scoped(entry)) {
+        let drift_state = match live.get(&entry.name) {
+            None => DriftState::Missing,
+            Some(value) if *value == render_entry(entry) => DriftState::Ok,
+            Some(_) => DriftState::Drifted,
+        };
+        rows.push(DriftRow { server: entry.name.clone(), tool: Tool::Claude, state: drift_state });
+    }
+    for name in live.keys() {
+        if manifest
+            .servers
+            .iter()
+            .any(|entry| is_claude_scoped(entry) && entry.name == *name)
+        {
+            continue;
+        }
+        let drift_state = if state.claude_managed.contains(name) {
+            DriftState::Drifted
+        } else {
+            DriftState::Unmanaged
+        };
+        rows.push(DriftRow { server: name.clone(), tool: Tool::Claude, state: drift_state });
+    }
+    Ok(rows)
 }
 
 /// Parses live Claude servers absent from the manifest into manifest entries.
@@ -56,7 +145,450 @@ pub fn check(
 /// # Errors
 /// Io, ParseJson.
 pub fn unmanaged(path: &Path, manifest: &Manifest) -> Result<Vec<ServerEntry>, SyncError> {
-    let _ = (path, manifest);
-    // TODO(AGNT-0001.T03): body lands in the phase-13 build; contract: interfaces.md claude adapter section
-    unimplemented!()
+    let (_, doc) = read_doc(path)?;
+    let live = live_servers(path, &doc)?;
+    let mut entries = Vec::new();
+    for (name, value) in &live {
+        if manifest.servers.iter().any(|entry| entry.name == *name) {
+            continue;
+        }
+        match translate(name, value) {
+            Ok(entry) => entries.push(entry),
+            Err(reason) => eprintln!("skip: claude server {name}: {reason}"),
+        }
+    }
+    Ok(entries)
+}
+
+fn is_claude_scoped(entry: &ServerEntry) -> bool {
+    matches!(entry.scope, ToolScope::Both | ToolScope::ClaudeOnly)
+}
+
+fn read_doc(path: &Path) -> Result<(String, Map<String, Value>), SyncError> {
+    let Some(text) = fsio::read_opt(path)? else {
+        return Err(SyncError::Io(
+            path.to_path_buf(),
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file does not exist; Claude creates its own config",
+            ),
+        ));
+    };
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|err| SyncError::ParseJson(path.to_path_buf(), err.to_string()))?;
+    match value {
+        Value::Object(doc) => Ok((text, doc)),
+        _ => Err(SyncError::ParseJson(
+            path.to_path_buf(),
+            "top-level value is not an object".to_string(),
+        )),
+    }
+}
+
+fn live_servers(path: &Path, doc: &Map<String, Value>) -> Result<Map<String, Value>, SyncError> {
+    match doc.get("mcpServers") {
+        Some(Value::Object(map)) => Ok(map.clone()),
+        Some(_) => Err(SyncError::ParseJson(
+            path.to_path_buf(),
+            "mcpServers is not an object".to_string(),
+        )),
+        None => Ok(Map::new()),
+    }
+}
+
+fn translate(name: &str, value: &Value) -> Result<ServerEntry, String> {
+    let Value::Object(object) = value else {
+        return Err("entry is not an object".to_string());
+    };
+    if object.contains_key("headers") {
+        return Err("headers have no manifest shape".to_string());
+    }
+    if object.contains_key("oauth") {
+        return Err("oauth has no manifest shape".to_string());
+    }
+    if object.contains_key("command") {
+        return translate_stdio(name, object);
+    }
+    match object.get("type").and_then(Value::as_str) {
+        Some("http") | Some("streamable-http") => {
+            let Some(url) = object.get("url").and_then(Value::as_str) else {
+                return Err("remote entry has no url string".to_string());
+            };
+            Ok(ServerEntry {
+                name: name.to_string(),
+                transport: Transport::Remote(RemoteSpec {
+                    url: url.to_string(),
+                    bearer_token_env_var: None,
+                }),
+                scope: ToolScope::Both,
+            })
+        }
+        Some(other) => Err(format!("transport {other} has no manifest shape")),
+        None => Err("entry has neither command nor a known type".to_string()),
+    }
+}
+
+fn translate_stdio(name: &str, object: &Map<String, Value>) -> Result<ServerEntry, String> {
+    let Some(command) = object.get("command").and_then(Value::as_str) else {
+        return Err("command is not a string".to_string());
+    };
+    let args = match object.get("args") {
+        None => Vec::new(),
+        Some(Value::Array(items)) => {
+            let mut args = Vec::new();
+            for item in items {
+                let Some(arg) = item.as_str() else {
+                    return Err("args holds a non-string".to_string());
+                };
+                args.push(arg.to_string());
+            }
+            args
+        }
+        Some(_) => return Err("args is not an array".to_string()),
+    };
+    let env = match object.get("env") {
+        None => Vec::new(),
+        Some(Value::Object(pairs)) => {
+            let mut env = Vec::new();
+            for (key, item) in pairs {
+                let Some(text) = item.as_str() else {
+                    return Err("env holds a non-string".to_string());
+                };
+                env.push((key.clone(), text.to_string()));
+            }
+            env
+        }
+        Some(_) => return Err("env is not an object".to_string()),
+    };
+    Ok(ServerEntry {
+        name: name.to_string(),
+        transport: Transport::Stdio(StdioSpec {
+            command: command.to_string(),
+            args,
+            env,
+            cwd: None,
+        }),
+        scope: ToolScope::Both,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::*;
+
+    fn fixture_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "mcp-sync-claude-{name}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create fixture dir");
+        dir
+    }
+
+    fn pretty(value: &Value) -> String {
+        let mut text = serde_json::to_string_pretty(value).expect("serialize fixture");
+        text.push('\n');
+        text
+    }
+
+    fn stdio_entry(
+        name: &str,
+        scope: ToolScope,
+        command: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> ServerEntry {
+        ServerEntry {
+            name: name.to_string(),
+            transport: Transport::Stdio(StdioSpec {
+                command: command.to_string(),
+                args: args.iter().map(|arg| arg.to_string()).collect(),
+                env: env
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                cwd: None,
+            }),
+            scope,
+        }
+    }
+
+    fn remote_entry(
+        name: &str,
+        scope: ToolScope,
+        url: &str,
+        token_var: Option<&str>,
+    ) -> ServerEntry {
+        ServerEntry {
+            name: name.to_string(),
+            transport: Transport::Remote(RemoteSpec {
+                url: url.to_string(),
+                bearer_token_env_var: token_var.map(str::to_string),
+            }),
+            scope,
+        }
+    }
+
+    fn empty_state() -> SyncState {
+        SyncState { claude_managed: Vec::new(), codex_managed: Vec::new() }
+    }
+
+    fn seeded_config() -> Value {
+        json!({
+            "installMethod": "brew",
+            "projects": {
+                "/Users/owais/repo": {
+                    "allowedTools": ["Bash", "Read"],
+                    "history": ["run tests", "fix the parser"]
+                }
+            },
+            "mcpServers": {
+                "drifty": { "command": "old-cmd", "args": [] },
+                "stale": { "command": "stale-cmd", "args": ["--x"] },
+                "foreign": { "type": "http", "url": "https://foreign.example/mcp" }
+            },
+            "tipsHistory": { "memory-command": 5 }
+        })
+    }
+
+    #[test]
+    fn render_stdio_without_env_omits_the_env_key() {
+        let rendered = render_entry(&stdio_entry("s", ToolScope::Both, "cmd", &["--flag"], &[]));
+        assert_eq!(rendered, json!({ "command": "cmd", "args": ["--flag"] }));
+    }
+
+    #[test]
+    fn render_stdio_with_env_carries_the_env_object() {
+        let rendered = render_entry(&stdio_entry(
+            "s",
+            ToolScope::Both,
+            "cmd",
+            &[],
+            &[("MODE", "fast")],
+        ));
+        assert_eq!(
+            rendered,
+            json!({ "command": "cmd", "args": [], "env": { "MODE": "fast" } })
+        );
+    }
+
+    #[test]
+    fn render_remote_is_http_url_and_never_a_token() {
+        let rendered = render_entry(&remote_entry(
+            "r",
+            ToolScope::Both,
+            "https://x.example/mcp",
+            Some("X_TOKEN"),
+        ));
+        assert_eq!(rendered, json!({ "type": "http", "url": "https://x.example/mcp" }));
+    }
+
+    #[test]
+    fn sync_on_an_absent_file_is_an_io_error() {
+        let dir = fixture_dir("absent");
+        let missing = dir.join("claude.json");
+        let manifest = Manifest { servers: Vec::new() };
+        let result = sync(&missing, &manifest, &empty_state(), false);
+        assert!(matches!(result, Err(SyncError::Io(_, _))));
+    }
+
+    #[test]
+    fn sync_converges_and_preserves_foreign_keys_byte_identically() {
+        let dir = fixture_dir("sync");
+        let path = dir.join("claude.json");
+        fs::write(&path, pretty(&seeded_config())).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![
+                stdio_entry("drifty", ToolScope::Both, "new-cmd", &["--serve"], &[("MODE", "fast")]),
+                remote_entry("fresh", ToolScope::ClaudeOnly, "https://fresh.example/mcp", Some("FRESH_TOKEN")),
+                stdio_entry("codex-side", ToolScope::CodexOnly, "codex-only-cmd", &[], &[]),
+            ],
+        };
+        let state = SyncState {
+            claude_managed: vec!["drifty".to_string(), "stale".to_string()],
+            codex_managed: Vec::new(),
+        };
+        let changes = sync(&path, &manifest, &state, false).expect("sync succeeds");
+        assert_eq!(changes.len(), 3);
+        assert!(matches!(
+            &changes[0],
+            Change { tool: Tool::Claude, kind: ChangeKind::Update, server } if server == "drifty"
+        ));
+        assert!(matches!(
+            &changes[1],
+            Change { tool: Tool::Claude, kind: ChangeKind::Add, server } if server == "fresh"
+        ));
+        assert!(matches!(
+            &changes[2],
+            Change { tool: Tool::Claude, kind: ChangeKind::Remove, server } if server == "stale"
+        ));
+        let expected = pretty(&json!({
+            "installMethod": "brew",
+            "projects": {
+                "/Users/owais/repo": {
+                    "allowedTools": ["Bash", "Read"],
+                    "history": ["run tests", "fix the parser"]
+                }
+            },
+            "mcpServers": {
+                "drifty": { "command": "new-cmd", "args": ["--serve"], "env": { "MODE": "fast" } },
+                "foreign": { "type": "http", "url": "https://foreign.example/mcp" },
+                "fresh": { "type": "http", "url": "https://fresh.example/mcp" }
+            },
+            "tipsHistory": { "memory-command": 5 }
+        }));
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    #[test]
+    fn sync_creates_the_mcp_servers_key_when_absent() {
+        let dir = fixture_dir("createkey");
+        let path = dir.join("claude.json");
+        fs::write(&path, pretty(&json!({ "installMethod": "brew" }))).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![remote_entry("fresh", ToolScope::Both, "https://fresh.example/mcp", None)],
+        };
+        let changes = sync(&path, &manifest, &empty_state(), false).expect("sync succeeds");
+        assert_eq!(changes.len(), 1);
+        let expected = pretty(&json!({
+            "installMethod": "brew",
+            "mcpServers": {
+                "fresh": { "type": "http", "url": "https://fresh.example/mcp" }
+            }
+        }));
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    #[test]
+    fn second_sync_returns_no_changes_and_writes_nothing() {
+        let dir = fixture_dir("idempotent");
+        let path = dir.join("claude.json");
+        fs::write(&path, pretty(&seeded_config())).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![stdio_entry("drifty", ToolScope::Both, "new-cmd", &[], &[])],
+        };
+        let state = empty_state();
+        let first = sync(&path, &manifest, &state, false).expect("first sync");
+        assert_eq!(first.len(), 1);
+        let bytes = fs::read_to_string(&path).unwrap();
+        let files_before = fs::read_dir(&dir).unwrap().count();
+        let second = sync(&path, &manifest, &state, false).expect("second sync");
+        assert!(second.is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), files_before);
+    }
+
+    #[test]
+    fn dry_run_sync_reports_changes_and_touches_nothing() {
+        let dir = fixture_dir("dry");
+        let path = dir.join("claude.json");
+        fs::write(&path, pretty(&seeded_config())).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![stdio_entry("drifty", ToolScope::Both, "new-cmd", &[], &[])],
+        };
+        let state = SyncState {
+            claude_managed: vec!["stale".to_string()],
+            codex_managed: Vec::new(),
+        };
+        let before = fs::read_to_string(&path).unwrap();
+        let changes = sync(&path, &manifest, &state, true).expect("dry-run sync");
+        assert_eq!(changes.len(), 2);
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn check_rows_cover_ok_missing_drifted_pending_remove_and_unmanaged() {
+        let dir = fixture_dir("check");
+        let path = dir.join("claude.json");
+        let live = json!({
+            "mcpServers": {
+                "steady": { "command": "cmd", "args": [] },
+                "drifty": { "command": "old-cmd", "args": [] },
+                "stale": { "command": "stale-cmd", "args": [] },
+                "foreign": { "type": "http", "url": "https://foreign.example/mcp" }
+            }
+        });
+        fs::write(&path, pretty(&live)).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![
+                stdio_entry("steady", ToolScope::Both, "cmd", &[], &[]),
+                stdio_entry("drifty", ToolScope::ClaudeOnly, "new-cmd", &[], &[]),
+                stdio_entry("gone", ToolScope::Both, "cmd", &[], &[]),
+                stdio_entry("codex-side", ToolScope::CodexOnly, "cmd", &[], &[]),
+            ],
+        };
+        let state = SyncState {
+            claude_managed: vec!["stale".to_string()],
+            codex_managed: Vec::new(),
+        };
+        let rows = check(&path, &manifest, &state).expect("check succeeds");
+        assert_eq!(rows.len(), 5);
+        assert!(matches!(
+            &rows[0],
+            DriftRow { tool: Tool::Claude, state: DriftState::Ok, server } if server == "steady"
+        ));
+        assert!(matches!(
+            &rows[1],
+            DriftRow { tool: Tool::Claude, state: DriftState::Drifted, server } if server == "drifty"
+        ));
+        assert!(matches!(
+            &rows[2],
+            DriftRow { tool: Tool::Claude, state: DriftState::Missing, server } if server == "gone"
+        ));
+        assert!(matches!(
+            &rows[3],
+            DriftRow { tool: Tool::Claude, state: DriftState::Drifted, server } if server == "stale"
+        ));
+        assert!(matches!(
+            &rows[4],
+            DriftRow { tool: Tool::Claude, state: DriftState::Unmanaged, server } if server == "foreign"
+        ));
+    }
+
+    #[test]
+    fn unmanaged_translates_expressible_entries_and_skips_the_rest() {
+        let dir = fixture_dir("unmanaged");
+        let path = dir.join("claude.json");
+        let live = json!({
+            "mcpServers": {
+                "known": { "command": "cmd", "args": [] },
+                "tool": { "command": "npx", "args": ["-y", "tool-mcp"], "env": { "MODE": "fast" } },
+                "site": { "type": "http", "url": "https://site.example/mcp" },
+                "stream": { "type": "streamable-http", "url": "https://stream.example/mcp" },
+                "pushy": { "type": "sse", "url": "https://pushy.example/mcp" },
+                "sockety": { "type": "ws", "url": "wss://sockety.example/mcp" },
+                "headed": { "type": "http", "url": "https://headed.example/mcp", "headers": { "X-Key": "v" } }
+            }
+        });
+        fs::write(&path, pretty(&live)).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![stdio_entry("known", ToolScope::CodexOnly, "cmd", &[], &[])],
+        };
+        let entries = unmanaged(&path, &manifest).expect("unmanaged succeeds");
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        assert_eq!(names, ["tool", "site", "stream"]);
+        assert!(matches!(
+            &entries[0].transport,
+            Transport::Stdio(spec)
+                if spec.command == "npx"
+                    && spec.args == ["-y", "tool-mcp"]
+                    && spec.env == [("MODE".to_string(), "fast".to_string())]
+        ));
+        assert!(matches!(
+            &entries[1].transport,
+            Transport::Remote(spec)
+                if spec.url == "https://site.example/mcp" && spec.bearer_token_env_var.is_none()
+        ));
+        assert!(matches!(
+            &entries[2].transport,
+            Transport::Remote(spec) if spec.url == "https://stream.example/mcp"
+        ));
+    }
 }
