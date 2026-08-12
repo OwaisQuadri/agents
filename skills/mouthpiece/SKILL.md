@@ -116,10 +116,10 @@ These fire on a trigger, and never as filler.
 
 ## eval
 
-`ste-check --register mouthpiece` scores a candidate message against the mechanical rules it
-carries. Those are the shared STE rules, the two borrowed plain-words rules, and the
-600-character cap. It does not grade every rule in this file. The backtick restriction, the
-list cap of 3, the negation shapes, and a clock time in words all rest on you. Run
+`ste-check --register mouthpiece` scores a candidate message against the 20 rules it carries.
+Those are the shared STE rules, most of the voice rules above, the two borrowed plain-words
+rules, and the 600-character cap. It does not grade every rule in this file. The backtick
+restriction, the cap of 3 on a list, and the negation-stack shape rest on you. Run
 `ste-check --register mouthpiece msg.txt`, or pipe the message on stdin. It prints one pass
 or FAIL line per rule and a final score line, and it exits nonzero on any failure.
 

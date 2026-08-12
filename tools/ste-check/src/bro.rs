@@ -17,8 +17,7 @@ const MIN_ACRONYM: usize = 2;
 const MAX_ACRONYM: usize = 5;
 
 /// Seeded narrow on purpose. A wide list flags prose that already reads clearly, so this
-/// grows on a logged miss and never on a guess. The mouthpiece register grades on this
-/// list as well, so an entry added here also fails every message the end user reads.
+/// grows on a logged miss and never on a guess. The mouthpiece register grades on it too.
 const JARGON: &[&str] = &[
     "abstraction", "abstractions", "canonical", "canonicalize", "deterministic", "determinism",
     "dispatch", "dispatched", "dispatches", "heuristic", "heuristics", "idempotency",
@@ -26,9 +25,6 @@ const JARGON: &[&str] = &[
     "monotonic", "orthogonal", "serialize", "serialized", "serializes", "topology",
 ];
 
-/// GATE earns its place from a measured false positive, not a guess: the engineer skill
-/// names its human gates GATE A through GATE E, so a status message quotes "GATE E" as a
-/// fact and the rule read it as an unexpanded abbreviation.
 const NOT_ACRONYMS: &[&str] = &["OK", "TV", "AM", "PM", "GATE"];
 
 pub fn jargon(text: &str) -> Vec<String> {
@@ -42,14 +38,30 @@ fn is_free(c: Option<&char>) -> bool {
     }
 }
 
-/// A hyphenated identifier, not an abbreviation: `CPU-0003`, `ABCD-1204`, `ASD-STE100`. No
-/// in-prose form can satisfy the expansion test here, because the parenthesis would have to
-/// follow the digits, so the rule flagged a ticket id and a branch name with no way out.
 fn is_hyphenated_id(chars: &[char], end: usize) -> bool {
-    chars.get(end) == Some(&'-')
-        && chars
-            .get(end + 1)
-            .is_some_and(|c| c.is_ascii_digit() || c.is_ascii_uppercase())
+    if chars.get(end) != Some(&'-') {
+        return false;
+    }
+    match chars.get(end + 1) {
+        Some(c) if c.is_ascii_digit() => true,
+        Some(c) if c.is_ascii_uppercase() => {
+            chars.get(end + 2).is_some_and(|c| c.is_ascii_uppercase())
+        }
+        _ => false,
+    }
+}
+
+fn is_expansion_before(chars: &[char], open_paren: usize, run: &str) -> bool {
+    let head: String = chars[..open_paren].iter().collect();
+    let words: Vec<&str> = head.split_whitespace().collect();
+    let Some(initial) = run.chars().next() else {
+        return false;
+    };
+    let from = words.len().saturating_sub(run.chars().count());
+    words[from..]
+        .iter()
+        .filter_map(|word| word.chars().next())
+        .any(|c| c.eq_ignore_ascii_case(&initial))
 }
 
 pub fn bare_acronym(text: &str) -> Vec<String> {
@@ -79,19 +91,18 @@ pub fn bare_acronym(text: &str) -> Vec<String> {
         {
             continue;
         }
-        // Either order counts as expanded. "MCP (Model Context Protocol)" reads acronym
-        // first, and "Model Context Protocol (MCP)" reads expansion first, which is the
-        // form a writer reaches for when a human reads the sentence.
-        let is_wrapped = start > 0 && chars[start - 1] == '(' && chars.get(end) == Some(&')');
-        let expansion = if chars.get(end) == Some(&' ') { end + 1 } else { end };
-        if is_wrapped || chars.get(expansion) == Some(&'(') {
+        let after = if chars.get(end) == Some(&' ') { end + 1 } else { end };
+        let is_expanded = chars.get(after) == Some(&'(')
+            || (start > 0
+                && chars[start - 1] == '('
+                && chars.get(end) == Some(&')')
+                && is_expansion_before(&chars, start - 1, &run));
+        if is_expanded {
             expanded.push(run);
         } else {
             hits.push(run);
         }
     }
-    // The rule name says "at first use", so one expansion anywhere covers every later short
-    // form. Every register tells the writer to expand once and then use the short form.
     hits.retain(|run| !expanded.contains(run));
     hits
 }
