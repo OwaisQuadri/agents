@@ -1,3 +1,7 @@
+use std::path::Path;
+
+use crate::error::SyncError;
+
 pub struct Manifest {
     pub servers: Vec<ServerEntry>,
 }
@@ -34,4 +38,51 @@ pub enum ToolScope {
 pub struct SyncState {
     pub claude_managed: Vec<String>,
     pub codex_managed: Vec<String>,
+}
+
+/// Loads and validates the manifest file.
+/// Takes the manifest path; returns the parsed Manifest in file order.
+///
+/// # Errors
+/// Io when the file is unreadable; ParseToml on invalid TOML;
+/// ManifestInvalid on a table with both command and url, neither, or an
+/// unknown tools entry.
+pub fn load_manifest(path: &Path) -> Result<Manifest, SyncError> {
+    let _ = path;
+    unimplemented!()
+}
+
+/// Loads the managed-names state file, treating an absent file as empty state.
+/// Takes the state path; returns SyncState.
+///
+/// # Errors
+/// Io on an unreadable existing file; ParseToml on invalid TOML.
+pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
+    let _ = path;
+    unimplemented!()
+}
+
+/// Writes the managed-names state file.
+/// Takes the state path, the state, and the dry-run flag; returns unit.
+///
+/// # Errors
+/// Io on write failure; VerifyFailed when the re-read does not match.
+pub fn save_state(path: &Path, state: &SyncState, is_dry_run: bool) -> Result<(), SyncError> {
+    let _ = (path, state, is_dry_run);
+    unimplemented!()
+}
+
+/// Appends adopted servers to the manifest file, format-preserving.
+/// Takes the manifest path, the entries, and the dry-run flag; returns unit.
+///
+/// # Errors
+/// Io, ParseToml, VerifyFailed, or ChangedSinceRead from the underlying
+/// verified write.
+pub fn append_servers(
+    path: &Path,
+    entries: &[ServerEntry],
+    is_dry_run: bool,
+) -> Result<(), SyncError> {
+    let _ = (path, entries, is_dry_run);
+    unimplemented!()
 }
