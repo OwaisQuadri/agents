@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 
+// TODO(AGNT-0002.T01): Verify deterministic SHA-256 implementation coverage.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }

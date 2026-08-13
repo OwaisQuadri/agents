@@ -39,6 +39,7 @@ pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
     }
 }
 
+// TODO(AGNT-0002.T03): Verify Claude fingerprint deletion-safety coverage.
 pub fn managed_server(entry: &ServerEntry) -> ManagedServer {
     ManagedServer {
         name: entry.name.clone(),

@@ -49,6 +49,7 @@ pub struct ManagedServer {
     pub fingerprint: Option<String>,
 }
 
+// TODO(AGNT-0002.T02): Verify legacy and fingerprinted state migration coverage.
 fn managed_servers_of(
     doc: &DocumentMut,
     key: &str,

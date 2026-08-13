@@ -42,6 +42,7 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
     table
 }
 
+// TODO(AGNT-0002.T04): Verify Codex semantic fingerprint safety coverage.
 pub fn managed_server(entry: &ServerEntry) -> ManagedServer {
     ManagedServer {
         name: entry.name.clone(),

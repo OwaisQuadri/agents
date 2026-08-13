@@ -110,6 +110,7 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
     }
 }
 
+// TODO(AGNT-0002.T05): Verify apply-level fingerprint lifecycle coverage.
 fn managed_state(manifest: &Manifest) -> SyncState {
     let mut claude_managed = Vec::new();
     let mut codex_managed = Vec::new();

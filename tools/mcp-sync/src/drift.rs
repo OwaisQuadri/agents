@@ -40,6 +40,7 @@ impl Tool {
 }
 
 impl DriftState {
+    // TODO(AGNT-0002.T06): Verify spared-state and spare-action reporting coverage.
     fn word(&self) -> &'static str {
         match self {
             DriftState::Ok => "ok",
