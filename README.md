@@ -23,8 +23,7 @@ versioned in one repo with a symlink installer.
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
 | `install.sh` | symlink installer; it builds `ste-check` and `mcp-sync` with cargo, then runs `mcp-sync` to render the manifest into the live configs; `--dry-run` prints every mutation through the real code path |
-| `CLAUDE.md` | global guidance loaded every session |
-| `AGENTS.md` | Codex global instructions; `install.sh` links `~/.codex/AGENTS.md` to it |
+| `CLAUDE.md` | global guidance loaded every session; the single instructions source for both tools. `install.sh` links `~/.codex/AGENTS.md` to it, so Codex reads the same file |
 
 ### skills
 

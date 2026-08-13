@@ -108,8 +108,10 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   fi
 fi
 
-# 9. global AGENTS.md for codex
-link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/AGENTS.md"
+# 9. codex reads CLAUDE.md as its global instructions, via one symlink — one source,
+#    no second file to drift. the handful of claude-only lines (register /slash names,
+#    the /hq runner) are harmless to codex; the register skills resolve from ~/.agents/skills
+link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
 # 10. mcp-sync: the claude/codex config sync step 11 runs; rebuilt every pass so the
 #     binary stays current with the manifest it syncs from
