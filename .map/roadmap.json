@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 5,
+  "next_nnnn": 8,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -62,6 +62,46 @@
       ],
       "blame_phase": null,
       "created": "2026-08-12T21:44:43-0400"
+    },
+    {
+      "id": "AGNT-0005",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Gate the rag-recall injection",
+      "long": "The hook injects the top eight chunks on every prompt. Gated retrieval beat that pattern by 2.2 points while it retrieved 70 percent less (TARG). Low-relevance chunks measurably degrade output quality (Chroma context-rot study, 18 models). Stale memories decay into confident wrong answers as the time gap grows.\n\nThe fix: inject only when the prompt turns on past work, and otherwise stay silent. The counter-finding sets the bar: a crude keyword gate scored worse than always-on retrieval. The gate must beat that bar, or the hook stays as it is. Anthropic ships the on-demand pattern in its memory tool, which is the fallback shape.\n\nPer the tooling rule, a change to this Python script means a Rust rewrite, never a patch in place. The Codex and Claude registrations both point at the new binary when it lands.",
+      "deps": [],
+      "files": [
+        "hooks/",
+        "config/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-12T22:05:50-0400"
+    },
+    {
+      "id": "AGNT-0006",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "A fast lane in the engineer map for one-sentence diffs",
+      "long": "Planning overhead runs near ten times execution for single-step changes. Anthropic guidance says skip the plan when one sentence states the exact diff. The map today walks every change through all 23 phases.\n\nThe counter stays on the record: removing plans cut coding performance 14 percent on 21,120 real trajectories. So the full map stays for real work. The lane covers only the change a single sentence can state, and the owner shapes it at that ticket own gates.",
+      "deps": [],
+      "files": [
+        "skills/engineer/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-12T22:05:50-0400"
+    },
+    {
+      "id": "AGNT-0007",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Evaluate research-sweep against the native deep-research workflow",
+      "long": "Claude Code now ships a Dynamic Workflow named deep-research. It fans searches across angles, cross-checks sources, votes per claim, and filters what fails the vote. That is nearly the research-sweep contract.\n\nRun one evaluation: the same goal through both, then compare cited coverage, cost, and the critic value. Retire research-sweep or differentiate it on what the native run cannot do.",
+      "deps": [],
+      "files": [
+        "workflows/research-sweep/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-12T22:05:50-0400"
     }
   ]
 }
