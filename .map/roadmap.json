@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 2,
+  "next_nnnn": 5,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -20,6 +20,48 @@
       ],
       "blame_phase": null,
       "created": "2026-08-12T15:54:03-0400"
+    },
+    {
+      "id": "AGNT-0002",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Spare hand-added servers from state-driven removal",
+      "long": "The state file lists which servers mcp-sync manages. A server on that list, but no longer in the manifest, gets removed from the live configs. A state file that goes false (a hand edit, a bad merge, cross-machine drift) then deletes a server the user added natively.\n\nThe fix: store a fingerprint of each rendered server. Before a removal, compare the live entry to the fingerprint. Spare and unlist an entry that no longer matches, and report the spare.\n\nFirst step, per the owner at gate C: map the consumers of the managed set before the schema changes. Those are the claude and codex removal paths, save_state, check, and adopt. Defer, but not long. Repro: .map/AGNT-0001/scratch/t19-state/repro/a02.",
+      "deps": [],
+      "files": [
+        "tools/mcp-sync/",
+        "config/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-12T21:44:43-0400"
+    },
+    {
+      "id": "AGNT-0003",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Merge concurrent applies instead of last-writer-wins",
+      "long": "Two mcp-sync applies against the same target at the same moment each write an intact file, and the later rename wins. The earlier change disappears while both runs report success.\n\nThe fix is a conflict pass: after a lost race, re-read the target and merge. Prefer to keep both entries and to maximize compatibility.\n\nLow priority: install.sh invokes the tool one run at a time, and the owner runs one agent at a time. The external-writer guard already refuses blind overwrites. Repro: .map/AGNT-0001/scratch/t19b-concurrency.",
+      "deps": [],
+      "files": [
+        "tools/mcp-sync/src/fsio.rs",
+        "tools/mcp-sync/src/claude.rs",
+        "tools/mcp-sync/src/codex.rs"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-12T21:44:43-0400"
+    },
+    {
+      "id": "AGNT-0004",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Show remote-server login state per tool",
+      "long": "The manifest adds ten remote MCP(Model Context Protocol) servers, and every one of them needs a one-time OAuth login per tool. No file sync can perform that login.\n\nAdd a login-status readout to mcp-sync. It lists, per remote server and per tool, whether authentication exists, so an added-but-not-logged-in server is visible long before it fails at first use. The readout reads each tool auth state and writes nothing.",
+      "deps": [],
+      "files": [
+        "tools/mcp-sync/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-12T21:44:43-0400"
     }
   ]
 }
