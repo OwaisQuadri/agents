@@ -5,7 +5,7 @@
     {
       "id": "AGNT-0001",
       "kind": "ticket",
-      "status": "in progress",
+      "status": "resolved",
       "short": "Codex config parity with Claude Code, one source, self-maintained",
       "long": "Extend the single-source config model in this repo so Codex CLI(codex-cli 0.146.0) reaches parity with Claude Code on every config surface, and a git pull re-syncs both tools via the existing install.sh hooks. Surfaces, per the handoff (.context/attachments/UJfJQs/codex-parity-handoff.md) and the owner's answers of 2026-08-12 (prefix AGNT, remote connector URLs in scope, parity everywhere including agents): (1) MCP(Model Context Protocol) manifest config/mcp-servers.toml plus a Rust tool tools/mcp-sync that writes the mcpServers key in ~/.claude.json and the [mcp_servers.*] tables in ~/.codex/config.toml without touching other keys or tables, backup before write, --dry-run passthrough; includes researched public remote MCP URLs for services now reached only as claude.ai connectors, added where codex mcp login can authenticate them. (2) Global instructions: a repo-tracked file linked to ~/.codex/AGENTS.md carrying the CLAUDE.md substance with Claude-only mechanism references translated. (3) Hook parity: register hooks/rag-recall for Codex's UserPromptSubmit hook with additionalContext injection. (4) Agents fleet parity: the six agents/*.md definitions derived into Codex agent TOML files under ~/.codex/agents/. (5) install.sh gains numbered steps wiring all of the above. Verification per the handoff: section-diff proofs on both live configs, matching mcp list output on both CLIs, and a real Codex session picking up the shared rules.",
       "deps": [],
