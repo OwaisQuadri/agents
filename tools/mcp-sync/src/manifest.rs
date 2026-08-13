@@ -49,6 +49,7 @@ pub struct ManagedServer {
     pub fingerprint: Option<String>,
 }
 
+// TODO(AGNT-0002.T02): Parse legacy names and fingerprinted managed records.
 fn managed_servers_of(
     _doc: &DocumentMut,
     _key: &str,
@@ -57,6 +58,7 @@ fn managed_servers_of(
     unimplemented!()
 }
 
+// TODO(AGNT-0002.T02): Render managed records in deterministic name order.
 fn managed_array(_servers: &[ManagedServer]) -> Array {
     unimplemented!()
 }
@@ -99,6 +101,7 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, SyncError> {
 /// # Errors
 /// Io on an unreadable existing file; ParseToml on invalid TOML.
 pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
+    // TODO(AGNT-0002.T02): Route state loading and saving through record helpers.
     let text = match fsio::read_opt(path)? {
         Some(text) => text,
         None => {

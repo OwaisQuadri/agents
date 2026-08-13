@@ -42,6 +42,7 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
     table
 }
 
+// TODO(AGNT-0002.T04): Canonically fingerprint rendered and live Codex tables.
 pub fn managed_server(_entry: &ServerEntry) -> ManagedServer {
     unimplemented!()
 }
@@ -106,6 +107,7 @@ pub fn sync(
         changes.push(Change { tool: Tool::Codex, server: entry.name.clone(), kind });
     }
     for name in &state.codex_managed {
+        // TODO(AGNT-0002.T04): Remove stale entries only when fingerprints match.
         if manifest
             .servers
             .iter()
@@ -162,6 +164,7 @@ pub fn check(
     }
     if let Some(servers) = servers {
         for (name, _) in servers.iter() {
+            // TODO(AGNT-0002.T04): Classify changed managed entries as spared.
             if manifest
                 .servers
                 .iter()

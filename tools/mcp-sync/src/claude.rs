@@ -39,6 +39,7 @@ pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
     }
 }
 
+// TODO(AGNT-0002.T03): Fingerprint rendered and live Claude server values.
 pub fn managed_server(_entry: &ServerEntry) -> ManagedServer {
     unimplemented!()
 }
@@ -87,6 +88,7 @@ pub fn sync(
         changes.push(Change { tool: Tool::Claude, server: entry.name.clone(), kind });
     }
     for name in &state.claude_managed {
+        // TODO(AGNT-0002.T03): Remove stale entries only when fingerprints match.
         if manifest
             .servers
             .iter()
@@ -140,6 +142,7 @@ pub fn check(
         rows.push(DriftRow { server: entry.name.clone(), tool: Tool::Claude, state: drift_state });
     }
     for name in live.keys() {
+        // TODO(AGNT-0002.T03): Classify changed managed entries as spared.
         if manifest
             .servers
             .iter()

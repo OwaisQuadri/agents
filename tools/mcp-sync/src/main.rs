@@ -72,6 +72,7 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
                 &targets.codex_agents_dir,
                 args.is_dry_run,
             )?);
+            // TODO(AGNT-0002.T05): Persist only current fingerprinted ownership after apply.
             manifest::save_state(&targets.state_path, &managed_state(&manifest), args.is_dry_run)?;
             print!("{}", drift::render_plan(&changes, args.is_dry_run));
             Ok(ExitCode::SUCCESS)
@@ -102,6 +103,7 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
     }
 }
 
+// TODO(AGNT-0002.T05): Build per-tool managed records with current fingerprints.
 fn managed_state(manifest: &Manifest) -> SyncState {
     let mut claude_managed = Vec::new();
     let mut codex_managed = Vec::new();

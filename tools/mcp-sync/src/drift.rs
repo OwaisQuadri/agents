@@ -40,6 +40,7 @@ impl Tool {
 }
 
 impl DriftState {
+    // TODO(AGNT-0002.T06): Render spared drift without changing existing words.
     fn word(&self) -> &'static str {
         match self {
             DriftState::Ok => "ok",
@@ -51,6 +52,7 @@ impl DriftState {
 }
 
 impl ChangeKind {
+    // TODO(AGNT-0002.T06): Render spare actions in the existing plan language.
     fn word(&self) -> &'static str {
         match self {
             ChangeKind::Add => "add",
