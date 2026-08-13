@@ -7,6 +7,7 @@ pub enum DriftState {
     Ok,
     Missing,
     Drifted,
+    Spared,
     Unmanaged,
 }
 
@@ -20,6 +21,7 @@ pub enum ChangeKind {
     Add,
     Update,
     Remove,
+    Spare,
 }
 
 pub struct Change {

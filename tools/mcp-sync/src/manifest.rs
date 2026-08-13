@@ -40,8 +40,13 @@ pub enum ToolScope {
 }
 
 pub struct SyncState {
-    pub claude_managed: Vec<String>,
-    pub codex_managed: Vec<String>,
+    pub claude_managed: Vec<ManagedServer>,
+    pub codex_managed: Vec<ManagedServer>,
+}
+
+pub struct ManagedServer {
+    pub name: String,
+    pub fingerprint: Option<String>,
 }
 
 /// Loads and validates the manifest file.
