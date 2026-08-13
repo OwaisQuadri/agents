@@ -39,13 +39,34 @@ pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
     }
 }
 
-// TODO(AGNT-0002.T03): Fingerprint rendered and live Claude server values.
-pub fn managed_server(_entry: &ServerEntry) -> ManagedServer {
-    unimplemented!()
+pub fn managed_server(entry: &ServerEntry) -> ManagedServer {
+    ManagedServer {
+        name: entry.name.clone(),
+        fingerprint: Some(fingerprint_live(&render_entry(entry))),
+    }
 }
 
-fn fingerprint_live(_value: &Value) -> String {
-    unimplemented!()
+fn fingerprint_live(value: &Value) -> String {
+    fn canonicalize(value: &Value) -> Value {
+        match value {
+            Value::Array(items) => Value::Array(items.iter().map(canonicalize).collect()),
+            Value::Object(object) => {
+                let mut pairs: Vec<_> = object.iter().collect();
+                pairs.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+                Value::Object(
+                    pairs
+                        .into_iter()
+                        .map(|(key, value)| (key.clone(), canonicalize(value)))
+                        .collect(),
+                )
+            }
+            scalar => scalar.clone(),
+        }
+    }
+
+    let canonical = canonicalize(value);
+    let bytes = serde_json::to_vec(&canonical).expect("a serde_json Value always serializes");
+    crate::fingerprint::sha256_hex(&bytes)
 }
 
 /// Validates that the live Claude config parses, before any write touches it.
@@ -76,8 +97,13 @@ pub fn sync(
     let (snapshot, mut doc) = read_doc(path)?;
     let mut servers = live_servers(path, &doc)?;
     let is_key_present = doc.contains_key("mcpServers");
+    let mut is_config_changed = false;
     let mut changes = Vec::new();
-    for entry in manifest.servers.iter().filter(|entry| is_claude_scoped(entry)) {
+    for entry in manifest
+        .servers
+        .iter()
+        .filter(|entry| is_claude_scoped(entry))
+    {
         let rendered = render_entry(entry);
         let kind = match servers.get(&entry.name) {
             Some(live) if *live == rendered => continue,
@@ -85,24 +111,42 @@ pub fn sync(
             None => ChangeKind::Add,
         };
         servers.insert(entry.name.clone(), rendered);
-        changes.push(Change { tool: Tool::Claude, server: entry.name.clone(), kind });
+        is_config_changed = true;
+        changes.push(Change {
+            tool: Tool::Claude,
+            server: entry.name.clone(),
+            kind,
+        });
     }
-    for name in &state.claude_managed {
-        // TODO(AGNT-0002.T03): Remove stale entries only when fingerprints match.
+    for managed in &state.claude_managed {
         if manifest
             .servers
             .iter()
-            .any(|entry| is_claude_scoped(entry) && entry.name == *name)
+            .any(|entry| is_claude_scoped(entry) && entry.name == managed.name)
         {
             continue;
         }
-        if servers.shift_remove(name).is_some() {
-            changes.push(Change {
-                tool: Tool::Claude,
-                server: name.clone(),
-                kind: ChangeKind::Remove,
-            });
-        }
+        let Some(live) = servers.get(&managed.name) else {
+            continue;
+        };
+        let live_fingerprint = fingerprint_live(live);
+        let is_fingerprint_match =
+            managed.fingerprint.as_deref() == Some(live_fingerprint.as_str());
+        let kind = if is_fingerprint_match {
+            servers.shift_remove(&managed.name);
+            is_config_changed = true;
+            ChangeKind::Remove
+        } else {
+            ChangeKind::Spare
+        };
+        changes.push(Change {
+            tool: Tool::Claude,
+            server: managed.name.clone(),
+            kind,
+        });
+    }
+    if !is_config_changed {
+        return Ok(changes);
     }
     if is_key_present || !servers.is_empty() {
         doc.insert("mcpServers".to_string(), Value::Object(servers));
@@ -133,16 +177,23 @@ pub fn check(
     let (_, doc) = read_doc(path)?;
     let live = live_servers(path, &doc)?;
     let mut rows = Vec::new();
-    for entry in manifest.servers.iter().filter(|entry| is_claude_scoped(entry)) {
+    for entry in manifest
+        .servers
+        .iter()
+        .filter(|entry| is_claude_scoped(entry))
+    {
         let drift_state = match live.get(&entry.name) {
             None => DriftState::Missing,
             Some(value) if *value == render_entry(entry) => DriftState::Ok,
             Some(_) => DriftState::Drifted,
         };
-        rows.push(DriftRow { server: entry.name.clone(), tool: Tool::Claude, state: drift_state });
+        rows.push(DriftRow {
+            server: entry.name.clone(),
+            tool: Tool::Claude,
+            state: drift_state,
+        });
     }
-    for name in live.keys() {
-        // TODO(AGNT-0002.T03): Classify changed managed entries as spared.
+    for (name, value) in &live {
         if manifest
             .servers
             .iter()
@@ -150,12 +201,24 @@ pub fn check(
         {
             continue;
         }
-        let drift_state = if state.claude_managed.contains(name) {
-            DriftState::Drifted
-        } else {
-            DriftState::Unmanaged
+        let drift_state = match state
+            .claude_managed
+            .iter()
+            .find(|managed| managed.name == *name)
+        {
+            Some(managed)
+                if managed.fingerprint.as_deref() == Some(fingerprint_live(value).as_str()) =>
+            {
+                DriftState::Drifted
+            }
+            Some(_) => DriftState::Spared,
+            None => DriftState::Unmanaged,
         };
-        rows.push(DriftRow { server: name.clone(), tool: Tool::Claude, state: drift_state });
+        rows.push(DriftRow {
+            server: name.clone(),
+            tool: Tool::Claude,
+            state: drift_state,
+        });
     }
     Ok(rows)
 }
@@ -306,10 +369,8 @@ mod tests {
     use super::*;
 
     fn fixture_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "mcp-sync-claude-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mcp-sync-claude-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create fixture dir");
         dir
@@ -362,7 +423,21 @@ mod tests {
     }
 
     fn empty_state() -> SyncState {
-        SyncState { claude_managed: Vec::new(), codex_managed: Vec::new() }
+        SyncState {
+            claude_managed: Vec::new(),
+            codex_managed: Vec::new(),
+        }
+    }
+
+    fn managed(name: &str, fingerprint: Option<String>) -> ManagedServer {
+        ManagedServer {
+            name: name.to_string(),
+            fingerprint,
+        }
+    }
+
+    fn managed_live(name: &str, value: &Value) -> ManagedServer {
+        managed(name, Some(fingerprint_live(value)))
     }
 
     fn seeded_config() -> Value {
@@ -412,14 +487,41 @@ mod tests {
             "https://x.example/mcp",
             Some("X_TOKEN"),
         ));
-        assert_eq!(rendered, json!({ "type": "http", "url": "https://x.example/mcp" }));
+        assert_eq!(
+            rendered,
+            json!({ "type": "http", "url": "https://x.example/mcp" })
+        );
+    }
+
+    #[test]
+    fn managed_record_fingerprints_the_rendered_value_canonically() {
+        let entry = stdio_entry(
+            "tool",
+            ToolScope::Both,
+            "npx",
+            &["-y", "tool-mcp"],
+            &[("MODE", "fast")],
+        );
+        let managed = managed_server(&entry);
+        let equal_live = json!({
+            "env": { "MODE": "fast" },
+            "args": ["-y", "tool-mcp"],
+            "command": "npx"
+        });
+        assert_eq!(managed.name, "tool");
+        assert_eq!(
+            managed.fingerprint.as_deref(),
+            Some(fingerprint_live(&equal_live).as_str())
+        );
     }
 
     #[test]
     fn sync_on_an_absent_file_is_an_io_error() {
         let dir = fixture_dir("absent");
         let missing = dir.join("claude.json");
-        let manifest = Manifest { servers: Vec::new() };
+        let manifest = Manifest {
+            servers: Vec::new(),
+        };
         let result = sync(&missing, &manifest, &empty_state(), false);
         assert!(matches!(result, Err(SyncError::Io(_, _))));
     }
@@ -431,13 +533,33 @@ mod tests {
         fs::write(&path, pretty(&seeded_config())).expect("seed config");
         let manifest = Manifest {
             servers: vec![
-                stdio_entry("drifty", ToolScope::Both, "new-cmd", &["--serve"], &[("MODE", "fast")]),
-                remote_entry("fresh", ToolScope::ClaudeOnly, "https://fresh.example/mcp", Some("FRESH_TOKEN")),
-                stdio_entry("codex-side", ToolScope::CodexOnly, "codex-only-cmd", &[], &[]),
+                stdio_entry(
+                    "drifty",
+                    ToolScope::Both,
+                    "new-cmd",
+                    &["--serve"],
+                    &[("MODE", "fast")],
+                ),
+                remote_entry(
+                    "fresh",
+                    ToolScope::ClaudeOnly,
+                    "https://fresh.example/mcp",
+                    Some("FRESH_TOKEN"),
+                ),
+                stdio_entry(
+                    "codex-side",
+                    ToolScope::CodexOnly,
+                    "codex-only-cmd",
+                    &[],
+                    &[],
+                ),
             ],
         };
         let state = SyncState {
-            claude_managed: vec!["drifty".to_string(), "stale".to_string()],
+            claude_managed: vec![
+                managed("drifty", None),
+                managed_live("stale", &json!({ "command": "stale-cmd", "args": ["--x"] })),
+            ],
             codex_managed: Vec::new(),
         };
         let changes = sync(&path, &manifest, &state, false).expect("sync succeeds");
@@ -473,12 +595,115 @@ mod tests {
     }
 
     #[test]
+    fn sync_removes_a_stale_server_only_on_an_exact_fingerprint_match() {
+        let dir = fixture_dir("exact-fingerprint-removal");
+        let path = dir.join("claude.json");
+        let stale = json!({ "command": "stale-cmd", "args": ["--x"] });
+        fs::write(
+            &path,
+            pretty(&json!({
+                "unrelated": { "keep": true },
+                "mcpServers": { "stale": stale.clone() }
+            })),
+        )
+        .expect("seed config");
+        let state = SyncState {
+            claude_managed: vec![managed_live("stale", &stale)],
+            codex_managed: Vec::new(),
+        };
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Claude, server, kind: ChangeKind::Remove }] if server == "stale"
+        ));
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            pretty(&json!({ "unrelated": { "keep": true }, "mcpServers": {} }))
+        );
+    }
+
+    #[test]
+    fn sync_spares_a_changed_replacement_without_rewriting_the_file() {
+        let dir = fixture_dir("changed-replacement");
+        let path = dir.join("claude.json");
+        let original = json!({ "command": "old-cmd", "args": [] });
+        let bytes = "{\"unrelated\":17,\"mcpServers\":{\"stale\":{\"command\":\"replacement\",\"args\":[]}}}";
+        fs::write(&path, bytes).expect("seed config");
+        let state = SyncState {
+            claude_managed: vec![managed_live("stale", &original)],
+            codex_managed: Vec::new(),
+        };
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Claude, server, kind: ChangeKind::Spare }] if server == "stale"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_spares_a_legacy_record_without_deletion_authority() {
+        let dir = fixture_dir("legacy-record");
+        let path = dir.join("claude.json");
+        let bytes = pretty(&json!({
+            "mcpServers": { "stale": { "command": "stale-cmd", "args": [] } }
+        }));
+        fs::write(&path, &bytes).expect("seed config");
+        let state = SyncState {
+            claude_managed: vec![managed("stale", None)],
+            codex_managed: Vec::new(),
+        };
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Claude, server, kind: ChangeKind::Spare }] if server == "stale"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+    }
+
+    #[test]
     fn sync_creates_the_mcp_servers_key_when_absent() {
         let dir = fixture_dir("createkey");
         let path = dir.join("claude.json");
         fs::write(&path, pretty(&json!({ "installMethod": "brew" }))).expect("seed config");
         let manifest = Manifest {
-            servers: vec![remote_entry("fresh", ToolScope::Both, "https://fresh.example/mcp", None)],
+            servers: vec![remote_entry(
+                "fresh",
+                ToolScope::Both,
+                "https://fresh.example/mcp",
+                None,
+            )],
         };
         let changes = sync(&path, &manifest, &empty_state(), false).expect("sync succeeds");
         assert_eq!(changes.len(), 1);
@@ -498,7 +723,12 @@ mod tests {
         let seeded = "{\n  \"growthMetrics\": {\n    \"ratio\": 0.16220400000000001,\n    \"ceiling\": 1e+308,\n    \"tiny\": 5e-324\n  },\n  \"mcpServers\": {}\n}\n";
         fs::write(&path, seeded).expect("seed config");
         let manifest = Manifest {
-            servers: vec![remote_entry("fresh", ToolScope::Both, "https://fresh.example/mcp", None)],
+            servers: vec![remote_entry(
+                "fresh",
+                ToolScope::Both,
+                "https://fresh.example/mcp",
+                None,
+            )],
         };
         let changes = sync(&path, &manifest, &empty_state(), false).expect("sync succeeds");
         assert_eq!(changes.len(), 1);
@@ -554,7 +784,10 @@ mod tests {
             servers: vec![stdio_entry("drifty", ToolScope::Both, "new-cmd", &[], &[])],
         };
         let state = SyncState {
-            claude_managed: vec!["stale".to_string()],
+            claude_managed: vec![managed_live(
+                "stale",
+                &json!({ "command": "stale-cmd", "args": ["--x"] }),
+            )],
             codex_managed: Vec::new(),
         };
         let before = fs::read_to_string(&path).unwrap();
@@ -586,7 +819,10 @@ mod tests {
             ],
         };
         let state = SyncState {
-            claude_managed: vec!["stale".to_string()],
+            claude_managed: vec![managed_live(
+                "stale",
+                &json!({ "command": "stale-cmd", "args": [] }),
+            )],
             codex_managed: Vec::new(),
         };
         let rows = check(&path, &manifest, &state).expect("check succeeds");
@@ -611,6 +847,41 @@ mod tests {
             &rows[4],
             DriftRow { tool: Tool::Claude, state: DriftState::Unmanaged, server } if server == "foreign"
         ));
+    }
+
+    #[test]
+    fn check_classifies_changed_and_legacy_managed_servers_as_spared() {
+        let dir = fixture_dir("check-spared");
+        let path = dir.join("claude.json");
+        let original = json!({ "command": "original", "args": [] });
+        fs::write(
+            &path,
+            pretty(&json!({
+                "mcpServers": {
+                    "changed": { "command": "replacement", "args": [] },
+                    "legacy": { "command": "legacy", "args": [] }
+                }
+            })),
+        )
+        .expect("seed config");
+        let state = SyncState {
+            claude_managed: vec![managed_live("changed", &original), managed("legacy", None)],
+            codex_managed: Vec::new(),
+        };
+
+        let rows = check(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+        )
+        .expect("check succeeds");
+
+        assert_eq!(rows.len(), 2);
+        assert!(rows
+            .iter()
+            .all(|row| matches!(row.state, DriftState::Spared)));
     }
 
     #[test]

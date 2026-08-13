@@ -50,8 +50,12 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
             claude::validate(&targets.claude_json_path)?;
             codex::validate(&targets.codex_toml_path)?;
             hooks::validate(&targets.codex_hooks_json_path)?;
-            let mut changes =
-                claude::sync(&targets.claude_json_path, &manifest, &state, args.is_dry_run)?;
+            let mut changes = claude::sync(
+                &targets.claude_json_path,
+                &manifest,
+                &state,
+                args.is_dry_run,
+            )?;
             changes.extend(codex::sync(
                 &targets.codex_toml_path,
                 &manifest,
@@ -72,8 +76,11 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
                 &targets.codex_agents_dir,
                 args.is_dry_run,
             )?);
-            // TODO(AGNT-0002.T05): Persist only current fingerprinted ownership after apply.
-            manifest::save_state(&targets.state_path, &managed_state(&manifest), args.is_dry_run)?;
+            manifest::save_state(
+                &targets.state_path,
+                &managed_state(&manifest),
+                args.is_dry_run,
+            )?;
             print!("{}", drift::render_plan(&changes, args.is_dry_run));
             Ok(ExitCode::SUCCESS)
         }
@@ -103,19 +110,21 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
     }
 }
 
-// TODO(AGNT-0002.T05): Build per-tool managed records with current fingerprints.
 fn managed_state(manifest: &Manifest) -> SyncState {
     let mut claude_managed = Vec::new();
     let mut codex_managed = Vec::new();
     for server in &manifest.servers {
         if !matches!(server.scope, ToolScope::CodexOnly) {
-            claude_managed.push(server.name.clone());
+            claude_managed.push(claude::managed_server(server));
         }
         if !matches!(server.scope, ToolScope::ClaudeOnly) {
-            codex_managed.push(server.name.clone());
+            codex_managed.push(codex::managed_server(server));
         }
     }
-    SyncState { claude_managed, codex_managed }
+    SyncState {
+        claude_managed,
+        codex_managed,
+    }
 }
 
 #[cfg(test)]
@@ -169,18 +178,34 @@ mod tests {
             "---\nname: ..\ndescription: name is all dots\n---\nbody\n",
         );
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
         let err = run(&args).expect_err("invalid agent name aborts apply");
-        assert!(err.to_string().contains("cannot name an output file"), "{err}");
+        assert!(
+            err.to_string().contains("cannot name an output file"),
+            "{err}"
+        );
 
-        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
-        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
+        assert_eq!(
+            fs::read_to_string(dir.join("claude.json")).unwrap(),
+            CLAUDE_JSON
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("config.toml")).unwrap(),
+            CODEX_TOML
+        );
         assert!(!dir.join("state.toml").exists());
         let names: Vec<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+        assert!(
+            !names.iter().any(|name| name.contains(".pre-sync-")),
+            "{names:?}"
+        );
     }
 
     #[test]
@@ -196,11 +221,96 @@ mod tests {
             "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
         );
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
         run(&args).expect("valid agent set applies");
 
         assert!(dir.join("codex-agents/alpha.toml").exists());
         assert!(dir.join("state.toml").exists());
+    }
+
+    #[test]
+    fn apply_releases_spared_entries_and_keeps_current_fingerprints() {
+        let dir = fixture("release-spared");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(
+            dir.join("claude.json"),
+            "{\n  \"mcpServers\": {\n    \"stale\": {\"command\": \"hand-added\", \"args\": []}\n  }\n}\n",
+        )
+        .expect("seed Claude replacement");
+        fs::write(
+            dir.join("config.toml"),
+            "[mcp_servers.stale]\ncommand = \"hand-added\"\nargs = []\n",
+        )
+        .expect("seed Codex replacement");
+        fs::write(
+            dir.join("state.toml"),
+            "claude_managed = [{ name = \"stale\", fingerprint = \"sha256:old\" }]\n\
+             codex_managed = [{ name = \"stale\", fingerprint = \"sha256:old\" }]\n",
+        )
+        .expect("seed stale ownership");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
+        run(&args).expect("apply spares replacements");
+        let targets = &args.targets;
+
+        let state = manifest::load_state(&targets.state_path).expect("load refreshed state");
+        assert_eq!(state.claude_managed.len(), 1);
+        assert_eq!(state.codex_managed.len(), 1);
+        assert_eq!(state.claude_managed[0].name, "demo");
+        assert_eq!(state.codex_managed[0].name, "demo");
+        assert!(state.claude_managed[0].fingerprint.is_some());
+        assert!(state.codex_managed[0].fingerprint.is_some());
+
+        let manifest = manifest::load_manifest(&targets.manifest_path).expect("reload manifest");
+        let claude_rows = claude::check(&targets.claude_json_path, &manifest, &state)
+            .expect("check Claude after ownership release");
+        let codex_rows = codex::check(&targets.codex_toml_path, &manifest, &state)
+            .expect("check Codex after ownership release");
+        assert!(claude_rows.iter().any(|row| {
+            row.server == "stale" && matches!(row.state, drift::DriftState::Unmanaged)
+        }));
+        assert!(codex_rows.iter().any(|row| {
+            row.server == "stale" && matches!(row.state, drift::DriftState::Unmanaged)
+        }));
+        assert!(fs::read_to_string(&targets.claude_json_path)
+            .expect("read Claude config")
+            .contains("hand-added"));
+        assert!(fs::read_to_string(&targets.codex_toml_path)
+            .expect("read Codex config")
+            .contains("hand-added"));
+    }
+
+    #[test]
+    fn dry_run_does_not_rewrite_managed_state() {
+        let dir = fixture("dry-state");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed claude.json");
+        fs::write(dir.join("config.toml"), CODEX_TOML).expect("seed codex config.toml");
+        fs::write(
+            dir.join("state.toml"),
+            "claude_managed = []\ncodex_managed = []\n",
+        )
+        .expect("seed state");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+
+        let before = fs::read_to_string(dir.join("state.toml")).expect("read state before");
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: true,
+            targets: apply_targets(&dir),
+        };
+        run(&args).expect("dry apply");
+
+        assert_eq!(fs::read_to_string(dir.join("state.toml")).unwrap(), before);
     }
 
     #[test]
@@ -213,7 +323,11 @@ mod tests {
         targets.manifest_path = repo_root.join("config/mcp-servers.toml");
         targets.agents_src_dir = repo_root.join("agents");
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets,
+        };
         run(&args).expect("real repo manifest and agents apply");
 
         for name in [
@@ -246,18 +360,34 @@ mod tests {
             &format!("---\nname: {long_name}\ndescription: name is 300 chars long\n---\nbody\n"),
         );
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
         let err = run(&args).expect_err("over-long agent name aborts apply");
-        assert!(err.to_string().contains("cannot name an output file"), "{err}");
+        assert!(
+            err.to_string().contains("cannot name an output file"),
+            "{err}"
+        );
 
-        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
-        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
+        assert_eq!(
+            fs::read_to_string(dir.join("claude.json")).unwrap(),
+            CLAUDE_JSON
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("config.toml")).unwrap(),
+            CODEX_TOML
+        );
         assert!(!dir.join("state.toml").exists());
         let names: Vec<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+        assert!(
+            !names.iter().any(|name| name.contains(".pre-sync-")),
+            "{names:?}"
+        );
     }
 
     #[test]
@@ -273,18 +403,34 @@ mod tests {
             "---\nname: bad\u{0}name\ndescription: name has a NUL byte\n---\nbody\n",
         );
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
         let err = run(&args).expect_err("NUL-byte agent name aborts apply");
-        assert!(err.to_string().contains("cannot name an output file"), "{err}");
+        assert!(
+            err.to_string().contains("cannot name an output file"),
+            "{err}"
+        );
 
-        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
-        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
+        assert_eq!(
+            fs::read_to_string(dir.join("claude.json")).unwrap(),
+            CLAUDE_JSON
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("config.toml")).unwrap(),
+            CODEX_TOML
+        );
         assert!(!dir.join("state.toml").exists());
         let names: Vec<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+        assert!(
+            !names.iter().any(|name| name.contains(".pre-sync-")),
+            "{names:?}"
+        );
     }
 
     #[test]
@@ -301,19 +447,35 @@ mod tests {
             "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
         );
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
         let err = run(&args).expect_err("malformed hooks.json aborts apply");
         assert!(matches!(err, SyncError::ParseJson(_, _)), "{err}");
 
-        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
-        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
-        assert_eq!(fs::read_to_string(dir.join("hooks.json")).unwrap(), "{not json");
+        assert_eq!(
+            fs::read_to_string(dir.join("claude.json")).unwrap(),
+            CLAUDE_JSON
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("config.toml")).unwrap(),
+            CODEX_TOML
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("hooks.json")).unwrap(),
+            "{not json"
+        );
         assert!(!dir.join("state.toml").exists());
         let names: Vec<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+        assert!(
+            !names.iter().any(|name| name.contains(".pre-sync-")),
+            "{names:?}"
+        );
     }
 
     #[test]
@@ -321,8 +483,11 @@ mod tests {
         let dir = fixture("malformed-codex");
         fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
         fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed claude.json");
-        fs::write(dir.join("config.toml"), "[mcp_servers.broken\ncommand = \"npx\"\n")
-            .expect("seed malformed codex config.toml");
+        fs::write(
+            dir.join("config.toml"),
+            "[mcp_servers.broken\ncommand = \"npx\"\n",
+        )
+        .expect("seed malformed codex config.toml");
         fs::create_dir_all(dir.join("agents")).expect("create agents dir");
         write_agent(
             &dir.join("agents"),
@@ -330,16 +495,26 @@ mod tests {
             "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
         );
 
-        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
         let err = run(&args).expect_err("malformed live codex config aborts apply");
         assert!(matches!(err, SyncError::ParseToml(_, _)), "{err}");
 
-        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
+        assert_eq!(
+            fs::read_to_string(dir.join("claude.json")).unwrap(),
+            CLAUDE_JSON
+        );
         assert!(!dir.join("state.toml").exists());
         let names: Vec<String> = fs::read_dir(&dir)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
-        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+        assert!(
+            !names.iter().any(|name| name.contains(".pre-sync-")),
+            "{names:?}"
+        );
     }
 }

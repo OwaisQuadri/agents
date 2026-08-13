@@ -40,24 +40,24 @@ impl Tool {
 }
 
 impl DriftState {
-    // TODO(AGNT-0002.T06): Render spared drift without changing existing words.
     fn word(&self) -> &'static str {
         match self {
             DriftState::Ok => "ok",
             DriftState::Missing => "missing",
             DriftState::Drifted => "drifted",
+            DriftState::Spared => "spared",
             DriftState::Unmanaged => "unmanaged",
         }
     }
 }
 
 impl ChangeKind {
-    // TODO(AGNT-0002.T06): Render spare actions in the existing plan language.
     fn word(&self) -> &'static str {
         match self {
             ChangeKind::Add => "add",
             ChangeKind::Update => "update",
             ChangeKind::Remove => "remove",
+            ChangeKind::Spare => "spare",
         }
     }
 }
@@ -163,6 +163,14 @@ mod tests {
     }
 
     #[test]
+    fn spare_action_uses_existing_plan_language() {
+        let changes = [change(Tool::Codex, ChangeKind::Spare, "linear")];
+
+        assert_eq!(render_plan(&changes, false), "plan: codex spare linear\n");
+        assert_eq!(render_plan(&changes, true), "dry:  codex spare linear\n");
+    }
+
+    #[test]
     fn check_screen_for_a_mixed_drift_set() {
         assert_eq!(
             render_check(&mixed_rows()),
@@ -174,12 +182,23 @@ mod tests {
     }
 
     #[test]
+    fn check_screen_exposes_spared_state_per_tool() {
+        let rows = [
+            row("linear", Tool::Claude, DriftState::Spared),
+            row("linear", Tool::Codex, DriftState::Ok),
+        ];
+
+        assert_eq!(render_check(&rows), "linear  claude=spared codex=ok\n");
+    }
+
+    #[test]
     fn is_drift_present_is_true_iff_any_non_ok_row() {
         assert!(is_drift_present(&mixed_rows()));
         assert!(!is_drift_present(&[]));
         assert!(!is_drift_present(&[row("supermemory", Tool::Claude, DriftState::Ok)]));
         assert!(is_drift_present(&[row("supermemory", Tool::Codex, DriftState::Missing)]));
         assert!(is_drift_present(&[row("mobbin", Tool::Claude, DriftState::Drifted)]));
+        assert!(is_drift_present(&[row("linear", Tool::Claude, DriftState::Spared)]));
         assert!(is_drift_present(&[row("scratchpad", Tool::Codex, DriftState::Unmanaged)]));
     }
 }
