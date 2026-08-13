@@ -93,20 +93,22 @@ if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
 fi
 
-# 8. ste-check: the prose checker every register runs. an artifact the installer
-#    compiles rather than links, because a checker in the reply path is waited on
-CRATE="$REPO_TARGET/tools/ste-check"
-if [[ -f "$CRATE/Cargo.toml" ]]; then
+# 8. the rust tools. these are the artifacts the installer compiles rather than links,
+#    because each one sits in a path that is waited on: ste-check in the reply path,
+#    no-ai-attribution in the PreToolUse path ahead of every commit
+for tool in ste-check no-ai-attribution; do
+  CRATE="$REPO_TARGET/tools/$tool"
+  [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then
     plan "build $CRATE (release)"
     run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
     plan "ensure $HOME/.local/bin"
     run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/ste-check" "$CRATE/target/release/ste-check"
+    link "$HOME/.local/bin/$tool" "$CRATE/target/release/$tool"
   else
-    echo "warn: cargo not found, skipping the ste-check build" >&2
+    echo "warn: cargo not found, skipping the $tool build" >&2
   fi
-fi
+done
 
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
 link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
