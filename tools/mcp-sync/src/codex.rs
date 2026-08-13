@@ -50,7 +50,14 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
 /// ParseToml on invalid TOML; Io on a read failure other than not-found.
 pub fn validate(path: &Path) -> Result<(), SyncError> {
     let text = fsio::read_opt(path)?;
-    parse_doc(path, text.as_deref()).map(|_| ())
+    let doc = parse_doc(path, text.as_deref())?;
+    match doc.get("mcp_servers") {
+        None | Some(toml_edit::Item::Table(_)) => Ok(()),
+        Some(_) => Err(SyncError::ParseToml(
+            path.to_path_buf(),
+            "mcp_servers is not a table".to_string(),
+        )),
+    }
 }
 
 /// Converges the [mcp_servers.*] tables of config.toml onto the manifest.

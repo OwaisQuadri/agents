@@ -75,7 +75,21 @@ pub fn write_verified(
         Err(err) => return Err(SyncError::Io(path.to_path_buf(), err)),
     };
     let tmp = suffixed(path, &unique_tmp_suffix());
-    fs::write(&tmp, content).map_err(|err| SyncError::Io(tmp.clone(), err))?;
+    {
+        use std::io::Write;
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(permissions) = &target_permissions {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            options.mode(permissions.mode());
+        }
+        let mut file = options
+            .open(&tmp)
+            .map_err(|err| SyncError::Io(tmp.clone(), err))?;
+        file.write_all(content.as_bytes())
+            .map_err(|err| SyncError::Io(tmp.clone(), err))?;
+    }
     if let Some(permissions) = target_permissions {
         fs::set_permissions(&tmp, permissions).map_err(|err| SyncError::Io(tmp.clone(), err))?;
     }

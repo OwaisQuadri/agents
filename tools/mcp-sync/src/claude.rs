@@ -99,7 +99,9 @@ pub fn sync(
     }
     let mut rendered_doc = serde_json::to_string_pretty(&Value::Object(doc))
         .expect("a string-keyed Value always serializes");
-    rendered_doc.push('\n');
+    if snapshot.ends_with('\n') {
+        rendered_doc.push('\n');
+    }
     if rendered_doc == snapshot {
         return Ok(changes);
     }
@@ -500,6 +502,26 @@ mod tests {
         let first = sync(&path, &manifest, &state, false).expect("first sync");
         assert_eq!(first.len(), 1);
         let bytes = fs::read_to_string(&path).unwrap();
+        let files_before = fs::read_dir(&dir).unwrap().count();
+        let second = sync(&path, &manifest, &state, false).expect("second sync");
+        assert!(second.is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), files_before);
+    }
+
+    #[test]
+    fn a_file_without_a_trailing_newline_converges() {
+        let dir = fixture_dir("no-trailing-newline");
+        let path = dir.join("claude.json");
+        let seeded = pretty(&seeded_config());
+        fs::write(&path, seeded.trim_end_matches('\n')).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![stdio_entry("drifty", ToolScope::Both, "new-cmd", &[], &[])],
+        };
+        let state = empty_state();
+        sync(&path, &manifest, &state, false).expect("first sync");
+        let bytes = fs::read_to_string(&path).unwrap();
+        assert!(!bytes.ends_with('\n'));
         let files_before = fs::read_dir(&dir).unwrap().count();
         let second = sync(&path, &manifest, &state, false).expect("second sync");
         assert!(second.is_empty());
