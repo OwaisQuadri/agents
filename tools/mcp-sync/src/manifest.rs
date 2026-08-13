@@ -1,3 +1,4 @@
+// TODO(AGNT-0002.T02): Reject duplicate managed authority before writes.
 use std::path::Path;
 
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, TableLike};

@@ -1,3 +1,4 @@
+// TODO(AGNT-0002.T05): Reject divergent same-name adoption.
 use std::env;
 #[cfg(not(test))]
 use std::io;

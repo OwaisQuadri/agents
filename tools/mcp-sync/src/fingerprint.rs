@@ -1,3 +1,4 @@
+// TODO(AGNT-0002.T01): Verify deterministic fingerprint coverage.
 use sha2::{Digest, Sha256};
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
