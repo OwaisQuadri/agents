@@ -1,4 +1,3 @@
-// TODO(AGNT-0002.T05): Reject divergent same-name adoption.
 use std::env;
 #[cfg(not(test))]
 use std::io;
@@ -117,8 +116,15 @@ fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, 
         Mode::Adopt => {
             let mut entries = claude::unmanaged(&targets.claude_json_path, &manifest)?;
             for entry in codex::unmanaged(&targets.codex_toml_path, &manifest)? {
-                if entries.iter().all(|held| held.name != entry.name) {
-                    entries.push(entry);
+                match entries.iter().find(|held| held.name == entry.name) {
+                    None => entries.push(entry),
+                    Some(held) if is_same_server_definition(held, &entry) => {}
+                    Some(_) => {
+                        return Err(SyncError::ManifestInvalid(format!(
+                            "cannot adopt server {}: Claude and Codex definitions differ; rename one or add the intended tool-scoped definition to the manifest",
+                            entry.name
+                        )));
+                    }
                 }
             }
             if !entries.is_empty() {
@@ -126,6 +132,25 @@ fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, 
             }
             Ok(ExitCode::SUCCESS)
         }
+    }
+}
+
+fn is_same_server_definition(left: &manifest::ServerEntry, right: &manifest::ServerEntry) -> bool {
+    match (&left.transport, &right.transport) {
+        (manifest::Transport::Stdio(left), manifest::Transport::Stdio(right)) => {
+            let mut left_env = left.env.clone();
+            let mut right_env = right.env.clone();
+            left_env.sort();
+            right_env.sort();
+            left.command == right.command
+                && left.args == right.args
+                && left_env == right_env
+                && left.cwd == right.cwd
+        }
+        (manifest::Transport::Remote(left), manifest::Transport::Remote(right)) => {
+            left.url == right.url && left.bearer_token_env_var == right.bearer_token_env_var
+        }
+        _ => false,
     }
 }
 
@@ -228,6 +253,53 @@ mod tests {
     }
 
     #[test]
+    fn apply_refuses_duplicate_managed_authority_before_any_write() {
+        let dir = fixture("duplicate-managed-authority");
+        fs::write(dir.join("manifest.toml"), "# victim was removed\n").expect("seed manifest");
+        let claude_before = "{\n  \"mcpServers\": {\n    \"victim\": {\n      \"command\": \"managed-original\",\n      \"args\": [\"safe\"]\n    }\n  }\n}\n";
+        let codex_before =
+            "[mcp_servers.victim]\ncommand = \"managed-original\"\nargs = [\"safe\"]\n";
+        let state_before = "claude_managed = [\n  { name = \"victim\" },\n  { name = \"victim\", fingerprint = \"sha256:377bb661e22dd601b0ea6327f3c5c4ffb3df081633b59f62d59ee347ab69b69d\" },\n]\ncodex_managed = [\n  { name = \"victim\" },\n  { name = \"victim\", fingerprint = \"sha256:b70fb30fd328274b80f962775458ad5b38b088b520d47ec24cf1d6efe60c5a9b\" },\n]\n";
+        fs::write(dir.join("claude.json"), claude_before).expect("seed Claude config");
+        fs::write(dir.join("config.toml"), codex_before).expect("seed Codex config");
+        fs::write(dir.join("state.toml"), state_before).expect("seed duplicate state");
+
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
+        let err = run(&args).expect_err("duplicate authority must stop apply");
+        assert!(matches!(err, SyncError::ParseToml(_, _)), "{err}");
+        assert!(err.to_string().contains("claude_managed"), "{err}");
+        assert!(
+            err.to_string().contains("duplicate managed name victim"),
+            "{err}"
+        );
+
+        assert_eq!(
+            fs::read_to_string(dir.join("claude.json")).unwrap(),
+            claude_before
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("config.toml")).unwrap(),
+            codex_before
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("state.toml")).unwrap(),
+            state_before
+        );
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !names.iter().any(|name| name.contains(".pre-sync-")),
+            "{names:?}"
+        );
+    }
+
+    #[test]
     fn apply_converges_a_valid_agent_set() {
         let dir = fixture("valid-agent");
         fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
@@ -277,23 +349,14 @@ mod tests {
             is_dry_run: false,
             targets: apply_targets(&dir),
         };
-        let manifest = manifest::load_manifest(&args.targets.manifest_path)
-            .expect("load manifest for spare preview");
-        let state =
-            manifest::load_state(&args.targets.state_path).expect("load state for spare preview");
-        let mut preview = claude::sync(&args.targets.claude_json_path, &manifest, &state, true)
-            .expect("preview Claude spare");
-        preview.extend(
-            codex::sync(&args.targets.codex_toml_path, &manifest, &state, true)
-                .expect("preview Codex spare"),
-        );
-        let rendered = drift::render_plan(&preview, true);
+        let mut output = Vec::new();
+        run_with_output(&args, &mut output).expect("apply spares replacements");
+        let rendered = String::from_utf8(output).expect("decode apply output");
         assert!(
-            rendered.contains("dry:  claude spare stale\n"),
+            rendered.contains("plan: claude spare stale\n"),
             "{rendered}"
         );
-        assert!(rendered.contains("dry:  codex spare stale\n"), "{rendered}");
-        run(&args).expect("apply spares replacements");
+        assert!(rendered.contains("plan: codex spare stale\n"), "{rendered}");
         let targets = &args.targets;
 
         let state = manifest::load_state(&targets.state_path).expect("load refreshed state");
@@ -950,6 +1013,50 @@ mod tests {
                 .iter()
                 .any(|name| name.starts_with("state.toml.pre-sync-")),
             "{names:?}"
+        );
+    }
+
+    #[test]
+    fn adopt_rejects_divergent_same_name_servers_without_changing_any_file() {
+        let dir = fixture("adopt-divergent-same-name");
+        let manifest_before = "# managed servers\n";
+        let claude_before = "{\n  \"mcpServers\": {\n    \"shared\": {\"command\": \"claude-hand-added\", \"args\": [\"--claude\"]}\n  }\n}\n";
+        let codex_before =
+            "[mcp_servers.shared]\ncommand = \"codex-hand-added\"\nargs = [\"--codex\"]\n";
+        fs::write(dir.join("manifest.toml"), manifest_before).expect("seed manifest");
+        fs::write(dir.join("claude.json"), claude_before).expect("seed Claude config");
+        fs::write(dir.join("config.toml"), codex_before).expect("seed Codex config");
+
+        let args = CliArgs {
+            mode: Mode::Adopt,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
+        let err = run(&args).expect_err("divergent same-name servers require selection");
+        let SyncError::ManifestInvalid(message) = err else {
+            panic!("expected manifest invalid error, got {err}");
+        };
+        assert!(
+            message.contains("cannot adopt server shared: Claude and Codex definitions differ"),
+            "{message}"
+        );
+        assert!(
+            message.contains(
+                "rename one or add the intended tool-scoped definition to the manifest"
+            ),
+            "{message}"
+        );
+        assert_eq!(
+            fs::read_to_string(&args.targets.manifest_path).expect("read manifest"),
+            manifest_before
+        );
+        assert_eq!(
+            fs::read_to_string(&args.targets.claude_json_path).expect("read Claude config"),
+            claude_before
+        );
+        assert_eq!(
+            fs::read_to_string(&args.targets.codex_toml_path).expect("read Codex config"),
+            codex_before
         );
     }
 

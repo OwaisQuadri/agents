@@ -1,4 +1,3 @@
-// TODO(AGNT-0002.T04): Verify Codex spare and removal safety.
 use std::path::Path;
 
 use toml_edit::{DocumentMut, Item, Table, TableLike, Value};

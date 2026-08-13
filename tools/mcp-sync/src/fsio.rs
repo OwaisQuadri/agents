@@ -1,4 +1,3 @@
-// TODO(AGNT-0002.T08): Serialize competing verified writes.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,15 +42,17 @@ pub fn backup(path: &Path) -> Result<Option<PathBuf>, SyncError> {
 }
 
 /// Writes content atomically after proving the target is unchanged since read.
-/// Compares the target against the snapshot taken at read time, backs it up,
-/// writes a temp file in the same dir carrying an existing target's file
-/// mode, renames it in, and re-reads to verify.
+/// Takes an exclusive lock on the parent directory, compares the target against
+/// the snapshot taken at read time, backs it up, writes a temp file in the same
+/// dir carrying an existing target's file mode, renames it in, and re-reads to
+/// verify.
 /// Takes the path, the new content, the read-time snapshot, and the dry-run
 /// flag; returns unit. In dry-run it prints the would-write line and touches
 /// nothing.
 ///
 /// # Errors
-/// ChangedSinceRead when the target no longer matches the snapshot;
+/// ChangedSinceRead when another writer holds the lock or the target no longer
+/// matches the snapshot;
 /// BackupFailed from the backup step; VerifyFailed when the re-read differs;
 /// Io on any filesystem failure.
 pub fn write_verified(
@@ -60,13 +61,18 @@ pub fn write_verified(
     snapshot: Option<&str>,
     is_dry_run: bool,
 ) -> Result<(), SyncError> {
+    if is_dry_run {
+        let current = read_opt(path)?;
+        if current.as_deref() != snapshot {
+            return Err(SyncError::ChangedSinceRead(path.to_path_buf()));
+        }
+        println!("dry:  write {}", path.display());
+        return Ok(());
+    }
+    let _write_lock = lock_parent(path)?;
     let current = read_opt(path)?;
     if current.as_deref() != snapshot {
         return Err(SyncError::ChangedSinceRead(path.to_path_buf()));
-    }
-    if is_dry_run {
-        println!("dry:  write {}", path.display());
-        return Ok(());
     }
     sweep_stale_tmp(path);
     backup(path)?;
@@ -104,6 +110,24 @@ pub fn write_verified(
         ));
     }
     Ok(())
+}
+
+fn lock_parent(path: &Path) -> Result<fs::File, SyncError> {
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let lock = fs::File::open(dir).map_err(|err| SyncError::Io(path.to_path_buf(), err))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => {
+            return Err(SyncError::ChangedSinceRead(path.to_path_buf()));
+        }
+        Err(fs::TryLockError::Error(err)) => {
+            return Err(SyncError::Io(path.to_path_buf(), err));
+        }
+    }
+    Ok(lock)
 }
 
 fn suffixed(path: &Path, suffix: &str) -> PathBuf {
@@ -232,6 +256,20 @@ mod tests {
         let absent = dir.join("gone.toml");
         let gone = write_verified(&absent, "next", Some("stale"), false);
         assert!(matches!(gone, Err(SyncError::ChangedSinceRead(_))));
+    }
+
+    #[test]
+    fn competing_write_is_rejected_while_write_lock_is_held() {
+        let dir = fixture("competing-write");
+        let target = dir.join("config.toml");
+        fs::write(&target, "shared-snapshot").expect("seed target");
+        let held_lock = lock_parent(&target).expect("hold write lock");
+        let result = write_verified(&target, "competing-content", Some("shared-snapshot"), false);
+        assert!(matches!(result, Err(SyncError::ChangedSinceRead(_))));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "shared-snapshot");
+        assert!(write_verified(&target, "dry-run-content", Some("shared-snapshot"), true).is_ok());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "shared-snapshot");
+        drop(held_lock);
     }
 
     #[test]

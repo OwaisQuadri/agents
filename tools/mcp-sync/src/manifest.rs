@@ -1,4 +1,3 @@
-// TODO(AGNT-0002.T02): Reject duplicate managed authority before writes.
 use std::path::Path;
 
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table, TableLike};
@@ -61,9 +60,15 @@ fn managed_servers_of(
     let array = item.as_array().ok_or_else(|| {
         SyncError::ParseToml(path.to_path_buf(), format!("{key} is not an array"))
     })?;
-    let mut servers = Vec::new();
+    let mut servers: Vec<ManagedServer> = Vec::new();
     for entry in array.iter() {
         if let Some(name) = entry.as_str() {
+            if servers.iter().any(|server| server.name == name) {
+                return Err(SyncError::ParseToml(
+                    path.to_path_buf(),
+                    format!("{key} holds duplicate managed name {name}"),
+                ));
+            }
             servers.push(ManagedServer {
                 name: name.to_string(),
                 fingerprint: None,
@@ -108,6 +113,12 @@ fn managed_servers_of(
             ),
             None => None,
         };
+        if servers.iter().any(|server| server.name == name) {
+            return Err(SyncError::ParseToml(
+                path.to_path_buf(),
+                format!("{key} holds duplicate managed name {name}"),
+            ));
+        }
         servers.push(ManagedServer {
             name: name.to_string(),
             fingerprint,
@@ -646,6 +657,34 @@ tools = [\"claude\", \"codex\"]
         assert_eq!(state.codex_managed.len(), 1);
         assert_eq!(state.codex_managed[0].name, "mike");
         assert_eq!(state.codex_managed[0].fingerprint, None);
+    }
+
+    #[test]
+    fn state_rejects_duplicate_legacy_names_per_tool() {
+        let dir = fixture("duplicate-legacy-state");
+        let path = dir.join("mcp-sync-state.toml");
+        for (managed_array, input) in [
+            (
+                "claude_managed",
+                "claude_managed = [\"zeta\", \"zeta\"]\ncodex_managed = []\n",
+            ),
+            (
+                "codex_managed",
+                "claude_managed = []\ncodex_managed = [\"zeta\", \"zeta\"]\n",
+            ),
+        ] {
+            fs::write(&path, input).expect("seed duplicate legacy state");
+            let err = match load_state(&path) {
+                Err(err) => err,
+                Ok(_) => panic!("duplicate legacy name unexpectedly loaded"),
+            };
+            let SyncError::ParseToml(error_path, detail) = err else {
+                panic!("expected state TOML error, got {err}");
+            };
+            assert_eq!(error_path, path);
+            assert!(detail.contains(managed_array), "{detail}");
+            assert!(detail.contains("duplicate managed name zeta"), "{detail}");
+        }
     }
 
     #[test]

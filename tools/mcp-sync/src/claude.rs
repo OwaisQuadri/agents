@@ -1,4 +1,3 @@
-// TODO(AGNT-0002.T03): Verify Claude spare and removal safety.
 use std::path::Path;
 
 use serde_json::{Map, Value};

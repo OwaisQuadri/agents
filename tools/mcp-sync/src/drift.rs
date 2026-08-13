@@ -1,4 +1,3 @@
-// TODO(AGNT-0002.T06): Verify spared reporting and drift states.
 pub enum Tool {
     Claude,
     Codex,
