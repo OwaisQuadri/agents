@@ -40,7 +40,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Merge concurrent applies instead of last-writer-wins",
-      "long": "Two mcp-sync applies against the same target at the same moment each write an intact file, and the later rename wins. The earlier change disappears while both runs report success.\n\nThe fix is a conflict pass: after a lost race, re-read the target and merge. Prefer to keep both entries and to maximize compatibility.\n\nLow priority: install.sh invokes the tool one run at a time, and the owner runs one agent at a time. The external-writer guard already refuses blind overwrites. Repro: .map/AGNT-0001/scratch/t19b-concurrency.",
+      "long": "Two mcp-sync applies against the same target at the same moment each write an intact file, and the later rename wins. The earlier change disappears while both runs report success.\n\nThe fix is a conflict pass: after a lost race, re-read the target and merge. Prefer to keep both entries and to maximize compatibility.\n\nLow priority: install.sh invokes the tool one run at a time, and the owner runs one agent at a time. The external-writer guard already refuses blind overwrites. Repro: .map/AGNT-0001/scratch/t19b-concurrency.\n\nTrigger note from the close review: install.sh links itself as the post-merge hook, so a git pull inside a live agent session is the likely real-world path to two concurrent applies.",
       "deps": [],
       "files": [
         "tools/mcp-sync/src/fsio.rs",

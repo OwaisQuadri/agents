@@ -17,7 +17,7 @@ versioned in one repo with a symlink installer.
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
-| `config/` | `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest and the single edit surface for servers; `mcp-sync-state.toml`, the machine-written sync state; tracked copies of `settings.json` / `settings.local.json`, which stay reference-only: never installed, never symlinked, never written by the installer |
+| `config/` | `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest and the single edit surface for servers; `mcp-sync-state.toml`, the machine-written, untracked sync state; tracked copies of `settings.json` / `settings.local.json`, which stay reference-only: never installed, never symlinked, never written by the installer |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
 | `tools/` | `ste-check`, the zero-dependency Rust binary that grades prose against the STE rules plus whatever the register adds; `mcp-sync`, the Rust binary that renders the MCP server manifest into each tool's live config |
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
