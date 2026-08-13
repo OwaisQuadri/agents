@@ -64,12 +64,12 @@ pub fn parse_agent_md(path: &Path) -> Result<AgentDef, SyncError> {
         .filter(|field| !field.is_empty())
         .ok_or_else(|| invalid(path, "frontmatter has no name"))?;
     let is_too_long_for_a_filename = name.len() > 255;
-    let has_a_control_char = name.chars().any(char::is_control);
+    let is_control_char_present = name.chars().any(char::is_control);
     if name.contains('/')
         || name.contains('\\')
         || name.contains("..")
         || is_too_long_for_a_filename
-        || has_a_control_char
+        || is_control_char_present
     {
         return Err(invalid(
             path,
@@ -89,9 +89,6 @@ pub fn parse_agent_md(path: &Path) -> Result<AgentDef, SyncError> {
 
 /// Renders an agent definition as a Codex agent TOML document.
 /// Takes the definition; returns the TOML text.
-///
-/// # Errors
-/// none
 pub fn render_agent_toml(def: &AgentDef) -> String {
     let mut doc = DocumentMut::new();
     doc.insert("name", value(def.name.as_str()));
@@ -118,8 +115,9 @@ pub fn parse_agents_dir(src_dir: &Path) -> Result<Vec<AgentDef>, SyncError> {
 }
 
 /// Converges the Codex agents dir onto the repo agents dir.
-/// Renders every agents/<name>/<name>.md into <dest>/<name>.toml and removes
-/// dest files whose source agent no longer exists.
+/// Renders every agents/<name>/<name>.md into <dest>/<name>.toml; a
+/// managed-shaped dest file whose source agent no longer exists is reported
+/// on stderr and left in place, never removed.
 /// Takes the source dir, dest dir, and dry-run flag; returns the changes.
 ///
 /// # Errors
@@ -165,16 +163,10 @@ pub fn sync_agents(src_dir: &Path, dest_dir: &Path, is_dry_run: bool) -> Result<
         if !is_managed_shape(&existing) {
             continue;
         }
-        changes.push(Change {
-            tool: Tool::Codex,
-            server: stem.to_string(),
-            kind: ChangeKind::Remove,
-        });
-        if is_dry_run {
-            continue;
-        }
-        fsio::backup(&orphan)?;
-        fs::remove_file(&orphan).map_err(|err| SyncError::Io(orphan.clone(), err))?;
+        eprintln!(
+            "orphan agent file {}: removal deferred, left in place",
+            orphan.display()
+        );
     }
     Ok(changes)
 }
@@ -406,7 +398,7 @@ The dispatch prompt carries \"mode\" and `drive_matrix`.
     }
 
     #[test]
-    fn sync_adds_updates_removes_and_skips() {
+    fn sync_adds_updates_reports_orphans_and_skips() {
         let dir = fixture("sync");
         let src = dir.join("agents");
         let dest = dir.join("codex-agents");
@@ -435,8 +427,7 @@ The dispatch prompt carries \"mode\" and `drive_matrix`.
         assert_eq!(
             crate::drift::render_plan(&changes, false),
             "plan: codex add alpha\n\
-             plan: codex update bravo\n\
-             plan: codex remove charlie\n"
+             plan: codex update bravo\n"
         );
 
         let alpha: DocumentMut = fs::read_to_string(dest.join("alpha.toml"))
@@ -448,13 +439,14 @@ The dispatch prompt carries \"mode\" and `drive_matrix`.
         assert!(alpha.get("model").is_none());
         let bravo = fs::read_to_string(dest.join("bravo.toml")).unwrap();
         assert!(bravo.contains("bravo does one job."), "{bravo}");
-        assert!(!dest.join("charlie.toml").exists());
+        let charlie = fs::read_to_string(dest.join("charlie.toml")).expect("orphan survives");
+        assert!(charlie.contains("name = \"charlie\""), "{charlie}");
         let names: Vec<String> = fs::read_dir(&dest)
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert!(
-            names.iter().any(|name| name.starts_with("charlie.toml.pre-sync-")),
+            !names.iter().any(|name| name.starts_with("charlie.toml.pre-sync-")),
             "{names:?}"
         );
         assert_eq!(
@@ -481,11 +473,7 @@ The dispatch prompt carries \"mode\" and `drive_matrix`.
         .expect("seed orphan");
 
         let changes = sync_agents(&src, &dest, true).expect("dry sync succeeds");
-        assert_eq!(
-            crate::drift::render_plan(&changes, true),
-            "dry:  codex add alpha\n\
-             dry:  codex remove charlie\n"
-        );
+        assert_eq!(crate::drift::render_plan(&changes, true), "dry:  codex add alpha\n");
         assert!(!dest.join("alpha.toml").exists());
         assert!(dest.join("charlie.toml").exists());
         assert_eq!(fs::read_dir(&dest).unwrap().count(), 1);

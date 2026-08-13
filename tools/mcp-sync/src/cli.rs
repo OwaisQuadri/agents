@@ -80,9 +80,6 @@ pub fn parse_args(args: impl Iterator<Item = String>) -> Result<CliArgs, String>
 impl Targets {
     /// Builds the default target set from the repo root and the home dir.
     /// Takes both roots; returns Targets with every path filled.
-    ///
-    /// # Errors
-    /// none
     pub fn from_roots(repo_root: &Path, home: &Path) -> Targets {
         Targets {
             manifest_path: repo_root.join("config/mcp-servers.toml"),

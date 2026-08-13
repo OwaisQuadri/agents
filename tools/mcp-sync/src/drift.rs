@@ -61,9 +61,6 @@ impl ChangeKind {
 /// Renders changes as plan lines in install.sh's line language.
 /// Takes the changes and the dry-run flag; returns the printable text, one
 /// line per change, dry: prefixed under dry-run and plan: otherwise.
-///
-/// # Errors
-/// none
 pub fn render_plan(changes: &[Change], is_dry_run: bool) -> String {
     let prefix = if is_dry_run { "dry:  " } else { "plan: " };
     changes
@@ -77,9 +74,6 @@ pub fn render_plan(changes: &[Change], is_dry_run: bool) -> String {
 /// Renders drift rows as the one-screen check readout.
 /// Takes the rows; returns the readout text grouped by server, one state
 /// word per tool.
-///
-/// # Errors
-/// none
 pub fn render_check(rows: &[DriftRow]) -> String {
     let mut seen: Vec<&str> = Vec::new();
     let mut out = String::new();
@@ -109,10 +103,7 @@ pub fn render_check(rows: &[DriftRow]) -> String {
 
 /// Reports whether any row is not Ok.
 /// Takes the rows; returns true on any Missing, Drifted, or Unmanaged row.
-///
-/// # Errors
-/// none
-pub fn has_drift(rows: &[DriftRow]) -> bool {
+pub fn is_drift_present(rows: &[DriftRow]) -> bool {
     rows.iter().any(|row| !matches!(row.state, DriftState::Ok))
 }
 
@@ -179,12 +170,12 @@ mod tests {
     }
 
     #[test]
-    fn has_drift_is_true_iff_any_non_ok_row() {
-        assert!(has_drift(&mixed_rows()));
-        assert!(!has_drift(&[]));
-        assert!(!has_drift(&[row("supermemory", Tool::Claude, DriftState::Ok)]));
-        assert!(has_drift(&[row("supermemory", Tool::Codex, DriftState::Missing)]));
-        assert!(has_drift(&[row("mobbin", Tool::Claude, DriftState::Drifted)]));
-        assert!(has_drift(&[row("scratchpad", Tool::Codex, DriftState::Unmanaged)]));
+    fn is_drift_present_is_true_iff_any_non_ok_row() {
+        assert!(is_drift_present(&mixed_rows()));
+        assert!(!is_drift_present(&[]));
+        assert!(!is_drift_present(&[row("supermemory", Tool::Claude, DriftState::Ok)]));
+        assert!(is_drift_present(&[row("supermemory", Tool::Codex, DriftState::Missing)]));
+        assert!(is_drift_present(&[row("mobbin", Tool::Claude, DriftState::Drifted)]));
+        assert!(is_drift_present(&[row("scratchpad", Tool::Codex, DriftState::Unmanaged)]));
     }
 }

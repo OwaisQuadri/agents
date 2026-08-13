@@ -11,9 +11,6 @@ use crate::manifest::{
 
 /// Renders one manifest entry as a Codex [mcp_servers.<name>] table.
 /// Takes the entry; returns the TOML table.
-///
-/// # Errors
-/// none
 pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
     let mut table = Table::new();
     match &entry.transport {
@@ -30,6 +27,9 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
                     env.insert(key.as_str(), value.as_str().into());
                 }
                 table.insert("env", toml_edit::value(env));
+            }
+            if let Some(cwd) = &spec.cwd {
+                table.insert("cwd", toml_edit::value(cwd.as_str()));
             }
         }
         Transport::Remote(spec) => {
@@ -79,12 +79,13 @@ pub fn sync(
         };
         let mut table = render_table(entry);
         let parent = parent_table_mut(&mut doc, path)?;
-        if let Some(position) = parent
-            .get(&entry.name)
-            .and_then(Item::as_table)
-            .and_then(Table::position)
-        {
-            table.set_position(Some(position));
+        if let Some(old) = parent.get(&entry.name).and_then(Item::as_table) {
+            if let Some(position) = old.position() {
+                table.set_position(Some(position));
+            }
+            if let Some(prefix) = old.decor().prefix() {
+                table.decor_mut().set_prefix(prefix.clone());
+            }
         }
         parent.insert(&entry.name, Item::Table(table));
         changes.push(Change { tool: Tool::Codex, server: entry.name.clone(), kind });
@@ -119,7 +120,8 @@ pub fn sync(
 
 /// Reports per-server drift between the manifest and config.toml.
 /// Takes the config path, manifest, and state; returns one DriftRow per
-/// codex-scoped manifest server plus one per unmanaged live server.
+/// codex-scoped manifest server plus one per live server outside them —
+/// Drifted when state lists it as a pending removal, Unmanaged otherwise.
 ///
 /// # Errors
 /// Io, ParseToml.
@@ -145,15 +147,19 @@ pub fn check(
     }
     if let Some(servers) = servers {
         for (name, _) in servers.iter() {
-            let is_known = manifest.servers.iter().any(|entry| entry.name == name)
-                || state.codex_managed.iter().any(|managed| managed.as_str() == name);
-            if !is_known {
-                rows.push(DriftRow {
-                    server: name.to_string(),
-                    tool: Tool::Codex,
-                    state: DriftState::Unmanaged,
-                });
+            if manifest
+                .servers
+                .iter()
+                .any(|entry| is_codex_scoped(entry) && entry.name == name)
+            {
+                continue;
             }
+            let drift = if state.codex_managed.iter().any(|managed| managed.as_str() == name) {
+                DriftState::Drifted
+            } else {
+                DriftState::Unmanaged
+            };
+            rows.push(DriftRow { server: name.to_string(), tool: Tool::Codex, state: drift });
         }
     }
     Ok(rows)
@@ -419,13 +425,13 @@ enabled = true
     }
 
     #[test]
-    fn stdio_table_carries_command_args_and_only_nonempty_env() {
+    fn stdio_table_carries_command_args_cwd_and_only_nonempty_env() {
         let bare = render_table(&stdio_entry(
             "alpha",
             "npx",
             &["-y", "alpha-mcp"],
             &[],
-            Some("/srv"),
+            None,
             ToolScope::Both,
         ));
         assert_eq!(bare.get("command").and_then(Item::as_str), Some("npx"));
@@ -441,14 +447,61 @@ enabled = true
             "npx",
             &[],
             &[("PORT", "8080")],
-            None,
+            Some("/srv"),
             ToolScope::Both,
         ));
         assert_eq!(
             env_pairs(&with_env),
             Some(vec![("PORT".to_string(), "8080".to_string())])
         );
-        assert_eq!(with_env.len(), 3);
+        assert_eq!(with_env.get("cwd").and_then(Item::as_str), Some("/srv"));
+        assert_eq!(with_env.len(), 4);
+    }
+
+    #[test]
+    fn cwd_entry_converges_on_the_second_apply() {
+        let dir = fixture("cwd");
+        let path = dir.join("config.toml");
+        let manifest = Manifest {
+            servers: vec![stdio_entry(
+                "srvd",
+                "npx",
+                &["srv-mcp"],
+                &[],
+                Some("/srv"),
+                ToolScope::Both,
+            )],
+        };
+        let state = state_of(&[]);
+        let first = sync(&path, &manifest, &state, false).expect("first sync");
+        assert_eq!(first.len(), 1);
+        let second = sync(&path, &manifest, &state, false).expect("second sync");
+        assert!(second.is_empty(), "cwd entry never converges");
+        let rows = check(&path, &manifest, &state).expect("check");
+        assert!(matches!(
+            &rows[0],
+            DriftRow { tool: Tool::Codex, state: DriftState::Ok, server } if server == "srvd"
+        ));
+    }
+
+    #[test]
+    fn update_keeps_the_comment_above_a_managed_table() {
+        let dir = fixture("update-comment");
+        let path = dir.join("config.toml");
+        let commented = "# keep me\n\
+            [mcp_servers.tended]\n\
+            command = \"npx\"\n\
+            args = [\"old-args\"]\n";
+        fs::write(&path, commented).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![stdio_entry("tended", "npx", &["new-args"], &[], None, ToolScope::Both)],
+        };
+        let changes = sync(&path, &manifest, &state_of(&[]), false).expect("sync");
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(changes[0].kind, ChangeKind::Update));
+        let written = fs::read_to_string(&path).expect("read result");
+        assert!(written.contains("# keep me\n[mcp_servers.tended]"), "{written}");
+        assert!(written.contains("args = [\"new-args\"]"), "{written}");
     }
 
     #[test]
@@ -714,7 +767,7 @@ enabled = true
         };
         let state = state_of(&["okie", "drifty", "pending"]);
         let rows = check(&path, &manifest, &state).expect("check");
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 7);
         assert!(matches!(
             &rows[0],
             DriftRow { tool: Tool::Codex, state: DriftState::Ok, server } if server == "okie"
@@ -738,6 +791,10 @@ enabled = true
         assert!(matches!(
             &rows[5],
             DriftRow { tool: Tool::Codex, state: DriftState::Unmanaged, server } if server == "foreign"
+        ));
+        assert!(matches!(
+            &rows[6],
+            DriftRow { tool: Tool::Codex, state: DriftState::Drifted, server } if server == "pending"
         ));
     }
 

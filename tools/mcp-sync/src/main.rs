@@ -48,6 +48,7 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
             agents::parse_agents_dir(&targets.agents_src_dir)?;
             claude::validate(&targets.claude_json_path)?;
             codex::validate(&targets.codex_toml_path)?;
+            hooks::validate(&targets.codex_hooks_json_path)?;
             let mut changes =
                 claude::sync(&targets.claude_json_path, &manifest, &state, args.is_dry_run)?;
             changes.extend(codex::sync(
@@ -79,7 +80,7 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
             let mut rows = claude::check(&targets.claude_json_path, &manifest, &state)?;
             rows.extend(codex::check(&targets.codex_toml_path, &manifest, &state)?);
             print!("{}", drift::render_check(&rows));
-            if drift::has_drift(&rows) {
+            if drift::is_drift_present(&rows) {
                 Ok(ExitCode::from(1))
             } else {
                 Ok(ExitCode::SUCCESS)
@@ -275,6 +276,35 @@ mod tests {
 
         assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
         assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
+        assert!(!dir.join("state.toml").exists());
+        let names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|name| name.contains(".pre-sync-")), "{names:?}");
+    }
+
+    #[test]
+    fn apply_refuses_before_any_write_on_a_malformed_hooks_json() {
+        let dir = fixture("malformed-hooks");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed claude.json");
+        fs::write(dir.join("config.toml"), CODEX_TOML).expect("seed codex config.toml");
+        fs::write(dir.join("hooks.json"), "{not json").expect("seed malformed hooks.json");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+        write_agent(
+            &dir.join("agents"),
+            "alpha",
+            "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
+        );
+
+        let args = CliArgs { mode: Mode::Apply, is_dry_run: false, targets: apply_targets(&dir) };
+        let err = run(&args).expect_err("malformed hooks.json aborts apply");
+        assert!(matches!(err, SyncError::ParseJson(_, _)), "{err}");
+
+        assert_eq!(fs::read_to_string(dir.join("claude.json")).unwrap(), CLAUDE_JSON);
+        assert_eq!(fs::read_to_string(dir.join("config.toml")).unwrap(), CODEX_TOML);
+        assert_eq!(fs::read_to_string(dir.join("hooks.json")).unwrap(), "{not json");
         assert!(!dir.join("state.toml").exists());
         let names: Vec<String> = fs::read_dir(&dir)
             .unwrap()

@@ -11,9 +11,6 @@ use crate::manifest::{
 
 /// Renders one manifest entry as a Claude mcpServers JSON value.
 /// Takes the entry; returns the JSON object for that server.
-///
-/// # Errors
-/// none
 pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
     match &entry.transport {
         Transport::Stdio(spec) => {
@@ -473,6 +470,21 @@ mod tests {
                 "fresh": { "type": "http", "url": "https://fresh.example/mcp" }
             }
         }));
+        assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    #[test]
+    fn sync_round_trips_float_literals_byte_exact() {
+        let dir = fixture_dir("floats");
+        let path = dir.join("claude.json");
+        let seeded = "{\n  \"growthMetrics\": {\n    \"ratio\": 0.16220400000000001,\n    \"ceiling\": 1e+308,\n    \"tiny\": 5e-324\n  },\n  \"mcpServers\": {}\n}\n";
+        fs::write(&path, seeded).expect("seed config");
+        let manifest = Manifest {
+            servers: vec![remote_entry("fresh", ToolScope::Both, "https://fresh.example/mcp", None)],
+        };
+        let changes = sync(&path, &manifest, &empty_state(), false).expect("sync succeeds");
+        assert_eq!(changes.len(), 1);
+        let expected = "{\n  \"growthMetrics\": {\n    \"ratio\": 0.16220400000000001,\n    \"ceiling\": 1e+308,\n    \"tiny\": 5e-324\n  },\n  \"mcpServers\": {\n    \"fresh\": {\n      \"type\": \"http\",\n      \"url\": \"https://fresh.example/mcp\"\n    }\n  }\n}\n";
         assert_eq!(fs::read_to_string(&path).unwrap(), expected);
     }
 

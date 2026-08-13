@@ -11,9 +11,27 @@ pub struct HookRegistration {
     pub timeout_secs: u64,
 }
 
+/// Validates that the live hooks file parses into the hooks shape, before
+/// any write touches it.
+/// Takes the hooks.json path; returns Ok when the file is absent or holds
+/// an object whose hooks.UserPromptSubmit slot can hold group entries.
+///
+/// # Errors
+/// ParseJson on invalid JSON or a wrong-shaped document; Io on a read
+/// failure other than not-found.
+pub fn validate(path: &Path) -> Result<(), SyncError> {
+    let Some(text) = fsio::read_opt(path)? else {
+        return Ok(());
+    };
+    let mut root: Value = serde_json::from_str(&text)
+        .map_err(|err| SyncError::ParseJson(path.to_path_buf(), err.to_string()))?;
+    prompt_groups(&mut root, path).map(|_| ())
+}
+
 /// Ensures the Codex hooks file carries the UserPromptSubmit registration.
-/// Matches the managed entry by command path, so foreign hook entries
-/// survive; creates the file when absent.
+/// Matches the managed entry by the stable hooks/rag-recall command suffix,
+/// so foreign hook entries survive and a moved repo path is updated in
+/// place; creates the file when absent.
 /// Takes the hooks.json path, the registration, and the dry-run flag;
 /// returns the changes.
 ///
@@ -31,12 +49,17 @@ pub fn sync_codex_hook(
         None => Value::Object(Map::new()),
     };
     let groups = prompt_groups(&mut root, path)?;
-    let kind = match managed_position(groups, &reg.command) {
+    let kind = match managed_position(groups) {
         Some((group_idx, entry_idx)) => {
             let entry = &mut groups[group_idx]["hooks"][entry_idx];
-            if entry.get("timeout").and_then(Value::as_u64) == Some(reg.timeout_secs) {
+            let is_command_current =
+                entry.get("command").and_then(Value::as_str) == Some(reg.command.as_str());
+            let is_timeout_current =
+                entry.get("timeout").and_then(Value::as_u64) == Some(reg.timeout_secs);
+            if is_command_current && is_timeout_current {
                 return Ok(Vec::new());
             }
+            entry["command"] = json!(reg.command);
             entry["timeout"] = json!(reg.timeout_secs);
             ChangeKind::Update
         }
@@ -85,12 +108,19 @@ fn not_shape(path: &Path, detail: &str) -> SyncError {
     SyncError::ParseJson(path.to_path_buf(), detail.to_string())
 }
 
-fn managed_position(groups: &[Value], command: &str) -> Option<(usize, usize)> {
+const MANAGED_COMMAND_SUFFIX: &str = "hooks/rag-recall";
+
+fn managed_position(groups: &[Value]) -> Option<(usize, usize)> {
     groups.iter().enumerate().find_map(|(group_idx, group)| {
         let entries = group.get("hooks")?.as_array()?;
         entries
             .iter()
-            .position(|entry| entry.get("command").and_then(Value::as_str) == Some(command))
+            .position(|entry| {
+                entry
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(|command| command.ends_with(MANAGED_COMMAND_SUFFIX))
+            })
             .map(|entry_idx| (group_idx, entry_idx))
     })
 }
@@ -206,6 +236,41 @@ mod tests {
         assert!(matches!(changes[0].kind, ChangeKind::Update));
         doc["hooks"]["UserPromptSubmit"][0]["hooks"][1]["timeout"] = json!(10);
         assert_eq!(fs::read_to_string(&path).unwrap(), pretty(&doc));
+    }
+
+    #[test]
+    fn moved_repo_command_is_updated_in_place_not_appended() {
+        let dir = fixture("moved");
+        let path = dir.join("hooks.json");
+        let mut doc = json!({
+            "hooks": {
+                "UserPromptSubmit": [
+                    {"hooks": [
+                        {"type": "command", "command": "/other/hook", "timeout": 3},
+                        {"type": "command", "command": "/old/checkout/hooks/rag-recall", "timeout": 10}
+                    ]}
+                ]
+            }
+        });
+        fs::write(&path, pretty(&doc)).unwrap();
+        let changes = sync_codex_hook(&path, &reg(), false).expect("sync");
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(changes[0].kind, ChangeKind::Update));
+        doc["hooks"]["UserPromptSubmit"][0]["hooks"][1]["command"] = json!(reg().command);
+        assert_eq!(fs::read_to_string(&path).unwrap(), pretty(&doc));
+    }
+
+    #[test]
+    fn validate_accepts_absent_and_shaped_and_refuses_the_rest() {
+        let dir = fixture("validate");
+        let path = dir.join("hooks.json");
+        assert!(validate(&path).is_ok());
+        fs::write(&path, pretty(&json!({"hooks": {"UserPromptSubmit": []}}))).unwrap();
+        assert!(validate(&path).is_ok());
+        fs::write(&path, "{not json").unwrap();
+        assert!(matches!(validate(&path), Err(SyncError::ParseJson(_, _))));
+        fs::write(&path, pretty(&json!({"hooks": {"UserPromptSubmit": {}}}))).unwrap();
+        assert!(matches!(validate(&path), Err(SyncError::ParseJson(_, _))));
     }
 
     #[test]

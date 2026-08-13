@@ -43,7 +43,8 @@ pub fn backup(path: &Path) -> Result<Option<PathBuf>, SyncError> {
 
 /// Writes content atomically after proving the target is unchanged since read.
 /// Compares the target against the snapshot taken at read time, backs it up,
-/// writes a temp file in the same dir, renames it in, and re-reads to verify.
+/// writes a temp file in the same dir carrying an existing target's file
+/// mode, renames it in, and re-reads to verify.
 /// Takes the path, the new content, the read-time snapshot, and the dry-run
 /// flag; returns unit. In dry-run it prints the would-write line and touches
 /// nothing.
@@ -68,8 +69,16 @@ pub fn write_verified(
     }
     sweep_stale_tmp(path);
     backup(path)?;
+    let target_permissions = match fs::metadata(path) {
+        Ok(metadata) => Some(metadata.permissions()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(SyncError::Io(path.to_path_buf(), err)),
+    };
     let tmp = suffixed(path, &unique_tmp_suffix());
     fs::write(&tmp, content).map_err(|err| SyncError::Io(tmp.clone(), err))?;
+    if let Some(permissions) = target_permissions {
+        fs::set_permissions(&tmp, permissions).map_err(|err| SyncError::Io(tmp.clone(), err))?;
+    }
     fs::rename(&tmp, path).map_err(|err| SyncError::Io(path.to_path_buf(), err))?;
     let reread =
         fs::read_to_string(path).map_err(|err| SyncError::Io(path.to_path_buf(), err))?;
@@ -260,6 +269,19 @@ mod tests {
         assert!(second.contains(&pid));
         assert!(first.ends_with(".sync-tmp"));
         assert!(second.ends_with(".sync-tmp"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_verified_preserves_the_target_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = fixture("mode");
+        let target = dir.join("claude.json");
+        fs::write(&target, "old").expect("seed target");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).expect("chmod target");
+        assert!(write_verified(&target, "new", Some("old"), false).is_ok());
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
