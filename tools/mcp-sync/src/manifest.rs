@@ -49,7 +49,6 @@ pub struct ManagedServer {
     pub fingerprint: Option<String>,
 }
 
-// TODO(AGNT-0002.T02): Verify legacy and fingerprinted state migration coverage.
 fn managed_servers_of(
     doc: &DocumentMut,
     key: &str,
@@ -148,9 +147,9 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, SyncError> {
             ))
         }
     };
-    let doc: DocumentMut = text
-        .parse()
-        .map_err(|err: toml_edit::TomlError| SyncError::ParseToml(path.to_path_buf(), err.to_string()))?;
+    let doc: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| {
+        SyncError::ParseToml(path.to_path_buf(), err.to_string())
+    })?;
     let mut servers = Vec::new();
     if let Some(item) = doc.get("servers") {
         let table = item.as_table_like().ok_or_else(|| {
@@ -178,9 +177,9 @@ pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
             })
         }
     };
-    let doc: DocumentMut = text
-        .parse()
-        .map_err(|err: toml_edit::TomlError| SyncError::ParseToml(path.to_path_buf(), err.to_string()))?;
+    let doc: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| {
+        SyncError::ParseToml(path.to_path_buf(), err.to_string())
+    })?;
     Ok(SyncState {
         claude_managed: managed_servers_of(&doc, "claude_managed", path)?,
         codex_managed: managed_servers_of(&doc, "codex_managed", path)?,
@@ -196,7 +195,10 @@ pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
 pub fn save_state(path: &Path, state: &SyncState, is_dry_run: bool) -> Result<(), SyncError> {
     let snapshot = fsio::read_opt(path)?;
     let mut doc = DocumentMut::new();
-    doc.insert("claude_managed", value(managed_array(&state.claude_managed)));
+    doc.insert(
+        "claude_managed",
+        value(managed_array(&state.claude_managed)),
+    );
     doc.insert("codex_managed", value(managed_array(&state.codex_managed)));
     let rendered = doc.to_string();
     if snapshot.as_deref() == Some(rendered.as_str()) {
@@ -225,9 +227,9 @@ pub fn append_servers(
             ))
         }
     };
-    let mut doc: DocumentMut = text
-        .parse()
-        .map_err(|err: toml_edit::TomlError| SyncError::ParseToml(path.to_path_buf(), err.to_string()))?;
+    let mut doc: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| {
+        SyncError::ParseToml(path.to_path_buf(), err.to_string())
+    })?;
     if doc.get("servers").is_none() {
         let mut implicit = Table::new();
         implicit.set_implicit(true);
@@ -419,10 +421,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "mcp-sync-manifest-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mcp-sync-manifest-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create fixture dir");
         dir
@@ -577,7 +577,10 @@ tools = [\"claude\", \"codex\"]
     #[test]
     fn manifest_rejects_server_with_both_command_and_url() {
         let dir = fixture("both-arm");
-        let err = load_err(&dir, "[servers.foo]\ncommand = \"x\"\nurl = \"https://y\"\n");
+        let err = load_err(
+            &dir,
+            "[servers.foo]\ncommand = \"x\"\nurl = \"https://y\"\n",
+        );
         assert!(matches!(err, SyncError::ManifestInvalid(_)));
         let text = err.to_string();
         assert!(text.contains("foo"), "{text}");
@@ -597,7 +600,13 @@ tools = [\"claude\", \"codex\"]
     #[test]
     fn manifest_rejects_unknown_tools_values() {
         let dir = fixture("tools-arm");
-        for tools in ["[\"gemini\"]", "[]", "[\"claude\", \"gemini\"]", "\"claude\"", "[3]"] {
+        for tools in [
+            "[\"gemini\"]",
+            "[]",
+            "[\"claude\", \"gemini\"]",
+            "\"claude\"",
+            "[3]",
+        ] {
             let err = load_err(
                 &dir,
                 &format!("[servers.baz]\ncommand = \"x\"\ntools = {tools}\n"),
@@ -690,7 +699,10 @@ tools = [\"claude\", \"codex\"]
                 "claude_managed = [{ name = \"alpha\", fingerprint = 3 }]\n",
                 "fingerprint",
             ),
-            ("claude_managed = [3]\n", "neither a string nor an inline record"),
+            (
+                "claude_managed = [3]\n",
+                "neither a string nor an inline record",
+            ),
             (
                 "claude_managed = [{ name = \"alpha\", extra = \"x\" }]\n",
                 "unknown field",
@@ -822,9 +834,6 @@ tools = [\"codex\"]
         let manifest = load_manifest(&path).expect("repo manifest loads");
         assert_eq!(manifest.servers.len(), 19);
         assert_eq!(manifest.servers[0].name, "XcodeBuildMCP");
-        assert!(manifest
-            .servers
-            .iter()
-            .all(|server| server.name != "gmail"));
+        assert!(manifest.servers.iter().all(|server| server.name != "gmail"));
     }
 }

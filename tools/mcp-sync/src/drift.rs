@@ -40,7 +40,6 @@ impl Tool {
 }
 
 impl DriftState {
-    // TODO(AGNT-0002.T06): Verify spared-state and spare-action reporting coverage.
     fn word(&self) -> &'static str {
         match self {
             DriftState::Ok => "ok",
@@ -71,7 +70,12 @@ pub fn render_plan(changes: &[Change], is_dry_run: bool) -> String {
     changes
         .iter()
         .map(|change| {
-            format!("{prefix}{} {} {}\n", change.tool.word(), change.kind.word(), change.server)
+            format!(
+                "{prefix}{} {} {}\n",
+                change.tool.word(),
+                change.kind.word(),
+                change.server
+            )
         })
         .collect()
 }
@@ -117,11 +121,19 @@ mod tests {
     use super::*;
 
     fn change(tool: Tool, kind: ChangeKind, server: &str) -> Change {
-        Change { tool, server: server.to_string(), kind }
+        Change {
+            tool,
+            server: server.to_string(),
+            kind,
+        }
     }
 
     fn row(server: &str, tool: Tool, state: DriftState) -> DriftRow {
-        DriftRow { server: server.to_string(), tool, state }
+        DriftRow {
+            server: server.to_string(),
+            tool,
+            state,
+        }
     }
 
     fn mixed_changes() -> Vec<Change> {
@@ -196,10 +208,30 @@ mod tests {
     fn is_drift_present_is_true_iff_any_non_ok_row() {
         assert!(is_drift_present(&mixed_rows()));
         assert!(!is_drift_present(&[]));
-        assert!(!is_drift_present(&[row("supermemory", Tool::Claude, DriftState::Ok)]));
-        assert!(is_drift_present(&[row("supermemory", Tool::Codex, DriftState::Missing)]));
-        assert!(is_drift_present(&[row("mobbin", Tool::Claude, DriftState::Drifted)]));
-        assert!(is_drift_present(&[row("linear", Tool::Claude, DriftState::Spared)]));
-        assert!(is_drift_present(&[row("scratchpad", Tool::Codex, DriftState::Unmanaged)]));
+        assert!(!is_drift_present(&[row(
+            "supermemory",
+            Tool::Claude,
+            DriftState::Ok
+        )]));
+        assert!(is_drift_present(&[row(
+            "supermemory",
+            Tool::Codex,
+            DriftState::Missing
+        )]));
+        assert!(is_drift_present(&[row(
+            "mobbin",
+            Tool::Claude,
+            DriftState::Drifted
+        )]));
+        assert!(is_drift_present(&[row(
+            "linear",
+            Tool::Claude,
+            DriftState::Spared
+        )]));
+        assert!(is_drift_present(&[row(
+            "scratchpad",
+            Tool::Codex,
+            DriftState::Unmanaged
+        )]));
     }
 }

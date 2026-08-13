@@ -42,7 +42,6 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
     table
 }
 
-// TODO(AGNT-0002.T04): Verify Codex semantic fingerprint safety coverage.
 pub fn managed_server(entry: &ServerEntry) -> ManagedServer {
     ManagedServer {
         name: entry.name.clone(),
@@ -63,7 +62,7 @@ fn fingerprint_live(table: &dyn TableLike) -> String {
     fn canonicalize_table(table: &dyn TableLike, bytes: &mut Vec<u8>) {
         bytes.push(b't');
         let mut pairs: Vec<_> = table.iter().collect();
-        pairs.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        pairs.sort_unstable_by_key(|(left, _)| *left);
         push_len(bytes, pairs.len());
         for (key, item) in pairs {
             push_bytes(bytes, key.as_bytes());
@@ -1085,11 +1084,25 @@ enabled = true
     }
 
     #[test]
-    fn sync_removes_stale_server_only_on_exact_fingerprint_match() {
+    fn sync_removes_matching_previously_managed_server() {
         let dir = fixture("exact-fingerprint-removal");
         let path = dir.join("config.toml");
-        let seeded =
-            "unrelated = 17\n\n[mcp_servers.stale]\ncommand = \"npx\"\nargs = [\"stale-mcp\"]\n";
+        let seeded = "# top-level comment\n\
+            unrelated = 17\n\
+            \n\
+            # foreign stdio comment\n\
+            [mcp_servers.foreign-stdio]\n\
+            command = \"deno\"\n\
+            args = [\"run\", \"server.ts\"]\n\
+            \n\
+            # stale managed comment\n\
+            [mcp_servers.stale]\n\
+            command = \"npx\"\n\
+            args = [\"stale-mcp\"]\n\
+            \n\
+            # foreign remote comment\n\
+            [mcp_servers.foreign-remote]\n\
+            url = \"https://foreign.example/mcp\"\n";
         fs::write(&path, seeded).expect("seed config");
         let doc = seeded.parse::<DocumentMut>().expect("seed parses");
         let state = state_with(vec![managed_live(
@@ -1112,12 +1125,18 @@ enabled = true
             [Change { tool: Tool::Codex, server, kind: ChangeKind::Remove }] if server == "stale"
         ));
         let written = fs::read_to_string(&path).expect("read result");
-        assert!(written.contains("unrelated = 17"), "{written}");
+        for foreign in [
+            "# top-level comment\nunrelated = 17\n",
+            "# foreign stdio comment\n[mcp_servers.foreign-stdio]\ncommand = \"deno\"\nargs = [\"run\", \"server.ts\"]\n",
+            "# foreign remote comment\n[mcp_servers.foreign-remote]\nurl = \"https://foreign.example/mcp\"\n",
+        ] {
+            assert!(written.contains(foreign), "lost foreign content:\n{foreign}\nin:\n{written}");
+        }
         assert!(!written.contains("stale"), "{written}");
     }
 
     #[test]
-    fn sync_spares_changed_replacement_without_rewriting_the_file() {
+    fn sync_spares_changed_previously_managed_server() {
         let dir = fixture("changed-replacement");
         let path = dir.join("config.toml");
         let original = "[mcp_servers.stale]\ncommand = \"old-command\"\nargs = []\n";
@@ -1173,7 +1192,7 @@ enabled = true
     }
 
     #[test]
-    fn formatting_only_change_still_allows_exact_match_removal() {
+    fn fingerprint_ignores_formatting_and_decor() {
         let dir = fixture("formatting-only");
         let path = dir.join("config.toml");
         let original =

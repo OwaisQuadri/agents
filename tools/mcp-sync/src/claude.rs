@@ -39,7 +39,6 @@ pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
     }
 }
 
-// TODO(AGNT-0002.T03): Verify Claude fingerprint deletion-safety coverage.
 pub fn managed_server(entry: &ServerEntry) -> ManagedServer {
     ManagedServer {
         name: entry.name.clone(),
@@ -53,7 +52,7 @@ fn fingerprint_live(value: &Value) -> String {
             Value::Array(items) => Value::Array(items.iter().map(canonicalize).collect()),
             Value::Object(object) => {
                 let mut pairs: Vec<_> = object.iter().collect();
-                pairs.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+                pairs.sort_unstable_by_key(|(left, _)| *left);
                 Value::Object(
                     pairs
                         .into_iter()
@@ -596,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_removes_a_stale_server_only_on_an_exact_fingerprint_match() {
+    fn sync_removes_matching_previously_managed_server() {
         let dir = fixture_dir("exact-fingerprint-removal");
         let path = dir.join("claude.json");
         let stale = json!({ "command": "stale-cmd", "args": ["--x"] });
@@ -634,7 +633,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_spares_a_changed_replacement_without_rewriting_the_file() {
+    fn sync_spares_changed_previously_managed_server() {
         let dir = fixture_dir("changed-replacement");
         let path = dir.join("claude.json");
         let original = json!({ "command": "old-cmd", "args": [] });
@@ -661,6 +660,52 @@ mod tests {
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_spares_executable_replacement_without_executing_strings() {
+        let dir = fixture_dir("executable-replacement");
+        let path = dir.join("claude.json");
+        let command_marker = dir.join("command-executed");
+        let args_marker = dir.join("args-executed");
+        let env_marker = dir.join("env-executed");
+        let cwd_marker = dir.join("cwd-executed");
+        let original = json!({ "command": "old-cmd", "args": [] });
+        let replacement = json!({
+            "command": format!("sh -c 'touch {}'", command_marker.display()),
+            "args": [format!("$(touch {})", args_marker.display())],
+            "env": { "PAYLOAD": format!("`touch {}`", env_marker.display()) },
+            "cwd": format!("$(touch {})", cwd_marker.display())
+        });
+        let bytes = serde_json::to_string(&json!({
+            "unrelated": 17,
+            "mcpServers": { "stale": replacement }
+        }))
+        .expect("serialize executable-shaped fixture");
+        fs::write(&path, &bytes).expect("seed config");
+        let state = SyncState {
+            claude_managed: vec![managed_live("stale", &original)],
+            codex_managed: Vec::new(),
+        };
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Claude, server, kind: ChangeKind::Spare }] if server == "stale"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), bytes);
+        for marker in [command_marker, args_marker, env_marker, cwd_marker] {
+            assert!(!marker.exists(), "{} was executed", marker.display());
+        }
     }
 
     #[test]
