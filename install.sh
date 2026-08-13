@@ -93,8 +93,8 @@ if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
 fi
 
-# 8. ste-check: the prose checker every register runs. this is the one artifact the
-#    installer compiles rather than links, because a checker in the reply path is waited on
+# 8. ste-check: the prose checker every register runs. an artifact the installer
+#    compiles rather than links, because a checker in the reply path is waited on
 CRATE="$REPO_TARGET/tools/ste-check"
 if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
@@ -105,6 +105,40 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
     link "$HOME/.local/bin/ste-check" "$CRATE/target/release/ste-check"
   else
     echo "warn: cargo not found, skipping the ste-check build" >&2
+  fi
+fi
+
+# 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
+link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
+
+# 10. mcp-sync: rebuilt every pass so the binary matches the manifest it syncs
+CRATE="$REPO_TARGET/tools/mcp-sync"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
+  else
+    echo "warn: cargo not found, skipping the mcp-sync build" >&2
+  fi
+fi
+
+# 11. sync the live configs. the binary runs outside run() on purpose, so its own
+#     --dry-run prints the real plan. no ~/.claude.json yet → skip; the next pull converges
+SYNC_BIN="$HOME/.local/bin/mcp-sync"
+run mkdir -p "$HOME/.codex/agents"
+if [[ ! -x "$SYNC_BIN" ]]; then
+  echo "warn: mcp-sync not built, skipping the config sync" >&2
+elif [[ ! -f "$HOME/.claude.json" ]]; then
+  echo "warn: $HOME/.claude.json not found yet, skipping the config sync" >&2
+else
+  plan "sync configs: MCP_SYNC_REPO=$REPO_TARGET $SYNC_BIN"
+  if (( DRY )); then
+    MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN" --dry-run
+  else
+    MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN"
   fi
 fi
 

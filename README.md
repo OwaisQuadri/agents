@@ -17,13 +17,13 @@ versioned in one repo with a symlink installer.
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
-| `config/` | tracked copies of `settings.json` / `settings.local.json`; the live files are never symlinked, never written by the installer |
+| `config/` | `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest and the single edit surface for servers; `mcp-sync-state.toml`, the machine-written, untracked sync state; tracked copies of `settings.json` / `settings.local.json`, which stay reference-only: never installed, never symlinked, never written by the installer |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
-| `tools/` | `ste-check`, the zero-dependency Rust binary that grades prose against the STE rules plus whatever the register adds |
-| `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt |
+| `tools/` | `ste-check`, the zero-dependency Rust binary that grades prose against the STE rules plus whatever the register adds; `mcp-sync`, the Rust binary that renders the MCP server manifest into each tool's live config |
+| `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
-| `install.sh` | symlink installer plus one `cargo build` for `ste-check`; `--dry-run` prints every mutation through the real code path |
-| `CLAUDE.md` | global guidance loaded every session |
+| `install.sh` | symlink installer; it builds `ste-check` and `mcp-sync` with cargo, then runs `mcp-sync` to render the manifest into the live configs; `--dry-run` prints every mutation through the real code path |
+| `CLAUDE.md` | global guidance loaded every session; the single instructions source for both tools. `install.sh` links `~/.codex/AGENTS.md` to it, so Codex reads the same file |
 
 ### skills
 
@@ -63,7 +63,10 @@ versioned in one repo with a symlink installer.
 
 - `~/.agents/skills` is the canonical root: one symlink per skill into this repo.
 - Each tool root (`~/.claude/skills`, `~/.codex/skills`) is a single directory symlink
-  into it, so a new tool costs one line.
+  into it, so a new tool costs one line. `tools/mcp-sync` renders `config/mcp-servers.toml`
+  into `~/.claude.json` and `~/.codex/config.toml` on every install and pull.
+  `mcp-sync adopt` folds the servers that `claude mcp add` or `codex mcp add` created
+  back into the manifest.
 - Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
   cases from real use; blind judge votes land the same way.
 - A worktree or branch checked out clean at main's tip inherits the live checkout's

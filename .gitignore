@@ -16,3 +16,8 @@ skills/byline/evals/candidates/
 skills/bro/evals/candidates/
 
 tools/*/target/
+
+.map/AGNT-*/
+
+config/mcp-sync-state.toml
+config/*.pre-sync-*

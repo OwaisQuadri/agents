@@ -1,0 +1,15 @@
+flowchart TD
+  classDef todo fill:#eeeeee,stroke:#999999
+  classDef inprogress fill:#fff3cd,stroke:#b8860b
+  classDef resolved fill:#cce5ff,stroke:#004085
+  classDef done fill:#d4edda,stroke:#155724
+  classDef cancelled fill:#f8d7da,stroke:#721c24,stroke-dasharray: 5 5
+  subgraph wave1 ["wave 1 — parallel"]
+    AGNT_0001["AGNT-0001 Codex config parity with Claude Code, one source, self-maintained"]:::resolved
+    AGNT_0002["AGNT-0002 Spare hand-added servers from state-driven removal"]:::todo
+    AGNT_0003["AGNT-0003 Merge concurrent applies instead of last-writer-wins"]:::todo
+    AGNT_0004["AGNT-0004 Show remote-server login state per tool"]:::todo
+    AGNT_0005["AGNT-0005 Gate the rag-recall injection"]:::todo
+    AGNT_0006["AGNT-0006 A fast lane in the engineer map for one-sentence diffs"]:::todo
+    AGNT_0007["AGNT-0007 Evaluate research-sweep against the native deep-research workflow"]:::todo
+  end
