@@ -118,10 +118,8 @@ fn unique_tmp_suffix() -> String {
     format!(".{}.{n}.sync-tmp", std::process::id())
 }
 
-// 60s: a live concurrent writer's own temp file is milliseconds-fresh, so
-// this threshold never races it (that race is the D-10 collision the unique
-// per-process suffix already closed); only a crash-orphaned temp, which is
-// necessarily old by the time a later run sweeps it, ever crosses it.
+// 60s: a live writer's temp is milliseconds-fresh, so the sweep can never race it;
+// only a crash orphan gets this old.
 const STALE_TMP_AGE: Duration = Duration::from_secs(60);
 
 fn sweep_stale_tmp(path: &Path) {

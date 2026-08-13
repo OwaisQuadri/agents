@@ -108,13 +108,10 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   fi
 fi
 
-# 9. codex reads CLAUDE.md as its global instructions, via one symlink — one source,
-#    no second file to drift. the handful of claude-only lines (register /slash names,
-#    the /hq runner) are harmless to codex; the register skills resolve from ~/.agents/skills
+# 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
 link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
-# 10. mcp-sync: the claude/codex config sync step 11 runs; rebuilt every pass so the
-#     binary stays current with the manifest it syncs from
+# 10. mcp-sync: rebuilt every pass so the binary matches the manifest it syncs
 CRATE="$REPO_TARGET/tools/mcp-sync"
 if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
@@ -128,11 +125,8 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   fi
 fi
 
-# 11. converge the live configs onto the repo manifest. the binary bypasses run() on
-#     purpose: its own --dry-run prints the sync plan a dry-echoed command would hide.
-#     mcp-sync errors on a missing $HOME/.claude.json by design (Claude, not this
-#     installer, creates that file on first launch) — skip the sync on a fresh machine
-#     rather than fail the install; the next pull re-runs the installer and converges
+# 11. sync the live configs. the binary runs outside run() on purpose, so its own
+#     --dry-run prints the real plan. no ~/.claude.json yet → skip; the next pull converges
 SYNC_BIN="$HOME/.local/bin/mcp-sync"
 run mkdir -p "$HOME/.codex/agents"
 if [[ ! -x "$SYNC_BIN" ]]; then
