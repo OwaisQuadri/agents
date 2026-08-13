@@ -6,7 +6,7 @@ use crate::drift::{Change, ChangeKind, DriftRow, DriftState, Tool};
 use crate::error::SyncError;
 use crate::fsio;
 use crate::manifest::{
-    Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
+    ManagedServer, Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
 };
 
 /// Renders one manifest entry as a Codex [mcp_servers.<name>] table.
@@ -40,6 +40,14 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
         }
     }
     table
+}
+
+pub fn managed_server(_entry: &ServerEntry) -> ManagedServer {
+    unimplemented!()
+}
+
+fn fingerprint_live(_table: &dyn TableLike) -> String {
+    unimplemented!()
 }
 
 /// Validates that a live Codex config parses, before any write touches it.

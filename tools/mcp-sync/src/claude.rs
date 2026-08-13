@@ -6,7 +6,7 @@ use crate::drift::{Change, ChangeKind, DriftRow, DriftState, Tool};
 use crate::error::SyncError;
 use crate::fsio;
 use crate::manifest::{
-    Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
+    ManagedServer, Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
 };
 
 /// Renders one manifest entry as a Claude mcpServers JSON value.
@@ -37,6 +37,14 @@ pub fn render_entry(entry: &ServerEntry) -> serde_json::Value {
             Value::Object(object)
         }
     }
+}
+
+pub fn managed_server(_entry: &ServerEntry) -> ManagedServer {
+    unimplemented!()
+}
+
+fn fingerprint_live(_value: &Value) -> String {
+    unimplemented!()
 }
 
 /// Validates that the live Claude config parses, before any write touches it.

@@ -7,6 +7,7 @@ mod cli;
 mod codex;
 mod drift;
 mod error;
+mod fingerprint;
 mod fsio;
 mod hooks;
 mod manifest;

@@ -49,6 +49,18 @@ pub struct ManagedServer {
     pub fingerprint: Option<String>,
 }
 
+fn managed_servers_of(
+    _doc: &DocumentMut,
+    _key: &str,
+    _path: &Path,
+) -> Result<Vec<ManagedServer>, SyncError> {
+    unimplemented!()
+}
+
+fn managed_array(_servers: &[ManagedServer]) -> Array {
+    unimplemented!()
+}
+
 /// Loads and validates the manifest file.
 /// Takes the manifest path; returns the parsed Manifest in file order.
 ///
