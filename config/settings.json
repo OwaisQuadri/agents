@@ -1,98 +1,39 @@
 {
-  "model": "haiku",
-  "enabledPlugins": {
-    "vercel@claude-plugins-official": true,
-    "lua-lsp@claude-plugins-official": true,
-    "plannotator@plannotator": true
-  },
-  "effortLevel": "high",
+  "tui": "fullscreen",
+  "theme": "dark",
   "skipDangerousModePermissionPrompt": true,
-  "editorMode": "normal",
-  "teammateMode": "in-process",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "hooks": {
-    "UserPromptSubmit": [
+    "SessionStart": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/owaisquadri/Documents/agents/hooks/rag-recall",
+            "command": "bash '$HOME/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/no-ai-attribution",
             "timeout": 10
           }
         ]
       }
     ]
   },
-  "mcpServers": {
-    "linear": {
-      "type": "url",
-      "url": "https://mcp.linear.app/mcp"
-    },
-    "XcodeBuildMCP": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "xcodebuildmcp@latest",
-        "mcp"
-      ]
-    },
-    "playwright": {
-      "command": "npx",
-      "args": [
-        "@playwright/mcp@latest"
-      ]
-    },
-    "shadcn": {
-      "command": "npx",
-      "args": [
-        "shadcn@latest",
-        "mcp"
-      ]
-    },
-    "lottiefiles-creator": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@lottiefiles/creator-mcp@latest"
-      ]
-    },
-    "lottiefiles-search": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "mcp-server-lottiefiles"
-      ]
-    },
-    "icon-composer": {
-      "command": "/opt/homebrew/bin/node",
-      "args": [
-        "/opt/homebrew/lib/node_modules/icon-composer-mcp/dist/server.js"
-      ]
-    },
-    "computer-use": {
-      "command": "npx",
-      "args": [
-        "--yes",
-        "--prefer-offline",
-        "@zavora-ai/computer-use-mcp"
-      ]
-    },
-    "rag": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/Users/owaisquadri/rag",
-        "python",
-        "server.py"
-      ]
-    }
-  },
-  "extraKnownMarketplaces": {
-    "plannotator": {
-      "source": {
-        "source": "github",
-        "repo": "backnotprop/plannotator"
-      }
-    }
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.claude/statusline.sh"
   }
 }
