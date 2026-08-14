@@ -20,20 +20,35 @@ const PATTERNS: &[&[&str]] = &[
     &["claude-session:"],
 ];
 
-const WRITE_COMMANDS: &[&str] = &[
-    "git commit",
-    "git tag",
-    "git merge",
-    "git notes",
-    "git revert",
-    "gh pr create",
-    "gh pr edit",
-    "gh pr comment",
-    "gh issue create",
-    "gh issue edit",
-    "gh issue comment",
-    "gh release create",
-    "gh release edit",
+const WRITE_COMMANDS: &[&[&str]] = &[
+    &["git", "commit"],
+    &["git", "tag"],
+    &["git", "merge"],
+    &["git", "notes"],
+    &["git", "revert"],
+    &["gh", "pr", "create"],
+    &["gh", "pr", "edit"],
+    &["gh", "pr", "comment"],
+    &["gh", "issue", "create"],
+    &["gh", "issue", "edit"],
+    &["gh", "issue", "comment"],
+    &["gh", "release", "create"],
+    &["gh", "release", "edit"],
+];
+
+/// Options that consume the NEXT token as their value. Skipping such a flag without
+/// its value leaves the value sitting where the subcommand should be, which is how
+/// `git -C <path> commit` walked past the earlier substring match.
+const VALUE_OPTIONS: &[&str] = &[
+    "-c",
+    "-C",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+    "--config-env",
+    "-R",
+    "--repo",
 ];
 
 const FILE_FLAGS: &[&str] = &["-F", "--file", "--body-file", "-m", "--message", "--body"];
@@ -84,7 +99,44 @@ fn main() {
 
 fn is_write_command(command: &str) -> bool {
     let lowered = command.to_lowercase();
-    WRITE_COMMANDS.iter().any(|verb| lowered.contains(verb))
+    let tokens: Vec<&str> = lowered
+        .split_whitespace()
+        .map(|token| token.trim_matches(|c| c == '"' || c == '\''))
+        .collect();
+    WRITE_COMMANDS
+        .iter()
+        .any(|verbs| is_verb_sequence(&tokens, verbs))
+}
+
+/// Anchors on the program name, then walks past its options, so a flag standing
+/// between the program and its subcommand cannot hide the subcommand.
+fn is_verb_sequence(tokens: &[&str], verbs: &[&str]) -> bool {
+    for (start, token) in tokens.iter().enumerate() {
+        if *token != verbs[0] {
+            continue;
+        }
+        let mut index = start + 1;
+        let mut matched = 1;
+        while index < tokens.len() && matched < verbs.len() {
+            let token = tokens[index];
+            if token.starts_with('-') {
+                if VALUE_OPTIONS.contains(&token) {
+                    index += 1;
+                }
+                index += 1;
+                continue;
+            }
+            if token != verbs[matched] {
+                break;
+            }
+            matched += 1;
+            index += 1;
+        }
+        if matched == verbs.len() {
+            return true;
+        }
+    }
+    false
 }
 
 fn find_attribution(text: &str) -> Option<String> {
@@ -167,4 +219,40 @@ fn json_quote(value: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_write_command;
+
+    #[test]
+    fn plain_forms_are_gated() {
+        assert!(is_write_command("git commit -m x"));
+        assert!(is_write_command("gh pr create --body x"));
+        assert!(is_write_command("gh release edit v1 --notes x"));
+    }
+
+    #[test]
+    fn a_flag_between_program_and_subcommand_cannot_hide_it() {
+        assert!(is_write_command("git -C ~/rag commit -m x"));
+        assert!(is_write_command("git --no-pager commit -m x"));
+        assert!(is_write_command("git -c user.name=x commit -m y"));
+        assert!(is_write_command("git --git-dir /r/.git --work-tree /r commit -m x"));
+        assert!(is_write_command("gh --repo o/r pr create --body x"));
+    }
+
+    #[test]
+    fn quoting_and_chaining_do_not_hide_it() {
+        assert!(is_write_command("sh -c \"git commit -m x\""));
+        assert!(is_write_command("git add -A && git commit -m x"));
+    }
+
+    #[test]
+    fn reading_history_stays_allowed() {
+        assert!(!is_write_command("git log | grep co-authored-by"));
+        assert!(!is_write_command("git log --grep commit"));
+        assert!(!is_write_command("git show head"));
+        assert!(!is_write_command("grep commit file"));
+        assert!(!is_write_command("gh pr list"));
+    }
 }
