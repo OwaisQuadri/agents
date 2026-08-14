@@ -1,7 +1,4 @@
 {
-  "tui": "fullscreen",
-  "theme": "dark",
-  "skipDangerousModePermissionPrompt": true,
   "attribution": {
     "commit": "",
     "pr": ""
@@ -35,5 +32,13 @@
   "statusLine": {
     "type": "command",
     "command": "$HOME/.claude/statusline.sh"
+  },
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "dark",
+  "voiceEnabled": true,
+  "voice": {
+    "enabled": true,
+    "mode": "hold"
   }
 }
