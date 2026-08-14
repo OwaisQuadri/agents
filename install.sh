@@ -144,4 +144,33 @@ else
   fi
 fi
 
+# 12. status line. the script is repo-owned and linked like every other repo artifact, but
+#     settings.json stays machine-local and only gains the pointer key: preferences and MCP
+#     config are separate concerns, so mcp-sync does not reach into this file
+SL_SRC="$REPO_TARGET/config/statusline.sh"
+SETTINGS="$HOME/.claude/settings.json"
+SL_LINK="$HOME/.claude/statusline.sh"
+if [[ ! -f "$SL_SRC" ]]; then
+  echo "warn: $SL_SRC not found, skipping the status line" >&2
+elif ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping the status line" >&2
+else
+  run chmod +x "$SL_SRC"
+  link "$SL_LINK" "$SL_SRC"
+  if [[ -f "$SETTINGS" ]] && jq -e --arg c "$SL_LINK" '.statusLine.command == $c' "$SETTINGS" >/dev/null 2>&1; then
+    plan "ok   $SETTINGS statusLine -> $SL_LINK"
+  else
+    backup "$SETTINGS"
+    plan "set  $SETTINGS statusLine -> $SL_LINK"
+    if (( DRY == 0 )); then
+      CURRENT='{}'
+      [[ -f "$SETTINGS" ]] && CURRENT="$(cat "$SETTINGS")"
+      UPDATED="$(printf '%s' "$CURRENT" | jq --arg c "$SL_LINK" \
+        '. + {statusLine: {type: "command", command: $c}}')" \
+        || { echo "FATAL: $SETTINGS is not valid JSON" >&2; exit 1; }
+      printf '%s\n' "$UPDATED" > "$SETTINGS"
+    fi
+  fi
+fi
+
 plan "done"
