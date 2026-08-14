@@ -13,6 +13,7 @@ pub struct ServerEntry {
     pub name: String,
     pub transport: Transport,
     pub scope: ToolScope,
+    pub platforms: Vec<String>,
 }
 
 pub enum Transport {
@@ -178,7 +179,39 @@ fn server_of(name: &str, item: &Item) -> Result<ServerEntry, SyncError> {
         name: name.to_string(),
         transport,
         scope: scope_of(name, table.get("tools"))?,
+        platforms: platforms_of(name, table.get("platforms"))?,
     })
+}
+
+/// Reads the optional `platforms` key. An empty result means every platform,
+/// so a server that omits the key keeps its current behaviour.
+///
+/// # Errors
+/// ManifestInvalid when platforms is not an array of strings.
+fn platforms_of(name: &str, item: Option<&Item>) -> Result<Vec<String>, SyncError> {
+    let Some(item) = item else {
+        return Ok(Vec::new());
+    };
+    let array = item
+        .as_array()
+        .ok_or_else(|| invalid(name, "platforms is not an array"))?;
+    let mut out = Vec::new();
+    for entry in array.iter() {
+        let text = entry
+            .as_str()
+            .ok_or_else(|| invalid(name, "platforms holds a non-string entry"))?;
+        out.push(text.to_string());
+    }
+    Ok(out)
+}
+
+impl ServerEntry {
+    /// Reports whether this server should be installed on the running platform.
+    /// Takes nothing; returns true when the manifest names this platform or
+    /// names none at all.
+    pub fn is_for_this_platform(&self) -> bool {
+        self.platforms.is_empty() || self.platforms.iter().any(|name| name == std::env::consts::OS)
+    }
 }
 
 fn stdio_of(name: &str, command: &Item, table: &dyn TableLike) -> Result<StdioSpec, SyncError> {
@@ -342,6 +375,47 @@ mod tests {
             Err(err) => err,
             Ok(_) => panic!("manifest unexpectedly loaded"),
         }
+    }
+
+    #[test]
+    fn a_server_without_platforms_runs_everywhere() {
+        let dir = fixture("platforms-absent");
+        let manifest = manifest_from(&dir, "[servers.zulu]\ncommand = \"npx\"\n")
+            .expect("manifest loads");
+        assert!(manifest.servers[0].platforms.is_empty());
+        assert!(manifest.servers[0].is_for_this_platform());
+    }
+
+    #[test]
+    fn platforms_gates_a_server_to_the_named_os() {
+        let dir = fixture("platforms-named");
+        let manifest = manifest_from(
+            &dir,
+            "[servers.mac_only]\ncommand = \"n\"\nplatforms = [\"macos\"]\n\
+             \n[servers.linux_only]\ncommand = \"n\"\nplatforms = [\"linux\"]\n\
+             \n[servers.both]\ncommand = \"n\"\nplatforms = [\"macos\", \"linux\"]\n",
+        )
+        .expect("manifest loads");
+        let by_name = |want: &str| {
+            manifest
+                .servers
+                .iter()
+                .find(|entry| entry.name == want)
+                .expect("server present")
+                .is_for_this_platform()
+        };
+        assert_eq!(by_name("mac_only"), cfg!(target_os = "macos"));
+        assert_eq!(by_name("linux_only"), cfg!(target_os = "linux"));
+        assert!(by_name("both"));
+    }
+
+    #[test]
+    fn platforms_must_be_an_array_of_strings() {
+        let dir = fixture("platforms-invalid");
+        let err = load_err(&dir, "[servers.zulu]\ncommand = \"n\"\nplatforms = \"macos\"\n");
+        assert!(matches!(err, SyncError::ManifestInvalid(_)));
+        let err = load_err(&dir, "[servers.zulu]\ncommand = \"n\"\nplatforms = [7]\n");
+        assert!(matches!(err, SyncError::ManifestInvalid(_)));
     }
 
     const MIXED: &str = "\
@@ -536,6 +610,7 @@ tools = [\"codex\"]
                     cwd: Some("/tmp/third".to_string()),
                 }),
                 scope: ToolScope::ClaudeOnly,
+                platforms: Vec::new(),
             },
             ServerEntry {
                 name: "fourth".to_string(),
@@ -544,6 +619,7 @@ tools = [\"codex\"]
                     bearer_token_env_var: None,
                 }),
                 scope: ToolScope::Both,
+                platforms: Vec::new(),
             },
         ];
         append_servers(&path, &entries, false).expect("append succeeds");
@@ -586,6 +662,7 @@ tools = [\"codex\"]
                 bearer_token_env_var: None,
             }),
             scope: ToolScope::Both,
+            platforms: Vec::new(),
         }];
         let err = append_servers(&path, &entries, false).expect_err("duplicate rejected");
         assert!(matches!(err, SyncError::ManifestInvalid(_)));

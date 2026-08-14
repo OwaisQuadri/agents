@@ -30,10 +30,13 @@ args = ["-y", "@kimsungwhee/apple-docs-mcp"]
 [servers.icon-composer]
 command = "/opt/homebrew/bin/node"
 args = ["/opt/homebrew/lib/node_modules/icon-composer-mcp/dist/server.js"]
+platforms = ["macos"]
 
+# Resolved through the `rag` shim on PATH, which finds its own repo directory.
+# An absolute path here would name one machine's checkout and fail on the rest.
 [servers.rag]
-command = "uv"
-args = ["run", "--directory", "/Users/owaisquadri/rag", "python", "server.py"]
+command = "rag"
+args = ["serve"]
 
 [servers.computer-use]
 command = "npx"

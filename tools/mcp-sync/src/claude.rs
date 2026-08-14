@@ -172,6 +172,7 @@ pub fn unmanaged(path: &Path, manifest: &Manifest) -> Result<Vec<ServerEntry>, S
 
 fn is_claude_scoped(entry: &ServerEntry) -> bool {
     matches!(entry.scope, ToolScope::Both | ToolScope::ClaudeOnly)
+        && entry.is_for_this_platform()
 }
 
 fn read_doc(path: &Path) -> Result<(String, Map<String, Value>), SyncError> {
@@ -231,6 +232,7 @@ fn translate(name: &str, value: &Value) -> Result<ServerEntry, String> {
                     bearer_token_env_var: None,
                 }),
                 scope: ToolScope::Both,
+                platforms: Vec::new(),
             })
         }
         Some(other) => Err(format!("transport {other} has no manifest shape")),
@@ -279,6 +281,7 @@ fn translate_stdio(name: &str, object: &Map<String, Value>) -> Result<ServerEntr
             cwd: None,
         }),
         scope: ToolScope::Both,
+        platforms: Vec::new(),
     })
 }
 
@@ -326,6 +329,7 @@ mod tests {
                 cwd: None,
             }),
             scope,
+            platforms: Vec::new(),
         }
     }
 
@@ -342,6 +346,7 @@ mod tests {
                 bearer_token_env_var: token_var.map(str::to_string),
             }),
             scope,
+            platforms: Vec::new(),
         }
     }
 

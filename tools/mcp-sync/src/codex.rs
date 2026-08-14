@@ -210,6 +210,7 @@ fn parse_doc(path: &Path, text: Option<&str>) -> Result<DocumentMut, SyncError> 
 
 fn is_codex_scoped(entry: &ServerEntry) -> bool {
     matches!(entry.scope, ToolScope::Both | ToolScope::CodexOnly)
+        && entry.is_for_this_platform()
 }
 
 fn live_server<'a>(doc: &'a DocumentMut, name: &str) -> Option<&'a dyn TableLike> {
@@ -309,7 +310,7 @@ fn adopt(name: &str, live: &dyn TableLike) -> Result<ServerEntry, String> {
             bearer_token_env_var: opt_str_value(live, "bearer_token_env_var")?,
         })
     };
-    Ok(ServerEntry { name: name.to_string(), transport, scope: ToolScope::Both })
+    Ok(ServerEntry { name: name.to_string(), transport, scope: ToolScope::Both, platforms: Vec::new() })
 }
 
 fn str_value(live: &dyn TableLike, key: &str) -> Result<String, String> {
@@ -410,6 +411,7 @@ enabled = true
                 cwd: cwd.map(str::to_string),
             }),
             scope,
+            platforms: Vec::new(),
         }
     }
 
@@ -421,6 +423,7 @@ enabled = true
                 bearer_token_env_var: bearer.map(str::to_string),
             }),
             scope,
+            platforms: Vec::new(),
         }
     }
 
