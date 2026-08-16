@@ -54,12 +54,34 @@ fn run(args: &CliArgs) -> Result<ExitCode, SyncError> {
     run_with_output(args, &mut Vec::new())
 }
 
+#[cfg(not(test))]
 fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, SyncError> {
+    run_with_output_impl(args, output)
+}
+
+#[cfg(test)]
+fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, SyncError> {
+    run_with_output_impl(args, output, || {})
+}
+
+#[cfg(test)]
+fn run_with_output_before_state_save(
+    args: &CliArgs,
+    output: &mut impl Write,
+    before_state_save: impl FnOnce(),
+) -> Result<ExitCode, SyncError> {
+    run_with_output_impl(args, output, before_state_save)
+}
+
+fn run_with_output_impl(
+    args: &CliArgs,
+    output: &mut impl Write,
+    #[cfg(test)] before_state_save: impl FnOnce(),
+) -> Result<ExitCode, SyncError> {
     let targets = &args.targets;
     let manifest = manifest::load_manifest(&targets.manifest_path)?;
     match args.mode {
-        // TODO(AGNT-0002.T09): Hold the apply guard through the final state commit.
-        Mode::Apply => {
+        Mode::Apply => fsio::with_apply_lock(&targets.state_path, args.is_dry_run, || {
             let state = manifest::load_state(&targets.state_path)?;
             agents::parse_agents_dir(&targets.agents_src_dir)?;
             claude::validate(&targets.claude_json_path)?;
@@ -91,6 +113,8 @@ fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, 
                 &targets.codex_agents_dir,
                 args.is_dry_run,
             )?);
+            #[cfg(test)]
+            before_state_save();
             manifest::save_state(
                 &targets.state_path,
                 &managed_state(&manifest),
@@ -100,7 +124,7 @@ fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, 
                 .write_all(drift::render_plan(&changes, args.is_dry_run).as_bytes())
                 .expect("write apply output");
             Ok(ExitCode::SUCCESS)
-        }
+        }),
         Mode::Check => {
             let state = manifest::load_state(&targets.state_path)?;
             let mut rows = claude::check(&targets.claude_json_path, &manifest, &state)?;
@@ -197,6 +221,30 @@ mod tests {
         fs::write(dir.join(format!("{name}.md")), md).expect("seed agent md");
     }
 
+    fn file_inventory(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        fn visit(root: &Path, dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+            for entry in fs::read_dir(dir).expect("read inventory directory") {
+                let entry = entry.expect("read inventory entry");
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(root, &path, files);
+                } else if path.is_file() {
+                    files.push((
+                        path.strip_prefix(root)
+                            .expect("inventory path below root")
+                            .into(),
+                        fs::read(&path).expect("read inventory file"),
+                    ));
+                }
+            }
+        }
+
+        let mut files = Vec::new();
+        visit(root, root, &mut files);
+        files.sort_by(|left, right| left.0.cmp(&right.0));
+        files
+    }
+
     fn apply_targets(dir: &Path) -> Targets {
         Targets {
             manifest_path: dir.join("manifest.toml"),
@@ -255,49 +303,70 @@ mod tests {
 
     #[test]
     fn apply_refuses_duplicate_managed_authority_before_any_write() {
-        let dir = fixture("duplicate-managed-authority");
-        fs::write(dir.join("manifest.toml"), "# victim was removed\n").expect("seed manifest");
-        let claude_before = "{\n  \"mcpServers\": {\n    \"victim\": {\n      \"command\": \"managed-original\",\n      \"args\": [\"safe\"]\n    }\n  }\n}\n";
-        let codex_before =
-            "[mcp_servers.victim]\ncommand = \"managed-original\"\nargs = [\"safe\"]\n";
-        let state_before = "claude_managed = [\n  { name = \"victim\" },\n  { name = \"victim\", fingerprint = \"sha256:377bb661e22dd601b0ea6327f3c5c4ffb3df081633b59f62d59ee347ab69b69d\" },\n]\ncodex_managed = [\n  { name = \"victim\" },\n  { name = \"victim\", fingerprint = \"sha256:b70fb30fd328274b80f962775458ad5b38b088b520d47ec24cf1d6efe60c5a9b\" },\n]\n";
-        fs::write(dir.join("claude.json"), claude_before).expect("seed Claude config");
-        fs::write(dir.join("config.toml"), codex_before).expect("seed Codex config");
-        fs::write(dir.join("state.toml"), state_before).expect("seed duplicate state");
+        let cases = [
+            (
+                "claude",
+                "claude_managed",
+                "claude_managed = [\n  { name = \"victim\" },\n  { name = \"victim\", fingerprint = \"sha256:377bb661e22dd601b0ea6327f3c5c4ffb3df081633b59f62d59ee347ab69b69d\" },\n]\ncodex_managed = []\n",
+            ),
+            (
+                "codex",
+                "codex_managed",
+                "claude_managed = []\ncodex_managed = [\n  { name = \"victim\" },\n  { name = \"victim\", fingerprint = \"sha256:b70fb30fd328274b80f962775458ad5b38b088b520d47ec24cf1d6efe60c5a9b\" },\n]\n",
+            ),
+        ];
 
-        let args = CliArgs {
-            mode: Mode::Apply,
-            is_dry_run: false,
-            targets: apply_targets(&dir),
-        };
-        let err = run(&args).expect_err("duplicate authority must stop apply");
-        assert!(matches!(err, SyncError::ParseToml(_, _)), "{err}");
-        assert!(err.to_string().contains("claude_managed"), "{err}");
-        assert!(
-            err.to_string().contains("duplicate managed name victim"),
-            "{err}"
-        );
+        for (case_name, managed_array, state_before) in cases {
+            let dir = fixture(&format!("duplicate-managed-authority-{case_name}"));
+            fs::write(dir.join("manifest.toml"), "# victim was removed\n").expect("seed manifest");
+            let claude_before = "{\n  \"mcpServers\": {\n    \"victim\": {\n      \"command\": \"managed-original\",\n      \"args\": [\"safe\"]\n    }\n  }\n}\n";
+            let codex_before =
+                "[mcp_servers.victim]\ncommand = \"managed-original\"\nargs = [\"safe\"]\n";
+            fs::write(dir.join("claude.json"), claude_before).expect("seed Claude config");
+            fs::write(dir.join("config.toml"), codex_before).expect("seed Codex config");
+            fs::write(dir.join("state.toml"), state_before).expect("seed duplicate state");
+            let backups_before: Vec<_> = file_inventory(&dir)
+                .into_iter()
+                .filter(|(path, _)| {
+                    path.file_name()
+                        .is_some_and(|name| name.to_string_lossy().contains(".pre-sync-"))
+                })
+                .collect();
 
-        assert_eq!(
-            fs::read_to_string(dir.join("claude.json")).unwrap(),
-            claude_before
-        );
-        assert_eq!(
-            fs::read_to_string(dir.join("config.toml")).unwrap(),
-            codex_before
-        );
-        assert_eq!(
-            fs::read_to_string(dir.join("state.toml")).unwrap(),
-            state_before
-        );
-        let names: Vec<String> = fs::read_dir(&dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        assert!(
-            !names.iter().any(|name| name.contains(".pre-sync-")),
-            "{names:?}"
-        );
+            let args = CliArgs {
+                mode: Mode::Apply,
+                is_dry_run: false,
+                targets: apply_targets(&dir),
+            };
+            let err = run(&args).expect_err("duplicate authority must stop apply");
+            assert!(matches!(err, SyncError::ParseToml(_, _)), "{err}");
+            assert!(err.to_string().contains(managed_array), "{err}");
+            assert!(
+                err.to_string().contains("duplicate managed name victim"),
+                "{err}"
+            );
+
+            assert_eq!(
+                fs::read_to_string(dir.join("claude.json")).unwrap(),
+                claude_before
+            );
+            assert_eq!(
+                fs::read_to_string(dir.join("config.toml")).unwrap(),
+                codex_before
+            );
+            assert_eq!(
+                fs::read_to_string(dir.join("state.toml")).unwrap(),
+                state_before
+            );
+            let backups_after: Vec<_> = file_inventory(&dir)
+                .into_iter()
+                .filter(|(path, _)| {
+                    path.file_name()
+                        .is_some_and(|name| name.to_string_lossy().contains(".pre-sync-"))
+                })
+                .collect();
+            assert_eq!(backups_after, backups_before);
+        }
     }
 
     #[test]
@@ -322,6 +391,208 @@ mod tests {
 
         assert!(dir.join("codex-agents/alpha.toml").exists());
         assert!(dir.join("state.toml").exists());
+    }
+
+    pub(crate) fn apply_lock_contention_preserves_all_targets_case() {
+        let dir = fixture("held-apply-lock");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed Claude config");
+        fs::write(dir.join("config.toml"), CODEX_TOML).expect("seed Codex config");
+        fs::write(dir.join("hooks.json"), "{}\n").expect("seed hooks config");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+        write_agent(
+            &dir.join("agents"),
+            "alpha",
+            "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
+        );
+        fs::create_dir_all(dir.join("codex-agents")).expect("create Codex agents dir");
+        fs::write(dir.join("codex-agents/alpha.toml"), "existing agent\n")
+            .expect("seed Codex agent");
+        let targets = apply_targets(&dir);
+        let seed = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets: apply_targets(&dir),
+        };
+        run(&seed).expect("seed matching live entries and fingerprinted ownership");
+        let state = manifest::load_state(&targets.state_path).expect("load seeded state");
+        assert!(matches!(
+            state.claude_managed.as_slice(),
+            [manifest::ManagedServer {
+                fingerprint: Some(_),
+                ..
+            }]
+        ));
+        assert!(matches!(
+            state.codex_managed.as_slice(),
+            [manifest::ManagedServer {
+                fingerprint: Some(_),
+                ..
+            }]
+        ));
+
+        fs::write(
+            &targets.manifest_path,
+            "[servers.demo]\ncommand = \"echo\"\nargs = [\"changed\"]\ntools = [\"claude\", \"codex\"]\n",
+        )
+        .expect("seed divergent manifest");
+        let claude_before = fs::read(&targets.claude_json_path).expect("snapshot Claude config");
+        let codex_before = fs::read(&targets.codex_toml_path).expect("snapshot Codex config");
+        let hooks_before = fs::read(&targets.codex_hooks_json_path).expect("snapshot hooks config");
+        let state_before = fs::read(&targets.state_path).expect("snapshot state");
+        let agents_before = file_inventory(&targets.codex_agents_dir);
+        let backups_before: Vec<_> = file_inventory(&dir)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(".pre-sync-"))
+            })
+            .collect();
+
+        fsio::with_apply_lock(&targets.state_path, false, || {
+            let competing = CliArgs {
+                mode: Mode::Apply,
+                is_dry_run: false,
+                targets: apply_targets(&dir),
+            };
+            let err = run(&competing).expect_err("competing apply must stop at the lock");
+            assert!(matches!(
+                err,
+                SyncError::ChangedSinceRead(ref path) if path == &targets.state_path
+            ));
+
+            let dry = CliArgs {
+                mode: Mode::Apply,
+                is_dry_run: true,
+                targets: apply_targets(&dir),
+            };
+            run(&dry).expect("dry run must ignore the held apply lock");
+            Ok(())
+        })
+        .expect("hold apply lock");
+
+        assert_eq!(
+            fs::read(&targets.claude_json_path).expect("read Claude config"),
+            claude_before
+        );
+        assert_eq!(
+            fs::read(&targets.codex_toml_path).expect("read Codex config"),
+            codex_before
+        );
+        assert_eq!(
+            fs::read(&targets.codex_hooks_json_path).expect("read hooks config"),
+            hooks_before
+        );
+        assert_eq!(
+            fs::read(&targets.state_path).expect("read state"),
+            state_before
+        );
+        assert_eq!(file_inventory(&targets.codex_agents_dir), agents_before);
+        let backups_after: Vec<_> = file_inventory(&dir)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(".pre-sync-"))
+            })
+            .collect();
+        assert_eq!(backups_after, backups_before);
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn unwritable_state_parent_fails_before_live_writes_case() {
+        use std::os::unix::fs::PermissionsExt;
+
+        struct PermissionRestore {
+            path: PathBuf,
+            mode: u32,
+        }
+
+        impl Drop for PermissionRestore {
+            fn drop(&mut self) {
+                let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode));
+            }
+        }
+
+        let dir = fixture("unwritable-apply-parent");
+        let state_dir = dir.join("state-only");
+        let state_path = state_dir.join("state.toml");
+        let state_before = "claude_managed = []\ncodex_managed = []\n";
+        let hooks_before = "{}\n";
+        let agent_before = "existing agent\n";
+        fs::create_dir(&state_dir).expect("create state parent");
+        fs::write(&state_path, state_before).expect("seed state");
+        fs::write(dir.join("manifest.toml"), MANIFEST_TOML).expect("seed manifest");
+        fs::write(dir.join("claude.json"), CLAUDE_JSON).expect("seed Claude config");
+        fs::write(dir.join("config.toml"), CODEX_TOML).expect("seed Codex config");
+        fs::write(dir.join("hooks.json"), hooks_before).expect("seed hooks config");
+        fs::create_dir_all(dir.join("agents")).expect("create agents dir");
+        write_agent(
+            &dir.join("agents"),
+            "alpha",
+            "---\nname: alpha\ndescription: alpha does one job.\n---\nbody\n",
+        );
+        fs::create_dir_all(dir.join("codex-agents")).expect("create Codex agents dir");
+        fs::write(dir.join("codex-agents/alpha.toml"), agent_before).expect("seed Codex agent");
+        fsio::with_apply_lock(&state_path, false, || Ok(())).expect("seed persistent apply lock");
+        let agents_before = file_inventory(&dir.join("codex-agents"));
+        let backups_before: Vec<_> = file_inventory(&dir)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(".pre-sync-"))
+            })
+            .collect();
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555))
+            .expect("make state parent read-only");
+        let _permission_restore = PermissionRestore {
+            path: state_dir,
+            mode: 0o755,
+        };
+
+        let mut targets = apply_targets(&dir);
+        targets.state_path = state_path.clone();
+        let args = CliArgs {
+            mode: Mode::Apply,
+            is_dry_run: false,
+            targets,
+        };
+        let err = run(&args).expect_err("unwritable state parent must stop apply");
+        match err {
+            SyncError::Io(path, source) => {
+                assert_eq!(path, state_path);
+                assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+            }
+            other => panic!("expected state Io(PermissionDenied), got {other}"),
+        }
+
+        assert_eq!(
+            fs::read_to_string(&args.targets.claude_json_path).unwrap(),
+            CLAUDE_JSON
+        );
+        assert_eq!(
+            fs::read_to_string(&args.targets.codex_toml_path).unwrap(),
+            CODEX_TOML
+        );
+        assert_eq!(
+            fs::read_to_string(&args.targets.codex_hooks_json_path).unwrap(),
+            hooks_before
+        );
+        assert_eq!(
+            fs::read_to_string(&args.targets.state_path).unwrap(),
+            state_before
+        );
+        assert_eq!(
+            file_inventory(&args.targets.codex_agents_dir),
+            agents_before
+        );
+        let backups_after: Vec<_> = file_inventory(&dir)
+            .into_iter()
+            .filter(|(path, _)| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().contains(".pre-sync-"))
+            })
+            .collect();
+        assert_eq!(backups_after, backups_before);
     }
 
     pub(crate) fn spared_entry_becomes_unmanaged_case() {
@@ -590,21 +861,37 @@ mod tests {
             "claude_managed = [{ name = \"stale\", fingerprint = \"sha256:old\" }]\n\
             codex_managed = []\n";
         fs::write(&state_path, state_before).expect("seed original state");
-        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555))
-            .expect("make state directory read-only");
         let _permission_restore = PermissionRestore {
-            path: state_dir,
+            path: state_dir.clone(),
             mode: 0o755,
         };
 
         let mut targets = apply_targets(&dir);
         targets.state_path = state_path.clone();
+        let manifest = manifest::load_manifest(&targets.manifest_path).expect("load manifest");
+        let state = manifest::load_state(&targets.state_path).expect("load state");
+        let rows = claude::check(&targets.claude_json_path, &manifest, &state)
+            .expect("check spared replacement");
+        let changed = rows
+            .iter()
+            .find(|row| row.server == "stale")
+            .expect("find changed live entry");
+        assert!(matches!(changed.state, drift::DriftState::Spared));
+
         let args = CliArgs {
             mode: Mode::Apply,
             is_dry_run: false,
             targets,
         };
-        let err = run(&args).expect_err("state write must fail");
+        let is_callback_run = std::cell::Cell::new(false);
+        let mut output = Vec::new();
+        let err = run_with_output_before_state_save(&args, &mut output, || {
+            is_callback_run.set(true);
+            fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o555))
+                .expect("make state directory read-only");
+        })
+        .expect_err("state write must fail");
+        assert!(is_callback_run.get());
 
         match err {
             SyncError::Io(path, source) => {
@@ -1323,6 +1610,11 @@ mod tests {
 mod main {
     mod tests {
         #[test]
+        fn apply_lock_contention_preserves_all_targets() {
+            crate::tests::apply_lock_contention_preserves_all_targets_case();
+        }
+
+        #[test]
         fn spared_entry_becomes_unmanaged() {
             crate::tests::spared_entry_becomes_unmanaged_case();
         }
@@ -1357,6 +1649,12 @@ mod main {
         #[test]
         fn state_write_failure_preserves_spared_live_entry() {
             crate::tests::state_write_failure_preserves_spared_live_entry_case();
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn unwritable_state_parent_fails_before_live_writes() {
+            crate::tests::unwritable_state_parent_fails_before_live_writes_case();
         }
     }
 }

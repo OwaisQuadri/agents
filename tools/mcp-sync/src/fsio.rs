@@ -130,7 +130,71 @@ fn lock_parent(path: &Path) -> Result<fs::File, SyncError> {
     Ok(lock)
 }
 
-// TODO(AGNT-0002.T09): Guard one complete apply before any shared read or write.
+/// Runs one apply operation while holding the ownership-state parent lock.
+/// Takes the state path, the dry-run flag, and the operation; returns the
+/// operation result. Dry runs execute without a lock.
+///
+/// # Errors
+/// ChangedSinceRead when another apply holds the lock; Io when the lock or
+/// state-parent writeability probe fails; otherwise returns the operation error.
+pub fn with_apply_lock<T>(
+    state_path: &Path,
+    is_dry_run: bool,
+    operation: impl FnOnce() -> Result<T, SyncError>,
+) -> Result<T, SyncError> {
+    if is_dry_run {
+        return operation();
+    }
+    let state_parent = match state_path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let lock_path = state_parent.join(".mcp-sync-apply.lock");
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true);
+    let apply_lock = options
+        .open(&lock_path)
+        .map_err(|err| SyncError::Io(state_path.to_path_buf(), err))?;
+    match apply_lock.try_lock() {
+        Ok(()) => {}
+        Err(fs::TryLockError::WouldBlock) => {
+            return Err(SyncError::ChangedSinceRead(state_path.to_path_buf()));
+        }
+        Err(fs::TryLockError::Error(err)) => {
+            return Err(SyncError::Io(state_path.to_path_buf(), err));
+        }
+    }
+    probe_state_parent(state_parent, state_path)?;
+    operation()
+}
+
+fn probe_state_parent(state_parent: &Path, state_path: &Path) -> Result<(), SyncError> {
+    for _ in 0..16 {
+        let count = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let probe_path = state_parent.join(format!(
+            ".mcp-sync-apply-probe-{}-{count}",
+            std::process::id()
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        match options.open(&probe_path) {
+            Ok(file) => {
+                drop(file);
+                return fs::remove_file(&probe_path)
+                    .map_err(|err| SyncError::Io(state_path.to_path_buf(), err));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(SyncError::Io(state_path.to_path_buf(), err)),
+        }
+    }
+    Err(SyncError::Io(
+        state_path.to_path_buf(),
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "apply probe name collision",
+        ),
+    ))
+}
 
 fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
