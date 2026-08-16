@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-def _rag_bin() -> str:}
+def _rag_bin() -> str:
     # Resolved per machine, never hardcoded: an absolute path from one machine
     # fails on every other one as OSError, which this hook turns into silence.
     # A store that is merely installed elsewhere then looks identical to a store
