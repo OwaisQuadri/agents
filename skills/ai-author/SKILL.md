@@ -150,33 +150,6 @@ nothing but the grader agreeing that the text says what it says. This is a weake
 banning self-tuning, and deliberately so: self-tuning is not the failure mode, answer-key cases
 are, and those are open to every author.
 
-### open, measured, not yet fixed
-
-The new harness scores the incumbent at 7.80 on both slices, and it does not sweep its own
-exam on purpose. The live gaps it measures:
-
-- `c1` scores **4**: the contract states the go-live condition and never requires the evidence
-  to be reported, so "the evals were authored" reads as "the evals passed". Vote 4 asked for a
-  gate field in the logging format in July. Highest-value next mutation, and the pass that named
-  it then committed it — reporting bare means with no pass count and no holdout line, which the
-  new rubric grades catastrophic. Fix belongs in the logging format as a required field.
-- The holdout gate was never shown met for either 2026-08-10 mutation. Step 4 requires the win
-  to hold on the holdout slice; both entries reported non-holdout figures only, and one of them
-  quoted `a4`, a holdout case, inside a non-holdout claim. Under step 4 as written neither
-  mutation was acceptable on numbers, which is the second reason both are now marked unmeasured.
-- Tree rule 1 ends at "update it" and never routes to the GEPA loop, though the arrival branch
-  routes that same state there. `b4` sits at 7 for it. One line.
-- `h1` at 6 and `b4` at 7: branches this file states but does not make checkable.
-- The one-sentence test, vote aggregation, the loop's trigger threshold, and "no churn on
-  noise" are all unobservable as written — no run can be said to have honoured or skipped them.
-- The deferred-verdict rule names the destination that does NOT count and never names one that
-  does.
-- ~~This file's own `## logging` is not its last section.~~ FIXED 2026-08-10, after the judge
-  called out authoring the rubric that condemns it while not fixing it. The move initially
-  corrupted the file — the naive search for `## logging` matched the contract's own code-block
-  comment first and spliced the judge protocol into it — which is worth remembering as the
-  cheapest possible edit still needing a diff read afterwards.
-
 ## logging
 
 Every authored skill and agent carries a short `## logging` section (paste-ready text in
