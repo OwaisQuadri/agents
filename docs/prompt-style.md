@@ -23,6 +23,10 @@ Code comments are the one exception, and comment-style.md owns them.
   spawn, launch, fire, or hand off. A synonym reads as a second concept. Grep the config
   for the concept before you name it a new way.
 - One part of speech per word. Where `gate` is a noun, write "the human gate applies", never "gate the change".
+- **`message` means between the user and an agent.** Write `agent-to-agent message` for one
+  agent's text to another, and never let `message` carry both. Owner's instruction, 2026-08-11,
+  after a bare `message` in a requirement got read as the agent-to-agent kind and a whole design
+  followed the wrong one. Vendor field names are exempt and stay as their API spells them.
 - Active voice, actor named. Write "the orchestrator appends the failure line", never "failure lines are appended". An unnamed actor is an unassigned step.
 - No noun stack over three words. "phase-04 data-only engine drive matrix" becomes "the drive matrix for the phase-04 engine".
 - Keep the articles and the relative pronouns. Write "the angles that partition the failure space", not "angles partitioning the failure space".
@@ -30,6 +34,9 @@ Code comments are the one exception, and comment-style.md owns them.
   is free to skip. Promote it to its own sentence.
 - The simplest word that carries the meaning. Write "use", not "utilize". Write "before", not "prior to". Write "to", not "in order to". Write "stop", not "terminate". Write "start", not "initiate". Write "about", not "approximately". Write "next", not "subsequent".
 - One topic per paragraph, and at most six sentences.
+- Never write "genuine" or "genuinely", in any form. Owner's instruction, 2026-08-11. It is
+  a hedge that adds no fact: strike it and the claim reads the same, or the claim was thin
+  and needs evidence rather than an adverb.
 
 ## why there is no approved word list
 

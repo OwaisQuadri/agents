@@ -63,6 +63,11 @@ const COMPLEX_WORDS: &[&str] = &[
 
 const COMPLEX_PHRASES: &[&str] = &["prior to", "in order to"];
 
+// Owner's instruction, 2026-08-11: "pls take out genuinely from ur vocab. any
+// version of that word." It sat in two registers and belongs in the base, so it
+// binds the agent register too.
+const BANNED_WORDS: &[&str] = &["genuine", "genuinely", "genuineness"];
+
 const FUNCTION_WORDS: &[&str] = &[
     "a", "after", "all", "already", "also", "always", "an", "and", "any", "as", "at", "before",
     "both", "but", "by", "can", "each", "either", "every", "for", "from", "if", "in", "into",
@@ -244,6 +249,10 @@ pub fn simple_word(text: &str) -> Vec<String> {
     hits
 }
 
+pub fn banned_word(text: &str) -> Vec<String> {
+    find_words(text, BANNED_WORDS)
+}
+
 pub fn paragraph_length(text: &str) -> Vec<String> {
     let mut hits = Vec::new();
     for block in prose_blocks(text).into_iter().filter(|b| !is_list_line(b)) {
@@ -267,5 +276,6 @@ pub const RULES: &[Rule] = &[
     ("articles and relative pronouns kept", dropped_relative_pronoun),
     ("a parenthetical holds examples only", imperative_in_parenthetical),
     ("the simplest word that carries the meaning", simple_word),
+    ("never genuine/genuinely", banned_word),
     ("paragraph within the sentence cap", paragraph_length),
 ];

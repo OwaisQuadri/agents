@@ -1,6 +1,6 @@
 ---
 name: agent-config-reset
-description: Use when the user asks to audit or reset their agent config, when a finished reset needs closing out (learnings fold-back, archive retirement), or on sprawl symptoms: skill roots disagreeing on counts, skill links resolving into unrelated repos, hooks accumulating, forced dispatches on trivial turns, orchestration eating a large share of output tokens, unversioned config edits piling up, a committed .claude/ dir growing in any repo. Skip when adding a single skill or making a one-off config edit.
+description: Use when the user asks to audit or reset their agent config, when a finished reset needs closing out (learnings fold-back, archive retirement), or on sprawl symptoms. skill roots disagreeing on counts, skill links resolving into unrelated repos, hooks accumulating, forced dispatches on trivial turns, orchestration eating a large share of output tokens, unversioned config edits piling up, a committed .claude/ dir growing in any repo. Skip when adding a single skill or making a one-off config edit.
 ---
 
 # agent-config-reset

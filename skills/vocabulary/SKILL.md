@@ -53,7 +53,7 @@ Translate the ramble into terms before touching anything.
 3. Read each candidate's definition in `vocabulary.md`. Keep the terms whose definition
    describes this symptom — at most three per complaint — and drop the rest.
 4. Answer with the mapping: their phrase → the surviving term(s), each handled per the
-   Guidelines below, plus what adjusting it would change. When two terms genuinely fit,
+   Guidelines below, plus what adjusting it would change. When two terms both fit,
    give both with the distinguishing rule. Done when every complaint from step 1
    appears in the mapping.
 5. If the ramble arrived mid-task ("make it classier" during a build), carry on with

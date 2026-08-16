@@ -70,8 +70,7 @@ after it ships, he types `/bro`, and that skill rewrites it with no cap at all.
   leading "- " bullet is fine.
 - Join clauses with and, but, or so. Never use however, moreover, furthermore, or in
   conclusion.
-- Never use the words awesome, excellent, absolutely, amazing, perfect, great, genuine, or
-  genuinely.
+- Never use the words awesome, excellent, absolutely, amazing, perfect, or great.
 - Plain text only. No emoji, no bold, no italics, and no headings.
 - Numbering steps is fine, and dressing them up is not.
 - Backticks go around a real path or a real command, and nowhere else.

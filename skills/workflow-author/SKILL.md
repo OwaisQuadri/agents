@@ -103,7 +103,7 @@ A graph buys breadth, not judgment. Skip it when:
 - the task is small or isolated: one function, one bug. coordination is pure overhead.
 - every step wants approval: the graph's point is running wide without you.
 - exploratory work: steer one agent, don't lock a fleet into a plan.
-- steps genuinely depend on each other: the graph adds cost for zero speedup.
+- steps depend on each other: the graph adds cost for zero speedup.
 
 The tell is the fake-edge test: zero cuts means there is no graph to build. It is a
 loop, and a loop is fine.

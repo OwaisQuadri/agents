@@ -10,7 +10,6 @@ const LIST_CAP: usize = 5;
 
 const JOINERS: &[&str] = &["however", "moreover", "furthermore", "in conclusion"];
 const PRAISE: &[&str] = &["awesome", "excellent", "absolutely", "amazing", "perfect", "great"];
-const GENUINE: &[&str] = &["genuine", "genuinely"];
 
 fn r_dashes(text: &str) -> Vec<String> {
     dashes(text)
@@ -22,10 +21,6 @@ fn r_joiners(text: &str) -> Vec<String> {
 
 fn r_praise(text: &str) -> Vec<String> {
     find_words(text, PRAISE)
-}
-
-fn r_genuine(text: &str) -> Vec<String> {
-    find_words(text, GENUINE)
 }
 
 pub fn not_just_but(text: &str) -> Vec<String> {
@@ -157,7 +152,6 @@ pub const RULES: &[Rule] = &[
     ("no dash between clauses", r_dashes),
     ("no however/moreover/furthermore/in conclusion", r_joiners),
     ("no awesome/excellent/absolutely/amazing/perfect/great", r_praise),
-    ("never genuine/genuinely", r_genuine),
     ("never 'not just x, but y'", not_just_but),
     ("plain text: no emoji/bold/italics/headings", plain_text),
     ("relative time, no timestamps", timestamps),
