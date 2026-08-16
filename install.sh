@@ -171,6 +171,8 @@ else
       printf '%s\n' "$UPDATED" > "$SETTINGS"
     fi
   fi
+fi
+
 done
 
 plan "done"
