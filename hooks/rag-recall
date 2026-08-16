@@ -13,16 +13,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-def _rag_bin() -> str:
+def _rag_bin() -> str:}
     # Resolved per machine, never hardcoded: an absolute path from one machine
     # fails on every other one as OSError, which this hook turns into silence.
     # A store that is merely installed elsewhere then looks identical to a store
     # with no hits.
-    return os.environ.get("RAG_BIN") or shutil.which("rag") or str(Path.home() / "rag" / "rag")
-
+    return os.environ.get("RAG_BIN") or shutil.which("rag") or str(Path.home() / "rag" / "rag") or "/Users/owaisquadri/.local/bin/rag"
 
 RAG = _rag_bin()
+
 K = 8
 QUERY_MAX_CHARS = 2000
 # embeddings.preflight runs `open -a Ollama` and blocks up to 10s when Ollama is down;

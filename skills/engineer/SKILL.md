@@ -1,8 +1,9 @@
 ---
 name: engineer
-description: Use when any development change begins in a project — picking the next ticket from .map/roadmap.json, resuming mid-run from .map/<TICKET-ID>/state.json, adopting an existing branch started outside the map, or ideating future work into tickets. Task scale sets the pace, never the route: every change walks the 23-phase spine (selection, research, UX(user experience) research, testability, structural definition, DAG(directed acyclic graph) implementation, fresh-context testing, invariants, break panel, human sign-off, roadmap refill, PR(Pull Request)). Skip for non-development asks — pure research questions (research-sweep owns those) and authoring skills, agents, or workflows (ai-author owns those).
+description: "Use when any development change begins in a project — picking the next ticket from .map/roadmap.json, resuming mid-run from .map/<TICKET-ID>/state.json, adopting an existing branch started outside the map, or ideating future work into tickets. Task scale sets the pace, never the route. every change walks the 23-phase spine (selection, research, UX(user experience) research, testability, structural definition, DAG(directed acyclic graph) implementation, fresh-context testing, invariants, break panel, human sign-off, roadmap refill, PR(Pull Request)). Skip for non-development asks — pure research questions (research-sweep owns those) and authoring skills, agents, or workflows (ai-author owns those)."
 metadata:
   short-description: The exact 23-phase map for agent coding work
+---
 ---
 
 # engineer

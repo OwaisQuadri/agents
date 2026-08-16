@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Use when the user asks for a PR(Pull Request) from the current branch or a Conductor PR-instructions attachment arrives: commit pending changes, push, open the PR with gh. Skip when the ask is only a commit or a push with no PR, and for reviewing an existing PR.
+description: Use when the user asks for a PR(Pull Request) from the current branch or a Conductor PR-instructions attachment arrives. commit pending changes, push, open the PR with gh. Skip when the ask is only a commit or a push with no PR, and for reviewing an existing PR.
 metadata:
   short-description: Commit, push, and open the PR with gh
 ---

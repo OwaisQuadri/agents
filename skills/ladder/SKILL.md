@@ -1,6 +1,6 @@
 ---
 name: ladder
-description: Use when a technology has to be learned deeply rather than skimmed — a language, framework, or stack where the goal is mastery and the user will be producing, not consuming summaries. Ladders it: honest per-dimension placement against what he already knows, the red cells that are the whole curriculum, one checkable artifact per rung, ending in a project he maintains. Skip for a single how-do-I question, for shipping a feature where learning is incidental, and for running an existing ladder (the ladder file is already the instructions).
+description: Use when a technology has to be learned deeply rather than skimmed — a language, framework, or stack where the goal is mastery and the user will be producing, not consuming summaries. Ladders it. honest per-dimension placement against what he already knows, the red cells that are the whole curriculum, one checkable artifact per rung, ending in a project he maintains. Skip for a single how-do-I question, for shipping a feature where learning is incidental, and for running an existing ladder (the ladder file is already the instructions).
 metadata:
   short-description: Build a rung ladder for learning a technology to mastery
 ---
