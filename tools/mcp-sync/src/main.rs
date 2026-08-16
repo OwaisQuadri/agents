@@ -58,6 +58,7 @@ fn run_with_output(args: &CliArgs, output: &mut impl Write) -> Result<ExitCode, 
     let targets = &args.targets;
     let manifest = manifest::load_manifest(&targets.manifest_path)?;
     match args.mode {
+        // TODO(AGNT-0002.T09): Hold the apply guard through the final state commit.
         Mode::Apply => {
             let state = manifest::load_state(&targets.state_path)?;
             agents::parse_agents_dir(&targets.agents_src_dir)?;

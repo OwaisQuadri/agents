@@ -130,6 +130,8 @@ fn lock_parent(path: &Path) -> Result<fs::File, SyncError> {
     Ok(lock)
 }
 
+// TODO(AGNT-0002.T09): Guard one complete apply before any shared read or write.
+
 fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
     os.push(suffix);
