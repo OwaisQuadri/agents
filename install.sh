@@ -173,6 +173,4 @@ else
   fi
 fi
 
-done
-
 plan "done"
