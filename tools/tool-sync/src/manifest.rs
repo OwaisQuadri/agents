@@ -1,3 +1,4 @@
+// TODO(AGNT-0008.T01): reverify the completed manifest after the plan walk-back.
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
