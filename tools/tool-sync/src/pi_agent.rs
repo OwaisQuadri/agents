@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::SyncError;
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 struct AgentSource {
@@ -25,4 +27,42 @@ struct PiAgent {
 struct AgentAdapterReport {
     rendered: Vec<PathBuf>,
     overlapping_builtins: Vec<String>,
+}
+
+/// Finds source agent definitions beneath one repository directory.
+/// It takes the agent root and returns sorted Markdown paths.
+///
+/// # Errors
+///
+/// Returns `SyncError` when the directory cannot be read or contains an unsafe path.
+pub fn discover(root: &Path) -> Result<Vec<PathBuf>, SyncError> {
+    unimplemented!()
+}
+
+/// Renders one source agent as a Pi-compatible agent definition.
+/// It takes source and destination paths and returns unit after the destination is verified.
+///
+/// # Errors
+///
+/// Returns `SyncError` for unreadable input, invalid frontmatter, unsupported fields, or filesystem failures.
+pub fn render(source: &Path, destination: &Path) -> Result<(), SyncError> {
+    unimplemented!()
+}
+
+/// Finds project agent names that overlap bundled pi-subagents roles.
+/// It takes source agent paths and returns sorted canonical role names.
+///
+/// # Errors
+///
+/// Returns `SyncError` when a source cannot be read or parsed.
+pub fn builtin_overlaps(sources: &[PathBuf]) -> Result<Vec<String>, SyncError> {
+    unimplemented!()
+}
+
+fn parse(source: &Path) -> Result<AgentSource, SyncError> {
+    unimplemented!()
+}
+
+fn adapt(source: AgentSource) -> Result<PiAgent, SyncError> {
+    unimplemented!()
 }
