@@ -173,9 +173,51 @@ else
   fi
 fi
 
-# 12. status line. the script is repo-owned and linked like every other repo artifact, but
-#     settings.json stays machine-local and only gains the pointer key: preferences and MCP
-#     config are separate concerns, so mcp-sync does not reach into this file
+# 12. shell preferences. Claude Code and Pi need explicit settings. Codex reads the
+#     user's login shell, and CLAUDE.md tells every client to keep Z shell syntax.
+ZSH_PATH="$(command -v zsh || true)"
+if [[ -z "$ZSH_PATH" ]]; then
+  echo "warn: zsh not found, skipping agent shell preferences" >&2
+elif ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping agent shell preferences" >&2
+else
+  CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+  PI_SETTINGS="$HOME/.pi/agent/settings.json"
+  run mkdir -p "$HOME/.pi/agent"
+
+  if [[ -f "$CLAUDE_SETTINGS" ]] && jq -e --arg s "$ZSH_PATH" '.env.CLAUDE_CODE_SHELL == $s' "$CLAUDE_SETTINGS" >/dev/null 2>&1; then
+    plan "ok   $CLAUDE_SETTINGS shell -> $ZSH_PATH"
+  else
+    backup "$CLAUDE_SETTINGS"
+    plan "set  $CLAUDE_SETTINGS shell -> $ZSH_PATH"
+    if (( IS_DRY == 0 )); then
+      CURRENT='{}'
+      [[ -f "$CLAUDE_SETTINGS" ]] && CURRENT="$(cat "$CLAUDE_SETTINGS")"
+      UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" \
+        '.env = ((.env // {}) + {CLAUDE_CODE_SHELL: $s})')" \
+        || { echo "FATAL: $CLAUDE_SETTINGS is not valid JSON" >&2; exit 1; }
+      printf '%s\n' "$UPDATED" > "$CLAUDE_SETTINGS"
+    fi
+  fi
+
+  if [[ -f "$PI_SETTINGS" ]] && jq -e --arg s "$ZSH_PATH" '.shellPath == $s' "$PI_SETTINGS" >/dev/null 2>&1; then
+    plan "ok   $PI_SETTINGS shell -> $ZSH_PATH"
+  else
+    backup "$PI_SETTINGS"
+    plan "set  $PI_SETTINGS shell -> $ZSH_PATH"
+    if (( IS_DRY == 0 )); then
+      CURRENT='{}'
+      [[ -f "$PI_SETTINGS" ]] && CURRENT="$(cat "$PI_SETTINGS")"
+      UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" '.shellPath = $s')" \
+        || { echo "FATAL: $PI_SETTINGS is not valid JSON" >&2; exit 1; }
+      printf '%s\n' "$UPDATED" > "$PI_SETTINGS"
+    fi
+  fi
+fi
+
+# 13. status line. the script is repo-owned and linked like every other repo artifact, but
+#     settings.json stays machine-local. Client preferences and MCP config are separate
+#     concerns, so mcp-sync does not reach into this file.
 SL_SRC="$REPO_TARGET/config/statusline.sh"
 SETTINGS="$HOME/.claude/settings.json"
 SL_LINK="$HOME/.claude/statusline.sh"
