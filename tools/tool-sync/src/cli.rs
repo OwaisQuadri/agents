@@ -1,4 +1,3 @@
-// TODO(AGNT-0008.T04): reverify the command after the preview contract walk-back.
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
