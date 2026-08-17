@@ -115,6 +115,35 @@ done
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
 link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
+# TODO(AGNT-0008.T06): reverify installer integration with fresh-source dry run.
+TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
+TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"
+if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $TOOL_SYNC_CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$TOOL_SYNC_CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/tool-sync" "$TOOL_SYNC_BIN"
+    BUILT_TOOLS+=("tool-sync")
+  else
+    echo "warn: cargo not found, skipping the tool-sync build" >&2
+  fi
+fi
+
+if [[ ! -x "$TOOL_SYNC_BIN" ]]; then
+  echo "warn: tool-sync not built, skipping the tool sync" >&2
+else
+  TOOL_SYNC_ARGS=(
+    --repository-root "$REPO_TARGET"
+    --manifest "$REPO_TARGET/config/tools.toml"
+    --home "$HOME"
+  )
+  (( DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
+  plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
+  "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
+fi
+
 # 10. mcp-sync: rebuilt every pass so the binary matches the manifest it syncs
 CRATE="$REPO_TARGET/tools/mcp-sync"
 if [[ -f "$CRATE/Cargo.toml" ]]; then
@@ -128,24 +157,6 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   else
     echo "warn: cargo not found, skipping the mcp-sync build" >&2
   fi
-fi
-
-# TODO(AGNT-0008.T06): replace the unsupported Pi registry with tool-sync.
-# 10.5. Register tools for Pi
-if command -v jq >/dev/null 2>&1; then
-  PLUGINS_DIR="$HOME/.pi/plugins"
-  TOOLS_FILE="$PLUGINS_DIR/tools.json"
-  mkdir -p "$PLUGINS_DIR"
-  if [[ ! -f "$TOOLS_FILE" ]]; then
-    echo '{}' > "$TOOLS_FILE"
-  fi
-  for tool in "${BUILT_TOOLS[@]}"; do
-    TMP_FILE="$TOOLS_FILE.tmp"
-    jq --arg tool "$tool" --arg path "$HOME/.local/bin/$tool" \
-      '. + {($tool): $path}' "$TOOLS_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$TOOLS_FILE"
-  done
-else
-  echo "warn: jq not found, skipping Pi tool registration" >&2
 fi
 
 # 11. sync the live configs. the binary runs outside run() on purpose, so its own
