@@ -7,13 +7,13 @@ shopt -s nullglob
 REPO_TARGET="${REPO_TARGET:-$HOME/Documents/agents}"
 SKILLS_ROOT="$HOME/.agents/skills"
 STAMP="$(date +%Y%m%d)"
-DRY=0
-[[ "${1:-}" == "--dry-run" ]] && DRY=1
+IS_DRY=0
+[[ "${1:-}" == "--dry-run" ]] && IS_DRY=1
 
 plan() { echo "plan: $*"; }
 
 run() {
-  if (( DRY )); then echo "dry:  $*"; else "$@"; fi
+  if (( IS_DRY )); then echo "dry:  $*"; else "$@"; fi
 }
 
 # move (or copy, for single files) an existing path to a .pre-reset-<stamp> backup, verified.
@@ -35,7 +35,7 @@ backup() {
   else
     run mv "$src" "$dest"
   fi
-  (( DRY )) || [[ -e "$dest" || -L "$dest" ]] || { echo "FATAL: backup missing at $dest" >&2; exit 1; }
+  (( IS_DRY )) || [[ -e "$dest" || -L "$dest" ]] || { echo "FATAL: backup missing at $dest" >&2; exit 1; }
 }
 
 # link <linkpath> <target> — idempotent, pre-write backup
@@ -51,7 +51,7 @@ link() {
 }
 
 [[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
-(( DRY )) && plan "dry run — printing, not executing"
+(( IS_DRY )) && plan "dry run — printing, not executing"
 
 # 1. canonical skills root
 plan "ensure $SKILLS_ROOT"
@@ -70,7 +70,7 @@ for lnk in "$SKILLS_ROOT"/*; do
   plan "prune $lnk (target gone) -> $PRUNED/"
   run mkdir -p "$PRUNED"
   run mv "$lnk" "$PRUNED/"
-  (( DRY )) || [[ -L "$PRUNED/$(basename "$lnk")" ]] || { echo "FATAL: prune missing at $PRUNED/$(basename "$lnk")" >&2; exit 1; }
+  (( IS_DRY )) || [[ -L "$PRUNED/$(basename "$lnk")" ]] || { echo "FATAL: prune missing at $PRUNED/$(basename "$lnk")" >&2; exit 1; }
 done
 
 # 4. agent skill roots become single directory symlinks
@@ -138,7 +138,7 @@ else
     --manifest "$REPO_TARGET/config/tools.toml"
     --home "$HOME"
   )
-  (( DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
+  (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
   plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
   "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
 fi
@@ -168,7 +168,7 @@ elif [[ ! -f "$HOME/.claude.json" ]]; then
   echo "warn: $HOME/.claude.json not found yet, skipping the config sync" >&2
 else
   plan "sync configs: MCP_SYNC_REPO=$REPO_TARGET $SYNC_BIN"
-  if (( DRY )); then
+  if (( IS_DRY )); then
     MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN" --dry-run
   else
     MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN"
@@ -193,7 +193,7 @@ else
   else
     backup "$SETTINGS"
     plan "set  $SETTINGS statusLine -> $SL_LINK"
-    if (( DRY == 0 )); then
+    if (( IS_DRY == 0 )); then
       CURRENT='{}'
       [[ -f "$SETTINGS" ]] && CURRENT="$(cat "$SETTINGS")"
       UPDATED="$(printf '%s' "$CURRENT" | jq --arg c "$SL_LINK" \
