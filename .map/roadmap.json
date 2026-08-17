@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 12,
+  "next_nnnn": 18,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -176,6 +176,120 @@
       ],
       "blame_phase": null,
       "created": "2026-08-17T00:00:36-0400"
+    },
+    {
+      "id": "AGNT-0012",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Install the pinned Pi stack with private telemetry.",
+      "long": "Install nicobailon/pi-subagents, Plannotator, HumanLayer show-me, Wayfinder, and grilling from pinned upstream revisions. Keep each upstream checkout unchanged. Add a project-owned Pi extension that records package version, invocation, duration, result status, human correction, and exposed cost fields. Do not record prompts or file contents by default.\n\nDerive Pi-compatible agent metadata from the existing definitions without creating a second prompt source. Disable overlapping bundled agents only after representative project roles pass. Require three reproduced failures with one source-level cause before a fork. Test dry runs, repeated installs, telemetry redaction, and representative agent discovery.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "config/tools.toml",
+        "tools/tool-sync/",
+        "pi/",
+        "agents/",
+        "install.sh",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0013",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Run Claude Code as a subscription-backed Pi child.",
+      "long": "Add a project-owned Pi agent that invokes the installed claude command through the external command runner in nicobailon/pi-subagents. Verify the supported flags from the installed Claude Code command instead of copying an example. Preserve fresh context and worktree isolation for mutation-capable runs. Run one bounded child task and confirm that its result returns to Pi. Verify that the call appears in Claude subscription usage before this route becomes the default.",
+      "deps": [
+        "AGNT-0012"
+      ],
+      "files": [
+        "agents/",
+        "pi/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0014",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Create the two-tab Herdr worktree setup.",
+      "long": "Install herdr-fresh-worktree from a pinned revision. Add one idempotent, repository-owned Herdr setup for new and opened worktrees. Tab one contains Pi at 75 percent width and a shell at 25 percent. Tab two contains Neovim at 75 percent and a shell at 25 percent. Define event ordering and ownership between herdr-fresh-worktree and hooks/post-checkout before either changes a new worktree. Test repeated setup, dirty destinations, existing tabs, and one temporary worktree.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "config/tools.toml",
+        "tools/tool-sync/",
+        "herdr/",
+        "hooks/",
+        "install.sh",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0015",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Show live request and overall diffs in Pi.",
+      "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "pi/extensions/",
+        "config/tools.toml",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0016",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Add decision aids to the engineering gates.",
+      "long": "Add Wayfinder's destination, frontier, fog, and out-of-scope fields to engineering plans. Use grilling only when unresolved answers can change execution. Use show-me for concise system views and Plannotator for visual plan or diff feedback. Keep the existing human gates as the authority and record each aid's output in the run artifacts. Add evaluations that prove the aids do not create new mandatory stops on clean runs.",
+      "deps": [
+        "AGNT-0012"
+      ],
+      "files": [
+        "skills/engineer/",
+        "skills/wayfinder/",
+        "skills/grilling/",
+        "skills/show-me/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0017",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Restore a Herdr worktree as a replayable cockpit.",
+      "long": "Store one repository-owned workspace recipe that restores Herdr tabs, active commands, the selected ticket, the current engineering gate, and live diff state. Restore the child-agent fleet view after a restart. Replace separate setup paths with this inspectable state where the shipped Herdr interfaces support it. Keep secrets and transcript contents out of the recipe. Test a cold restore, a partial existing workspace, stale child state, and repeated restore.",
+      "deps": [
+        "AGNT-0012",
+        "AGNT-0014",
+        "AGNT-0015"
+      ],
+      "files": [
+        "herdr/",
+        "pi/extensions/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
     }
   ]
 }
