@@ -1,4 +1,3 @@
-// TODO(AGNT-0008.T03): implement the approved fresh-source preview rule.
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -93,7 +92,9 @@ pub fn run(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
                 ..
             } = action
             {
-                run_installer(tool, working_directory, command, preview_args)?;
+                if !is_unfetched_git_source(plan, working_directory) {
+                    run_installer(tool, working_directory, command, preview_args)?;
+                }
             }
             continue;
         }
@@ -101,6 +102,18 @@ pub fn run(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
         apply_action(action)?;
     }
     Ok(())
+}
+
+fn is_unfetched_git_source(plan: &Plan, working_directory: &Path) -> bool {
+    matches!(
+        fs::metadata(working_directory),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ) && plan.actions.iter().any(|action| {
+        matches!(
+            action,
+            Action::CloneRepository { destination, .. } if destination == working_directory
+        )
+    })
 }
 
 fn check_stale_state(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
@@ -387,6 +400,43 @@ mod tests {
         run(&plan, true).expect("preview succeeds");
 
         assert!(!uncreated.exists());
+    }
+
+    #[test]
+    fn dry_run_does_not_invoke_installer_for_unfetched_git_source() {
+        let fixture = Fixture::new();
+        let marker = fixture.0.join("installer-ran");
+        let script = fixture.0.join("preview.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch {:?}\n", marker.display().to_string()),
+        )
+        .expect("script");
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("executable");
+        let cache = fixture.0.join("cache");
+        let checkout = cache.join("rag");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory { path: cache },
+                Action::CloneRepository {
+                    url: "https://example.test/rag.git".into(),
+                    destination: checkout.clone(),
+                },
+                Action::RunInstaller {
+                    tool: "rag".into(),
+                    working_directory: checkout,
+                    command: script.to_string_lossy().into_owned(),
+                    args: vec!["apply".into()],
+                    preview_args: vec!["preview".into()],
+                },
+            ],
+        };
+
+        run(&plan, true).expect("missing fresh source is only rendered");
+
+        assert!(!marker.exists(), "installer child was invoked");
+        assert!(!fixture.0.join("cache").exists(), "dry run wrote cache");
     }
 
     #[test]

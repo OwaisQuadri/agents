@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitStatus;
 
-/// Exposes plan rendering and application.
+/// Exposes plan rendering and application, including non-writing installer previews.
 /// It takes planned actions and a dry-run selection, returns rendered text or unit, and reports apply failures.
 pub mod apply;
 /// Parses and validates tool-sync command inputs.
@@ -17,7 +17,7 @@ pub mod plan;
 /// It takes a manifest and context, returns a plan, and reports unsafe state as `SyncError`.
 pub mod planner;
 
-/// Describes a failure to plan, render, or apply executable-tool synchronization.
+/// Describes a failure to plan or apply executable-tool synchronization.
 /// Its variants contain the relevant path, process, status, or validation detail and formatting returns a user-facing message.
 /// Constructing and formatting this value do not themselves fail.
 pub enum SyncError {
