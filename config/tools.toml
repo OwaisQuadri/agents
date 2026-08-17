@@ -1,4 +1,3 @@
-# TODO(AGNT-0012.T04): Declare immutable package and skill revisions.
 [[tools]]
 name = "rag"
 platforms = ["macos", "linux"]
@@ -7,3 +6,44 @@ mcp_server = "rag"
 pi_extension = "pi/extensions/rag.ts"
 source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "91fe6c77eb5c075d6a12dd581f62eedd4eafc926" }
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
+
+[[tools]]
+name = "pi-subagents"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "."
+skills = ["skills/pi-subagents"]
+source = { url = "https://github.com/nicobailon/pi-subagents.git", revision = "27784eed57dd62021a7add4990ac2dada6690baa" }
+installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
+
+[[tools]]
+name = "plannotator"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "apps/pi-extension"
+source = { url = "https://github.com/backnotprop/plannotator.git", revision = "e1ce7dabe10474b3a653bef9ed5134b73e0b5336" }
+installer = { command = "/bin/sh", args = ["-c", "bun install --frozen-lockfile && bun run build:pi"], preview_args = ["-c", "bun --version"] }
+
+[[tools]]
+name = "humanlayer-skills"
+platforms = ["macos", "linux"]
+commands = []
+skills = ["plugins/show-me/skills/show-me"]
+source = { url = "https://github.com/humanlayer/skills.git", revision = "3c2629142c5d437428269b1b722b08c0b87f574d" }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "mattpocock-skills"
+platforms = ["macos", "linux"]
+commands = []
+skills = ["skills/engineering/wayfinder", "skills/productivity/grilling"]
+source = { url = "https://github.com/mattpocock/skills.git", revision = "068b6e0c62393147daf03530149cdce209c93da8" }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "telemetry"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/telemetry.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }

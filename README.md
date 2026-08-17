@@ -64,7 +64,93 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 | --- | --- |
 | `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
 
-<!-- TODO(AGNT-0012.T15): Document the pinned Pi stack and private telemetry controls. -->
+## Pi stack
+
+The managed upstream stack pins these immutable revisions:
+
+- `nicobailon/pi-subagents` at `27784eed57dd62021a7add4990ac2dada6690baa`.
+- `backnotprop/plannotator` at `e1ce7dabe10474b3a653bef9ed5134b73e0b5336`.
+- `humanlayer/skills` at `3c2629142c5d437428269b1b722b08c0b87f574d`.
+- `mattpocock/skills` at `068b6e0c62393147daf03530149cdce209c93da8`.
+
+`tool-sync` manages Pi packages and telemetry under `~/.pi/agent/extensions`. It links selected upstream skills under `~/.agents/skills` and caches Git checkouts under `~/.cache/tool-sync`. It derives Pi project agents under `~/.pi/agent/agents` from `agents/*/*.md`. The adapter maps only supported tools and models, and it preserves the prompt bytes.
+
+Package extensions execute with full user permissions. Review every pinned update before installation.
+
+### Private telemetry
+
+Telemetry uses the private local JavaScript Object Notation (JSON) Lines store at `${PI_CODING_AGENT_DIR:-~/.pi/agent}/telemetry.jsonl`. No prompts, outputs, tool arguments, tool results, file paths, or free-text feedback enter the closed schema.
+
+A run has exactly these fields: `recordType`, `runId`, `parentRunId`, `packageName`, `packageVersion`, `agentName`, `startedAt`, `settledAt`, `durationMs`, `status`, `tokens`, and `costUsd`. The nested `tokens` value has exactly `input`, `output`, `cacheRead`, and `cacheWrite`. The run status is `succeeded`, `failed`, or `cancelled`.
+
+A feedback record has exactly `recordType`, `runId`, `value`, and `createdAt`. The accepted feedback categories are `accepted`, `corrected`, and `rejected`.
+
+Routine status shows only active and failed counts. Use these Pi slash commands:
+
+```text
+/telemetry-status
+/telemetry-runs {"packageName":"pi-subagents","packageVersion":"0.50.0","agentName":"code-reviewer","status":"failed","minimumDurationMs":1000,"maximumCostUsd":0.25,"feedback":"corrected"}
+/telemetry-feedback <runId> <accepted|corrected|rejected>
+```
+
+The `/telemetry-runs` command accepts one JSON object. Its approved filters are `packageName`, `packageVersion`, `agentName`, `status`, `minimumDurationMs`, `maximumCostUsd`, and `feedback`.
+
+### Updates and verification
+
+For an upstream update, change its immutable revision and any reviewed adapter paths or installer. If the `pi-subagents` package version changes, also update `PinnedSubagentPackageVersion` in `pi/extensions/telemetry.ts`, its test expectations, and the telemetry filter example above. Then build `tool-sync`, preview the complete plan, and apply it:
+
+```sh
+cargo build --release --manifest-path tools/tool-sync/Cargo.toml
+REPO_TARGET="$PWD" ./install.sh --dry-run
+REPO_TARGET="$PWD" ./install.sh
+```
+
+Confirm clean checkouts, exact revisions, managed links, and derived agents. Then run the Cargo and telemetry tests:
+
+```sh
+set -eu
+
+while read -r name revision; do
+  test "$(git -C "$HOME/.cache/tool-sync/$name" rev-parse HEAD)" = "$revision"
+  test -z "$(git -C "$HOME/.cache/tool-sync/$name" status --porcelain)"
+done <<'REVISIONS'
+pi-subagents 27784eed57dd62021a7add4990ac2dada6690baa
+plannotator e1ce7dabe10474b3a653bef9ed5134b73e0b5336
+humanlayer-skills 3c2629142c5d437428269b1b722b08c0b87f574d
+mattpocock-skills 068b6e0c62393147daf03530149cdce209c93da8
+REVISIONS
+
+test "$(readlink "$HOME/.pi/agent/extensions/pi-subagents")" = "$HOME/.cache/tool-sync/pi-subagents"
+test "$(readlink "$HOME/.pi/agent/extensions/pi-extension")" = "$HOME/.cache/tool-sync/plannotator/apps/pi-extension"
+test "$(readlink "$HOME/.pi/agent/extensions/telemetry.ts")" = "$PWD/pi/extensions/telemetry.ts"
+test "$(readlink "$HOME/.agents/skills/pi-subagents")" = "$HOME/.cache/tool-sync/pi-subagents/skills/pi-subagents"
+test "$(readlink "$HOME/.agents/skills/show-me")" = "$HOME/.cache/tool-sync/humanlayer-skills/plugins/show-me/skills/show-me"
+test "$(readlink "$HOME/.agents/skills/wayfinder")" = "$HOME/.cache/tool-sync/mattpocock-skills/skills/engineering/wayfinder"
+test "$(readlink "$HOME/.agents/skills/grilling")" = "$HOME/.cache/tool-sync/mattpocock-skills/skills/productivity/grilling"
+
+for source in agents/*/*.md; do
+  test -f "$HOME/.pi/agent/agents/$(basename "$source")"
+done
+tools/tool-sync/target/release/tool-sync \
+  --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check >/dev/null
+
+cargo test --manifest-path tools/tool-sync/Cargo.toml
+node --test pi/extensions/telemetry.test.ts pi/extensions/telemetry.security.test.ts pi/extensions/telemetry.rpc.test.ts
+```
+
+Finally, use Pi Remote Procedure Call (RPC) mode to confirm that all three commands load without extension errors:
+
+```sh
+set -eu
+rpc_output="$(printf '%s\n' '{"id":"commands","type":"get_commands"}' | pi --mode rpc --no-session 2>&1)"
+printf '%s\n' "$rpc_output" | grep -q 'telemetry-status'
+printf '%s\n' "$rpc_output" | grep -q 'telemetry-runs'
+printf '%s\n' "$rpc_output" | grep -q 'telemetry-feedback'
+! printf '%s\n' "$rpc_output" | grep -Eiq 'extension.*error|error.*extension'
+```
+
+Do not fork upstream until three reproduced failures share one source-level cause. Configuration, wrappers, or project-owned agents must be unable to fix that cause.
+
 ## executable tools
 
 `config/tools.toml` declares executable tools for macOS and Linux. Each entry declares its source, installer, commands, and optional adapters.
