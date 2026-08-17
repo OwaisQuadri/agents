@@ -1,4 +1,3 @@
-// TODO(AGNT-0008.T03): fix real Git checkout and reverify apply behavior.
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -189,7 +188,7 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
         Action::CheckoutRevision {
             repository,
             revision,
-        } => git(repository, &["checkout", "--detach", "--", revision]),
+        } => git(repository, &["checkout", "--detach", revision]),
         Action::RunInstaller {
             tool,
             working_directory,
@@ -463,6 +462,64 @@ mod tests {
             Err(SyncError::DestinationCollision(_))
         ));
         assert!(!uncreated.exists());
+    }
+
+    #[test]
+    fn checkout_revision_detaches_at_exact_pinned_commit_with_real_git() {
+        let fixture = Fixture::new();
+        let repository = &fixture.0;
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(repository)
+                .args(args)
+                .output()
+                .expect("real local Git starts")
+        };
+        assert!(git(&["init", "--quiet"]).status.success());
+        assert!(git(&["config", "user.name", "Tool Sync Test"])
+            .status
+            .success());
+        assert!(git(&["config", "user.email", "tool-sync@example.test"])
+            .status
+            .success());
+
+        let tracked = repository.join("tracked");
+        fs::write(&tracked, "pinned\n").expect("first version");
+        assert!(git(&["add", "tracked"]).status.success());
+        assert!(git(&["commit", "--quiet", "-m", "pinned"]).status.success());
+        let pinned_output = git(&["rev-parse", "HEAD"]);
+        assert!(pinned_output.status.success());
+        let pinned = String::from_utf8(pinned_output.stdout)
+            .expect("commit ID is UTF-8")
+            .trim()
+            .to_owned();
+
+        fs::write(&tracked, "newer\n").expect("second version");
+        assert!(git(&["commit", "--quiet", "-am", "newer"]).status.success());
+        let newer_output = git(&["rev-parse", "HEAD"]);
+        assert!(newer_output.status.success());
+        assert_ne!(pinned.as_bytes(), newer_output.stdout.trim_ascii());
+
+        let plan = Plan {
+            actions: vec![Action::CheckoutRevision {
+                repository: repository.clone(),
+                revision: pinned.clone(),
+            }],
+        };
+        run(&plan, false).expect("checkout succeeds");
+
+        let actual_output = git(&["rev-parse", "HEAD"]);
+        assert!(actual_output.status.success());
+        assert_eq!(pinned.as_bytes(), actual_output.stdout.trim_ascii());
+        assert_eq!(
+            fs::read_to_string(tracked).expect("checked-out file"),
+            "pinned\n"
+        );
+        assert!(
+            !git(&["symbolic-ref", "--quiet", "HEAD"]).status.success(),
+            "checkout must leave HEAD detached"
+        );
     }
 
     #[test]

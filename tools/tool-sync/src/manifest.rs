@@ -1,4 +1,3 @@
-// TODO(AGNT-0008.T01): reverify manifest parsing after the final plan update.
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};

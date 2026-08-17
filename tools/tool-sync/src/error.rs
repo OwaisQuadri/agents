@@ -1,4 +1,3 @@
-// TODO(AGNT-0008.T02): reverify planning contracts after the final plan update.
 use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitStatus;
