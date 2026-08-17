@@ -115,7 +115,6 @@ done
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
 link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
-# TODO(AGNT-0008.T06): reverify installer integration with fresh-source dry run.
 TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
 TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"
 if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
