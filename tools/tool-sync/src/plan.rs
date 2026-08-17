@@ -44,7 +44,7 @@ pub enum Action {
         source: PathBuf,
         destination: PathBuf,
     },
-    // TODO(AGNT-0012.T02): Plan source-relative package and skill links.
+    // TODO(AGNT-0012.T01): Plan source-relative package and skill links.
     LinkPiPackage {
         source: PathBuf,
         destination: PathBuf,

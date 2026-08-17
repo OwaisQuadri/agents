@@ -15,6 +15,7 @@ pub mod manifest;
 pub mod plan;
 /// Discovers and renders project agent definitions for Pi.
 /// It takes source and destination paths, returns discovered or rendered paths, and reports invalid frontmatter or filesystem failures as `SyncError`.
+// TODO(AGNT-0012.T05): Export the source-agent parser and discovery module.
 pub mod pi_agent;
 /// Exposes installation planning without changing managed state.
 /// It takes a manifest and context, returns a plan, and reports unsafe state as `SyncError`.
