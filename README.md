@@ -6,9 +6,12 @@ versioned in one repo with a symlink installer.
 ## install
 
 ```sh
+cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 ./install.sh --dry-run   # print the plan
 ./install.sh             # symlink for real; pre-write backups land outside the skills root
 ```
+
+A fresh checkout needs the one-time build before its first dry run. The dry run exits with the required build command when the binary is absent.
 
 ## layout
 
@@ -74,6 +77,7 @@ A Pi tool interface requires a Pi extension. `tool-sync` links each declared ext
 Preview and apply the complete installation from the repository root:
 
 ```sh
+cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 REPO_TARGET="$PWD" ./install.sh --dry-run
 REPO_TARGET="$PWD" ./install.sh
 ```

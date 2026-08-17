@@ -473,3 +473,28 @@ fn top_level_installer_dry_run_leaves_an_absent_home_absent() {
     assert!(!home.exists());
     fs::remove_dir_all(root).expect("top-level fixture cleanup");
 }
+
+#[test]
+fn top_level_dry_run_requires_tool_sync_to_be_built() {
+    let root = fixture_root("tool-sync-top-level-unbuilt");
+    let repository = root.join("repository");
+    let home = root.join("home");
+    fs::create_dir_all(repository.join("skills/fixture")).expect("top-level fixture");
+    fs::create_dir_all(repository.join("tools/tool-sync")).expect("tool-sync fixture");
+    fs::write(repository.join("CLAUDE.md"), "fixture").expect("instructions fixture");
+    fs::write(repository.join("tools/tool-sync/Cargo.toml"), "[package]\n").expect("crate fixture");
+    let installer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+
+    let output = Command::new("bash")
+        .arg(installer)
+        .arg("--dry-run")
+        .env("HOME", &home)
+        .env("REPO_TARGET", &repository)
+        .output()
+        .expect("run top-level installer dry-run");
+
+    assert!(!output.status.success());
+    assert!(error_text(&output).contains("cargo build --release --manifest-path"));
+    assert!(!home.exists());
+    fs::remove_dir_all(root).expect("top-level fixture cleanup");
+}

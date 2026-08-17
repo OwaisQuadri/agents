@@ -62,9 +62,6 @@ function commandArguments(params: SearchMemoryInput): string[] {
 
 function commandFailure(result: CommandResult): Error {
 	const stderr = result.stderr.trim();
-	if (result.code === 1 && stderr.length === 0) {
-		return new Error("rag command was not found");
-	}
 	return new Error(stderr || `rag search failed with exit code ${result.code}`);
 }
 

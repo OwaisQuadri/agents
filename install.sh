@@ -127,9 +127,10 @@ if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
   fi
 fi
 
-if [[ ! -x "$TOOL_SYNC_BIN" ]]; then
-  echo "warn: tool-sync not built, skipping the tool sync" >&2
-else
+if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" && ! -x "$TOOL_SYNC_BIN" ]]; then
+  echo "FATAL: tool-sync is not built; run: cargo build --release --manifest-path $TOOL_SYNC_CRATE/Cargo.toml" >&2
+  exit 1
+elif [[ -x "$TOOL_SYNC_BIN" ]]; then
   TOOL_SYNC_ARGS=(
     --repository-root "$REPO_TARGET"
     --manifest "$REPO_TARGET/config/tools.toml"

@@ -113,6 +113,16 @@ test("propagates command, output, and cancellation failures", async (context) =>
 		await assert.rejects(tool.execute("call-3", { query: "query" }), /index unavailable/);
 	});
 
+	await context.test("nonzero exit without stderr", async () => {
+		const tool = registerWith(async () => ({
+			stdout: "",
+			stderr: "",
+			code: 1,
+			isKilled: false,
+		}));
+		await assert.rejects(tool.execute("call-3b", { query: "query" }), /failed with exit code 1/);
+	});
+
 	await context.test("invalid output", async () => {
 		const tool = registerWith(async () => ({
 			stdout: "not-json\n",

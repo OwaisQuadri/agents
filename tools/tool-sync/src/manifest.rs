@@ -247,6 +247,12 @@ fn git_of(name: &str, url: String, revision: String) -> Result<ToolSource, SyncE
     if url.trim().is_empty() || revision.trim().is_empty() {
         return Err(tool_invalid(name, "Git URL and revision must not be empty"));
     }
+    if revision.starts_with('-') {
+        return Err(tool_invalid(
+            name,
+            "Git revision must not start with a hyphen",
+        ));
+    }
     Ok(ToolSource::Git { url, revision })
 }
 
@@ -381,7 +387,7 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
 
     #[test]
     fn rejects_duplicate_names_and_provided_commands() {
-        let duplicate_name = format!("{TOOL}\n{}", TOOL.replace("[[tools]]", "[[tools]]"));
+        let duplicate_name = format!("{TOOL}\n{TOOL}");
         assert!(load_text(&duplicate_name).is_err());
 
         let second = TOOL
@@ -434,7 +440,16 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             .replace("pi/extensions/rag.ts", "other/rag.ts");
         let text = format!("{TOOL}\n{second}");
         let error = load_text(&text).expect_err("duplicate Pi extension must be rejected");
-        assert!(error.to_string().contains("Pi extension rag.ts is duplicated"));
+        assert!(error
+            .to_string()
+            .contains("Pi extension rag.ts is duplicated"));
+    }
+
+    #[test]
+    fn rejects_option_shaped_git_revision() {
+        let text = TOOL.replace("revision = \"abc123\"", "revision = \"--force\"");
+        let error = load_text(&text).expect_err("option-shaped revision must be rejected");
+        assert!(error.to_string().contains("must not start with a hyphen"));
     }
 
     #[test]

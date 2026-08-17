@@ -70,10 +70,13 @@ The extension must register its Pi tool and call the installed command. Keep pro
 Run the complete installer from the repository root:
 
 ```sh
+cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 REPO_TARGET="$PWD" ./install.sh --dry-run
 ```
 
-This command prints the top-level plan. When the `tool-sync` binary exists, it also prints the executable-tool plan.
+A fresh checkout needs the one-time build before its first dry run. If the binary is absent, the dry run exits with this build command and writes nothing.
+
+The dry run prints the top-level and executable-tool plans.
 
 The dry run passes `preview_args` to installers for existing embedded or cached sources.
 
