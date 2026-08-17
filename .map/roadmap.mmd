@@ -15,6 +15,13 @@ flowchart TD
     AGNT_0008["AGNT-0008 Install local and remote tools from one manifest."]:::todo
   end
   subgraph wave2 ["wave 2 — parallel"]
+    AGNT_0010["AGNT-0010 Prove tool sync on real Linux."]:::todo
+    AGNT_0011["AGNT-0011 Set up missing agent clients."]:::todo
+  end
+  subgraph wave3 ["wave 3 — parallel"]
     AGNT_0009["AGNT-0009 Manage shell entries and protect generated files."]:::todo
   end
   AGNT_0008 --> AGNT_0009
+  AGNT_0010 --> AGNT_0009
+  AGNT_0008 --> AGNT_0010
+  AGNT_0008 --> AGNT_0011

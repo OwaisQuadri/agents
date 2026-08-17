@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 10,
+  "next_nnnn": 12,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -128,7 +128,8 @@
       "short": "Manage shell entries and protect generated files.",
       "long": "Render one managed shell file for Bash and Z shell from the tool manifest. Add cld as claude --dangerously-skip-permissions. Render a managed Secure Shell include for the archlinux Tailscale host, and preserve the user's main Secure Shell config.\n\nInstall guards for Claude Code, Codex, and Pi. The guards block direct agent writes to managed configuration fields. Each refusal names the tracked source file or the adopt command. Human edits and unmanaged fields must survive the installer.\n\nTest repeated installs, existing user shell content, direct write attempts, the approved installer path, and dry runs with a temporary home directory.",
       "deps": [
-        "AGNT-0008"
+        "AGNT-0008",
+        "AGNT-0010"
       ],
       "files": [
         "config/",
@@ -140,6 +141,41 @@
       ],
       "blame_phase": null,
       "created": "2026-08-16T20:10:56-0400"
+    },
+    {
+      "id": "AGNT-0010",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Prove tool sync on real Linux.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        ".github/workflows/",
+        "tools/tool-sync/",
+        "install.sh"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T00:00:36-0400"
+    },
+    {
+      "id": "AGNT-0011",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Set up missing agent clients.",
+      "long": "Detect missing Claude Code, Codex, and Pi commands before adapter configuration. On macOS and Linux, show the supported installation command and require explicit approval before running it. Leave installed clients unchanged. Report clients that the system cannot install. Test detection, refusal, approval, repeated runs, and dry-run behavior with an isolated home and executable search path.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "config/",
+        "tools/tool-sync/",
+        "install.sh",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T00:00:36-0400"
     }
   ]
 }
