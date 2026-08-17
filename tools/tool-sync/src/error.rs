@@ -5,6 +5,9 @@ use std::process::ExitStatus;
 /// Exposes plan rendering and application.
 /// It takes planned actions and a dry-run selection, returns rendered text or unit, and reports apply failures.
 pub mod apply;
+/// Parses and validates tool-sync command inputs.
+/// It takes process arguments and a default home, returns CLI data, and reports invalid arguments as `SyncError`.
+pub mod cli;
 /// Contains executable-tool manifest parsing and validation.
 pub mod manifest;
 /// Exposes ordered installation action data.
@@ -18,6 +21,7 @@ pub mod planner;
 /// Its variants contain the relevant path, process, status, or validation detail and formatting returns a user-facing message.
 /// Constructing and formatting this value do not themselves fail.
 pub enum SyncError {
+    Arguments(String),
     Io(PathBuf, std::io::Error),
     ParseToml(PathBuf, String),
     ManifestInvalid(String),
@@ -41,6 +45,7 @@ pub enum SyncError {
 impl fmt::Display for SyncError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Arguments(detail) => write!(f, "invalid arguments: {detail}"),
             Self::Io(path, error) => write!(f, "cannot read {}: {error}", path.display()),
             Self::ParseToml(path, detail) => {
                 write!(f, "{} is not valid TOML: {detail}", path.display())
