@@ -22,6 +22,7 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 | `workflows/` | multi-agent graph specs |
 | `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; reference copies of `settings.json` and `settings.local.json` |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
+| `rules/` | Claude Code rules that load only for matching file paths |
 | `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest |
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
@@ -41,6 +42,7 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 | `bro` | re-explains the last reply in plain words when it lost you; jargon goes, facts stay verbatim, no length cap |
 | `byline` | de-slops prose that ships under your name: commits, PR bodies, tickets, READMEs; facts stay verbatim |
 | `mouthpiece` | voice rules for end-user-facing replies, scored by `ste-check --register mouthpiece` |
+| `rust-style` | applies the shared Rust baseline in Pi and Codex while Claude Code uses its matching path rule |
 | `task-graph` | work items + deps → statused DAG or ABCD-NNNN tickets, rendered in mermaid |
 | `vocabulary` | precise design and UI terms: exact lookup, near-synonym boundaries, reverse lookup from a vague ramble |
 | `volley` | short-turn mode: every turn ends inside 30 seconds; Volley dispatches longer work and reports it on the next turn |

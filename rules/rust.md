@@ -1,0 +1,1 @@
+../skills/rust-style/rust-baseline.md
