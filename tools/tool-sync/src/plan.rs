@@ -44,6 +44,18 @@ pub enum Action {
         source: PathBuf,
         destination: PathBuf,
     },
+    LinkPiPackage {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    LinkSkill {
+        source: PathBuf,
+        destination: PathBuf,
+    },
+    RenderPiAgent {
+        source: PathBuf,
+        destination: PathBuf,
+    },
     SkipPlatform {
         tool: String,
         platform: Platform,
