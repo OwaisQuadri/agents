@@ -96,7 +96,6 @@ fi
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
 #    because each one sits in a path that is waited on: ste-check in the reply path,
 #    no-ai-attribution in the PreToolUse path ahead of every commit
-BUILT_TOOLS=()
 for tool in ste-check no-ai-attribution; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
@@ -106,7 +105,6 @@ for tool in ste-check no-ai-attribution; do
     plan "ensure $HOME/.local/bin"
     run mkdir -p "$HOME/.local/bin"
     link "$HOME/.local/bin/$tool" "$CRATE/target/release/$tool"
-    BUILT_TOOLS+=("$tool")
   else
     echo "warn: cargo not found, skipping the $tool build" >&2
   fi
@@ -124,7 +122,6 @@ if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
     plan "ensure $HOME/.local/bin"
     run mkdir -p "$HOME/.local/bin"
     link "$HOME/.local/bin/tool-sync" "$TOOL_SYNC_BIN"
-    BUILT_TOOLS+=("tool-sync")
   else
     echo "warn: cargo not found, skipping the tool-sync build" >&2
   fi
@@ -152,7 +149,6 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
     plan "ensure $HOME/.local/bin"
     run mkdir -p "$HOME/.local/bin"
     link "$HOME/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
-    BUILT_TOOLS+=("mcp-sync")
   else
     echo "warn: cargo not found, skipping the mcp-sync build" >&2
   fi
