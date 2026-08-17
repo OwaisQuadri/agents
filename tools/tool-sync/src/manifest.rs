@@ -293,14 +293,16 @@ fn tool_invalid(name: &str, detail: &str) -> SyncError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
     fn load_text(text: &str) -> Result<ToolManifest, SyncError> {
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("tool-sync-{suffix}.toml"));
+        let fixture_id = FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "tool-sync-{}-{fixture_id}.toml",
+            std::process::id()
+        ));
         fs::write(&path, text).expect("write fixture");
         let result = load(&path);
         let _ = fs::remove_file(path);
