@@ -96,6 +96,7 @@ fi
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
 #    because each one sits in a path that is waited on: ste-check in the reply path,
 #    no-ai-attribution in the PreToolUse path ahead of every commit
+BUILT_TOOLS=()
 for tool in ste-check no-ai-attribution; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
@@ -105,6 +106,7 @@ for tool in ste-check no-ai-attribution; do
     plan "ensure $HOME/.local/bin"
     run mkdir -p "$HOME/.local/bin"
     link "$HOME/.local/bin/$tool" "$CRATE/target/release/$tool"
+    BUILT_TOOLS+=("$tool")
   else
     echo "warn: cargo not found, skipping the $tool build" >&2
   fi
@@ -122,9 +124,28 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
     plan "ensure $HOME/.local/bin"
     run mkdir -p "$HOME/.local/bin"
     link "$HOME/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
+    BUILT_TOOLS+=("mcp-sync")
   else
     echo "warn: cargo not found, skipping the mcp-sync build" >&2
   fi
+fi
+
+# TODO(AGNT-0008.T06): replace the unsupported Pi registry with tool-sync.
+# 10.5. Register tools for Pi
+if command -v jq >/dev/null 2>&1; then
+  PLUGINS_DIR="$HOME/.pi/plugins"
+  TOOLS_FILE="$PLUGINS_DIR/tools.json"
+  mkdir -p "$PLUGINS_DIR"
+  if [[ ! -f "$TOOLS_FILE" ]]; then
+    echo '{}' > "$TOOLS_FILE"
+  fi
+  for tool in "${BUILT_TOOLS[@]}"; do
+    TMP_FILE="$TOOLS_FILE.tmp"
+    jq --arg tool "$tool" --arg path "$HOME/.local/bin/$tool" \
+      '. + {($tool): $path}' "$TOOLS_FILE" > "$TMP_FILE" && mv "$TMP_FILE" "$TOOLS_FILE"
+  done
+else
+  echo "warn: jq not found, skipping Pi tool registration" >&2
 fi
 
 # 11. sync the live configs. the binary runs outside run() on purpose, so its own
