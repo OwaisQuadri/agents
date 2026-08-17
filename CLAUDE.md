@@ -66,6 +66,11 @@ one exception, and comment-style.md owns them.
 `ste-check --register <mouthpiece|computah|byline|bro|agent>` grades the mechanical part. It
 reads a file argument or stdin, and it exits nonzero on any failure.
 
+## shell
+
+Use Z shell (`zsh`) for all shell commands. Do not use Bash. If a tool has the name
+`bash` but does not let you select its shell, run the command through `/bin/zsh -lc`.
+
 ## tooling language
 
 New tooling in this repo is Rust. A Python or shell script that needs a change gets

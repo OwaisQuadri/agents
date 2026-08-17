@@ -96,6 +96,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supporte
   into `~/.claude.json` and `~/.codex/config.toml` on every install and pull.
   `mcp-sync adopt` folds the servers that `claude mcp add` or `codex mcp add` created
   back into the manifest.
+- `install.sh` selects Z shell (`zsh`) for Claude Code and Pi. Codex uses the login
+  shell, and the shared global guidance requires Z shell syntax in every client.
 - Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
   cases from real use; blind judge votes land the same way.
 - The `post-checkout` hook copies uncommitted work into a clean worktree or branch at main's tip.
