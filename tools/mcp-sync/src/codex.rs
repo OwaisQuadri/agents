@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use toml_edit::{DocumentMut, Item, Table, TableLike};
+use toml_edit::{DocumentMut, Item, Table, TableLike, Value};
 
 use crate::drift::{Change, ChangeKind, DriftRow, DriftState, Tool};
 use crate::error::SyncError;
 use crate::fsio;
 use crate::manifest::{
-    Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
+    ManagedServer, Manifest, RemoteSpec, ServerEntry, StdioSpec, SyncState, ToolScope, Transport,
 };
 
 /// Renders one manifest entry as a Codex [mcp_servers.<name>] table.
@@ -40,6 +40,87 @@ pub fn render_table(entry: &ServerEntry) -> toml_edit::Table {
         }
     }
     table
+}
+
+pub fn managed_server(entry: &ServerEntry) -> ManagedServer {
+    ManagedServer {
+        name: entry.name.clone(),
+        fingerprint: Some(fingerprint_live(&render_table(entry))),
+    }
+}
+
+fn fingerprint_live(table: &dyn TableLike) -> String {
+    fn push_len(bytes: &mut Vec<u8>, len: usize) {
+        bytes.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+
+    fn push_bytes(bytes: &mut Vec<u8>, value: &[u8]) {
+        push_len(bytes, value.len());
+        bytes.extend_from_slice(value);
+    }
+
+    fn canonicalize_table(table: &dyn TableLike, bytes: &mut Vec<u8>) {
+        bytes.push(b't');
+        let mut pairs: Vec<_> = table.iter().collect();
+        pairs.sort_unstable_by_key(|(left, _)| *left);
+        push_len(bytes, pairs.len());
+        for (key, item) in pairs {
+            push_bytes(bytes, key.as_bytes());
+            canonicalize_item(item, bytes);
+        }
+    }
+
+    fn canonicalize_value(value: &Value, bytes: &mut Vec<u8>) {
+        match value {
+            Value::String(value) => {
+                bytes.push(b's');
+                push_bytes(bytes, value.value().as_bytes());
+            }
+            Value::Integer(value) => {
+                bytes.push(b'i');
+                bytes.extend_from_slice(&value.value().to_be_bytes());
+            }
+            Value::Float(value) => {
+                bytes.push(b'f');
+                bytes.extend_from_slice(&value.value().to_bits().to_be_bytes());
+            }
+            Value::Boolean(value) => {
+                bytes.push(b'b');
+                bytes.push(u8::from(*value.value()));
+            }
+            Value::Datetime(value) => {
+                bytes.push(b'd');
+                push_bytes(bytes, value.value().to_string().as_bytes());
+            }
+            Value::Array(values) => {
+                bytes.push(b'a');
+                push_len(bytes, values.len());
+                for value in values.iter() {
+                    canonicalize_value(value, bytes);
+                }
+            }
+            Value::InlineTable(table) => canonicalize_table(table, bytes),
+        }
+    }
+
+    fn canonicalize_item(item: &Item, bytes: &mut Vec<u8>) {
+        match item {
+            Item::None => bytes.push(b'n'),
+            Item::Value(value) => canonicalize_value(value, bytes),
+            Item::Table(table) => canonicalize_table(table, bytes),
+            Item::ArrayOfTables(tables) => {
+                bytes.push(b'a');
+                push_len(bytes, tables.len());
+                for table in tables.iter() {
+                    canonicalize_table(table, bytes);
+                }
+            }
+        }
+    }
+
+    let mut canonical = Vec::new();
+    canonicalize_table(table, &mut canonical);
+    crate::fingerprint::sha256_hex(&canonical)
 }
 
 /// Validates that a live Codex config parses, before any write touches it.
@@ -77,8 +158,13 @@ pub fn sync(
 ) -> Result<Vec<Change>, SyncError> {
     let snapshot = fsio::read_opt(path)?;
     let mut doc = parse_doc(path, snapshot.as_deref())?;
+    let mut is_config_changed = false;
     let mut changes = Vec::new();
-    for entry in manifest.servers.iter().filter(|entry| is_codex_scoped(entry)) {
+    for entry in manifest
+        .servers
+        .iter()
+        .filter(|entry| is_codex_scoped(entry))
+    {
         let kind = match live_server(&doc, &entry.name) {
             None => ChangeKind::Add,
             Some(live) if is_matching(live, entry) => continue,
@@ -95,26 +181,53 @@ pub fn sync(
             }
         }
         parent.insert(&entry.name, Item::Table(table));
-        changes.push(Change { tool: Tool::Codex, server: entry.name.clone(), kind });
+        is_config_changed = true;
+        changes.push(Change {
+            tool: Tool::Codex,
+            server: entry.name.clone(),
+            kind,
+        });
     }
-    for name in &state.codex_managed {
+    for managed in &state.codex_managed {
         if manifest
             .servers
             .iter()
-            .any(|entry| is_codex_scoped(entry) && entry.name == *name)
+            .any(|entry| is_codex_scoped(entry) && entry.name == managed.name)
         {
+            continue;
+        }
+        let Some(live) = doc
+            .get("mcp_servers")
+            .and_then(Item::as_table_like)
+            .and_then(|servers| servers.get(&managed.name))
+        else {
+            continue;
+        };
+        let is_fingerprint_match = live.as_table_like().is_some_and(|table| {
+            managed.fingerprint.as_deref() == Some(fingerprint_live(table).as_str())
+        });
+        if !is_fingerprint_match {
+            changes.push(Change {
+                tool: Tool::Codex,
+                server: managed.name.clone(),
+                kind: ChangeKind::Spare,
+            });
             continue;
         }
         let Some(parent) = doc.get_mut("mcp_servers").and_then(Item::as_table_mut) else {
             break;
         };
-        if parent.remove(name).is_some() {
+        if parent.remove(&managed.name).is_some() {
+            is_config_changed = true;
             changes.push(Change {
                 tool: Tool::Codex,
-                server: name.clone(),
+                server: managed.name.clone(),
                 kind: ChangeKind::Remove,
             });
         }
+    }
+    if !is_config_changed {
+        return Ok(changes);
     }
     let rendered = doc.to_string();
     let is_converged = snapshot.as_deref() == Some(rendered.as_str())
@@ -141,7 +254,11 @@ pub fn check(
     let doc = parse_doc(path, text.as_deref())?;
     let servers = doc.get("mcp_servers").and_then(Item::as_table_like);
     let mut rows = Vec::new();
-    for entry in manifest.servers.iter().filter(|entry| is_codex_scoped(entry)) {
+    for entry in manifest
+        .servers
+        .iter()
+        .filter(|entry| is_codex_scoped(entry))
+    {
         let live = servers
             .and_then(|table| table.get(&entry.name))
             .and_then(Item::as_table_like);
@@ -150,10 +267,14 @@ pub fn check(
             Some(table) if is_matching(table, entry) => DriftState::Ok,
             Some(_) => DriftState::Drifted,
         };
-        rows.push(DriftRow { server: entry.name.clone(), tool: Tool::Codex, state: drift });
+        rows.push(DriftRow {
+            server: entry.name.clone(),
+            tool: Tool::Codex,
+            state: drift,
+        });
     }
     if let Some(servers) = servers {
-        for (name, _) in servers.iter() {
+        for (name, item) in servers.iter() {
             if manifest
                 .servers
                 .iter()
@@ -161,12 +282,26 @@ pub fn check(
             {
                 continue;
             }
-            let drift = if state.codex_managed.iter().any(|managed| managed.as_str() == name) {
-                DriftState::Drifted
-            } else {
-                DriftState::Unmanaged
+            let drift = match state
+                .codex_managed
+                .iter()
+                .find(|managed| managed.name == name)
+            {
+                Some(managed)
+                    if item.as_table_like().is_some_and(|table| {
+                        managed.fingerprint.as_deref() == Some(fingerprint_live(table).as_str())
+                    }) =>
+                {
+                    DriftState::Drifted
+                }
+                Some(_) => DriftState::Spared,
+                None => DriftState::Unmanaged,
             };
-            rows.push(DriftRow { server: name.to_string(), tool: Tool::Codex, state: drift });
+            rows.push(DriftRow {
+                server: name.to_string(),
+                tool: Tool::Codex,
+                state: drift,
+            });
         }
     }
     Ok(rows)
@@ -229,7 +364,10 @@ fn parent_table_mut<'a>(doc: &'a mut DocumentMut, path: &Path) -> Result<&'a mut
     doc.get_mut("mcp_servers")
         .and_then(Item::as_table_mut)
         .ok_or_else(|| {
-            SyncError::ParseToml(path.to_path_buf(), String::from("mcp_servers is not a table"))
+            SyncError::ParseToml(
+                path.to_path_buf(),
+                String::from("mcp_servers is not a table"),
+            )
         })
 }
 
@@ -310,7 +448,12 @@ fn adopt(name: &str, live: &dyn TableLike) -> Result<ServerEntry, String> {
             bearer_token_env_var: opt_str_value(live, "bearer_token_env_var")?,
         })
     };
-    Ok(ServerEntry { name: name.to_string(), transport, scope: ToolScope::Both, platforms: Vec::new() })
+    Ok(ServerEntry {
+        name: name.to_string(),
+        transport,
+        scope: ToolScope::Both,
+        platforms: Vec::new(),
+    })
 }
 
 fn str_value(live: &dyn TableLike, key: &str) -> Result<String, String> {
@@ -382,10 +525,8 @@ enabled = true
 "#;
 
     fn fixture(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "mcp-sync-codex-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mcp-sync-codex-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create fixture dir");
         dir
@@ -430,7 +571,27 @@ enabled = true
     fn state_of(codex_managed: &[&str]) -> SyncState {
         SyncState {
             claude_managed: Vec::new(),
-            codex_managed: codex_managed.iter().map(|name| name.to_string()).collect(),
+            codex_managed: codex_managed
+                .iter()
+                .map(|name| ManagedServer {
+                    name: name.to_string(),
+                    fingerprint: None,
+                })
+                .collect(),
+        }
+    }
+
+    fn state_with(codex_managed: Vec<ManagedServer>) -> SyncState {
+        SyncState {
+            claude_managed: Vec::new(),
+            codex_managed,
+        }
+    }
+
+    fn managed_live(name: &str, table: &dyn TableLike) -> ManagedServer {
+        ManagedServer {
+            name: name.to_string(),
+            fingerprint: Some(fingerprint_live(table)),
         }
     }
 
@@ -504,13 +665,23 @@ enabled = true
             args = [\"old-args\"]\n";
         fs::write(&path, commented).expect("seed config");
         let manifest = Manifest {
-            servers: vec![stdio_entry("tended", "npx", &["new-args"], &[], None, ToolScope::Both)],
+            servers: vec![stdio_entry(
+                "tended",
+                "npx",
+                &["new-args"],
+                &[],
+                None,
+                ToolScope::Both,
+            )],
         };
         let changes = sync(&path, &manifest, &state_of(&[]), false).expect("sync");
         assert_eq!(changes.len(), 1);
         assert!(matches!(changes[0].kind, ChangeKind::Update));
         let written = fs::read_to_string(&path).expect("read result");
-        assert!(written.contains("# keep me\n[mcp_servers.tended]"), "{written}");
+        assert!(
+            written.contains("# keep me\n[mcp_servers.tended]"),
+            "{written}"
+        );
         assert!(written.contains("args = [\"new-args\"]"), "{written}");
     }
 
@@ -538,6 +709,132 @@ enabled = true
             Some("MY_TOKEN")
         );
         assert_eq!(with_var.len(), 2);
+    }
+
+    #[test]
+    fn managed_record_fingerprints_every_codex_managed_field() {
+        let stdio = stdio_entry(
+            "tool",
+            "npx",
+            &["-y", "tool-mcp"],
+            &[("MODE", "fast")],
+            Some("/srv/tool"),
+            ToolScope::Both,
+        );
+        let managed = managed_server(&stdio);
+        assert_eq!(managed.name, "tool");
+        assert_eq!(
+            managed.fingerprint.as_deref(),
+            Some(fingerprint_live(&render_table(&stdio)).as_str())
+        );
+        for changed in [
+            stdio_entry(
+                "tool",
+                "bunx",
+                &["-y", "tool-mcp"],
+                &[("MODE", "fast")],
+                Some("/srv/tool"),
+                ToolScope::Both,
+            ),
+            stdio_entry(
+                "tool",
+                "npx",
+                &["tool-mcp"],
+                &[("MODE", "fast")],
+                Some("/srv/tool"),
+                ToolScope::Both,
+            ),
+            stdio_entry(
+                "tool",
+                "npx",
+                &["-y", "tool-mcp"],
+                &[("MODE", "slow")],
+                Some("/srv/tool"),
+                ToolScope::Both,
+            ),
+            stdio_entry(
+                "tool",
+                "npx",
+                &["-y", "tool-mcp"],
+                &[("MODE", "fast")],
+                Some("/srv/other"),
+                ToolScope::Both,
+            ),
+        ] {
+            assert_ne!(managed.fingerprint, managed_server(&changed).fingerprint);
+        }
+
+        let remote = remote_entry(
+            "remote",
+            "https://api.example.com/mcp",
+            Some("API_TOKEN"),
+            ToolScope::Both,
+        );
+        let remote_fingerprint = managed_server(&remote).fingerprint;
+        assert_ne!(
+            remote_fingerprint,
+            managed_server(&remote_entry(
+                "remote",
+                "https://other.example.com/mcp",
+                Some("API_TOKEN"),
+                ToolScope::Both,
+            ))
+            .fingerprint
+        );
+        assert_ne!(
+            remote_fingerprint,
+            managed_server(&remote_entry(
+                "remote",
+                "https://api.example.com/mcp",
+                Some("OTHER_TOKEN"),
+                ToolScope::Both,
+            ))
+            .fingerprint
+        );
+    }
+
+    #[test]
+    fn fingerprint_is_semantic_and_keeps_unknown_or_malformed_values() {
+        let compact = "[mcp_servers.tool]\ncommand='npx'\nargs=['-y','tool-mcp']\ncwd='/srv'\nenv={B='2',A='1'}\n";
+        let decorated = "# decoration is irrelevant\n\
+            [mcp_servers.tool] # table comment\n\
+            args = [ \"-y\", \"tool-mcp\" ] # args comment\n\
+            command = \"npx\"\n\
+            cwd = \"/srv\"\n\
+            [mcp_servers.tool.env]\n\
+            A = \"1\"\n\
+            B = \"2\"\n";
+        let compact_doc = compact.parse::<DocumentMut>().expect("compact parses");
+        let decorated_doc = decorated.parse::<DocumentMut>().expect("decorated parses");
+        assert_eq!(
+            fingerprint_live(live_server(&compact_doc, "tool").expect("compact table")),
+            fingerprint_live(live_server(&decorated_doc, "tool").expect("decorated table"))
+        );
+
+        let malformed = "[mcp_servers.tool]\ncommand='npx'\nargs=42\n";
+        let differently_malformed = "[mcp_servers.tool]\ncommand='npx'\nargs=true\n";
+        let with_unknown = "[mcp_servers.tool]\ncommand='npx'\nargs=42\nunknown='kept'\n";
+        let malformed_doc = malformed
+            .parse::<DocumentMut>()
+            .expect("malformed shape parses");
+        let differently_malformed_doc = differently_malformed
+            .parse::<DocumentMut>()
+            .expect("different malformed shape parses");
+        let with_unknown_doc = with_unknown
+            .parse::<DocumentMut>()
+            .expect("unknown field shape parses");
+        let malformed_fingerprint =
+            fingerprint_live(live_server(&malformed_doc, "tool").expect("malformed table"));
+        assert_ne!(
+            malformed_fingerprint,
+            fingerprint_live(
+                live_server(&differently_malformed_doc, "tool").expect("different malformed table")
+            )
+        );
+        assert_ne!(
+            malformed_fingerprint,
+            fingerprint_live(live_server(&with_unknown_doc, "tool").expect("unknown table"))
+        );
     }
 
     #[test]
@@ -571,10 +868,19 @@ enabled = true
                     None,
                     ToolScope::CodexOnly,
                 ),
-                stdio_entry("gmail", "npx", &["gmail-mcp"], &[], None, ToolScope::ClaudeOnly),
+                stdio_entry(
+                    "gmail",
+                    "npx",
+                    &["gmail-mcp"],
+                    &[],
+                    None,
+                    ToolScope::ClaudeOnly,
+                ),
             ],
         };
-        let state = state_of(&["XcodeBuildMCP", "playwright", "shadcn"]);
+        let original = REAL_SHAPE.parse::<DocumentMut>().expect("seed parses");
+        let shadcn = live_server(&original, "shadcn").expect("shadcn table");
+        let state = state_with(vec![managed_live("shadcn", shadcn)]);
         let changes = sync(&path, &manifest, &state, false).expect("sync");
         assert_eq!(changes.len(), 3);
         assert!(matches!(
@@ -604,7 +910,10 @@ enabled = true
             "[mcp_servers.XcodeBuildMCP]\ncommand = \"npx\"\nargs = [\"-y\", \"xcodebuildmcp@latest\", \"mcp\"]\n",
         ];
         for section in foreign_sections {
-            assert!(written.contains(section), "lost section:\n{section}\nin:\n{written}");
+            assert!(
+                written.contains(section),
+                "lost section:\n{section}\nin:\n{written}"
+            );
         }
         assert!(!written.contains("shadcn"), "{written}");
         assert!(!written.contains("gmail"), "{written}");
@@ -618,9 +927,17 @@ enabled = true
             Some("/tmp/sm")
         );
         assert_eq!(
-            str_values(doc["mcp_servers"]["playwright"].as_table_like().unwrap(), "args")
-                .as_deref(),
-            Some(&["@playwright/mcp@latest".to_string(), "--headless".to_string()][..])
+            str_values(
+                doc["mcp_servers"]["playwright"].as_table_like().unwrap(),
+                "args"
+            )
+            .as_deref(),
+            Some(
+                &[
+                    "@playwright/mcp@latest".to_string(),
+                    "--headless".to_string()
+                ][..]
+            )
         );
     }
 
@@ -678,7 +995,10 @@ enabled = true
         let changes = sync(&path, &manifest, &state_of(&[]), false).expect("sync");
         assert_eq!(changes.len(), 1);
         let written = fs::read_to_string(&path).expect("read result");
-        assert!(written.contains("# codex config, hand-tended\n"), "{written}");
+        assert!(
+            written.contains("# codex config, hand-tended\n"),
+            "{written}"
+        );
         assert!(written.contains(
             "# foreign server, do not touch\n[mcp_servers.foreign]\ncommand = \"deno\"\nargs = []\n"
         ), "{written}");
@@ -694,14 +1014,28 @@ enabled = true
         let path = dir.join("config.toml");
         let manifest = Manifest {
             servers: vec![
-                stdio_entry("alpha", "npx", &["-y", "alpha-mcp"], &[], None, ToolScope::Both),
+                stdio_entry(
+                    "alpha",
+                    "npx",
+                    &["-y", "alpha-mcp"],
+                    &[],
+                    None,
+                    ToolScope::Both,
+                ),
                 remote_entry(
                     "beta",
                     "https://api.example.com/mcp",
                     Some("MY_TOKEN"),
                     ToolScope::CodexOnly,
                 ),
-                stdio_entry("gamma", "npx", &["gamma-mcp"], &[], None, ToolScope::ClaudeOnly),
+                stdio_entry(
+                    "gamma",
+                    "npx",
+                    &["gamma-mcp"],
+                    &[],
+                    None,
+                    ToolScope::ClaudeOnly,
+                ),
             ],
         };
         let changes = sync(&path, &manifest, &state_of(&[]), false).expect("sync");
@@ -714,7 +1048,10 @@ enabled = true
         let doc = written.parse::<DocumentMut>().expect("result parses");
         let beta = doc["mcp_servers"]["beta"].as_table().expect("beta table");
         assert_eq!(beta.len(), 2);
-        assert_eq!(beta.get("url").and_then(Item::as_str), Some("https://api.example.com/mcp"));
+        assert_eq!(
+            beta.get("url").and_then(Item::as_str),
+            Some("https://api.example.com/mcp")
+        );
         assert_eq!(
             beta.get("bearer_token_env_var").and_then(Item::as_str),
             Some("MY_TOKEN")
@@ -727,7 +1064,14 @@ enabled = true
         let path = dir.join("config.toml");
         fs::write(&path, REAL_SHAPE).expect("seed config");
         let manifest = Manifest {
-            servers: vec![stdio_entry("newbie", "npx", &["newbie-mcp"], &[], None, ToolScope::Both)],
+            servers: vec![stdio_entry(
+                "newbie",
+                "npx",
+                &["newbie-mcp"],
+                &[],
+                None,
+                ToolScope::Both,
+            )],
         };
         let changes = sync(&path, &manifest, &state_of(&[]), true).expect("dry sync");
         assert_eq!(changes.len(), 1);
@@ -736,6 +1080,181 @@ enabled = true
             Change { tool: Tool::Codex, kind: ChangeKind::Add, server } if server == "newbie"
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), REAL_SHAPE);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_removes_matching_previously_managed_server() {
+        let dir = fixture("exact-fingerprint-removal");
+        let path = dir.join("config.toml");
+        let seeded = "# top-level comment\n\
+            unrelated = 17\n\
+            \n\
+            # foreign stdio comment\n\
+            [mcp_servers.foreign-stdio]\n\
+            command = \"deno\"\n\
+            args = [\"run\", \"server.ts\"]\n\
+            \n\
+            # stale managed comment\n\
+            [mcp_servers.stale]\n\
+            command = \"npx\"\n\
+            args = [\"stale-mcp\"]\n\
+            \n\
+            # foreign remote comment\n\
+            [mcp_servers.foreign-remote]\n\
+            url = \"https://foreign.example/mcp\"\n";
+        fs::write(&path, seeded).expect("seed config");
+        let doc = seeded.parse::<DocumentMut>().expect("seed parses");
+        let state = state_with(vec![managed_live(
+            "stale",
+            live_server(&doc, "stale").expect("stale table"),
+        )]);
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Codex, server, kind: ChangeKind::Remove }] if server == "stale"
+        ));
+        let written = fs::read_to_string(&path).expect("read result");
+        for foreign in [
+            "# top-level comment\nunrelated = 17\n",
+            "# foreign stdio comment\n[mcp_servers.foreign-stdio]\ncommand = \"deno\"\nargs = [\"run\", \"server.ts\"]\n",
+            "# foreign remote comment\n[mcp_servers.foreign-remote]\nurl = \"https://foreign.example/mcp\"\n",
+        ] {
+            assert!(written.contains(foreign), "lost foreign content:\n{foreign}\nin:\n{written}");
+        }
+        assert!(!written.contains("stale"), "{written}");
+    }
+
+    #[test]
+    fn sync_spares_changed_previously_managed_server() {
+        let dir = fixture("changed-replacement");
+        let path = dir.join("config.toml");
+        let original = "[mcp_servers.stale]\ncommand = \"old-command\"\nargs = []\n";
+        let original_doc = original.parse::<DocumentMut>().expect("original parses");
+        let replacement =
+            "# hand replacement\n[mcp_servers.stale]\ncommand=\"new-command\"\nargs=[]";
+        fs::write(&path, replacement).expect("seed config");
+        let state = state_with(vec![managed_live(
+            "stale",
+            live_server(&original_doc, "stale").expect("original table"),
+        )]);
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Codex, server, kind: ChangeKind::Spare }] if server == "stale"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), replacement);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn sync_spares_legacy_record_without_deletion_authority() {
+        let dir = fixture("legacy-record");
+        let path = dir.join("config.toml");
+        let seeded = "[mcp_servers.stale]\ncommand = \"npx\"\nargs = []\n";
+        fs::write(&path, seeded).expect("seed config");
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state_of(&["stale"]),
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Codex, server, kind: ChangeKind::Spare }] if server == "stale"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), seeded);
+    }
+
+    #[test]
+    fn fingerprint_ignores_formatting_and_decor() {
+        let dir = fixture("formatting-only");
+        let path = dir.join("config.toml");
+        let original =
+            "[mcp_servers.stale]\ncommand='npx'\nargs=['-y','stale-mcp']\nenv={B='2',A='1'}\n";
+        let original_doc = original.parse::<DocumentMut>().expect("original parses");
+        let reformatted = "# reformatted by hand\n\
+            [mcp_servers.stale]\n\
+            args = [ \"-y\", \"stale-mcp\" ]\n\
+            command = \"npx\"\n\
+            [mcp_servers.stale.env]\n\
+            A = \"1\"\n\
+            B = \"2\"\n";
+        fs::write(&path, reformatted).expect("seed config");
+        let state = state_with(vec![managed_live(
+            "stale",
+            live_server(&original_doc, "stale").expect("original table"),
+        )]);
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            false,
+        )
+        .expect("sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Codex, server, kind: ChangeKind::Remove }] if server == "stale"
+        ));
+        assert!(!fs::read_to_string(&path).unwrap().contains("stale"));
+    }
+
+    #[test]
+    fn dry_run_exact_removal_reports_change_and_writes_nothing() {
+        let dir = fixture("dry-removal");
+        let path = dir.join("config.toml");
+        let seeded = "[mcp_servers.stale]\ncommand = \"npx\"\nargs = []\n";
+        fs::write(&path, seeded).expect("seed config");
+        let doc = seeded.parse::<DocumentMut>().expect("seed parses");
+        let state = state_with(vec![managed_live(
+            "stale",
+            live_server(&doc, "stale").expect("stale table"),
+        )]);
+
+        let changes = sync(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+            true,
+        )
+        .expect("dry-run sync succeeds");
+
+        assert!(matches!(
+            changes.as_slice(),
+            [Change { tool: Tool::Codex, server, kind: ChangeKind::Remove }] if server == "stale"
+        ));
+        assert_eq!(fs::read_to_string(&path).unwrap(), seeded);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
     }
 
@@ -769,13 +1288,40 @@ enabled = true
             servers: vec![
                 stdio_entry("okie", "npx", &["okie-mcp"], &[], None, ToolScope::Both),
                 stdio_entry("drifty", "npx", &["new-args"], &[], None, ToolScope::Both),
-                stdio_entry("missing-one", "npx", &["missing-mcp"], &[], None, ToolScope::CodexOnly),
+                stdio_entry(
+                    "missing-one",
+                    "npx",
+                    &["missing-mcp"],
+                    &[],
+                    None,
+                    ToolScope::CodexOnly,
+                ),
                 remote_entry("remote-ok", "https://x/mcp", None, ToolScope::Both),
-                remote_entry("remote-drift", "https://x/mcp", Some("X_TOKEN"), ToolScope::Both),
-                stdio_entry("claude-side", "npx", &["c-mcp"], &[], None, ToolScope::ClaudeOnly),
+                remote_entry(
+                    "remote-drift",
+                    "https://x/mcp",
+                    Some("X_TOKEN"),
+                    ToolScope::Both,
+                ),
+                stdio_entry(
+                    "claude-side",
+                    "npx",
+                    &["c-mcp"],
+                    &[],
+                    None,
+                    ToolScope::ClaudeOnly,
+                ),
             ],
         };
-        let state = state_of(&["okie", "drifty", "pending"]);
+        let pending = stdio_entry(
+            "pending",
+            "npx",
+            &["pending-mcp"],
+            &[],
+            None,
+            ToolScope::Both,
+        );
+        let state = state_with(vec![managed_server(&pending)]);
         let rows = check(&path, &manifest, &state).expect("check");
         assert_eq!(rows.len(), 7);
         assert!(matches!(
@@ -805,6 +1351,72 @@ enabled = true
         assert!(matches!(
             &rows[6],
             DriftRow { tool: Tool::Codex, state: DriftState::Drifted, server } if server == "pending"
+        ));
+    }
+
+    #[test]
+    fn check_classifies_exact_changed_legacy_and_unmanaged_servers() {
+        let dir = fixture("check-protected-removals");
+        let path = dir.join("config.toml");
+        let live = "[mcp_servers.exact]\n\
+            command = \"npx\"\n\
+            args = [\"exact-mcp\"]\n\
+            \n\
+            [mcp_servers.changed]\n\
+            command = \"replacement\"\n\
+            args = []\n\
+            \n\
+            [mcp_servers.legacy]\n\
+            command = \"legacy\"\n\
+            args = []\n\
+            \n\
+            [mcp_servers.foreign]\n\
+            url = \"https://foreign.example/mcp\"\n";
+        fs::write(&path, live).expect("seed config");
+        let live_doc = live.parse::<DocumentMut>().expect("live parses");
+        let original_changed = "[mcp_servers.changed]\ncommand = \"original\"\nargs = []\n"
+            .parse::<DocumentMut>()
+            .expect("original parses");
+        let state = state_with(vec![
+            managed_live(
+                "exact",
+                live_server(&live_doc, "exact").expect("exact table"),
+            ),
+            managed_live(
+                "changed",
+                live_server(&original_changed, "changed").expect("original changed table"),
+            ),
+            ManagedServer {
+                name: "legacy".to_string(),
+                fingerprint: None,
+            },
+        ]);
+
+        let rows = check(
+            &path,
+            &Manifest {
+                servers: Vec::new(),
+            },
+            &state,
+        )
+        .expect("check succeeds");
+
+        assert_eq!(rows.len(), 4);
+        assert!(matches!(
+            &rows[0],
+            DriftRow { tool: Tool::Codex, server, state: DriftState::Drifted } if server == "exact"
+        ));
+        assert!(matches!(
+            &rows[1],
+            DriftRow { tool: Tool::Codex, server, state: DriftState::Spared } if server == "changed"
+        ));
+        assert!(matches!(
+            &rows[2],
+            DriftRow { tool: Tool::Codex, server, state: DriftState::Spared } if server == "legacy"
+        ));
+        assert!(matches!(
+            &rows[3],
+            DriftRow { tool: Tool::Codex, server, state: DriftState::Unmanaged } if server == "foreign"
         ));
     }
 
@@ -872,7 +1484,9 @@ enabled = true
         let dir = fixture("invalid");
         let path = dir.join("config.toml");
         fs::write(&path, "[mcp_servers.broken\ncommand = \"npx\"\n").expect("seed config");
-        let manifest = Manifest { servers: Vec::new() };
+        let manifest = Manifest {
+            servers: Vec::new(),
+        };
         let result = sync(&path, &manifest, &state_of(&[]), false);
         assert!(matches!(result, Err(SyncError::ParseToml(_, _))));
     }

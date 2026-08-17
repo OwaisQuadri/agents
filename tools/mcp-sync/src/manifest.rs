@@ -40,8 +40,106 @@ pub enum ToolScope {
 }
 
 pub struct SyncState {
-    pub claude_managed: Vec<String>,
-    pub codex_managed: Vec<String>,
+    pub claude_managed: Vec<ManagedServer>,
+    pub codex_managed: Vec<ManagedServer>,
+}
+
+pub struct ManagedServer {
+    pub name: String,
+    pub fingerprint: Option<String>,
+}
+
+fn managed_servers_of(
+    doc: &DocumentMut,
+    key: &str,
+    path: &Path,
+) -> Result<Vec<ManagedServer>, SyncError> {
+    let Some(item) = doc.get(key) else {
+        return Ok(Vec::new());
+    };
+    let array = item.as_array().ok_or_else(|| {
+        SyncError::ParseToml(path.to_path_buf(), format!("{key} is not an array"))
+    })?;
+    let mut servers: Vec<ManagedServer> = Vec::new();
+    for entry in array.iter() {
+        if let Some(name) = entry.as_str() {
+            if servers.iter().any(|server| server.name == name) {
+                return Err(SyncError::ParseToml(
+                    path.to_path_buf(),
+                    format!("{key} holds duplicate managed name {name}"),
+                ));
+            }
+            servers.push(ManagedServer {
+                name: name.to_string(),
+                fingerprint: None,
+            });
+            continue;
+        }
+        let record = entry.as_inline_table().ok_or_else(|| {
+            SyncError::ParseToml(
+                path.to_path_buf(),
+                format!("{key} holds an entry that is neither a string nor an inline record"),
+            )
+        })?;
+        if record
+            .iter()
+            .any(|(field, _)| field != "name" && field != "fingerprint")
+        {
+            return Err(SyncError::ParseToml(
+                path.to_path_buf(),
+                format!("{key} holds a record with an unknown field"),
+            ));
+        }
+        let name = record
+            .get("name")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                SyncError::ParseToml(
+                    path.to_path_buf(),
+                    format!("{key} holds a record whose name is missing or not a string"),
+                )
+            })?;
+        let fingerprint = match record.get("fingerprint") {
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .ok_or_else(|| {
+                        SyncError::ParseToml(
+                            path.to_path_buf(),
+                            format!("{key} holds a record whose fingerprint is not a string"),
+                        )
+                    })?
+                    .to_string(),
+            ),
+            None => None,
+        };
+        if servers.iter().any(|server| server.name == name) {
+            return Err(SyncError::ParseToml(
+                path.to_path_buf(),
+                format!("{key} holds duplicate managed name {name}"),
+            ));
+        }
+        servers.push(ManagedServer {
+            name: name.to_string(),
+            fingerprint,
+        });
+    }
+    Ok(servers)
+}
+
+fn managed_array(servers: &[ManagedServer]) -> Array {
+    let mut sorted: Vec<&ManagedServer> = servers.iter().collect();
+    sorted.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut array = Array::new();
+    for server in sorted {
+        let mut record = InlineTable::new();
+        record.insert("name", server.name.as_str().into());
+        if let Some(fingerprint) = &server.fingerprint {
+            record.insert("fingerprint", fingerprint.as_str().into());
+        }
+        array.push(record);
+    }
+    array
 }
 
 /// Loads and validates the manifest file.
@@ -61,9 +159,9 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, SyncError> {
             ))
         }
     };
-    let doc: DocumentMut = text
-        .parse()
-        .map_err(|err: toml_edit::TomlError| SyncError::ParseToml(path.to_path_buf(), err.to_string()))?;
+    let doc: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| {
+        SyncError::ParseToml(path.to_path_buf(), err.to_string())
+    })?;
     let mut servers = Vec::new();
     if let Some(item) = doc.get("servers") {
         let table = item.as_table_like().ok_or_else(|| {
@@ -91,12 +189,12 @@ pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
             })
         }
     };
-    let doc: DocumentMut = text
-        .parse()
-        .map_err(|err: toml_edit::TomlError| SyncError::ParseToml(path.to_path_buf(), err.to_string()))?;
+    let doc: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| {
+        SyncError::ParseToml(path.to_path_buf(), err.to_string())
+    })?;
     Ok(SyncState {
-        claude_managed: names_of(&doc, "claude_managed", path)?,
-        codex_managed: names_of(&doc, "codex_managed", path)?,
+        claude_managed: managed_servers_of(&doc, "claude_managed", path)?,
+        codex_managed: managed_servers_of(&doc, "codex_managed", path)?,
     })
 }
 
@@ -109,8 +207,11 @@ pub fn load_state(path: &Path) -> Result<SyncState, SyncError> {
 pub fn save_state(path: &Path, state: &SyncState, is_dry_run: bool) -> Result<(), SyncError> {
     let snapshot = fsio::read_opt(path)?;
     let mut doc = DocumentMut::new();
-    doc.insert("claude_managed", value(sorted_names(&state.claude_managed)));
-    doc.insert("codex_managed", value(sorted_names(&state.codex_managed)));
+    doc.insert(
+        "claude_managed",
+        value(managed_array(&state.claude_managed)),
+    );
+    doc.insert("codex_managed", value(managed_array(&state.codex_managed)));
     let rendered = doc.to_string();
     if snapshot.as_deref() == Some(rendered.as_str()) {
         return Ok(());
@@ -138,9 +239,9 @@ pub fn append_servers(
             ))
         }
     };
-    let mut doc: DocumentMut = text
-        .parse()
-        .map_err(|err: toml_edit::TomlError| SyncError::ParseToml(path.to_path_buf(), err.to_string()))?;
+    let mut doc: DocumentMut = text.parse().map_err(|err: toml_edit::TomlError| {
+        SyncError::ParseToml(path.to_path_buf(), err.to_string())
+    })?;
     if doc.get("servers").is_none() {
         let mut implicit = Table::new();
         implicit.set_implicit(true);
@@ -285,29 +386,6 @@ fn opt_str_of(name: &str, key: &str, table: &dyn TableLike) -> Result<Option<Str
     }
 }
 
-fn names_of(doc: &DocumentMut, key: &str, path: &Path) -> Result<Vec<String>, SyncError> {
-    let Some(item) = doc.get(key) else {
-        return Ok(Vec::new());
-    };
-    let array = item.as_array().ok_or_else(|| {
-        SyncError::ParseToml(path.to_path_buf(), format!("{key} is not an array"))
-    })?;
-    let mut names = Vec::new();
-    for entry in array.iter() {
-        let text = entry.as_str().ok_or_else(|| {
-            SyncError::ParseToml(path.to_path_buf(), format!("{key} holds a non-string entry"))
-        })?;
-        names.push(text.to_string());
-    }
-    Ok(names)
-}
-
-fn sorted_names(names: &[String]) -> Array {
-    let mut sorted = names.to_vec();
-    sorted.sort();
-    Array::from_iter(sorted)
-}
-
 fn table_of(entry: &ServerEntry) -> Table {
     let mut table = Table::new();
     table.decor_mut().set_prefix("\n");
@@ -355,10 +433,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn fixture(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "mcp-sync-manifest-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mcp-sync-manifest-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("create fixture dir");
         dir
@@ -416,6 +492,13 @@ mod tests {
         assert!(matches!(err, SyncError::ManifestInvalid(_)));
         let err = load_err(&dir, "[servers.zulu]\ncommand = \"n\"\nplatforms = [7]\n");
         assert!(matches!(err, SyncError::ManifestInvalid(_)));
+    }
+
+    fn managed(name: &str, fingerprint: Option<&str>) -> ManagedServer {
+        ManagedServer {
+            name: name.to_string(),
+            fingerprint: fingerprint.map(str::to_string),
+        }
     }
 
     const MIXED: &str = "\
@@ -506,7 +589,10 @@ tools = [\"claude\", \"codex\"]
     #[test]
     fn manifest_rejects_server_with_both_command_and_url() {
         let dir = fixture("both-arm");
-        let err = load_err(&dir, "[servers.foo]\ncommand = \"x\"\nurl = \"https://y\"\n");
+        let err = load_err(
+            &dir,
+            "[servers.foo]\ncommand = \"x\"\nurl = \"https://y\"\n",
+        );
         assert!(matches!(err, SyncError::ManifestInvalid(_)));
         let text = err.to_string();
         assert!(text.contains("foo"), "{text}");
@@ -526,7 +612,13 @@ tools = [\"claude\", \"codex\"]
     #[test]
     fn manifest_rejects_unknown_tools_values() {
         let dir = fixture("tools-arm");
-        for tools in ["[\"gemini\"]", "[]", "[\"claude\", \"gemini\"]", "\"claude\"", "[3]"] {
+        for tools in [
+            "[\"gemini\"]",
+            "[]",
+            "[\"claude\", \"gemini\"]",
+            "\"claude\"",
+            "[3]",
+        ] {
             let err = load_err(
                 &dir,
                 &format!("[servers.baz]\ncommand = \"x\"\ntools = {tools}\n"),
@@ -547,21 +639,125 @@ tools = [\"claude\", \"codex\"]
     }
 
     #[test]
-    fn save_state_sorts_names_and_round_trips() {
-        let dir = fixture("state");
+    fn legacy_state_loads_strings_without_fingerprints_in_input_order() {
+        let dir = fixture("legacy-state");
+        let path = dir.join("mcp-sync-state.toml");
+        fs::write(
+            &path,
+            "claude_managed = [\"zeta\", \"alpha\"]\ncodex_managed = [\"mike\"]\n",
+        )
+        .expect("seed legacy state");
+
+        let state = load_state(&path).expect("legacy state loads");
+        assert_eq!(state.claude_managed.len(), 2);
+        assert_eq!(state.claude_managed[0].name, "zeta");
+        assert_eq!(state.claude_managed[0].fingerprint, None);
+        assert_eq!(state.claude_managed[1].name, "alpha");
+        assert_eq!(state.claude_managed[1].fingerprint, None);
+        assert_eq!(state.codex_managed.len(), 1);
+        assert_eq!(state.codex_managed[0].name, "mike");
+        assert_eq!(state.codex_managed[0].fingerprint, None);
+    }
+
+    #[test]
+    fn state_rejects_duplicate_legacy_names_per_tool() {
+        let dir = fixture("duplicate-legacy-state");
+        let path = dir.join("mcp-sync-state.toml");
+        for (managed_array, input) in [
+            (
+                "claude_managed",
+                "claude_managed = [\"zeta\", \"zeta\"]\ncodex_managed = []\n",
+            ),
+            (
+                "codex_managed",
+                "claude_managed = []\ncodex_managed = [\"zeta\", \"zeta\"]\n",
+            ),
+        ] {
+            fs::write(&path, input).expect("seed duplicate legacy state");
+            let err = match load_state(&path) {
+                Err(err) => err,
+                Ok(_) => panic!("duplicate legacy name unexpectedly loaded"),
+            };
+            let SyncError::ParseToml(error_path, detail) = err else {
+                panic!("expected state TOML error, got {err}");
+            };
+            assert_eq!(error_path, path);
+            assert!(detail.contains(managed_array), "{detail}");
+            assert!(detail.contains("duplicate managed name zeta"), "{detail}");
+        }
+    }
+
+    #[test]
+    fn new_state_records_round_trip_fingerprints() {
+        let dir = fixture("record-state");
         let path = dir.join("mcp-sync-state.toml");
         let state = SyncState {
-            claude_managed: vec!["zeta".to_string(), "alpha".to_string()],
-            codex_managed: vec!["mike".to_string()],
+            claude_managed: vec![managed("alpha", Some("sha256:abc"))],
+            codex_managed: vec![managed("mike", None)],
         };
+        save_state(&path, &state, false).expect("state saves");
+        let reloaded = load_state(&path).expect("state reloads");
+        assert_eq!(reloaded.claude_managed.len(), 1);
+        assert_eq!(reloaded.claude_managed[0].name, "alpha");
+        assert_eq!(
+            reloaded.claude_managed[0].fingerprint.as_deref(),
+            Some("sha256:abc")
+        );
+        assert_eq!(reloaded.codex_managed.len(), 1);
+        assert_eq!(reloaded.codex_managed[0].name, "mike");
+        assert_eq!(reloaded.codex_managed[0].fingerprint, None);
+    }
+
+    #[test]
+    fn save_state_sorts_inline_records_by_name() {
+        let dir = fixture("stable-state-order");
+        let path = dir.join("mcp-sync-state.toml");
+        let state = SyncState {
+            claude_managed: vec![
+                managed("zeta", None),
+                managed("alpha", Some("fingerprint-a")),
+            ],
+            codex_managed: vec![managed("mike", None)],
+        };
+
         save_state(&path, &state, false).expect("state saves");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "claude_managed = [\"alpha\", \"zeta\"]\ncodex_managed = [\"mike\"]\n"
+            "claude_managed = [{ name = \"alpha\", fingerprint = \"fingerprint-a\" }, { name = \"zeta\" }]\ncodex_managed = [{ name = \"mike\" }]\n"
         );
-        let reloaded = load_state(&path).expect("state reloads");
-        assert_eq!(reloaded.claude_managed, ["alpha", "zeta"]);
-        assert_eq!(reloaded.codex_managed, ["mike"]);
+    }
+
+    #[test]
+    fn state_rejects_malformed_managed_arrays_and_records() {
+        let dir = fixture("malformed-state");
+        let path = dir.join("mcp-sync-state.toml");
+        let cases = [
+            ("claude_managed = \"alpha\"\n", "not an array"),
+            ("claude_managed = [{}]\n", "name"),
+            ("claude_managed = [{ name = 3 }]\n", "name"),
+            (
+                "claude_managed = [{ name = \"alpha\", fingerprint = 3 }]\n",
+                "fingerprint",
+            ),
+            (
+                "claude_managed = [3]\n",
+                "neither a string nor an inline record",
+            ),
+            (
+                "claude_managed = [{ name = \"alpha\", extra = \"x\" }]\n",
+                "unknown field",
+            ),
+        ];
+
+        for (input, detail) in cases {
+            fs::write(&path, input).expect("seed malformed state");
+            let err = match load_state(&path) {
+                Err(err) => err,
+                Ok(_) => panic!("malformed state unexpectedly loaded"),
+            };
+            assert!(matches!(err, SyncError::ParseToml(_, _)), "{err}");
+            assert!(err.to_string().contains(detail), "{err}");
+        }
     }
 
     #[test]
@@ -569,8 +765,8 @@ tools = [\"claude\", \"codex\"]
         let dir = fixture("converged-state");
         let path = dir.join("mcp-sync-state.toml");
         let state = SyncState {
-            claude_managed: vec!["alpha".to_string()],
-            codex_managed: vec!["mike".to_string()],
+            claude_managed: vec![managed("alpha", Some("fingerprint-a"))],
+            codex_managed: vec![managed("mike", None)],
         };
         save_state(&path, &state, false).expect("first save writes");
         let bytes = fs::read_to_string(&path).unwrap();
@@ -678,9 +874,6 @@ tools = [\"codex\"]
         let manifest = load_manifest(&path).expect("repo manifest loads");
         assert_eq!(manifest.servers.len(), 19);
         assert_eq!(manifest.servers[0].name, "XcodeBuildMCP");
-        assert!(manifest
-            .servers
-            .iter()
-            .all(|server| server.name != "gmail"));
+        assert!(manifest.servers.iter().all(|server| server.name != "gmail"));
     }
 }

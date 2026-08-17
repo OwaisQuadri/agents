@@ -7,6 +7,7 @@ pub enum DriftState {
     Ok,
     Missing,
     Drifted,
+    Spared,
     Unmanaged,
 }
 
@@ -20,6 +21,7 @@ pub enum ChangeKind {
     Add,
     Update,
     Remove,
+    Spare,
 }
 
 pub struct Change {
@@ -43,6 +45,7 @@ impl DriftState {
             DriftState::Ok => "ok",
             DriftState::Missing => "missing",
             DriftState::Drifted => "drifted",
+            DriftState::Spared => "spared",
             DriftState::Unmanaged => "unmanaged",
         }
     }
@@ -54,6 +57,7 @@ impl ChangeKind {
             ChangeKind::Add => "add",
             ChangeKind::Update => "update",
             ChangeKind::Remove => "remove",
+            ChangeKind::Spare => "spare",
         }
     }
 }
@@ -66,7 +70,12 @@ pub fn render_plan(changes: &[Change], is_dry_run: bool) -> String {
     changes
         .iter()
         .map(|change| {
-            format!("{prefix}{} {} {}\n", change.tool.word(), change.kind.word(), change.server)
+            format!(
+                "{prefix}{} {} {}\n",
+                change.tool.word(),
+                change.kind.word(),
+                change.server
+            )
         })
         .collect()
 }
@@ -112,11 +121,19 @@ mod tests {
     use super::*;
 
     fn change(tool: Tool, kind: ChangeKind, server: &str) -> Change {
-        Change { tool, server: server.to_string(), kind }
+        Change {
+            tool,
+            server: server.to_string(),
+            kind,
+        }
     }
 
     fn row(server: &str, tool: Tool, state: DriftState) -> DriftRow {
-        DriftRow { server: server.to_string(), tool, state }
+        DriftRow {
+            server: server.to_string(),
+            tool,
+            state,
+        }
     }
 
     fn mixed_changes() -> Vec<Change> {
@@ -159,6 +176,14 @@ mod tests {
     }
 
     #[test]
+    fn spare_action_uses_existing_plan_language() {
+        let changes = [change(Tool::Codex, ChangeKind::Spare, "linear")];
+
+        assert_eq!(render_plan(&changes, false), "plan: codex spare linear\n");
+        assert_eq!(render_plan(&changes, true), "dry:  codex spare linear\n");
+    }
+
+    #[test]
     fn check_screen_for_a_mixed_drift_set() {
         assert_eq!(
             render_check(&mixed_rows()),
@@ -170,12 +195,43 @@ mod tests {
     }
 
     #[test]
+    fn check_screen_exposes_spared_state_per_tool() {
+        let rows = [
+            row("linear", Tool::Claude, DriftState::Spared),
+            row("linear", Tool::Codex, DriftState::Ok),
+        ];
+
+        assert_eq!(render_check(&rows), "linear  claude=spared codex=ok\n");
+    }
+
+    #[test]
     fn is_drift_present_is_true_iff_any_non_ok_row() {
         assert!(is_drift_present(&mixed_rows()));
         assert!(!is_drift_present(&[]));
-        assert!(!is_drift_present(&[row("supermemory", Tool::Claude, DriftState::Ok)]));
-        assert!(is_drift_present(&[row("supermemory", Tool::Codex, DriftState::Missing)]));
-        assert!(is_drift_present(&[row("mobbin", Tool::Claude, DriftState::Drifted)]));
-        assert!(is_drift_present(&[row("scratchpad", Tool::Codex, DriftState::Unmanaged)]));
+        assert!(!is_drift_present(&[row(
+            "supermemory",
+            Tool::Claude,
+            DriftState::Ok
+        )]));
+        assert!(is_drift_present(&[row(
+            "supermemory",
+            Tool::Codex,
+            DriftState::Missing
+        )]));
+        assert!(is_drift_present(&[row(
+            "mobbin",
+            Tool::Claude,
+            DriftState::Drifted
+        )]));
+        assert!(is_drift_present(&[row(
+            "linear",
+            Tool::Claude,
+            DriftState::Spared
+        )]));
+        assert!(is_drift_present(&[row(
+            "scratchpad",
+            Tool::Codex,
+            DriftState::Unmanaged
+        )]));
     }
 }

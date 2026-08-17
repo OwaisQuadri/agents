@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+sha2 = "0.10"
 toml_edit = "0.25"
 serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 
