@@ -1,3 +1,4 @@
+// TODO(AGNT-0008.T03): implement the approved fresh-source preview rule.
 use std::fs;
 use std::path::Path;
 use std::process::Command;

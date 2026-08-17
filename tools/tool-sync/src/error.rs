@@ -1,3 +1,4 @@
+// TODO(AGNT-0008.T02): reverify shared module registration after the walk-back.
 use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitStatus;
