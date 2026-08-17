@@ -48,11 +48,7 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                         });
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        add_directory(
-                            &context.cache_root,
-                            &mut planned_directories,
-                            &mut actions,
-                        )?;
+                        add_directory(&context.cache_root, &mut planned_directories, &mut actions)?;
                         actions.push(Action::CloneRepository {
                             url: url.clone(),
                             destination: checkout.clone(),
@@ -84,11 +80,7 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                     .expect("validated command paths have file names"),
             );
             reject_non_symlink(&destination, "command")?;
-            add_directory(
-                &command_directory,
-                &mut planned_directories,
-                &mut actions,
-            )?;
+            add_directory(&command_directory, &mut planned_directories, &mut actions)?;
             actions.push(Action::LinkCommand {
                 source: working_directory.join(command),
                 destination,
@@ -104,11 +96,7 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                     .expect("validated Pi extension paths have file names"),
             );
             reject_non_symlink(&destination, "Pi extension")?;
-            add_directory(
-                &extension_directory,
-                &mut planned_directories,
-                &mut actions,
-            )?;
+            add_directory(&extension_directory, &mut planned_directories, &mut actions)?;
             actions.push(Action::LinkPiExtension {
                 source,
                 destination,
@@ -164,10 +152,11 @@ fn git_output(repository: &Path, args: &[&str]) -> Result<String, SyncError> {
 }
 
 fn resolve_inside(root: &Path, relative: &Path, field: &str) -> Result<PathBuf, SyncError> {
-    let canonical_root = fs::canonicalize(root).map_err(|error| SyncError::Io(root.into(), error))?;
+    let canonical_root =
+        fs::canonicalize(root).map_err(|error| SyncError::Io(root.into(), error))?;
     let candidate = root.join(relative);
-    let resolved = fs::canonicalize(&candidate)
-        .map_err(|error| SyncError::Io(candidate.clone(), error))?;
+    let resolved =
+        fs::canonicalize(&candidate).map_err(|error| SyncError::Io(candidate.clone(), error))?;
     if !resolved.starts_with(&canonical_root) {
         return Err(planning_error(format!(
             "{field} {} is outside repository {}",
@@ -218,7 +207,9 @@ fn planning_error(detail: String) -> SyncError {
 mod tests {
     use super::*;
     use crate::manifest::{InstallerSpec, ToolSpec};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
     struct Fixture {
         root: PathBuf,
@@ -226,11 +217,11 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let suffix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos();
-            let root = std::env::temp_dir().join(format!("tool-sync-planner-{suffix}"));
+            let fixture_id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!(
+                "tool-sync-planner-{}-{fixture_id}",
+                std::process::id()
+            ));
             fs::create_dir_all(&root).expect("fixture root");
             Self { root }
         }
