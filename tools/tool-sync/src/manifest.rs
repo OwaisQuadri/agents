@@ -135,6 +135,10 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         if name.is_empty() {
             return Err(invalid("tool name is empty"));
         }
+        // TODO(AGNT-0008.T01): reject control characters before planning or child execution.
+        if name.chars().any(char::is_control) {
+            return Err(invalid("tool name contains control characters"));
+        }
         if !names.insert(name.to_owned()) {
             return Err(invalid(format!("duplicate tool name {name}")));
         }
