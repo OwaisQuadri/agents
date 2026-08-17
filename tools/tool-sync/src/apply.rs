@@ -1,3 +1,4 @@
+// TODO(AGNT-0008.T03): fix real Git checkout and reverify apply behavior.
 use std::fs;
 use std::path::Path;
 use std::process::Command;

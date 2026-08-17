@@ -1,3 +1,4 @@
+// TODO(AGNT-0008.T05): reverify the Pi adapter after the final plan update.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type SearchMemoryInput = {
