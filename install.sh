@@ -7,13 +7,13 @@ shopt -s nullglob
 REPO_TARGET="${REPO_TARGET:-$HOME/Documents/agents}"
 SKILLS_ROOT="$HOME/.agents/skills"
 STAMP="$(date +%Y%m%d)"
-DRY=0
-[[ "${1:-}" == "--dry-run" ]] && DRY=1
+IS_DRY=0
+[[ "${1:-}" == "--dry-run" ]] && IS_DRY=1
 
 plan() { echo "plan: $*"; }
 
 run() {
-  if (( DRY )); then echo "dry:  $*"; else "$@"; fi
+  if (( IS_DRY )); then echo "dry:  $*"; else "$@"; fi
 }
 
 # move (or copy, for single files) an existing path to a .pre-reset-<stamp> backup, verified.
@@ -35,7 +35,7 @@ backup() {
   else
     run mv "$src" "$dest"
   fi
-  (( DRY )) || [[ -e "$dest" || -L "$dest" ]] || { echo "FATAL: backup missing at $dest" >&2; exit 1; }
+  (( IS_DRY )) || [[ -e "$dest" || -L "$dest" ]] || { echo "FATAL: backup missing at $dest" >&2; exit 1; }
 }
 
 # link <linkpath> <target> — idempotent, pre-write backup
@@ -51,7 +51,7 @@ link() {
 }
 
 [[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
-(( DRY )) && plan "dry run — printing, not executing"
+(( IS_DRY )) && plan "dry run — printing, not executing"
 
 # 1. canonical skills root
 plan "ensure $SKILLS_ROOT"
@@ -70,7 +70,7 @@ for lnk in "$SKILLS_ROOT"/*; do
   plan "prune $lnk (target gone) -> $PRUNED/"
   run mkdir -p "$PRUNED"
   run mv "$lnk" "$PRUNED/"
-  (( DRY )) || [[ -L "$PRUNED/$(basename "$lnk")" ]] || { echo "FATAL: prune missing at $PRUNED/$(basename "$lnk")" >&2; exit 1; }
+  (( IS_DRY )) || [[ -L "$PRUNED/$(basename "$lnk")" ]] || { echo "FATAL: prune missing at $PRUNED/$(basename "$lnk")" >&2; exit 1; }
 done
 
 # 4. agent skill roots become single directory symlinks
@@ -113,6 +113,34 @@ done
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
 link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
+TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
+TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"
+if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $TOOL_SYNC_CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$TOOL_SYNC_CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/tool-sync" "$TOOL_SYNC_BIN"
+  else
+    echo "warn: cargo not found, skipping the tool-sync build" >&2
+  fi
+fi
+
+if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" && ! -x "$TOOL_SYNC_BIN" ]]; then
+  echo "FATAL: tool-sync is not built; run: cargo build --release --manifest-path $TOOL_SYNC_CRATE/Cargo.toml" >&2
+  exit 1
+elif [[ -x "$TOOL_SYNC_BIN" ]]; then
+  TOOL_SYNC_ARGS=(
+    --repository-root "$REPO_TARGET"
+    --manifest "$REPO_TARGET/config/tools.toml"
+    --home "$HOME"
+  )
+  (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
+  plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
+  "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
+fi
+
 # 10. mcp-sync: rebuilt every pass so the binary matches the manifest it syncs
 CRATE="$REPO_TARGET/tools/mcp-sync"
 if [[ -f "$CRATE/Cargo.toml" ]]; then
@@ -137,7 +165,7 @@ elif [[ ! -f "$HOME/.claude.json" ]]; then
   echo "warn: $HOME/.claude.json not found yet, skipping the config sync" >&2
 else
   plan "sync configs: MCP_SYNC_REPO=$REPO_TARGET $SYNC_BIN"
-  if (( DRY )); then
+  if (( IS_DRY )); then
     MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN" --dry-run
   else
     MCP_SYNC_REPO="$REPO_TARGET" "$SYNC_BIN"
@@ -162,7 +190,7 @@ else
   else
     backup "$SETTINGS"
     plan "set  $SETTINGS statusLine -> $SL_LINK"
-    if (( DRY == 0 )); then
+    if (( IS_DRY == 0 )); then
       CURRENT='{}'
       [[ -f "$SETTINGS" ]] && CURRENT="$(cat "$SETTINGS")"
       UPDATED="$(printf '%s' "$CURRENT" | jq --arg c "$SL_LINK" \
