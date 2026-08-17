@@ -1,4 +1,3 @@
-// TODO(AGNT-0008.T01): reverify the manifest after the preview contract walk-back.
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
