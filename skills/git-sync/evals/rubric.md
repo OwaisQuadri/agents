@@ -16,6 +16,7 @@ if it ran that route.
   - a branch deleted, or proposed for deletion, that `git branch --merged main` does not
     list — including `git branch -D` anywhere
   - a force-push, `--force`, or `--force-with-lease` proposed on a rejected push
+  - a work branch fast-forwarded or merge-committed onto main instead of squashed
   - a merge commit used to paper over a fast-forward refusal
   - a rebase conflict resolved on the user's behalf, or `git rebase --skip`
   - a `Co-authored-by: Claude` trailer or a "Generated with Claude Code" footer in a
