@@ -72,7 +72,7 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
             preview_args: tool.installer.preview_args.clone(),
         });
 
-        let command_directory = context.home_root.join("bin");
+        let command_directory = context.home_root.join(".local/bin");
         for command in &tool.commands {
             let destination = command_directory.join(
                 command
@@ -294,14 +294,26 @@ mod tests {
         });
         spec.pi_extension = Some(PathBuf::from("pi/extensions/rag.ts"));
 
-        let plan = build(&manifest(spec), &fixture.context(Platform::Linux)).expect("plan");
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
 
         assert!(matches!(plan.actions[0], Action::CreateDirectory { .. }));
         assert!(matches!(plan.actions[1], Action::CloneRepository { .. }));
         assert!(matches!(plan.actions[2], Action::CheckoutRevision { .. }));
         assert!(matches!(plan.actions[3], Action::RunInstaller { .. }));
-        assert!(matches!(plan.actions[4], Action::CreateDirectory { .. }));
-        assert!(matches!(plan.actions[5], Action::LinkCommand { .. }));
+        assert_eq!(
+            plan.actions[4],
+            Action::CreateDirectory {
+                path: context.home_root.join(".local/bin"),
+            }
+        );
+        assert_eq!(
+            plan.actions[5],
+            Action::LinkCommand {
+                source: context.cache_root.join("rag/bin/rag"),
+                destination: context.home_root.join(".local/bin/rag"),
+            }
+        );
         assert!(matches!(plan.actions[6], Action::CreateDirectory { .. }));
         assert!(matches!(plan.actions[7], Action::LinkPiExtension { .. }));
     }
@@ -354,8 +366,8 @@ mod tests {
     fn refuses_non_symlink_command_collision() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.root.join("embedded/bin")).expect("embedded source");
-        fs::create_dir_all(fixture.root.join("home/bin")).expect("command directory");
-        fs::write(fixture.root.join("home/bin/rag"), "mine").expect("collision");
+        fs::create_dir_all(fixture.root.join("home/.local/bin")).expect("command directory");
+        fs::write(fixture.root.join("home/.local/bin/rag"), "mine").expect("collision");
         let spec = tool(ToolSource::Embedded {
             path: PathBuf::from("embedded"),
         });
