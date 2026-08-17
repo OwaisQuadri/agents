@@ -24,7 +24,7 @@
     {
       "id": "AGNT-0002",
       "kind": "ticket",
-      "status": "in progress",
+      "status": "resolved",
       "short": "Spare hand-added servers from state-driven removal",
       "long": "The state file lists which servers mcp-sync manages. A server on that list, but no longer in the manifest, gets removed from the live configs. A state file that goes false (a hand edit, a bad merge, cross-machine drift) then deletes a server the user added natively.\n\nThe fix: store a fingerprint of each rendered server. Before a removal, compare the live entry to the fingerprint. Spare and unlist an entry that no longer matches, and report the spare.\n\nFirst step, per the owner at gate C: map the consumers of the managed set before the schema changes. Those are the claude and codex removal paths, save_state, check, and adopt. Defer, but not long. Repro: .map/AGNT-0001/scratch/t19-state/repro/a02.",
       "deps": [],

@@ -183,6 +183,9 @@ fn managed_state(manifest: &Manifest) -> SyncState {
     let mut claude_managed = Vec::new();
     let mut codex_managed = Vec::new();
     for server in &manifest.servers {
+        if !server.is_for_this_platform() {
+            continue;
+        }
         if !matches!(server.scope, ToolScope::CodexOnly) {
             claude_managed.push(claude::managed_server(server));
         }
@@ -299,6 +302,28 @@ mod tests {
             !names.iter().any(|name| name.contains(".pre-sync-")),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn managed_state_excludes_servers_for_other_platforms() {
+        let manifest = Manifest {
+            servers: vec![manifest::ServerEntry {
+                name: "other-platform".to_string(),
+                transport: manifest::Transport::Stdio(manifest::StdioSpec {
+                    command: "npx".to_string(),
+                    args: Vec::new(),
+                    env: Vec::new(),
+                    cwd: None,
+                }),
+                scope: ToolScope::Both,
+                platforms: vec!["unsupported".to_string()],
+            }],
+        };
+
+        let state = managed_state(&manifest);
+
+        assert!(state.claude_managed.is_empty());
+        assert!(state.codex_managed.is_empty());
     }
 
     #[test]
@@ -769,6 +794,7 @@ mod tests {
                     cwd: Some((*cwd).to_string()),
                 }),
                 scope: ToolScope::Both,
+                platforms: Vec::new(),
             };
 
             let claude_first = claude::managed_server(&entry).fingerprint.unwrap();
@@ -801,6 +827,7 @@ mod tests {
                 cwd: None,
             }),
             scope: ToolScope::Both,
+            platforms: Vec::new(),
         };
         let _ = claude::managed_server(&command_entry);
         let _ = codex::managed_server(&command_entry);
@@ -820,6 +847,7 @@ mod tests {
                 bearer_token_env_var: None,
             }),
             scope: ToolScope::Both,
+            platforms: Vec::new(),
         };
         let _ = claude::managed_server(&remote_entry);
         let _ = codex::managed_server(&remote_entry);
