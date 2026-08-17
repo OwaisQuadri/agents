@@ -1,6 +1,10 @@
 use std::fmt;
 use std::path::PathBuf;
+use std::process::ExitStatus;
 
+/// Exposes plan rendering and application.
+/// It takes planned actions and a dry-run selection, returns rendered text or unit, and reports apply failures.
+pub mod apply;
 /// Contains executable-tool manifest parsing and validation.
 pub mod manifest;
 /// Exposes ordered installation action data.
@@ -10,13 +14,28 @@ pub mod plan;
 /// It takes a manifest and context, returns a plan, and reports unsafe state as `SyncError`.
 pub mod planner;
 
-/// Describes a failure to read or validate executable-tool configuration.
-/// The variant contains the failing path or validation detail; formatting it
-/// returns a user-facing message. It does not produce errors itself.
+/// Describes a failure to plan, render, or apply executable-tool synchronization.
+/// Its variants contain the relevant path, process, status, or validation detail and formatting returns a user-facing message.
+/// Constructing and formatting this value do not themselves fail.
 pub enum SyncError {
     Io(PathBuf, std::io::Error),
     ParseToml(PathBuf, String),
     ManifestInvalid(String),
+    ProcessStart {
+        program: String,
+        working_directory: PathBuf,
+        error: std::io::Error,
+    },
+    GitFailed {
+        repository: PathBuf,
+        status: ExitStatus,
+    },
+    InstallerFailed {
+        tool: String,
+        status: ExitStatus,
+    },
+    StaleState(PathBuf, String),
+    DestinationCollision(PathBuf),
 }
 
 impl fmt::Display for SyncError {
@@ -27,6 +46,31 @@ impl fmt::Display for SyncError {
                 write!(f, "{} is not valid TOML: {detail}", path.display())
             }
             Self::ManifestInvalid(detail) => write!(f, "tool manifest invalid: {detail}"),
+            Self::ProcessStart {
+                program,
+                working_directory,
+                error,
+            } => write!(
+                f,
+                "cannot start {program} in {}: {error}",
+                working_directory.display()
+            ),
+            Self::GitFailed { repository, status } => {
+                write!(f, "Git failed in {} with {status}", repository.display())
+            }
+            Self::InstallerFailed { tool, status } => {
+                write!(f, "installer for {tool} failed with {status}")
+            }
+            Self::StaleState(path, detail) => {
+                write!(f, "state changed at {}: {detail}", path.display())
+            }
+            Self::DestinationCollision(path) => {
+                write!(
+                    f,
+                    "destination {} collides with a non-symlink",
+                    path.display()
+                )
+            }
         }
     }
 }
