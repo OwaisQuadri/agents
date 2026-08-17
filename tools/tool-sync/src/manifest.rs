@@ -20,6 +20,8 @@ pub struct ToolSpec {
     pub commands: Vec<PathBuf>,
     pub mcp_server: Option<String>,
     pub pi_extension: Option<PathBuf>,
+    pub pi_package: Option<PathBuf>,
+    pub skills: Vec<PathBuf>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -59,6 +61,10 @@ struct RawTool {
     mcp_server: Option<String>,
     #[serde(default)]
     pi_extension: Option<PathBuf>,
+    #[serde(default)]
+    pi_package: Option<PathBuf>,
+    #[serde(default)]
+    skills: Vec<PathBuf>,
 }
 
 #[derive(Deserialize)]
