@@ -24,7 +24,7 @@
     {
       "id": "AGNT-0002",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Spare hand-added servers from state-driven removal",
       "long": "The state file lists which servers mcp-sync manages. A server on that list, but no longer in the manifest, gets removed from the live configs. A state file that goes false (a hand edit, a bad merge, cross-machine drift) then deletes a server the user added natively.\n\nThe fix: store a fingerprint of each rendered server. Before a removal, compare the live entry to the fingerprint. Spare and unlist an entry that no longer matches, and report the spare.\n\nFirst step, per the owner at gate C: map the consumers of the managed set before the schema changes. Those are the claude and codex removal paths, save_state, check, and adopt. Defer, but not long. Repro: .map/AGNT-0001/scratch/t19-state/repro/a02.",
       "deps": [],
@@ -106,7 +106,7 @@
     {
       "id": "AGNT-0008",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Install local and remote tools from one manifest.",
       "long": "Create one tracked manifest for executable tools. It must accept an embedded repository path or a Git URL and revision. Each entry records supported operating systems, its installer, provided commands, and harness adapters.\n\nAdd a Rust sync tool that fetches remote repositories into a managed cache. It must refuse to update a dirty checkout, select the declared revision, run the declared installer, and link each command. Dry run must report every fetch, build, link, harness change, and platform skip without writing.\n\nKeep Model Context Protocol server definitions in config/mcp-servers.toml. The tool manifest references those definitions instead of copying them. Replace the unsupported Pi draft with supported Pi extension or skill paths. Use OwaisQuadri/rag as the first macOS and Linux proof, including a real search through Claude Code, Codex, and Pi.",
       "deps": [],
@@ -180,7 +180,7 @@
     {
       "id": "AGNT-0012",
       "kind": "ticket",
-      "status": "todo",
+      "status": "in progress",
       "short": "Install the pinned Pi stack with private telemetry.",
       "long": "Install nicobailon/pi-subagents, Plannotator, HumanLayer show-me, Wayfinder, and grilling from pinned upstream revisions. Keep each upstream checkout unchanged. Add a project-owned Pi extension that records package version, invocation, duration, result status, human correction, and exposed cost fields. Do not record prompts or file contents by default.\n\nDerive Pi-compatible agent metadata from the existing definitions without creating a second prompt source. Disable overlapping bundled agents only after representative project roles pass. Require three reproduced failures with one source-level cause before a fork. Test dry runs, repeated installs, telemetry redaction, and representative agent discovery.",
       "deps": [
