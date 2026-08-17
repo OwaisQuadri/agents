@@ -1,1 +1,8 @@
-# TODO(AGNT-0008.T01): declare rag acquisition, compatibility, commands, and adapters.
+[[tools]]
+name = "rag"
+platforms = ["macos", "linux"]
+commands = ["rag"]
+mcp_server = "rag"
+pi_extension = "pi/extensions/rag.ts"
+source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "91fe6c77eb5c075d6a12dd581f62eedd4eafc926" }
+installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
