@@ -131,13 +131,12 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
     let mut tools = Vec::with_capacity(raw.tools.len());
 
     for raw_tool in raw.tools {
+        if raw_tool.name.chars().any(char::is_control) {
+            return Err(invalid("tool name contains control characters"));
+        }
         let name = raw_tool.name.trim();
         if name.is_empty() {
             return Err(invalid("tool name is empty"));
-        }
-        // TODO(AGNT-0008.T01): reject control characters before planning or child execution.
-        if name.chars().any(char::is_control) {
-            return Err(invalid("tool name contains control characters"));
         }
         if !names.insert(name.to_owned()) {
             return Err(invalid(format!("duplicate tool name {name}")));
@@ -343,17 +342,22 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
 
     #[test]
     fn parses_embedded_source() {
-        let text = TOOL.replace(
-            "{ url = \"https://example.test/rag.git\", revision = \"abc123\" }",
+        for declaration in [
+            "{ path = \"vendor/rag\" }",
             "{ embedded = { path = \"vendor/rag\" } }",
-        );
-        let manifest = load_text(&text).expect("manifest loads");
-        assert_eq!(
-            manifest.tools[0].source,
-            ToolSource::Embedded {
-                path: PathBuf::from("vendor/rag")
-            }
-        );
+        ] {
+            let text = TOOL.replace(
+                "{ url = \"https://example.test/rag.git\", revision = \"abc123\" }",
+                declaration,
+            );
+            let manifest = load_text(&text).expect("manifest loads");
+            assert_eq!(
+                manifest.tools[0].source,
+                ToolSource::Embedded {
+                    path: PathBuf::from("vendor/rag")
+                }
+            );
+        }
     }
 
     #[test]
@@ -368,13 +372,30 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
     }
 
     #[test]
-    fn rejects_escaped_paths_and_incomplete_git_sources() {
+    fn rejects_escaped_paths_and_incomplete_sources() {
+        for source in [
+            "{ path = \"../rag\" }",
+            "{ url = \"https://example.test/rag.git\" }",
+            "{ revision = \"abc123\" }",
+            "{ embedded = {} }",
+        ] {
+            let text = TOOL.replace(
+                "{ url = \"https://example.test/rag.git\", revision = \"abc123\" }",
+                source,
+            );
+            assert!(
+                load_text(&text).is_err(),
+                "source should be rejected: {source}"
+            );
+        }
         assert!(load_text(&TOOL.replace("pi/extensions/rag.ts", "../rag.ts")).is_err());
-        assert!(load_text(&TOOL.replace(
-            "source = { url = \"https://example.test/rag.git\", revision = \"abc123\" }",
-            "source = { url = \"https://example.test/rag.git\" }"
-        ))
-        .is_err());
+    }
+
+    #[test]
+    fn rejects_control_characters_even_when_name_would_be_trimmed() {
+        let text = TOOL.replace("name = \"rag\"", "name = \"\\nrag\\n\"");
+        let error = load_text(&text).expect_err("control characters must be rejected");
+        assert!(error.to_string().contains("control characters"));
     }
 
     #[test]
