@@ -64,6 +64,7 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 | --- | --- |
 | `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
 
+<!-- TODO(AGNT-0012.T15): Document the pinned Pi stack and private telemetry controls. -->
 ## executable tools
 
 `config/tools.toml` declares executable tools for macOS and Linux. Each entry declares its source, installer, commands, and optional adapters.

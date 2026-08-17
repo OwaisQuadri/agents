@@ -21,6 +21,8 @@ pub struct Context {
 /// Builds an ordered, data-only installation plan from a validated manifest.
 /// It takes a manifest and absolute planning context, returns actions for the
 /// selected platform, and errors on unsafe paths, checkout state, or collisions.
+// TODO(AGNT-0012.T02): Add collision-checked package and skill actions.
+// TODO(AGNT-0012.T07): Add one derived-agent action per source definition.
 pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncError> {
     let mut actions = Vec::new();
     let mut planned_directories = HashSet::new();

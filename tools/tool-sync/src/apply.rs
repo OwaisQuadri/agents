@@ -17,6 +17,8 @@ pub fn render(plan: &Plan, is_dry_run: bool) -> String {
         .join("\n")
 }
 
+// TODO(AGNT-0012.T03): Render package and skill link actions.
+// TODO(AGNT-0012.T07): Render derived-agent actions.
 fn render_action(action: &Action, is_dry_run: bool) -> String {
     match action {
         Action::CreateDirectory { path } => format!("create directory {}", path.display()),
@@ -172,6 +174,8 @@ fn check_link_destination(destination: &Path) -> Result<(), SyncError> {
     }
 }
 
+// TODO(AGNT-0012.T03): Apply package and skill links through verified linking.
+// TODO(AGNT-0012.T07): Dispatch derived-agent rendering.
 fn apply_action(action: &Action) -> Result<(), SyncError> {
     match action {
         Action::CreateDirectory { path } => {

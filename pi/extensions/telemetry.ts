@@ -62,6 +62,7 @@ type TelemetryRuntime = {
 
 type TelemetryExtension = (pi: ExtensionAPI) => Promise<void>;
 
+// TODO(AGNT-0012.T08): Validate and append closed-schema local records.
 function loadStore(path: string): Promise<TelemetryStore> {
 	throw new Error("unimplemented");
 }
@@ -78,6 +79,7 @@ function appendRecord(store: TelemetryStore, record: TelemetryRecord): Promise<v
  * @returns Matching settled runs in storage order.
  * @throws An error when a stored feedback record refers to a missing run.
  */
+// TODO(AGNT-0012.T09): Filter wide events and compute quiet default counts.
 export function filterRuns(store: TelemetryStore, filter: TelemetryFilter): RunRecord[] {
 	throw new Error("unimplemented");
 }
@@ -93,6 +95,7 @@ export function telemetryCounts(runtime: TelemetryRuntime): TelemetryCounts {
 	throw new Error("unimplemented");
 }
 
+// TODO(AGNT-0012.T10): Capture parent and subagent lifecycle boundaries.
 function startRun(
 	runtime: TelemetryRuntime,
 	runId: string,
@@ -125,6 +128,7 @@ function attachFeedback(
 	throw new Error("unimplemented");
 }
 
+// TODO(AGNT-0012.T11): Register drill-down, feedback, and count surfaces.
 function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): void {
 	throw new Error("unimplemented");
 }

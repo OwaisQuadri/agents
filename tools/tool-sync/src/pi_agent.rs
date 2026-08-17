@@ -35,6 +35,7 @@ struct AgentAdapterReport {
 /// # Errors
 ///
 /// Returns `SyncError` when the directory cannot be read or contains an unsafe path.
+// TODO(AGNT-0012.T05): Discover and parse source agents in stable order.
 pub fn discover(root: &Path) -> Result<Vec<PathBuf>, SyncError> {
     unimplemented!()
 }
@@ -45,6 +46,7 @@ pub fn discover(root: &Path) -> Result<Vec<PathBuf>, SyncError> {
 /// # Errors
 ///
 /// Returns `SyncError` for unreadable input, invalid frontmatter, unsupported fields, or filesystem failures.
+// TODO(AGNT-0012.T06): Normalize metadata and preserve the prompt body.
 pub fn render(source: &Path, destination: &Path) -> Result<(), SyncError> {
     unimplemented!()
 }

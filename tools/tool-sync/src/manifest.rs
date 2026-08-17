@@ -17,6 +17,7 @@ pub struct ToolSpec {
     pub source: ToolSource,
     pub platforms: Vec<Platform>,
     pub installer: InstallerSpec,
+    // TODO(AGNT-0012.T01): Validate resource-only tools and safe adapter paths.
     pub commands: Vec<PathBuf>,
     pub mcp_server: Option<String>,
     pub pi_extension: Option<PathBuf>,
@@ -156,6 +157,7 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         let platforms = platforms_of(name, raw_tool.platforms)?;
         validate_installer(name, &raw_tool.installer)?;
 
+        // TODO(AGNT-0012.T01): Permit no commands only when another adapter exists.
         if raw_tool.commands.is_empty() {
             return Err(tool_invalid(name, "commands is empty"));
         }

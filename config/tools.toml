@@ -1,3 +1,4 @@
+# TODO(AGNT-0012.T04): Declare immutable package and skill revisions.
 [[tools]]
 name = "rag"
 platforms = ["macos", "linux"]
