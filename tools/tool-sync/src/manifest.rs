@@ -128,6 +128,7 @@ pub fn load(path: &Path) -> Result<ToolManifest, SyncError> {
 fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
     let mut names = HashSet::new();
     let mut provided_commands = HashSet::new();
+    let mut pi_extensions = HashSet::new();
     let mut tools = Vec::with_capacity(raw.tools.len());
 
     for raw_tool in raw.tools {
@@ -137,6 +138,9 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         let name = raw_tool.name.trim();
         if name.is_empty() {
             return Err(invalid("tool name is empty"));
+        }
+        if Path::new(name).file_name() != Some(std::ffi::OsStr::new(name)) {
+            return Err(tool_invalid(name, "name must be one path component"));
         }
         if !names.insert(name.to_owned()) {
             return Err(invalid(format!("duplicate tool name {name}")));
@@ -177,6 +181,21 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         }
         if let Some(extension) = &raw_tool.pi_extension {
             validate_relative(name, "Pi extension", extension)?;
+            let provided = extension.file_name().ok_or_else(|| {
+                tool_invalid(
+                    name,
+                    &format!("Pi extension {} has no file name", extension.display()),
+                )
+            })?;
+            if !pi_extensions.insert(provided.to_owned()) {
+                return Err(tool_invalid(
+                    name,
+                    &format!(
+                        "provided Pi extension {} is duplicated",
+                        provided.to_string_lossy()
+                    ),
+                ));
+            }
         }
 
         tools.push(ToolSpec {
@@ -396,6 +415,26 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
         let text = TOOL.replace("name = \"rag\"", "name = \"\\nrag\\n\"");
         let error = load_text(&text).expect_err("control characters must be rejected");
         assert!(error.to_string().contains("control characters"));
+    }
+
+    #[test]
+    fn rejects_tool_names_that_are_not_one_path_component() {
+        for name in ["../victim", "nested/rag", ".", ".."] {
+            let text = TOOL.replace("name = \"rag\"", &format!("name = {name:?}"));
+            let error = load_text(&text).expect_err("path-shaped name must be rejected");
+            assert!(error.to_string().contains("one path component"));
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_pi_extension_names() {
+        let second = TOOL
+            .replace("name = \"rag\"", "name = \"other\"")
+            .replace("commands = [\"rag\"]", "commands = [\"other\"]")
+            .replace("pi/extensions/rag.ts", "other/rag.ts");
+        let text = format!("{TOOL}\n{second}");
+        let error = load_text(&text).expect_err("duplicate Pi extension must be rejected");
+        assert!(error.to_string().contains("Pi extension rag.ts is duplicated"));
     }
 
     #[test]
