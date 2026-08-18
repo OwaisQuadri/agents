@@ -382,6 +382,9 @@ function buildFeedbackIndex(records: TelemetryRecord[]): Map<string, Set<Feedbac
 
 	for (const record of records) {
 		if (record.recordType === "run") {
+			if (settledRunIds.has(record.runId)) {
+				throw new Error(`telemetry run record runId ${record.runId} already exists`);
+			}
 			settledRunIds.add(record.runId);
 		}
 	}
@@ -1178,7 +1181,8 @@ export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): v
 				throw new Error("telemetry-status takes no arguments");
 			}
 
-			syncTelemetryStatus(ctx.ui, runtime);
+			const counts = telemetryCounts(runtime);
+			ctx.ui.notify(`active: ${counts.active} failed: ${counts.failed}`);
 		},
 	});
 

@@ -255,6 +255,33 @@ test("telemetry loadStore rejects malformed lines and schema drift", async () =>
 	});
 });
 
+test("telemetry loadStore rejects duplicate run identifiers and preserves valid relationships", async () => {
+	await withTelemetryRoot(async () => {
+		const store = await loadStore();
+		const duplicateRunRecord = {
+			...validRunRecord,
+			packageName: "pi-subagents",
+			agentName: "reviewer",
+			startedAt: "2026-08-17T02:25:00.000Z",
+			settledAt: "2026-08-17T02:25:20.000Z",
+			durationMs: 20000,
+		};
+		const duplicateContents = `${JSON.stringify(validRunRecord)}\n${JSON.stringify(duplicateRunRecord)}\n`;
+		await writeFile(store.path, duplicateContents);
+
+		await assert.rejects(() => loadStore(), /runId run-1 already exists/);
+		assert.equal(await readFile(store.path, "utf8"), duplicateContents);
+		assert.deepEqual(store.records, []);
+
+		const validContents = `${JSON.stringify(validRunRecord)}\n${JSON.stringify(validFeedbackRecord)}\n`;
+		await writeFile(store.path, validContents);
+		const loadedStore = await loadStore();
+
+		assert.deepEqual(loadedStore.records, [validRunRecord, validFeedbackRecord]);
+		assert.equal(await readFile(store.path, "utf8"), validContents);
+	});
+});
+
 test("telemetry appendRecord rejects invalid metrics without changing storage", async () => {
 	await withTelemetryRoot(async () => {
 		const store = await loadStore();

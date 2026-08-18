@@ -289,7 +289,7 @@ test("telemetry store loading and appending", async () => {
 	});
 });
 
-test("telemetry status command surfaces active and failed counts", async () => {
+test("telemetry status command notifies active and failed counts including zero", async () => {
 	const runtime = createTelemetryRuntime({
 		path: "/tmp/telemetry.jsonl",
 		records: [
@@ -328,8 +328,17 @@ test("telemetry status command surfaces active and failed counts", async () => {
 	const recordingUi = createRecordingUi();
 	await invokeCommand(api.command("telemetry-status"), "", createFakeCommandContext(recordingUi));
 
-	assert.deepEqual(recordingUi.statuses, [{ key: "telemetry", text: "active: 1 failed: 1" }]);
-	assert.deepEqual(recordingUi.notifications, []);
+	assert.deepEqual(recordingUi.statuses, []);
+	assert.deepEqual(recordingUi.notifications, [{ message: "active: 1 failed: 1", type: undefined }]);
+
+	const emptyRuntime = createTelemetryRuntime({ path: "/tmp/empty-telemetry.jsonl", records: [] });
+	const emptyApi = createFakeExtensionAPI();
+	registerCommands(emptyApi.api, emptyRuntime);
+	const emptyRecordingUi = createRecordingUi();
+	await invokeCommand(emptyApi.command("telemetry-status"), "", createFakeCommandContext(emptyRecordingUi));
+
+	assert.deepEqual(emptyRecordingUi.statuses, []);
+	assert.deepEqual(emptyRecordingUi.notifications, [{ message: "active: 0 failed: 0", type: undefined }]);
 });
 
 
@@ -351,6 +360,7 @@ test("telemetry status surface clears on session start and successful completion
 		await invoke(completedHandler, { id: "async-1", success: true });
 
 		assert.deepEqual(recordingUi.statuses.map((status) => status.text), [undefined, "active: 1 failed: 0", undefined]);
+		assert.deepEqual(recordingUi.notifications, []);
 	});
 });
 

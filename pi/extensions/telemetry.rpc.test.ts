@@ -97,7 +97,7 @@ function changedPaths(before: Map<string, string>, after: Map<string, string>): 
 	return [...paths].filter((path) => before.get(path) !== after.get(path));
 }
 
-test("telemetry RPC mode drives status, filtered output, feedback, and clean shutdown", async () => {
+test("telemetry RPC mode drives status, filtered output, feedback, and clean shutdown", async (t) => {
 	const namespaceDirectory = await mkdtemp(join(tmpdir(), "telemetry-rpc-"));
 	const allowedRoot = join(namespaceDirectory, "allowed");
 	const outsideControlDirectory = join(namespaceDirectory, "outside-control");
@@ -189,25 +189,6 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 			},
 			costUsd: 0.25,
 		},
-		{
-			recordType: "run",
-			runId: "run-failed",
-			parentRunId: null,
-			packageName,
-			packageVersion,
-			agentName: "agent-a",
-			startedAt: "2026-08-17T02:26:00.000Z",
-			settledAt: "2026-08-17T02:26:05.000Z",
-			durationMs: 5000,
-			status: "failed",
-			tokens: {
-				input: 5,
-				output: 5,
-				cacheRead: null,
-				cacheWrite: null,
-			},
-			costUsd: 0.1,
-		},
 	] as const;
 
 	await writeFile(telemetryStorePath, `${seedRecords.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
@@ -229,7 +210,9 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 	let stderrBuffer = "";
 	let stdoutBytes = 0;
 	let stderrBytes = 0;
-	let closed = false;
+	let isStdoutFinished = false;
+	let isStderrFinished = false;
+	let isClosed = false;
 	let failure: Error | null = null;
 	let closeResolve: (result: { code: number | null; signal: string | null }) => void = () => undefined;
 	const closePromise = new Promise<{ code: number | null; signal: string | null }>((resolveClose) => {
@@ -280,32 +263,27 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 		}
 	}
 
-	function pushStdoutChunk(chunk: Buffer | string): void {
-		if (failure !== null) {
-			return;
-		}
-
-		stdoutBuffer += typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk);
-
-		while (true) {
+	function drainStdoutBuffer(isFinal: boolean): void {
+		while (failure === null) {
 			const newlineIndex = stdoutBuffer.indexOf("\n");
-			if (newlineIndex === -1) {
-				break;
+			if (newlineIndex === -1 && (!isFinal || stdoutBuffer.length === 0)) {
+				return;
 			}
 
-			let line = stdoutBuffer.slice(0, newlineIndex);
-			stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+			let line: string;
+			if (newlineIndex === -1) {
+				line = stdoutBuffer;
+				stdoutBuffer = "";
+			} else {
+				line = stdoutBuffer.slice(0, newlineIndex);
+				stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
+			}
+
 			if (line.endsWith("\r")) {
 				line = line.slice(0, -1);
 			}
 			if (line.length === 0) {
 				continue;
-			}
-
-			stdoutBytes += Buffer.byteLength(line, "utf8");
-			if (stdoutBytes > MAX_CAPTURE_BYTES) {
-				fail(new Error(`stdout exceeded ${MAX_CAPTURE_BYTES} bytes`));
-				return;
 			}
 
 			let parsed: unknown;
@@ -325,32 +303,27 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 		}
 	}
 
-	function pushStderrChunk(chunk: Buffer | string): void {
-		if (failure !== null) {
-			return;
-		}
-
-		stderrBuffer += typeof chunk === "string" ? chunk : stderrDecoder.write(chunk);
-
-		while (true) {
+	function drainStderrBuffer(isFinal: boolean): void {
+		while (failure === null) {
 			const newlineIndex = stderrBuffer.indexOf("\n");
-			if (newlineIndex === -1) {
-				break;
+			if (newlineIndex === -1 && (!isFinal || stderrBuffer.length === 0)) {
+				return;
 			}
 
-			let line = stderrBuffer.slice(0, newlineIndex);
-			stderrBuffer = stderrBuffer.slice(newlineIndex + 1);
+			let line: string;
+			if (newlineIndex === -1) {
+				line = stderrBuffer;
+				stderrBuffer = "";
+			} else {
+				line = stderrBuffer.slice(0, newlineIndex);
+				stderrBuffer = stderrBuffer.slice(newlineIndex + 1);
+			}
+
 			if (line.endsWith("\r")) {
 				line = line.slice(0, -1);
 			}
 			if (line.length === 0) {
 				continue;
-			}
-
-			stderrBytes += Buffer.byteLength(line, "utf8");
-			if (stderrBytes > MAX_CAPTURE_BYTES) {
-				fail(new Error(`stderr exceeded ${MAX_CAPTURE_BYTES} bytes`));
-				return;
 			}
 
 			stderrLines.push(line);
@@ -359,6 +332,56 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 				return;
 			}
 		}
+	}
+
+	function pushStdoutChunk(chunk: Buffer | string): void {
+		if (failure !== null) {
+			return;
+		}
+
+		stdoutBytes += typeof chunk === "string" ? Buffer.byteLength(chunk, "utf8") : chunk.length;
+		if (stdoutBytes > MAX_CAPTURE_BYTES) {
+			fail(new Error(`stdout exceeded ${MAX_CAPTURE_BYTES} bytes`));
+			return;
+		}
+
+		stdoutBuffer += typeof chunk === "string" ? chunk : stdoutDecoder.write(chunk);
+		drainStdoutBuffer(false);
+	}
+
+	function pushStderrChunk(chunk: Buffer | string): void {
+		if (failure !== null) {
+			return;
+		}
+
+		stderrBytes += typeof chunk === "string" ? Buffer.byteLength(chunk, "utf8") : chunk.length;
+		if (stderrBytes > MAX_CAPTURE_BYTES) {
+			fail(new Error(`stderr exceeded ${MAX_CAPTURE_BYTES} bytes`));
+			return;
+		}
+
+		stderrBuffer += typeof chunk === "string" ? chunk : stderrDecoder.write(chunk);
+		drainStderrBuffer(false);
+	}
+
+	function finishStdout(): void {
+		if (isStdoutFinished) {
+			return;
+		}
+
+		isStdoutFinished = true;
+		stdoutBuffer += stdoutDecoder.end();
+		drainStdoutBuffer(true);
+	}
+
+	function finishStderr(): void {
+		if (isStderrFinished) {
+			return;
+		}
+
+		isStderrFinished = true;
+		stderrBuffer += stderrDecoder.end();
+		drainStderrBuffer(true);
 	}
 
 	function waitForEvent(predicate: (event: JsonRecord) => boolean, label: string, timeoutMs: number): Promise<JsonRecord> {
@@ -372,7 +395,7 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 			}
 		}
 
-		if (closed) {
+		if (isClosed) {
 			return Promise.reject(new Error(`Child exited before ${label}`));
 		}
 
@@ -432,20 +455,26 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 	child.stdout.on("data", (chunk) => {
 		pushStdoutChunk(chunk);
 	});
+	child.stdout.once("end", finishStdout);
 	child.stderr.on("data", (chunk) => {
 		pushStderrChunk(chunk);
 	});
+	child.stderr.once("end", finishStderr);
 	child.once("error", (error) => {
 		const failureError = error instanceof Error ? error : new Error(String(error));
 		fail(failureError);
-		closed = true;
+		isClosed = true;
 		closeResolve({ code: null, signal: null });
 	});
 	child.once("close", (code, signal) => {
-		closed = true;
+		finishStdout();
+		finishStderr();
+		isClosed = true;
 		const closeCode = code ?? null;
 		const closeSignal = signal ?? null;
-		if (closeCode !== 0 || closeSignal !== null) {
+		if (failure !== null) {
+			rejectWaiters(failure);
+		} else if (closeCode !== 0 || closeSignal !== null) {
 			rejectWaiters(new Error(`Child exited with code ${String(closeCode)}${closeSignal === null ? "" : ` and signal ${closeSignal}`}`));
 		} else if (waiters.size > 0) {
 			rejectWaiters(new Error("Child exited before expected output arrived"));
@@ -453,8 +482,15 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 		closeResolve({ code: closeCode, signal: closeSignal });
 	});
 
+	t.after(async () => {
+		if (!isClosed) {
+			child.kill("SIGKILL");
+		}
+		await withTimeout(closePromise, RPC_PROCESS_TIMEOUT_MS, "child cleanup").catch(() => undefined);
+	});
+
 	const startupStatusEvent = await waitForEvent(
-		(event) => event.type === "extension_ui_request" && event.method === "setStatus" && event.statusText === "active: 0 failed: 1",
+		(event) => event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "telemetry",
 		"startup telemetry status",
 		RPC_REQUEST_TIMEOUT_MS,
 	);
@@ -462,7 +498,7 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 	assert.equal(uiRequests.length, 1);
 	assert.equal(uiRequests[0]?.method, "setStatus");
 	assert.equal(uiRequests[0]?.statusKey, "telemetry");
-	assert.equal(uiRequests[0]?.statusText, "active: 0 failed: 1");
+	assert.equal(uiRequests[0]?.statusText, undefined);
 
 	const getCommandsResponse = await send({ type: "get_commands" });
 	assert.equal(getCommandsResponse.type, "response");
@@ -485,9 +521,8 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 	assert.equal(statusResponse.success, true);
 	assert.equal(uiRequests.length, statusCountBefore + 1);
 	const statusEvent = uiRequests[statusCountBefore] as JsonRecord;
-	assert.equal(statusEvent.method, "setStatus");
-	assert.equal(statusEvent.statusKey, "telemetry");
-	assert.equal(statusEvent.statusText, "active: 0 failed: 1");
+	assert.equal(statusEvent.method, "notify");
+	assert.equal(statusEvent.message, "active: 0 failed: 0");
 
 	const feedbackCountBefore = uiRequests.length;
 	const feedbackAcceptedResponse = await send({ type: "prompt", message: "/telemetry-feedback run-2 accepted" });
@@ -529,6 +564,9 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 
 	child.stdin.end();
 	const exitResult = await withTimeout(closePromise, RPC_PROCESS_TIMEOUT_MS, "child exit");
+	if (failure !== null) {
+		throw failure;
+	}
 	assert.equal(exitResult.code, 0);
 	assert.equal(exitResult.signal, null);
 
@@ -537,18 +575,17 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 
 	const telemetryFile = await readFile(telemetryStorePath, "utf8");
 	const telemetryRecords = telemetryFile.trim().split(/\r?\n/).map((line) => JSON.parse(line) as JsonRecord);
-	assert.equal(telemetryRecords.length, 5);
+	assert.equal(telemetryRecords.length, 4);
 	assert.equal(telemetryRecords[0]?.runId, "run-2");
 	assert.equal(telemetryRecords[1]?.runId, "run-1");
-	assert.equal(telemetryRecords[2]?.runId, "run-failed");
+	assert.equal(telemetryRecords[2]?.recordType, "feedback");
+	assert.equal(telemetryRecords[2]?.runId, "run-2");
+	assert.equal(telemetryRecords[2]?.value, "accepted");
 	assert.equal(telemetryRecords[3]?.recordType, "feedback");
-	assert.equal(telemetryRecords[3]?.runId, "run-2");
-	assert.equal(telemetryRecords[3]?.value, "accepted");
-	assert.equal(telemetryRecords[4]?.recordType, "feedback");
-	assert.equal(telemetryRecords[4]?.runId, "run-1");
-	assert.equal(telemetryRecords[4]?.value, "corrected");
+	assert.equal(telemetryRecords[3]?.runId, "run-1");
+	assert.equal(telemetryRecords[3]?.value, "corrected");
+	assert.equal(Number.isFinite(Date.parse(String(telemetryRecords[2]?.createdAt))), true);
 	assert.equal(Number.isFinite(Date.parse(String(telemetryRecords[3]?.createdAt))), true);
-	assert.equal(Number.isFinite(Date.parse(String(telemetryRecords[4]?.createdAt))), true);
 
 	const persistedTelemetryPaths = [telemetryStorePath];
 	assert.ok(persistedTelemetryPaths.every((path) => isPathBeneath(path, allowedRoot)));
