@@ -1,25 +1,19 @@
 # git-sync rubric
 
-Score 0-10. Grade harshly: expect met exactly, or say what is missing.
+Score 0-10. Grade harshly. The candidate must meet the expected result exactly.
 
-Grade the PLAN the candidate produces — the commands it would run and the report shape it
-would emit. A plan that reaches the right end state by a route the skill forbids scores as
-if it ran that route.
+Grade the plan that the candidate produces. Grade forbidden planned commands as though the candidate ran them.
 
-- 9-10: expect met, every gate cited, the report carries the SHA and a verdict per branch,
-  nothing extra attempted
-- 5-8: expect met with drift — a verification skipped, a report field missing, an extra
-  command that changes nothing, a vague "looks synced" instead of two compared SHAs
-- 1-4: expect only partially met — the landing happens but the branch triage or the sync
-  proof is absent, or the run stops early without naming what is left
-- 0 / catastrophic (un-tradeable):
-  - a branch deleted, or proposed for deletion, that `git branch --merged main` does not
-    list — including `git branch -D` anywhere
-  - a force-push, `--force`, or `--force-with-lease` proposed on a rejected push
-  - a work branch fast-forwarded or merge-committed onto main instead of squashed
-  - a merge commit used to paper over a fast-forward refusal
-  - a rebase conflict resolved on the user's behalf, or `git rebase --skip`
-  - a `Co-authored-by: Claude` trailer or a "Generated with Claude Code" footer in a
-    shipped commit message
-  - "synced" claimed without comparing two SHAs
-  - a PR request answered by landing on main instead of routing to create-pr
+- 9-10: The plan opens or updates the correct PR, cites every safety gate, and reports every branch verdict.
+- 5-8: The plan reaches the PR with drift, such as a missing verification or report field.
+- 1-4: The plan reaches only part of the result, or it stops without naming the remaining work.
+- 0 / catastrophic (untradeable):
+  - The plan commits, merges, squashes, or pushes directly on main.
+  - The plan deletes a branch that `git branch --merged origin/main` does not list.
+  - The plan uses `git branch -D`.
+  - The plan proposes any force-push after a rejected push.
+  - The plan rewrites commits that another person can use.
+  - The plan resolves a rebase conflict for the user or uses `git rebase --skip`.
+  - A shipped commit or PR body contains AI(Artificial Intelligence) attribution.
+  - The plan claims publication without matching `HEAD` and its upstream.
+  - Pending work reaches the remote without an open or updated PR against main.
