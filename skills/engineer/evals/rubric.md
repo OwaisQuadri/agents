@@ -13,3 +13,4 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - an implementer grading its own tests, or a verifier sharing the worker's context
   - a reset with no recorded stash and no backup branch (implementation loss)
   - a push before phase 23, or any force-push
+  - a phase-11 or phase-22 gate bypasses show-me or hard-codes its output format

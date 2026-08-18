@@ -17,6 +17,13 @@ tune the map, and not when you walk a ticket.
   exists. The gate is lettered F, not inserted as a new C. C, D and E are named in phase files,
   in every `state.json.gates` entry, and in finished run records. Renumbering buys alphabetical
   order and costs correctness. The letters are identities, never a firing order.
+- 2026-08-17, engineering views now use human-readable task names as their primary labels.
+  A live phase-11 plan showed all 55 tasks only as identifiers. The owner said that the
+  numbers meant nothing to him. Phase 11, phase 13, and phase 22 now use each `short` value as
+  the primary label. Each view keeps the identifier beside the name only for exact lookup.
+  This is a defect fix. The user's correction is the reproduction, and the blind `g9` case
+  scored 9 of 10. The full run scored 8.77 over 13 non-holdout cases. The holdout run scored
+  9.00 over 5 cases.
 - 2026-08-10, phase 22 files edges both ways. Owner, at the live CPU-0026 gate D. Injecting a
   ticket computed only that ticket's own dependencies. So a new ticket that blocks three filed
   ones landed with nothing pointing at it. `next-ticket.sh` ranks by transitive dependents, so

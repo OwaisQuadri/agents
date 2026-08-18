@@ -1,15 +1,30 @@
 # phase 11 — dag
 
-JOB: the task DAG(directed acyclic graph) validated, rendered, adversarially reviewed fresh, and approved by the human
+JOB: the task DAG(directed acyclic graph) validated, shown through /show-me, adversarially reviewed fresh, and approved by the human
 IN:  tasks.json, test-cases.md; phase 10 committed
-OUT: `.map/<ID>/dag.mmd`; tasks.json final for implementation
+OUT: tasks.json final for implementation; a plan view shown through /show-me
 
 ## steps
 
-1. invoke /task-graph in task shape. It validates the graph, lands tasks.json, regenerates dag.mmd through `skills/task-graph/scripts/dag-mermaid.sh`, and reports the waves. Show the diagram. Done when the script exits 0 and the .mmd is committed-ready.
-2. [FRESH] run the adversarial plan review. Dispatch anchor-verifier with three fields. `work_product_paths` = [tasks.json, dag.mmd, data-structures.md, interfaces.md, test-cases.md]. `verify_command` = the tsort line from phase 09. `rubric` = [acyclic; every wave's siblings have disjoint files; every phase-06/07 delta covered by a task; every task has ≥1 covering test case; statuses all todo]. The dispatch must NOT carry this session's reasoning, the drafts, or any "it's fine" summary. Done when the verdict returns.
-3. fix the rubric failures, then re-dispatch until the verdict is pass. These cycles count against `loop_counts.plan`, which is their own counter. Plan-review fixes never count against the cap in phase 13. Done when the verdict is pass.
-4. HUMAN GATE B. Present the plan bundle: the chosen pattern in ux.md with its rejected alternates, data-structures.md, interfaces.md, test-cases.md, tasks.json, and the dag.mmd rendering. ux.md is in the bundle because phase 03 PICKS an interaction pattern. An unshown choice reaches implementation without the user ever seeing it. Commit `map(<ID>): phase 11 dag`. Done when the user has seen the bundle, `state.json.gates.B` records their verdict, and the commit exists.
+1. Invoke /task-graph in task shape for the identifier, dependency, and cycle checks. Land tasks.json. Require the wave report and reverse-edge verdict. Done when the structural checks exit 0.
+2. Invoke /show-me with tasks.json and the phase-06 through phase-10 plan files. Do not select its output format. Ask for the smallest view that shows every task and the user-experience choice.
+
+   Use each task's `short` field as its primary label. Put its identifier beside the label only as a lookup key. An identifier never stands alone.
+
+   Prefer a console-safe view. For parallel work, prefer an Xcode-style lane timeline. Use dependency waves as the horizontal axis. Let /show-me select any UML(Unified Modeling Language) view that makes another relationship clearer. Let /show-me select an interactive or web view only when density needs it. Done when the user sees the view and the view represents every task by name.
+3. Run the fresh adversarial plan review. Dispatch anchor-verifier with three fields. Set `work_product_paths` to [tasks.json, data-structures.md, interfaces.md, test-cases.md]. Use the phase-09 topological-sort line for `verify_command`. Use this `rubric`:
+
+   ```text
+   [acyclic;
+   disjoint sibling files;
+   phase-06 and phase-07 deltas owned;
+   each task covered;
+   statuses correct].
+   ```
+
+   The dispatch must not carry this session's reasoning, drafts, or approval summary. Done when the verdict returns.
+4. Fix each rubric failure. Re-dispatch until the verdict is pass. Each cycle increments `loop_counts.plan`. These fixes do not count against the phase-13 cap. Done when the verdict is pass.
+5. Present Human Gate B. Include the chosen pattern and rejected alternates from ux.md. Include data-structures.md, interfaces.md, test-cases.md, and tasks.json. Present the plan view through /show-me. The interaction choice must reach the user before implementation. Commit `map(<ID>): phase 11 dag`. Done when the user sees the bundle, `state.json.gates.B` records the verdict, and the commit exists.
 
 ## blame tags
 
