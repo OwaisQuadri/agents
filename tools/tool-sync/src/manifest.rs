@@ -20,6 +20,8 @@ pub struct ToolSpec {
     pub commands: Vec<PathBuf>,
     pub mcp_server: Option<String>,
     pub pi_extension: Option<PathBuf>,
+    pub pi_package: Option<PathBuf>,
+    pub skills: Vec<PathBuf>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -59,6 +61,10 @@ struct RawTool {
     mcp_server: Option<String>,
     #[serde(default)]
     pi_extension: Option<PathBuf>,
+    #[serde(default)]
+    pi_package: Option<PathBuf>,
+    #[serde(default)]
+    skills: Vec<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -150,7 +156,10 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         let platforms = platforms_of(name, raw_tool.platforms)?;
         validate_installer(name, &raw_tool.installer)?;
 
-        if raw_tool.commands.is_empty() {
+        let is_resource_only = raw_tool.pi_extension.is_some()
+            || raw_tool.pi_package.is_some()
+            || !raw_tool.skills.is_empty();
+        if raw_tool.commands.is_empty() && !is_resource_only {
             return Err(tool_invalid(name, "commands is empty"));
         }
         for command in &raw_tool.commands {
@@ -197,6 +206,23 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
                 ));
             }
         }
+        if let Some(package) = &raw_tool.pi_package {
+            validate_relative(name, "Pi package", package)?;
+            if package != Path::new(".") {
+                package.file_name().ok_or_else(|| {
+                    tool_invalid(
+                        name,
+                        &format!("Pi package {} has no file name", package.display()),
+                    )
+                })?;
+            }
+        }
+        for skill in &raw_tool.skills {
+            validate_relative(name, "skill", skill)?;
+            skill.file_name().ok_or_else(|| {
+                tool_invalid(name, &format!("skill {} has no file name", skill.display()))
+            })?;
+        }
 
         tools.push(ToolSpec {
             name: name.to_owned(),
@@ -206,6 +232,8 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
             commands: raw_tool.commands,
             mcp_server: raw_tool.mcp_server,
             pi_extension: raw_tool.pi_extension,
+            pi_package: raw_tool.pi_package,
+            skills: raw_tool.skills,
         });
     }
 
@@ -344,6 +372,8 @@ platforms = ["macos", "linux"]
 commands = ["rag"]
 mcp_server = "rag"
 pi_extension = "pi/extensions/rag.ts"
+pi_package = "pi/packages/rag"
+skills = ["skills/show-me", "skills/grilling"]
 source = { url = "https://example.test/rag.git", revision = "abc123" }
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
 "#;
@@ -361,8 +391,42 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             tool.pi_extension.as_deref(),
             Some(Path::new("pi/extensions/rag.ts"))
         );
+        assert_eq!(
+            tool.pi_package.as_deref(),
+            Some(Path::new("pi/packages/rag"))
+        );
+        assert_eq!(
+            tool.skills,
+            [
+                PathBuf::from("skills/show-me"),
+                PathBuf::from("skills/grilling"),
+            ]
+        );
         assert_eq!(tool.installer.preview_args, ["--dry-run"]);
         assert!(matches!(tool.source, ToolSource::Git { .. }));
+    }
+
+    #[test]
+    fn parses_resource_only_tool_with_adapters() {
+        let text = TOOL.replace("commands = [\"rag\"]", "commands = []");
+        let manifest = load_text(&text).expect("manifest loads");
+        assert!(manifest.tools[0].commands.is_empty());
+        assert_eq!(
+            manifest.tools[0].pi_package.as_deref(),
+            Some(Path::new("pi/packages/rag"))
+        );
+    }
+
+    #[test]
+    fn parses_root_pi_package() {
+        let text = TOOL
+            .replace("commands = [\"rag\"]", "commands = []")
+            .replace("pi/packages/rag", ".");
+        let manifest = load_text(&text).expect("manifest loads");
+        assert_eq!(
+            manifest.tools[0].pi_package.as_deref(),
+            Some(Path::new("."))
+        );
     }
 
     #[test]
@@ -414,6 +478,8 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             );
         }
         assert!(load_text(&TOOL.replace("pi/extensions/rag.ts", "../rag.ts")).is_err());
+        assert!(load_text(&TOOL.replace("pi/packages/rag", "../package")).is_err());
+        assert!(load_text(&TOOL.replace("skills/show-me", "../skill")).is_err());
     }
 
     #[test]
@@ -461,8 +527,19 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
     fn repository_manifest_declares_rag() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
         let manifest = load(&path).expect("repository manifest loads");
-        assert_eq!(manifest.tools.len(), 1);
-        assert_eq!(manifest.tools[0].name, "rag");
-        assert_eq!(manifest.tools[0].mcp_server.as_deref(), Some("rag"));
+        let tool = manifest
+            .tools
+            .iter()
+            .find(|tool| tool.name == "rag")
+            .expect("rag tool exists");
+        assert_eq!(tool.platforms, [Platform::Macos, Platform::Linux]);
+        assert_eq!(tool.commands, [PathBuf::from("rag")]);
+        assert_eq!(tool.mcp_server.as_deref(), Some("rag"));
+        assert_eq!(
+            tool.pi_extension.as_deref(),
+            Some(Path::new("pi/extensions/rag.ts"))
+        );
+        assert!(tool.pi_package.is_none());
+        assert!(tool.skills.is_empty());
     }
 }

@@ -6,7 +6,20 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use tool_sync::pi_agent;
+
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy)]
+struct AgentCase {
+    name: &'static str,
+    description: &'static str,
+    source_tools: &'static [&'static str],
+    rendered_tools: &'static [&'static str],
+    source_model: &'static str,
+    rendered_model: &'static str,
+    prompt: &'static str,
+}
 
 struct Fixture {
     root: PathBuf,
@@ -14,6 +27,8 @@ struct Fixture {
     remote: PathBuf,
     first_revision: String,
     second_revision: String,
+    first_revision_contents: Vec<u8>,
+    first_skill_show_me_contents: Vec<u8>,
 }
 
 impl Fixture {
@@ -22,29 +37,33 @@ impl Fixture {
         let repository = root.join("repository");
         let work = root.join("work");
         let remote = root.join("remote.git");
-        fs::create_dir_all(repository.join("pi/extensions")).expect("repository fixture");
-        fs::copy(
-            fixture_file("rag.ts"),
-            repository.join("pi/extensions/rag.ts"),
-        )
-        .expect("Pi extension fixture");
+        fs::create_dir_all(&repository).expect("repository fixture directory");
         fs::create_dir_all(&work).expect("Git work tree");
+        seed_repository_root_tree(&repository);
+        seed_checkout_tree(&work);
+        fs::write(work.join("revision"), "first revision\n").expect("first revision file");
         git(&work, &["init", "-q"]);
         git(&work, &["config", "user.email", "fixture@example.test"]);
         git(&work, &["config", "user.name", "Fixture"]);
-        fs::create_dir_all(work.join("bin")).expect("command directory");
-        copy_executable(&fixture_file("installer.sh"), &work.join("install.sh"));
-        copy_executable(&fixture_file("rag"), &work.join("bin/rag"));
-        fs::write(work.join("revision"), "first\n").expect("first revision file");
         git(&work, &["add", "."]);
         git(&work, &["commit", "-qm", "first"]);
         let first_revision = git_text(&work, &["rev-parse", "HEAD"]);
-        fs::write(work.join("revision"), "second\n").expect("second revision file");
+        let first_revision_contents =
+            fs::read(work.join("revision")).expect("first revision contents");
+        let first_skill_show_me_contents =
+            fs::read(work.join("skills/show-me/README.md")).expect("first skill contents");
+        fs::write(work.join("revision"), "second revision\n").expect("second revision file");
+        fs::write(
+            work.join("skills/show-me/README.md"),
+            "show-me checkout fixture second\n",
+        )
+        .expect("second skill contents");
         git(&work, &["commit", "-qam", "second"]);
         let second_revision = git_text(&work, &["rev-parse", "HEAD"]);
         fs::create_dir_all(&remote).expect("bare repository directory");
+        let remote_path = canonical_path(&remote);
         git(&remote, &["init", "--bare", "-q"]);
-        git(&work, &["remote", "add", "origin", path_text(&remote)]);
+        git(&work, &["remote", "add", "origin", path_text(&remote_path)]);
         git(&work, &["push", "-q", "origin", "HEAD:refs/heads/main"]);
         git(&remote, &["symbolic-ref", "HEAD", "refs/heads/main"]);
 
@@ -54,6 +73,8 @@ impl Fixture {
             remote,
             first_revision,
             second_revision,
+            first_revision_contents,
+            first_skill_show_me_contents,
         }
     }
 
@@ -61,8 +82,17 @@ impl Fixture {
         self.root.join(name)
     }
 
+    fn repository_root(&self) -> PathBuf {
+        canonical_path(&self.repository)
+    }
+
+    fn remote_path(&self) -> PathBuf {
+        canonical_path(&self.remote)
+    }
+
     fn manifest(&self, revision: &str, platforms: &str) -> PathBuf {
         let manifest = self.root.join(format!("manifest-{platforms}.toml"));
+        let remote = self.remote_path();
         fs::write(
             &manifest,
             format!(
@@ -71,10 +101,12 @@ name = "rag"
 platforms = [{platforms}]
 commands = ["bin/rag"]
 pi_extension = "pi/extensions/rag.ts"
+pi_package = "."
+skills = ["skills/show-me", "skills/grilling"]
 source = {{ url = {:?}, revision = {:?} }}
 installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
 "#,
-                path_text(&self.remote),
+                path_text(&remote),
                 revision
             ),
         )
@@ -84,12 +116,14 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
 
     fn run(&self, home: &Path, manifest: &Path, platform: &str, is_dry_run: bool) -> Output {
         let record = self.root.join("installer-invocations");
+        let home = canonical_path(home);
+        let repository = self.repository_root();
         let mut command = Command::new(env!("CARGO_BIN_EXE_tool-sync"));
         command
             .env("TOOL_SYNC_RECORD", record)
-            .args(["--home", path_text(home)])
+            .args(["--home", path_text(&home)])
             .args(["--manifest", path_text(manifest)])
-            .args(["--repository-root", path_text(&self.repository)])
+            .args(["--repository-root", path_text(&repository)])
             .args(["--platform", platform]);
         if is_dry_run {
             command.arg("--dry-run");
@@ -98,7 +132,7 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
     }
 
     fn checkout(&self, home: &Path) -> PathBuf {
-        home.join(".cache/tool-sync/rag")
+        canonical_path(home).join(".cache/tool-sync/rag")
     }
 
     fn record(&self) -> PathBuf {
@@ -110,6 +144,91 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn agent_cases() -> [AgentCase; 6] {
+    [
+        AgentCase {
+            name: "anchor-verifier",
+            description: "Verify one worker with anchors.",
+            source_tools: &["Read", "Grep", "Glob", "Bash"],
+            rendered_tools: &["read", "grep", "find", "bash"],
+            source_model: "opus",
+            rendered_model: "claude-opus-4-7",
+            prompt: "Anchor the evidence.\nUse the exact command output.\n",
+        },
+        AgentCase {
+            name: "code-reviewer",
+            description: "Review a diff from fresh context.",
+            source_tools: &["Read", "Grep", "Glob", "Bash"],
+            rendered_tools: &["read", "grep", "find", "bash"],
+            source_model: "opus",
+            rendered_model: "claude-opus-4-7",
+            prompt: "Read the diff first.\nInspect the surrounding code.\n",
+        },
+        AgentCase {
+            name: "debugger",
+            description: "Fix one failing repro.",
+            source_tools: &["Read", "Edit", "Bash", "Grep", "Glob"],
+            rendered_tools: &["read", "edit", "bash", "grep", "find"],
+            source_model: "sonnet",
+            rendered_model: "claude-sonnet-4-5",
+            prompt: "Reproduce the failure.\nApply the smallest fix.\n",
+        },
+        AgentCase {
+            name: "maestro-tester",
+            description: "Drive one mobile flow.",
+            source_tools: &["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+            rendered_tools: &["read", "write", "edit", "bash", "find", "grep"],
+            source_model: "sonnet",
+            rendered_model: "claude-sonnet-4-5",
+            prompt: "Write one flow.\nRun it once.\n",
+        },
+        AgentCase {
+            name: "spec-tester",
+            description: "Execute one natural-language test case.",
+            source_tools: &["Read", "Write", "Bash", "Grep", "Glob"],
+            rendered_tools: &["read", "write", "bash", "grep", "find"],
+            source_model: "sonnet",
+            rendered_model: "claude-sonnet-4-5",
+            prompt: "Run the case through the drive harness.\nReport the real output.\n",
+        },
+        AgentCase {
+            name: "web-research-summarizer",
+            description: "Research sources and cite the findings.",
+            source_tools: &["WebSearch", "WebFetch", "Read"],
+            rendered_tools: &["web_search", "fetch_content", "read"],
+            source_model: "sonnet",
+            rendered_model: "claude-sonnet-4-5",
+            prompt: "Fetch the sources.\nCondense the result.\n",
+        },
+    ]
+}
+
+fn seed_repository_root_tree(root: &Path) {
+    copy_tree(
+        &fixture_file("install/repository-root/pi"),
+        &root.join("pi"),
+    );
+    copy_tree(
+        &fixture_file("install/repository-root/agents"),
+        &root.join("agents"),
+    );
+}
+
+fn seed_checkout_tree(root: &Path) {
+    copy_tree(
+        &fixture_file("install/checkout/skills"),
+        &root.join("skills"),
+    );
+    copy_executable(
+        &fixture_file("install/checkout/install.sh"),
+        &root.join("install.sh"),
+    );
+    copy_executable(
+        &fixture_file("install/checkout/bin/rag"),
+        &root.join("bin/rag"),
+    );
 }
 
 fn fixture_root(prefix: &str) -> PathBuf {
@@ -130,11 +249,40 @@ fn fixture_file(name: &str) -> PathBuf {
         .join(name)
 }
 
+fn canonical_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn path_text(path: &Path) -> &str {
     path.to_str().expect("fixture path is UTF-8")
 }
 
+fn copy_tree(source: &Path, destination: &Path) {
+    let metadata = fs::symlink_metadata(source).expect("fixture metadata");
+    if metadata.is_dir() {
+        fs::create_dir_all(destination).expect("fixture directory");
+        let mut children = fs::read_dir(source)
+            .expect("fixture children")
+            .map(|entry| entry.expect("fixture child").path())
+            .collect::<Vec<_>>();
+        children.sort();
+        for child in children {
+            let target = destination.join(child.file_name().expect("fixture child name"));
+            copy_tree(&child, &target);
+        }
+        return;
+    }
+
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).expect("fixture parent directory");
+    }
+    fs::copy(source, destination).expect("copy fixture file");
+}
+
 fn copy_executable(source: &Path, destination: &Path) {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).expect("executable parent directory");
+    }
     fs::copy(source, destination).expect("copy executable fixture");
     fs::set_permissions(destination, fs::Permissions::from_mode(0o755))
         .expect("set executable fixture mode");
@@ -176,6 +324,43 @@ fn error_text(output: &Output) -> String {
     String::from_utf8(output.stderr.clone()).expect("tool-sync error is UTF-8")
 }
 
+fn normalize_private_prefix(text: &str) -> String {
+    text.replace("/private", "")
+}
+
+fn normalize_private_path_text(path: &Path) -> String {
+    normalize_private_prefix(&path.display().to_string())
+}
+
+fn assert_lines_in_order(report: &str, expected: &[String]) {
+    let mut previous = 0;
+    for text in expected {
+        let position = report[previous..]
+            .find(text)
+            .unwrap_or_else(|| panic!("missing {text:?} in {report}"))
+            + previous;
+        previous = position + text.len();
+    }
+}
+
+fn assert_same_link_target(link: &Path, expected: &Path) {
+    let actual = fs::read_link(link).expect("read link target");
+    assert_eq!(
+        normalize_private_path_text(&actual),
+        normalize_private_path_text(expected)
+    );
+}
+
+fn symlink_identity(path: &Path) -> (u64, u64) {
+    let metadata = fs::symlink_metadata(path).expect("symlink metadata");
+    (metadata.dev(), metadata.ino())
+}
+
+fn file_identity(path: &Path) -> (u64, u64) {
+    let metadata = fs::metadata(path).expect("file metadata");
+    (metadata.dev(), metadata.ino())
+}
+
 fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Vec<u8>>) {
         let mut children = fs::read_dir(path)
@@ -213,51 +398,166 @@ fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     entries
 }
 
+fn assert_rendered_agents(fixture: &Fixture, home: &Path) {
+    let repository_root = fixture.repository_root();
+    let agent_root = repository_root.join("agents");
+    for case in agent_cases() {
+        let source = agent_root.join(format!("{0}/{0}.md", case.name));
+        let destination = home
+            .join(".pi/agent/agents")
+            .join(format!("{0}.md", case.name));
+        let source_agent = pi_agent::parse(&source).expect("parse source agent");
+        assert_eq!(source_agent.name, case.name, "{name}", name = case.name);
+        assert_eq!(
+            source_agent.description,
+            case.description,
+            "{name}",
+            name = case.name
+        );
+        assert_eq!(
+            source_agent.tools,
+            case.source_tools,
+            "{name}",
+            name = case.name
+        );
+        assert_eq!(
+            source_agent.model,
+            case.source_model,
+            "{name}",
+            name = case.name
+        );
+        assert_eq!(source_agent.prompt, case.prompt, "{name}", name = case.name);
+
+        let rendered_agent = pi_agent::parse(&destination).expect("parse rendered agent");
+        assert_eq!(rendered_agent.name, case.name, "{name}", name = case.name);
+        assert_eq!(
+            rendered_agent.description,
+            case.description,
+            "{name}",
+            name = case.name
+        );
+        assert_eq!(
+            rendered_agent.tools,
+            case.rendered_tools,
+            "{name}",
+            name = case.name
+        );
+        assert_eq!(
+            rendered_agent.model,
+            case.rendered_model,
+            "{name}",
+            name = case.name
+        );
+        assert_eq!(
+            rendered_agent.prompt,
+            case.prompt,
+            "{name}",
+            name = case.name
+        );
+    }
+}
+
 #[test]
-fn previews_clone_in_order_without_writing_or_invoking_a_missing_checkout() {
+fn previews_a_pinned_checkout_with_package_skills_and_agents_without_writing_home() {
     let fixture = Fixture::new();
     let home = fixture.home("preview-home");
-    fs::create_dir(&home).expect("preview home");
-    fs::write(home.join("seed"), b"unchanged\0bytes").expect("home seed");
+    fs::create_dir_all(&home).expect("preview home");
+    fs::write(home.join("seed.txt"), b"unchanged home content\n").expect("home seed");
+    let home = canonical_path(&home);
     let before = tree_snapshot(&home);
     let manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
 
     let output = fixture.run(&home, &manifest, "linux", true);
 
     assert!(output.status.success(), "{}", error_text(&output));
-    let report = output_text(&output);
-    let expected = [
+    let report = normalize_private_prefix(&output_text(&output));
+    let checkout = fixture.checkout(&home);
+    let repository = fixture.repository_root();
+    let mut expected = vec![
         format!(
             "create directory {}",
-            home.join(".cache/tool-sync").display()
+            normalize_private_path_text(&home.join(".cache/tool-sync"))
         ),
-        format!("clone {}", fixture.remote.display()),
-        format!("checkout {}", fixture.first_revision),
-        "install rag".to_owned(),
-        "[\"preview\"]".to_owned(),
         format!(
-            "link command {}",
-            home.join(".cache/tool-sync/rag/bin/rag").display()
+            "clone {} into {}",
+            normalize_private_path_text(&fixture.remote_path()),
+            normalize_private_path_text(&checkout)
         ),
-        "link Pi extension".to_owned(),
+        format!(
+            "checkout {} in {}",
+            fixture.first_revision,
+            normalize_private_path_text(&checkout)
+        ),
+        format!(
+            "install rag in {}: ./install.sh [\"preview\"]",
+            normalize_private_path_text(&checkout)
+        ),
+        format!(
+            "create directory {}",
+            normalize_private_path_text(&home.join(".local/bin"))
+        ),
+        format!(
+            "link command {} -> {}",
+            normalize_private_path_text(&checkout.join("bin/rag")),
+            normalize_private_path_text(&home.join(".local/bin/rag"))
+        ),
+        format!(
+            "create directory {}",
+            normalize_private_path_text(&home.join(".pi/agent/extensions"))
+        ),
+        format!(
+            "link Pi extension {} -> {}",
+            normalize_private_path_text(&repository.join("pi/extensions/rag.ts")),
+            normalize_private_path_text(&home.join(".pi/agent/extensions/rag.ts"))
+        ),
+        format!(
+            "link Pi package {} -> {}",
+            normalize_private_path_text(&checkout.join(".")),
+            normalize_private_path_text(&home.join(".pi/agent/extensions/rag"))
+        ),
+        format!(
+            "create directory {}",
+            normalize_private_path_text(&home.join(".agents/skills"))
+        ),
+        format!(
+            "link skill {} -> {}",
+            normalize_private_path_text(&checkout.join("skills/show-me")),
+            normalize_private_path_text(&home.join(".agents/skills/show-me"))
+        ),
+        format!(
+            "link skill {} -> {}",
+            normalize_private_path_text(&checkout.join("skills/grilling")),
+            normalize_private_path_text(&home.join(".agents/skills/grilling"))
+        ),
+        format!(
+            "create directory {}",
+            normalize_private_path_text(&home.join(".pi/agent/agents"))
+        ),
     ];
-    let mut previous = 0;
-    for text in expected {
-        let position = report[previous..]
-            .find(&text)
-            .unwrap_or_else(|| panic!("missing {text:?} in {report}"))
-            + previous;
-        previous = position + text.len();
-    }
-    assert!(!fixture.record().exists(), "missing checkout invoked child");
+    expected.extend(agent_cases().into_iter().map(|case| {
+        format!(
+            "render Pi agent {} -> {}",
+            normalize_private_path_text(&repository.join(format!("agents/{0}/{0}.md", case.name))),
+            normalize_private_path_text(
+                &home
+                    .join(".pi/agent/agents")
+                    .join(format!("{0}.md", case.name))
+            )
+        )
+    }));
+    assert_lines_in_order(&report, &expected);
+    assert!(!fixture.record().exists());
     assert_eq!(tree_snapshot(&home), before);
 }
 
 #[test]
-fn applies_a_pinned_revision_and_repeats_without_duplicate_directories_or_checkouts() {
+fn applies_a_pinned_checkout_and_repeats_without_duplicate_directories_or_checkouts() {
     let fixture = Fixture::new();
     let home = fixture.home("apply-home");
-    let manifest = fixture.manifest(&fixture.first_revision, "\"linux\", \"macos\"");
+    fs::create_dir_all(&home).expect("apply home");
+    fs::write(home.join("notes.txt"), b"keep this home content\n").expect("home notes");
+    let home = canonical_path(&home);
+    let manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
 
     let first = fixture.run(&home, &manifest, "linux", false);
 
@@ -267,18 +567,53 @@ fn applies_a_pinned_revision_and_repeats_without_duplicate_directories_or_checko
         git_text(&checkout, &["rev-parse", "HEAD"]),
         fixture.first_revision
     );
+    assert_eq!(
+        fs::read(checkout.join("revision")).expect("selected revision contents"),
+        fixture.first_revision_contents
+    );
+    assert_eq!(
+        fs::read(checkout.join("skills/show-me/README.md")).expect("selected skill contents"),
+        fixture.first_skill_show_me_contents
+    );
     let command = home.join(".local/bin/rag");
     let extension = home.join(".pi/agent/extensions/rag.ts");
-    let command_target = fs::read_link(&command).expect("command link");
-    let extension_target = fs::read_link(&extension).expect("extension link");
-    assert_eq!(command_target, checkout.join("bin/rag"));
-    assert_eq!(
-        extension_target,
-        fs::canonicalize(fixture.repository.join("pi/extensions/rag.ts"))
-            .expect("canonical extension")
+    let package = home.join(".pi/agent/extensions/rag");
+    let show_me = home.join(".agents/skills/show-me");
+    let grilling = home.join(".agents/skills/grilling");
+    assert_same_link_target(&command, &checkout.join("bin/rag"));
+    assert_same_link_target(
+        &extension,
+        &fixture.repository_root().join("pi/extensions/rag.ts"),
     );
-    let selected_contents = fs::read(checkout.join("revision")).expect("selected contents");
+    assert_same_link_target(&package, &checkout.join("."));
+    assert_same_link_target(&show_me, &checkout.join("skills/show-me"));
+    assert_same_link_target(&grilling, &checkout.join("skills/grilling"));
+    assert_rendered_agents(&fixture, &home);
+    let agent_directory = home.join(".pi/agent/agents");
+    let agent_contents = tree_snapshot(&agent_directory);
+    let agent_identities = agent_cases()
+        .into_iter()
+        .map(|case| {
+            (
+                case.name,
+                file_identity(&agent_directory.join(format!("{}.md", case.name))),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        fs::read_to_string(home.join("notes.txt")).expect("notes after apply"),
+        "keep this home content\n"
+    );
     let checkout_metadata = fs::metadata(&checkout).expect("checkout metadata");
+    let command_identity = symlink_identity(&command);
+    let extension_identity = symlink_identity(&extension);
+    let package_identity = symlink_identity(&package);
+    let show_me_identity = symlink_identity(&show_me);
+    let grilling_identity = symlink_identity(&grilling);
+    assert_eq!(
+        normalize_private_prefix(&fs::read_to_string(fixture.record()).expect("apply record")),
+        normalize_private_prefix(&format!("{}|apply\n", checkout.display()))
+    );
 
     let second = fixture.run(&home, &manifest, "linux", false);
 
@@ -288,69 +623,66 @@ fn applies_a_pinned_revision_and_repeats_without_duplicate_directories_or_checko
         fixture.first_revision
     );
     assert_eq!(
-        fs::read(checkout.join("revision")).expect("repeated selected contents"),
-        selected_contents
+        fs::read(checkout.join("revision")).expect("repeated selected revision contents"),
+        fixture.first_revision_contents
     );
     assert_eq!(
-        fs::read_link(command).expect("repeated command link"),
-        command_target
+        fs::read(checkout.join("skills/show-me/README.md"))
+            .expect("repeated selected skill contents"),
+        fixture.first_skill_show_me_contents
     );
-    assert_eq!(
-        fs::read_link(extension).expect("repeated extension link"),
-        extension_target
+    assert_same_link_target(&command, &checkout.join("bin/rag"));
+    assert_same_link_target(
+        &extension,
+        &fixture.repository_root().join("pi/extensions/rag.ts"),
     );
-    let repeated_metadata = fs::metadata(&checkout).expect("repeated checkout metadata");
+    assert_same_link_target(&package, &checkout.join("."));
+    assert_same_link_target(&show_me, &checkout.join("skills/show-me"));
+    assert_same_link_target(&grilling, &checkout.join("skills/grilling"));
+    assert_rendered_agents(&fixture, &home);
+    assert_eq!(tree_snapshot(&agent_directory), agent_contents);
+    for (name, identity) in agent_identities {
+        assert_eq!(
+            file_identity(&agent_directory.join(format!("{name}.md"))),
+            identity,
+            "{name} must not be replaced during an unchanged repeat"
+        );
+    }
     assert_eq!(
-        (repeated_metadata.dev(), repeated_metadata.ino()),
+        fs::read_to_string(home.join("notes.txt")).expect("notes after repeated apply"),
+        "keep this home content\n"
+    );
+    let repeated_checkout_metadata = fs::metadata(&checkout).expect("repeated checkout metadata");
+    assert_eq!(
+        (
+            repeated_checkout_metadata.dev(),
+            repeated_checkout_metadata.ino()
+        ),
         (checkout_metadata.dev(), checkout_metadata.ino()),
         "the existing checkout directory must be reused"
     );
+    assert_eq!(symlink_identity(&command), command_identity);
+    assert_eq!(symlink_identity(&extension), extension_identity);
+    assert_eq!(symlink_identity(&package), package_identity);
+    assert_eq!(symlink_identity(&show_me), show_me_identity);
+    assert_eq!(symlink_identity(&grilling), grilling_identity);
     let mut cached = fs::read_dir(home.join(".cache/tool-sync"))
         .expect("cache directory")
         .map(|entry| entry.expect("cache entry").path())
         .collect::<Vec<_>>();
     cached.sort();
-    assert_eq!(cached, [checkout]);
-    let report = output_text(&second);
+    assert_eq!(cached.as_slice(), std::slice::from_ref(&checkout));
+    let report = normalize_private_prefix(&output_text(&second));
     assert!(report.contains("fetch repository"), "{report}");
     assert!(report.contains("install rag"), "{report}");
     assert!(!report.contains("clone "), "{report}");
     assert!(!report.contains("create directory"), "{report}");
     assert_eq!(
-        fs::read_to_string(fixture.record()).expect("installer invocations"),
-        format!(
-            "{0}|apply\n{0}|apply\n",
-            fs::canonicalize(&cached[0])
-                .expect("canonical checkout")
-                .display()
-        )
+        normalize_private_prefix(
+            &fs::read_to_string(fixture.record()).expect("repeated apply record")
+        ),
+        normalize_private_prefix(&format!("{0}|apply\n{0}|apply\n", checkout.display()))
     );
-}
-
-#[test]
-fn previews_the_child_for_an_existing_checkout() {
-    let fixture = Fixture::new();
-    let home = fixture.home("child-preview-home");
-    let manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
-    let applied = fixture.run(&home, &manifest, "linux", false);
-    assert!(applied.status.success(), "{}", error_text(&applied));
-    fs::write(fixture.record(), "").expect("clear invocation record");
-    let before = tree_snapshot(&home);
-
-    let preview = fixture.run(&home, &manifest, "linux", true);
-
-    assert!(preview.status.success(), "{}", error_text(&preview));
-    let invocations = fs::read_to_string(fixture.record()).expect("preview invocation");
-    assert_eq!(
-        invocations,
-        format!(
-            "{}|preview\n",
-            fs::canonicalize(fixture.checkout(&home))
-                .expect("canonical checkout")
-                .display()
-        )
-    );
-    assert_eq!(tree_snapshot(&home), before);
 }
 
 #[test]
@@ -362,12 +694,19 @@ fn skips_tools_selected_for_the_other_platform_without_inspecting_them() {
         let output = fixture.run(&home, &manifest, selected, true);
         assert!(output.status.success(), "{}", error_text(&output));
         let report = output_text(&output);
-        assert_eq!(report.lines().count(), 1, "{report}");
         assert!(
             report.contains(&format!("skip rag on {selected}")),
             "{report}"
         );
-        for forbidden in ["clone ", "checkout ", "install ", "link "] {
+        for forbidden in [
+            "clone ",
+            "checkout ",
+            "install ",
+            "link command ",
+            "link Pi extension ",
+            "link Pi package ",
+            "link skill ",
+        ] {
             assert!(!report.contains(forbidden), "{report}");
         }
     }
@@ -376,9 +715,12 @@ fn skips_tools_selected_for_the_other_platform_without_inspecting_them() {
 }
 
 #[test]
-fn refuses_a_dirty_checkout_before_advancing_revision_or_links() {
+fn refuses_a_dirty_checkout_before_advancing_revision_or_mutating_home() {
     let fixture = Fixture::new();
     let home = fixture.home("dirty-home");
+    fs::create_dir_all(&home).expect("dirty home");
+    fs::write(home.join("notes.txt"), b"keep this home content\n").expect("dirty home notes");
+    let home = canonical_path(&home);
     let first_manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
     let first = fixture.run(&home, &first_manifest, "linux", false);
     assert!(first.status.success(), "{}", error_text(&first));
@@ -387,9 +729,16 @@ fn refuses_a_dirty_checkout_before_advancing_revision_or_links() {
     fs::write(&dirty, "keep me").expect("dirty checkout file");
     let command = home.join(".local/bin/rag");
     let extension = home.join(".pi/agent/extensions/rag.ts");
+    let package = home.join(".pi/agent/extensions/rag");
+    let show_me = home.join(".agents/skills/show-me");
+    let grilling = home.join(".agents/skills/grilling");
     let command_target = fs::read_link(&command).expect("command target");
     let extension_target = fs::read_link(&extension).expect("extension target");
-    let next_manifest = fixture.manifest(&fixture.second_revision, "\"linux\", \"macos\"");
+    let package_target = fs::read_link(&package).expect("package target");
+    let show_me_target = fs::read_link(&show_me).expect("show-me target");
+    let grilling_target = fs::read_link(&grilling).expect("grilling target");
+    let before = tree_snapshot(&home);
+    let next_manifest = fixture.manifest(&fixture.second_revision, "\"linux\"");
 
     let output = fixture.run(&home, &next_manifest, "linux", false);
 
@@ -406,6 +755,10 @@ fn refuses_a_dirty_checkout_before_advancing_revision_or_links() {
         "keep me"
     );
     assert_eq!(
+        fs::read_to_string(home.join("notes.txt")).expect("notes retained"),
+        "keep this home content\n"
+    );
+    assert_eq!(
         fs::read_link(command).expect("command retained"),
         command_target
     );
@@ -413,16 +766,66 @@ fn refuses_a_dirty_checkout_before_advancing_revision_or_links() {
         fs::read_link(extension).expect("extension retained"),
         extension_target
     );
+    assert_eq!(
+        fs::read_link(package).expect("package retained"),
+        package_target
+    );
+    assert_eq!(
+        fs::read_link(show_me).expect("show-me retained"),
+        show_me_target
+    );
+    assert_eq!(
+        fs::read_link(grilling).expect("grilling retained"),
+        grilling_target
+    );
+    assert_eq!(tree_snapshot(&home), before);
+    assert_eq!(
+        normalize_private_prefix(&fs::read_to_string(fixture.record()).expect("dirty record")),
+        normalize_private_prefix(&format!("{}|apply\n", checkout.display()))
+    );
+}
+
+#[test]
+fn refuses_a_non_symlink_collision_before_any_write() {
+    let fixture = Fixture::new();
+    let home = fixture.home("collision-home");
+    fs::create_dir_all(&home).expect("collision home");
+    fs::write(home.join("notes.txt"), b"keep this home content\n").expect("collision home notes");
+    let home = canonical_path(&home);
+    let collision = home.join(".pi/agent/extensions/rag");
+    if let Some(parent) = collision.parent() {
+        fs::create_dir_all(parent).expect("collision parent");
+    }
+    fs::write(&collision, "owned").expect("collision file");
+    let before = tree_snapshot(&home);
+    let manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
+
+    let output = fixture.run(&home, &manifest, "linux", false);
+
+    assert!(!output.status.success());
+    let error = error_text(&output);
+    assert!(error.contains("collides with a non-symlink"), "{error}");
+    assert!(error.contains(path_text(&collision)), "{error}");
+    assert_eq!(tree_snapshot(&home), before);
+    assert!(!fixture.checkout(&home).exists());
+    assert!(!fixture.record().exists());
 }
 
 #[test]
 fn installs_an_embedded_tool_without_a_git_cache() {
     let fixture = Fixture::new();
     let home = fixture.home("embedded-home");
+    fs::create_dir_all(&home).expect("embedded home");
     let embedded = fixture.repository.join("embedded");
     fs::create_dir_all(embedded.join("bin")).expect("embedded command directory");
-    copy_executable(&fixture_file("installer.sh"), &embedded.join("install.sh"));
-    copy_executable(&fixture_file("rag"), &embedded.join("bin/embedded-rag"));
+    copy_executable(
+        &fixture_file("install/checkout/install.sh"),
+        &embedded.join("install.sh"),
+    );
+    copy_executable(
+        &fixture_file("install/checkout/bin/rag"),
+        &embedded.join("bin/embedded-rag"),
+    );
     let manifest = fixture.root.join("embedded.toml");
     fs::write(
         &manifest,

@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 12,
+  "next_nnnn": 19,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -24,7 +24,7 @@
     {
       "id": "AGNT-0002",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Spare hand-added servers from state-driven removal",
       "long": "The state file lists which servers mcp-sync manages. A server on that list, but no longer in the manifest, gets removed from the live configs. A state file that goes false (a hand edit, a bad merge, cross-machine drift) then deletes a server the user added natively.\n\nThe fix: store a fingerprint of each rendered server. Before a removal, compare the live entry to the fingerprint. Spare and unlist an entry that no longer matches, and report the spare.\n\nFirst step, per the owner at gate C: map the consumers of the managed set before the schema changes. Those are the claude and codex removal paths, save_state, check, and adopt. Defer, but not long. Repro: .map/AGNT-0001/scratch/t19-state/repro/a02.",
       "deps": [],
@@ -106,7 +106,7 @@
     {
       "id": "AGNT-0008",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Install local and remote tools from one manifest.",
       "long": "Create one tracked manifest for executable tools. It must accept an embedded repository path or a Git URL and revision. Each entry records supported operating systems, its installer, provided commands, and harness adapters.\n\nAdd a Rust sync tool that fetches remote repositories into a managed cache. It must refuse to update a dirty checkout, select the declared revision, run the declared installer, and link each command. Dry run must report every fetch, build, link, harness change, and platform skip without writing.\n\nKeep Model Context Protocol server definitions in config/mcp-servers.toml. The tool manifest references those definitions instead of copying them. Replace the unsupported Pi draft with supported Pi extension or skill paths. Use OwaisQuadri/rag as the first macOS and Linux proof, including a real search through Claude Code, Codex, and Pi.",
       "deps": [],
@@ -176,6 +176,139 @@
       ],
       "blame_phase": null,
       "created": "2026-08-17T00:00:36-0400"
+    },
+    {
+      "id": "AGNT-0012",
+      "kind": "ticket",
+      "status": "resolved",
+      "short": "Install the pinned Pi stack with private telemetry.",
+      "long": "Install nicobailon/pi-subagents, Plannotator, HumanLayer show-me, Wayfinder, and grilling from pinned upstream revisions. Keep each upstream checkout unchanged. Add a project-owned Pi extension that records package version, invocation, duration, result status, human correction, and exposed cost fields. Do not record prompts or file contents by default.\n\nDerive Pi-compatible agent metadata from the existing definitions without creating a second prompt source. Disable overlapping bundled agents only after representative project roles pass. Require three reproduced failures with one source-level cause before a fork. Test dry runs, repeated installs, telemetry redaction, and representative agent discovery.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "config/tools.toml",
+        "tools/tool-sync/",
+        "pi/",
+        "agents/",
+        "install.sh",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0013",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Run Claude Code as a subscription-backed Pi child.",
+      "long": "Add a project-owned Pi agent that invokes the installed claude command through the external command runner in nicobailon/pi-subagents. Verify the supported flags from the installed Claude Code command instead of copying an example. Preserve fresh context and worktree isolation for mutation-capable runs. Run one bounded child task and confirm that its result returns to Pi. Verify that the call appears in Claude subscription usage before this route becomes the default.",
+      "deps": [
+        "AGNT-0012"
+      ],
+      "files": [
+        "agents/",
+        "pi/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0014",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Create the two-tab Herdr worktree setup.",
+      "long": "Install herdr-fresh-worktree from a pinned revision. Add one idempotent, repository-owned Herdr setup for new and opened worktrees. Tab one contains Pi at 75 percent width and a shell at 25 percent. Tab two contains Neovim at 75 percent and a shell at 25 percent. Define event ordering and ownership between herdr-fresh-worktree and hooks/post-checkout before either changes a new worktree. Test repeated setup, dirty destinations, existing tabs, and one temporary worktree.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "config/tools.toml",
+        "tools/tool-sync/",
+        "herdr/",
+        "hooks/",
+        "install.sh",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0015",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Show live request and overall diffs in Pi.",
+      "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.",
+      "deps": [
+        "AGNT-0008"
+      ],
+      "files": [
+        "pi/extensions/",
+        "config/tools.toml",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0016",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Add decision aids to the engineering gates.",
+      "long": "Add Wayfinder's destination, frontier, fog, and out-of-scope fields to engineering plans. Use grilling only when unresolved answers can change execution. Use show-me for concise system views and Plannotator for visual plan or diff feedback. Keep the existing human gates as the authority and record each aid's output in the run artifacts. Add evaluations that prove the aids do not create new mandatory stops on clean runs.",
+      "deps": [
+        "AGNT-0012"
+      ],
+      "files": [
+        "skills/engineer/",
+        "skills/wayfinder/",
+        "skills/grilling/",
+        "skills/show-me/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0017",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Restore a Herdr worktree as a replayable cockpit.",
+      "long": "Store one repository-owned workspace recipe that restores Herdr tabs, active commands, the selected ticket, the current engineering gate, and live diff state. Restore the child-agent fleet view after a restart. Replace separate setup paths with this inspectable state where the shipped Herdr interfaces support it. Keep secrets and transcript contents out of the recipe. Test a cold restore, a partial existing workspace, stale child state, and repeated restore.",
+      "deps": [
+        "AGNT-0012",
+        "AGNT-0014",
+        "AGNT-0015"
+      ],
+      "files": [
+        "herdr/",
+        "pi/extensions/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0018",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Design harness-independent model routing by task value.",
+      "long": "Design the routing system and its evaluation plan. Do not implement the router. Define a harness-neutral architecture that chooses a model and access path for each task class. Admit newly released models through discovered capability, availability, quota, and price data instead of a hard-coded model list.\n\nSeparate the model, provider, account, and harness so the design can use a model through any allowed route. Cover the Claude Code and Codex memberships and the user's free OpenRouter account. Study an OpenRouter route from the Claude harness as one example. Do not assume that a membership pays for Application Programming Interface (API) use or that each harness exposes each provider.\n\nDefine a repeatable evaluation and benchmark system for the tasks this repository delegates. Include representative task classes, fixed inputs, blind grading, repeated trials, uncertainty, model and harness version capture, and content-free result summaries. Compare completion quality, success probability, latency, marginal price, membership quota impact, and fallback behavior. Define the utility rule that trades task success against price paid. Include a cold-start policy for new models and an exploration limit that cannot spend beyond an approved budget.\n\nProduce the architecture, adapter contracts, data shapes, benchmark protocol, privacy rules, routing decision record, and an implementation ticket breakdown. Show how existing telemetry supplies outcomes without storing prompts or outputs. Name which benchmark artifacts require reviewed content. Include one worked comparison across membership-backed Claude Code, membership-backed Codex, and OpenRouter routes. End with a testable design acceptance checklist and no runtime code.",
+      "deps": [
+        "AGNT-0012",
+        "AGNT-0013"
+      ],
+      "files": [
+        "docs/",
+        "evals/",
+        "agents/",
+        "pi/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T20:27:34-0400"
     }
   ]
 }

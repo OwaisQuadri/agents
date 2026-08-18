@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::manifest::Platform;
+use crate::pi_agent;
 use crate::plan::{Action, Plan};
 use crate::SyncError;
 
@@ -56,6 +57,30 @@ fn render_action(action: &Action, is_dry_run: bool) -> String {
             destination,
         } => format!(
             "link Pi extension {} -> {}",
+            source.display(),
+            destination.display()
+        ),
+        Action::LinkPiPackage {
+            source,
+            destination,
+        } => format!(
+            "link Pi package {} -> {}",
+            source.display(),
+            destination.display()
+        ),
+        Action::LinkSkill {
+            source,
+            destination,
+        } => format!(
+            "link skill {} -> {}",
+            source.display(),
+            destination.display()
+        ),
+        Action::RenderPiAgent {
+            source,
+            destination,
+        } => format!(
+            "render Pi agent {} -> {}",
             source.display(),
             destination.display()
         ),
@@ -135,7 +160,13 @@ fn check_stale_state(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
                 }
             }
             Action::LinkCommand { destination, .. }
-            | Action::LinkPiExtension { destination, .. } => check_link_destination(destination)?,
+            | Action::LinkPiExtension { destination, .. }
+            | Action::LinkPiPackage { destination, .. }
+            | Action::LinkSkill { destination, .. } => check_link_destination(destination)?,
+            Action::RenderPiAgent {
+                source,
+                destination,
+            } => check_agent_destination(source, destination)?,
             Action::CheckoutRevision { .. }
             | Action::RunInstaller { .. }
             | Action::SkipPlatform { .. } => {}
@@ -166,6 +197,23 @@ fn stale_or_io(path: &Path, detail: &str, error: std::io::Error) -> SyncError {
 fn check_link_destination(destination: &Path) -> Result<(), SyncError> {
     match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() => Ok(()),
+        Ok(_) => Err(SyncError::DestinationCollision(destination.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
+    }
+}
+
+fn check_agent_destination(source: &Path, destination: &Path) -> Result<(), SyncError> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.is_file() => {
+            let observed = fs::read(destination)
+                .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+            if observed == pi_agent::rendered_bytes(source)? {
+                Ok(())
+            } else {
+                Err(SyncError::DestinationCollision(destination.to_path_buf()))
+            }
+        }
         Ok(_) => Err(SyncError::DestinationCollision(destination.to_path_buf())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
@@ -203,7 +251,19 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
         | Action::LinkPiExtension {
             source,
             destination,
+        }
+        | Action::LinkPiPackage {
+            source,
+            destination,
+        }
+        | Action::LinkSkill {
+            source,
+            destination,
         } => create_verified_link(source, destination),
+        Action::RenderPiAgent {
+            source,
+            destination,
+        } => pi_agent::render(source, destination),
         Action::SkipPlatform { .. } => Ok(()),
     }
 }
@@ -324,6 +384,7 @@ fn create_verified_link(source: &Path, destination: &Path) -> Result<(), SyncErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pi_agent;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -347,6 +408,17 @@ mod tests {
         }
     }
 
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repo root")
+    }
+
+    fn agent_source(name: &str) -> PathBuf {
+        repo_root().join(format!("agents/{0}/{0}.md", name))
+    }
+
     #[test]
     fn renders_actions_in_order_with_selected_installer_arguments() {
         let plan = Plan {
@@ -367,6 +439,27 @@ mod tests {
         assert_eq!(
             render(&plan, true),
             "create directory /cache\ninstall rag in /source: ./install [\"--preview\"]"
+        );
+    }
+
+    #[test]
+    fn renders_package_and_skill_actions_in_order() {
+        let plan = Plan {
+            actions: vec![
+                Action::LinkPiPackage {
+                    source: "/source/package".into(),
+                    destination: "/root/package".into(),
+                },
+                Action::LinkSkill {
+                    source: "/source/skill".into(),
+                    destination: "/shared/skill".into(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            render(&plan, true),
+            "link Pi package /source/package -> /root/package\nlink skill /source/skill -> /shared/skill"
         );
     }
 
@@ -437,6 +530,38 @@ mod tests {
 
         assert!(!marker.exists(), "installer child was invoked");
         assert!(!fixture.0.join("cache").exists(), "dry run wrote cache");
+    }
+
+    #[test]
+    fn dry_run_does_not_write_package_or_skill_links() {
+        let fixture = Fixture::new();
+        let package_source = fixture.0.join("package");
+        let skill_source = fixture.0.join("skill");
+        fs::create_dir_all(&package_source).expect("package source");
+        fs::create_dir_all(&skill_source).expect("skill source");
+        let package_root = fixture.0.join("home/.pi/agent/extensions");
+        let skill_root = fixture.0.join("home/.agents/skills");
+        let package_destination = package_root.join("package");
+        let skill_destination = skill_root.join("skill");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory { path: package_root },
+                Action::LinkPiPackage {
+                    source: package_source,
+                    destination: package_destination,
+                },
+                Action::CreateDirectory { path: skill_root },
+                Action::LinkSkill {
+                    source: skill_source,
+                    destination: skill_destination,
+                },
+            ],
+        };
+
+        run(&plan, true).expect("dry run succeeds");
+
+        assert!(!fixture.0.join("home/.pi/agent/extensions").exists());
+        assert!(!fixture.0.join("home/.agents/skills").exists());
     }
 
     #[test]
@@ -523,6 +648,31 @@ mod tests {
     }
 
     #[test]
+    fn stale_package_collision_is_found_before_any_write() {
+        let fixture = Fixture::new();
+        let uncreated = fixture.0.join("first");
+        let collision = fixture.0.join("package");
+        fs::write(&collision, "owned").expect("collision");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: uncreated.clone(),
+                },
+                Action::LinkPiPackage {
+                    source: fixture.0.join("source"),
+                    destination: collision,
+                },
+            ],
+        };
+
+        assert!(matches!(
+            run(&plan, false),
+            Err(SyncError::DestinationCollision(_))
+        ));
+        assert!(!uncreated.exists());
+    }
+
+    #[test]
     fn apply_creates_and_verifies_link() {
         let fixture = Fixture::new();
         let source = fixture.0.join("source");
@@ -542,5 +692,371 @@ mod tests {
         run(&plan, false).expect("apply succeeds");
 
         assert_eq!(fs::read_link(destination).expect("link target"), source);
+    }
+
+    #[test]
+    fn apply_creates_and_verifies_package_and_skill_links() {
+        let fixture = Fixture::new();
+        let package_source = fixture.0.join("package");
+        let skill_source = fixture.0.join("skill");
+        fs::create_dir_all(&package_source).expect("package source");
+        fs::create_dir_all(&skill_source).expect("skill source");
+        let package_root = fixture.0.join("home/.pi/agent/extensions");
+        let skill_root = fixture.0.join("home/.agents/skills");
+        let package_destination = package_root.join("package");
+        let skill_destination = skill_root.join("skill");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: package_root.clone(),
+                },
+                Action::LinkPiPackage {
+                    source: package_source.clone(),
+                    destination: package_destination.clone(),
+                },
+                Action::CreateDirectory {
+                    path: skill_root.clone(),
+                },
+                Action::LinkSkill {
+                    source: skill_source.clone(),
+                    destination: skill_destination.clone(),
+                },
+            ],
+        };
+
+        run(&plan, false).expect("apply succeeds");
+
+        assert_eq!(
+            fs::read_link(package_destination).expect("package link"),
+            package_source
+        );
+        assert_eq!(
+            fs::read_link(skill_destination).expect("skill link"),
+            skill_source
+        );
+    }
+
+    #[test]
+    fn renders_pi_agent_actions_in_order() {
+        let source = agent_source("anchor-verifier");
+        let destination = PathBuf::from("/root/.pi/agent/agents/anchor-verifier.md");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: PathBuf::from("/root/.pi/agent/agents"),
+                },
+                Action::RenderPiAgent {
+                    source: source.clone(),
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        assert_eq!(
+            render(&plan, true),
+            format!(
+                "create directory {}\nrender Pi agent {} -> {}",
+                PathBuf::from("/root/.pi/agent/agents").display(),
+                source.display(),
+                destination.display()
+            )
+        );
+    }
+
+    #[test]
+    fn renders_pi_agent_prompt_without_changing_source() {
+        let fixture = Fixture::new();
+        let source = agent_source("anchor-verifier");
+        let source_before = fs::read_to_string(&source).expect("source before");
+        let source_prompt = pi_agent::parse(&source).expect("parse source").prompt;
+        let destination_root = fixture.0.join("home/.pi/agent/agents");
+        let destination = destination_root.join("anchor-verifier.md");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: destination_root,
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        run(&plan, false).expect("render succeeds");
+
+        let rendered_prompt = pi_agent::parse(&destination)
+            .expect("parse rendered")
+            .prompt;
+        assert_eq!(rendered_prompt, source_prompt);
+        assert_eq!(
+            fs::read_to_string(agent_source("anchor-verifier")).expect("source after"),
+            source_before
+        );
+    }
+
+    #[test]
+    fn dry_run_does_not_render_pi_agent_files() {
+        let fixture = Fixture::new();
+        let source = agent_source("anchor-verifier");
+        let destination_root = fixture.0.join("home/.pi/agent/agents");
+        let destination = destination_root.join("anchor-verifier.md");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: destination_root.clone(),
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        run(&plan, true).expect("dry run succeeds");
+
+        assert!(!destination_root.exists());
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn exact_existing_agent_is_accepted_without_replacing_the_file() {
+        let fixture = Fixture::new();
+        let source = agent_source("anchor-verifier");
+        let destination = fixture.0.join("home/.pi/agent/agents/anchor-verifier.md");
+        pi_agent::render(&source, &destination).expect("seed exact agent");
+        let metadata = fs::metadata(&destination).expect("agent metadata");
+        use std::os::unix::fs::MetadataExt;
+        let identity = (metadata.dev(), metadata.ino());
+        let created = fixture.0.join("created");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: created.clone(),
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        run(&plan, false).expect("exact agent repeat succeeds");
+
+        assert!(created.is_dir());
+        let repeated_metadata = fs::metadata(&destination).expect("repeated agent metadata");
+        assert_eq!((repeated_metadata.dev(), repeated_metadata.ino()), identity);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_agent_symlink_is_found_before_any_write() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        let source = agent_source("anchor-verifier");
+        let destination_root = fixture.0.join("home/.pi/agent/agents");
+        fs::create_dir_all(&destination_root).expect("destination root");
+        let target = fixture.0.join("matching-agent.md");
+        fs::write(
+            &target,
+            pi_agent::rendered_bytes(&source).expect("render bytes"),
+        )
+        .expect("matching target");
+        let destination = destination_root.join("anchor-verifier.md");
+        symlink(&target, &destination).expect("agent symlink");
+        let uncreated = fixture.0.join("first");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: uncreated.clone(),
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination,
+                },
+            ],
+        };
+
+        assert!(matches!(
+            run(&plan, false),
+            Err(SyncError::DestinationCollision(_))
+        ));
+        assert!(!uncreated.exists());
+    }
+
+    #[test]
+    fn stale_agent_collision_is_found_before_any_write() {
+        let fixture = Fixture::new();
+        let uncreated = fixture.0.join("first");
+        let destination_root = fixture.0.join("home/.pi/agent/agents");
+        let collision = destination_root.join("anchor-verifier.md");
+        fs::create_dir_all(&destination_root).expect("destination root");
+        fs::write(&collision, "owned").expect("collision");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: uncreated.clone(),
+                },
+                Action::RenderPiAgent {
+                    source: agent_source("anchor-verifier"),
+                    destination: collision,
+                },
+            ],
+        };
+
+        assert!(matches!(
+            run(&plan, false),
+            Err(SyncError::DestinationCollision(_))
+        ));
+        assert!(!uncreated.exists());
+    }
+
+    #[test]
+    fn late_agent_file_collision_is_preserved_after_preflight() {
+        let fixture = Fixture::new();
+        let source = agent_source("anchor-verifier");
+        let destination_root = fixture.0.join("home/.pi/agent/agents");
+        fs::create_dir_all(&destination_root).expect("destination root");
+        let destination = destination_root.join("anchor-verifier.md");
+        let foreign = fixture.0.join("foreign");
+        fs::write(&foreign, b"foreign bytes\0").expect("foreign file");
+        let unrelated = fixture.0.join("unrelated");
+        fs::write(&unrelated, b"unrelated bytes\0").expect("unrelated file");
+        let plan = Plan {
+            actions: vec![
+                Action::RunInstaller {
+                    tool: "collision fixture".to_owned(),
+                    working_directory: fixture.0.clone(),
+                    command: "cp".to_owned(),
+                    args: vec![
+                        foreign.to_string_lossy().into_owned(),
+                        destination.to_string_lossy().into_owned(),
+                    ],
+                    preview_args: Vec::new(),
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        assert!(matches!(
+            run(&plan, false),
+            Err(SyncError::DestinationCollision(path)) if path == destination
+        ));
+        assert_eq!(
+            fs::read(&destination).expect("destination bytes"),
+            b"foreign bytes\0"
+        );
+        assert_eq!(
+            fs::read(&foreign).expect("foreign bytes"),
+            b"foreign bytes\0"
+        );
+        assert_eq!(
+            fs::read(&unrelated).expect("unrelated bytes"),
+            b"unrelated bytes\0"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn late_agent_symlink_collision_is_preserved_after_preflight() {
+        let fixture = Fixture::new();
+        let source = agent_source("anchor-verifier");
+        let destination_root = fixture.0.join("home/.pi/agent/agents");
+        fs::create_dir_all(&destination_root).expect("destination root");
+        let destination = destination_root.join("anchor-verifier.md");
+        let target = fixture.0.join("foreign-target");
+        fs::write(&target, b"target bytes\0").expect("foreign target");
+        let unrelated = fixture.0.join("unrelated");
+        fs::write(&unrelated, b"unrelated bytes\0").expect("unrelated file");
+        let plan = Plan {
+            actions: vec![
+                Action::RunInstaller {
+                    tool: "collision fixture".to_owned(),
+                    working_directory: fixture.0.clone(),
+                    command: "ln".to_owned(),
+                    args: vec![
+                        "-s".to_owned(),
+                        target.to_string_lossy().into_owned(),
+                        destination.to_string_lossy().into_owned(),
+                    ],
+                    preview_args: Vec::new(),
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        assert!(matches!(
+            run(&plan, false),
+            Err(SyncError::DestinationCollision(path)) if path == destination
+        ));
+        assert_eq!(
+            fs::read_link(&destination).expect("destination target"),
+            target
+        );
+        assert_eq!(fs::read(&target).expect("target bytes"), b"target bytes\0");
+        assert_eq!(
+            fs::read(&unrelated).expect("unrelated bytes"),
+            b"unrelated bytes\0"
+        );
+    }
+
+    #[test]
+    fn changed_agent_source_preserves_the_old_render_after_preflight() {
+        let fixture = Fixture::new();
+        let source = fixture.0.join("agent.md");
+        fs::write(
+            &source,
+            "---\nname: fixture-agent\ndescription: Fixture agent\ntools: Read\nmodel: sonnet\n---\nOld prompt.\n",
+        )
+        .expect("old source");
+        let changed_source = fixture.0.join("changed-agent.md");
+        fs::write(
+            &changed_source,
+            "---\nname: fixture-agent\ndescription: Fixture agent\ntools: Read\nmodel: sonnet\n---\nChanged prompt.\n",
+        )
+        .expect("changed source");
+        let destination = fixture.0.join("agents/fixture-agent.md");
+        pi_agent::render(&source, &destination).expect("old render");
+        let old_render = fs::read(&destination).expect("old render bytes");
+        let unrelated = fixture.0.join("unrelated");
+        fs::write(&unrelated, b"unrelated bytes\0").expect("unrelated file");
+        let plan = Plan {
+            actions: vec![
+                Action::RunInstaller {
+                    tool: "source change fixture".to_owned(),
+                    working_directory: fixture.0.clone(),
+                    command: "cp".to_owned(),
+                    args: vec![
+                        changed_source.to_string_lossy().into_owned(),
+                        source.to_string_lossy().into_owned(),
+                    ],
+                    preview_args: Vec::new(),
+                },
+                Action::RenderPiAgent {
+                    source,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        assert!(matches!(
+            run(&plan, false),
+            Err(SyncError::DestinationCollision(path)) if path == destination
+        ));
+        assert_eq!(
+            fs::read(&destination).expect("destination bytes"),
+            old_render
+        );
+        assert_eq!(
+            fs::read(&unrelated).expect("unrelated bytes"),
+            b"unrelated bytes\0"
+        );
     }
 }

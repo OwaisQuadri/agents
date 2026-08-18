@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::manifest::{Platform, ToolManifest, ToolSource};
+use crate::pi_agent;
 use crate::plan::{Action, Plan};
 use crate::SyncError;
 
@@ -23,7 +24,7 @@ pub struct Context {
 /// selected platform, and errors on unsafe paths, checkout state, or collisions.
 pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncError> {
     let mut actions = Vec::new();
-    let mut planned_directories = HashSet::new();
+    let mut planned_paths = HashSet::new();
 
     for tool in &manifest.tools {
         if !tool.platforms.contains(&context.platform) {
@@ -34,33 +35,36 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
             continue;
         }
 
-        let working_directory = match &tool.source {
-            ToolSource::Embedded { path } => {
-                resolve_inside(&context.repository_root, path, "embedded source")?
-            }
+        let (working_directory, is_checkout_present) = match &tool.source {
+            ToolSource::Embedded { path } => (
+                resolve_inside(&context.repository_root, path, "embedded source")?,
+                true,
+            ),
             ToolSource::Git { url, revision } => {
                 let checkout = context.cache_root.join(&tool.name);
-                match fs::symlink_metadata(&checkout) {
+                let is_checkout_present = match fs::symlink_metadata(&checkout) {
                     Ok(_) => {
                         inspect_checkout(&checkout, url)?;
                         actions.push(Action::FetchRepository {
                             repository: checkout.clone(),
                         });
+                        true
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                        add_directory(&context.cache_root, &mut planned_directories, &mut actions)?;
+                        add_directory(&context.cache_root, &mut planned_paths, &mut actions)?;
                         actions.push(Action::CloneRepository {
                             url: url.clone(),
                             destination: checkout.clone(),
                         });
+                        false
                     }
                     Err(error) => return Err(SyncError::Io(checkout, error)),
-                }
+                };
                 actions.push(Action::CheckoutRevision {
                     repository: checkout.clone(),
                     revision: revision.clone(),
                 });
-                checkout
+                (checkout, is_checkout_present)
             }
         };
 
@@ -80,24 +84,92 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                     .expect("validated command paths have file names"),
             );
             reject_non_symlink(&destination, "command")?;
-            add_directory(&command_directory, &mut planned_directories, &mut actions)?;
+            add_directory(&command_directory, &mut planned_paths, &mut actions)?;
+            reserve_destination(&destination, &mut planned_paths, "command")?;
             actions.push(Action::LinkCommand {
                 source: working_directory.join(command),
                 destination,
             });
         }
 
-        if let Some(extension) = &tool.pi_extension {
-            let source = resolve_inside(&context.repository_root, extension, "Pi extension")?;
+        if tool.pi_extension.is_some() || tool.pi_package.is_some() {
             let extension_directory = context.home_root.join(".pi/agent/extensions");
-            let destination = extension_directory.join(
-                extension
-                    .file_name()
-                    .expect("validated Pi extension paths have file names"),
-            );
-            reject_non_symlink(&destination, "Pi extension")?;
-            add_directory(&extension_directory, &mut planned_directories, &mut actions)?;
-            actions.push(Action::LinkPiExtension {
+            add_directory(&extension_directory, &mut planned_paths, &mut actions)?;
+
+            if let Some(extension) = &tool.pi_extension {
+                let source = resolve_inside(&context.repository_root, extension, "Pi extension")?;
+                let destination = extension_directory.join(
+                    extension
+                        .file_name()
+                        .expect("validated Pi extension paths have file names"),
+                );
+                reject_non_symlink(&destination, "Pi extension")?;
+                reserve_destination(&destination, &mut planned_paths, "Pi extension")?;
+                actions.push(Action::LinkPiExtension {
+                    source,
+                    destination,
+                });
+            }
+
+            if let Some(package) = &tool.pi_package {
+                let source = resource_source(
+                    &working_directory,
+                    package,
+                    "Pi package",
+                    is_checkout_present,
+                )?;
+                let destination = if package == Path::new(".") {
+                    extension_directory.join(&tool.name)
+                } else {
+                    extension_directory.join(
+                        package
+                            .file_name()
+                            .expect("validated Pi package paths have file names"),
+                    )
+                };
+                reject_non_symlink(&destination, "Pi package")?;
+                reserve_destination(&destination, &mut planned_paths, "Pi package")?;
+                actions.push(Action::LinkPiPackage {
+                    source,
+                    destination,
+                });
+            }
+        }
+
+        if !tool.skills.is_empty() {
+            let skill_directory = context.home_root.join(".agents/skills");
+            add_directory(&skill_directory, &mut planned_paths, &mut actions)?;
+
+            for skill in &tool.skills {
+                let source =
+                    resource_source(&working_directory, skill, "skill", is_checkout_present)?;
+                let destination = skill_directory.join(
+                    skill
+                        .file_name()
+                        .expect("validated skill paths have file names"),
+                );
+                reject_non_symlink(&destination, "skill")?;
+                reserve_destination(&destination, &mut planned_paths, "skill")?;
+                actions.push(Action::LinkSkill {
+                    source,
+                    destination,
+                });
+            }
+        }
+    }
+
+    let agent_sources = discover_project_agents(&context.repository_root)?;
+    let _builtin_overlap_evidence = pi_agent::builtin_overlaps(&agent_sources)?;
+    if !agent_sources.is_empty() {
+        let agent_directory = context.home_root.join(".pi/agent/agents");
+        add_directory(&agent_directory, &mut planned_paths, &mut actions)?;
+
+        for source in agent_sources {
+            let agent = pi_agent::parse(&source)?;
+            let destination = agent_directory.join(format!("{}.md", agent.name));
+            reject_agent_destination(&source, &destination)?;
+            reserve_destination(&destination, &mut planned_paths, "Pi agent")?;
+            actions.push(Action::RenderPiAgent {
                 source,
                 destination,
             });
@@ -167,6 +239,19 @@ fn resolve_inside(root: &Path, relative: &Path, field: &str) -> Result<PathBuf, 
     Ok(resolved)
 }
 
+fn resource_source(
+    root: &Path,
+    relative: &Path,
+    field: &str,
+    is_checkout_present: bool,
+) -> Result<PathBuf, SyncError> {
+    if is_checkout_present {
+        resolve_inside(root, relative, field)
+    } else {
+        Ok(root.join(relative))
+    }
+}
+
 fn reject_non_symlink(destination: &Path, field: &str) -> Result<(), SyncError> {
     match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() => Ok(()),
@@ -176,6 +261,56 @@ fn reject_non_symlink(destination: &Path, field: &str) -> Result<(), SyncError> 
         ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
+    }
+}
+
+fn reject_agent_destination(source: &Path, destination: &Path) -> Result<(), SyncError> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.is_file() => {
+            let observed = fs::read(destination)
+                .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+            if observed == pi_agent::rendered_bytes(source)? {
+                Ok(())
+            } else {
+                Err(planning_error(format!(
+                    "Pi agent destination {} collides with a non-symlink",
+                    destination.display()
+                )))
+            }
+        }
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(planning_error(format!(
+            "Pi agent destination {} collides with a symlink",
+            destination.display()
+        ))),
+        Ok(_) => Err(planning_error(format!(
+            "Pi agent destination {} collides with a non-symlink",
+            destination.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
+    }
+}
+
+fn reserve_destination(
+    destination: &Path,
+    planned: &mut HashSet<PathBuf>,
+    field: &str,
+) -> Result<(), SyncError> {
+    if !planned.insert(destination.to_path_buf()) {
+        return Err(planning_error(format!(
+            "{field} destination {} collides with another planned destination",
+            destination.display()
+        )));
+    }
+    Ok(())
+}
+
+fn discover_project_agents(repository_root: &Path) -> Result<Vec<PathBuf>, SyncError> {
+    let agent_root = repository_root.join("agents");
+    match fs::symlink_metadata(&agent_root) {
+        Ok(_) => pi_agent::discover(&agent_root),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(SyncError::Io(agent_root, error)),
     }
 }
 
@@ -207,6 +342,7 @@ fn planning_error(detail: String) -> SyncError {
 mod tests {
     use super::*;
     use crate::manifest::{InstallerSpec, ToolSpec};
+    use crate::pi_agent;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
@@ -255,11 +391,35 @@ mod tests {
             commands: vec![PathBuf::from("bin/rag")],
             mcp_server: None,
             pi_extension: None,
+            pi_package: None,
+            skills: Vec::new(),
         }
     }
 
     fn manifest(tool: ToolSpec) -> ToolManifest {
         ToolManifest { tools: vec![tool] }
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("repo root")
+    }
+
+    fn repository_agent_source(name: &str) -> PathBuf {
+        repo_root().join(format!("agents/{0}/{0}.md", name))
+    }
+
+    fn repository_agent_names() -> [&'static str; 6] {
+        [
+            "anchor-verifier",
+            "code-reviewer",
+            "debugger",
+            "maestro-tester",
+            "spec-tester",
+            "web-research-summarizer",
+        ]
     }
 
     fn run_git(directory: &Path, args: &[&str]) {
@@ -319,6 +479,113 @@ mod tests {
     }
 
     #[test]
+    fn plans_resource_only_package_extension_and_skill_links() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("bundle")).expect("bundle source");
+        fs::create_dir_all(fixture.root.join("extensions")).expect("extension source parent");
+        fs::write(fixture.root.join("extensions/rag.ts"), "extension").expect("extension source");
+        fs::create_dir_all(fixture.root.join("bundle/packages/rag")).expect("package source");
+        fs::create_dir_all(fixture.root.join("bundle/skills/show-me")).expect("skill source");
+        let mut spec = tool(ToolSource::Embedded {
+            path: PathBuf::from("bundle"),
+        });
+        spec.commands.clear();
+        spec.pi_extension = Some(PathBuf::from("extensions/rag.ts"));
+        spec.pi_package = Some(PathBuf::from("packages/rag"));
+        spec.skills = vec![PathBuf::from("skills/show-me")];
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+
+        assert_eq!(
+            plan.actions[0],
+            Action::RunInstaller {
+                tool: "rag".to_owned(),
+                working_directory: fs::canonicalize(fixture.root.join("bundle"))
+                    .expect("canonical bundle"),
+                command: "./install.sh".to_owned(),
+                args: vec!["literal argument".to_owned()],
+                preview_args: vec!["--dry-run".to_owned()],
+            }
+        );
+        assert_eq!(
+            plan.actions[1],
+            Action::CreateDirectory {
+                path: context.home_root.join(".pi/agent/extensions"),
+            }
+        );
+        assert_eq!(
+            plan.actions[2],
+            Action::LinkPiExtension {
+                source: fs::canonicalize(fixture.root.join("extensions/rag.ts"))
+                    .expect("canonical extension"),
+                destination: context.home_root.join(".pi/agent/extensions/rag.ts"),
+            }
+        );
+        assert_eq!(
+            plan.actions[3],
+            Action::LinkPiPackage {
+                source: fs::canonicalize(fixture.root.join("bundle/packages/rag"))
+                    .expect("canonical package"),
+                destination: context.home_root.join(".pi/agent/extensions/rag"),
+            }
+        );
+        assert_eq!(
+            plan.actions[4],
+            Action::CreateDirectory {
+                path: context.home_root.join(".agents/skills"),
+            }
+        );
+        assert_eq!(
+            plan.actions[5],
+            Action::LinkSkill {
+                source: fs::canonicalize(fixture.root.join("bundle/skills/show-me"))
+                    .expect("canonical skill"),
+                destination: context.home_root.join(".agents/skills/show-me"),
+            }
+        );
+    }
+
+    #[test]
+    fn plans_root_pi_package_uses_tool_name_destination() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("bundle")).expect("bundle source");
+        let mut spec = tool(ToolSource::Embedded {
+            path: PathBuf::from("bundle"),
+        });
+        spec.commands.clear();
+        spec.pi_package = Some(PathBuf::from("."));
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+
+        assert_eq!(
+            plan.actions[0],
+            Action::RunInstaller {
+                tool: "rag".to_owned(),
+                working_directory: fs::canonicalize(fixture.root.join("bundle"))
+                    .expect("canonical bundle"),
+                command: "./install.sh".to_owned(),
+                args: vec!["literal argument".to_owned()],
+                preview_args: vec!["--dry-run".to_owned()],
+            }
+        );
+        assert_eq!(
+            plan.actions[1],
+            Action::CreateDirectory {
+                path: context.home_root.join(".pi/agent/extensions"),
+            }
+        );
+        assert_eq!(
+            plan.actions[2],
+            Action::LinkPiPackage {
+                source: fs::canonicalize(fixture.root.join("bundle")).expect("canonical bundle"),
+                destination: context.home_root.join(".pi/agent/extensions/rag"),
+            }
+        );
+    }
+
+    #[test]
     fn selects_platform_without_inspecting_source() {
         let fixture = Fixture::new();
         let spec = tool(ToolSource::Embedded {
@@ -334,6 +601,176 @@ mod tests {
                 platform: Platform::Macos,
             }]
         );
+    }
+
+    #[test]
+    fn plans_git_package_and_skill_links_from_planned_checkout() {
+        let fixture = Fixture::new();
+        let mut spec = tool(ToolSource::Git {
+            url: "https://example.test/rag.git".to_owned(),
+            revision: "abc123".to_owned(),
+        });
+        spec.commands.clear();
+        spec.pi_package = Some(PathBuf::from("packages/rag"));
+        spec.skills = vec![PathBuf::from("skills/show-me")];
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+        let checkout = context.cache_root.join("rag");
+
+        assert_eq!(
+            plan.actions[0],
+            Action::CreateDirectory {
+                path: context.cache_root.clone(),
+            }
+        );
+        assert_eq!(
+            plan.actions[1],
+            Action::CloneRepository {
+                url: "https://example.test/rag.git".to_owned(),
+                destination: checkout.clone(),
+            }
+        );
+        assert_eq!(
+            plan.actions[2],
+            Action::CheckoutRevision {
+                repository: checkout.clone(),
+                revision: "abc123".to_owned(),
+            }
+        );
+        assert_eq!(
+            plan.actions[3],
+            Action::RunInstaller {
+                tool: "rag".to_owned(),
+                working_directory: checkout.clone(),
+                command: "./install.sh".to_owned(),
+                args: vec!["literal argument".to_owned()],
+                preview_args: vec!["--dry-run".to_owned()],
+            }
+        );
+        assert_eq!(
+            plan.actions[5],
+            Action::LinkPiPackage {
+                source: checkout.join("packages/rag"),
+                destination: context.home_root.join(".pi/agent/extensions/rag"),
+            }
+        );
+        assert_eq!(
+            plan.actions[7],
+            Action::LinkSkill {
+                source: checkout.join("skills/show-me"),
+                destination: context.home_root.join(".agents/skills/show-me"),
+            }
+        );
+    }
+
+    #[test]
+    fn plans_git_package_and_skill_links_from_checkout() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("extensions")).expect("extension source parent");
+        fs::write(fixture.root.join("extensions/rag.ts"), "extension").expect("extension source");
+        let checkout = fixture.root.join("cache/rag");
+        initialize_checkout(&checkout, "https://example.test/rag.git");
+        fs::create_dir_all(checkout.join("packages/rag")).expect("package source");
+        fs::write(checkout.join("packages/rag/package.toml"), "package").expect("package file");
+        fs::create_dir_all(checkout.join("skills/show-me")).expect("skill source");
+        fs::write(checkout.join("skills/show-me/skill.md"), "skill").expect("skill file");
+        run_git(&checkout, &["add", "packages", "skills"]);
+        run_git(&checkout, &["commit", "-qm", "resources"]);
+
+        let mut spec = tool(ToolSource::Git {
+            url: "https://example.test/rag.git".to_owned(),
+            revision: "abc123".to_owned(),
+        });
+        spec.commands.clear();
+        spec.pi_extension = Some(PathBuf::from("extensions/rag.ts"));
+        spec.pi_package = Some(PathBuf::from("packages/rag"));
+        spec.skills = vec![PathBuf::from("skills/show-me")];
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+
+        assert_eq!(
+            plan.actions[0],
+            Action::FetchRepository {
+                repository: checkout.clone(),
+            }
+        );
+        assert_eq!(
+            plan.actions[1],
+            Action::CheckoutRevision {
+                repository: checkout.clone(),
+                revision: "abc123".to_owned(),
+            }
+        );
+        assert_eq!(
+            plan.actions[2],
+            Action::RunInstaller {
+                tool: "rag".to_owned(),
+                working_directory: checkout.clone(),
+                command: "./install.sh".to_owned(),
+                args: vec!["literal argument".to_owned()],
+                preview_args: vec!["--dry-run".to_owned()],
+            }
+        );
+        assert_eq!(
+            plan.actions[3],
+            Action::CreateDirectory {
+                path: context.home_root.join(".pi/agent/extensions"),
+            }
+        );
+        assert_eq!(
+            plan.actions[4],
+            Action::LinkPiExtension {
+                source: fs::canonicalize(fixture.root.join("extensions/rag.ts"))
+                    .expect("canonical extension"),
+                destination: context.home_root.join(".pi/agent/extensions/rag.ts"),
+            }
+        );
+        assert_eq!(
+            plan.actions[5],
+            Action::LinkPiPackage {
+                source: fs::canonicalize(checkout.join("packages/rag")).expect("canonical package"),
+                destination: context.home_root.join(".pi/agent/extensions/rag"),
+            }
+        );
+        assert_eq!(
+            plan.actions[6],
+            Action::CreateDirectory {
+                path: context.home_root.join(".agents/skills"),
+            }
+        );
+        assert_eq!(
+            plan.actions[7],
+            Action::LinkSkill {
+                source: fs::canonicalize(checkout.join("skills/show-me")).expect("canonical skill"),
+                destination: context.home_root.join(".agents/skills/show-me"),
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_colliding_skill_destinations() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("bundle")).expect("bundle source");
+        fs::create_dir_all(fixture.root.join("bundle/skills/first/show-me")).expect("first skill");
+        fs::create_dir_all(fixture.root.join("bundle/skills/second/show-me"))
+            .expect("second skill");
+        let mut spec = tool(ToolSource::Embedded {
+            path: PathBuf::from("bundle"),
+        });
+        spec.commands.clear();
+        spec.skills = vec![
+            PathBuf::from("skills/first/show-me"),
+            PathBuf::from("skills/second/show-me"),
+        ];
+
+        let error = build(&manifest(spec), &fixture.context(Platform::Linux))
+            .expect_err("duplicate skill destination rejected");
+
+        assert!(error
+            .to_string()
+            .contains("collides with another planned destination"));
     }
 
     #[test]
@@ -379,6 +816,112 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn plans_repository_agents_in_sorted_source_order() {
+        let fixture = Fixture::new();
+        let context = Context {
+            repository_root: repo_root(),
+            home_root: fixture.root.join("home"),
+            cache_root: fixture.root.join("cache"),
+            platform: Platform::Linux,
+        };
+
+        let plan = build(&ToolManifest { tools: Vec::new() }, &context).expect("plan");
+        let agent_directory = context.home_root.join(".pi/agent/agents");
+
+        assert_eq!(plan.actions.len(), 7);
+        assert_eq!(
+            plan.actions[0],
+            Action::CreateDirectory {
+                path: agent_directory.clone(),
+            }
+        );
+        assert!(pi_agent::builtin_overlaps(
+            &repository_agent_names()
+                .into_iter()
+                .map(repository_agent_source)
+                .collect::<Vec<_>>()
+        )
+        .expect("builtin overlap report")
+        .is_empty());
+
+        for (index, name) in repository_agent_names().into_iter().enumerate() {
+            let source = repository_agent_source(name);
+            assert_eq!(
+                plan.actions[index + 1],
+                Action::RenderPiAgent {
+                    source: source.clone(),
+                    destination: agent_directory.join(format!("{name}.md")),
+                },
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_only_an_exact_existing_repository_agent_file() {
+        let fixture = Fixture::new();
+        let source_root = fixture.root.join("agents/fixture-agent");
+        fs::create_dir_all(&source_root).expect("agent source directory");
+        let source = source_root.join("fixture-agent.md");
+        fs::write(
+            &source,
+            "---\nname: fixture-agent\ndescription: Fixture agent\ntools: Read\nmodel: sonnet\n---\nKeep this prompt exact.\n",
+        )
+        .expect("agent source");
+        let context = fixture.context(Platform::Linux);
+        let destination = context.home_root.join(".pi/agent/agents/fixture-agent.md");
+        pi_agent::render(&source, &destination).expect("seed exact render");
+
+        let plan = build(&ToolManifest { tools: Vec::new() }, &context)
+            .expect("exact existing agent accepted");
+
+        assert_eq!(
+            plan.actions,
+            [Action::RenderPiAgent {
+                source: source.clone(),
+                destination: destination.clone(),
+            }]
+        );
+
+        fs::write(&destination, "arbitrary file\n").expect("replace exact render");
+        let error = build(&ToolManifest { tools: Vec::new() }, &context)
+            .expect_err("changed agent destination rejected");
+        assert!(error.to_string().contains("collides with a non-symlink"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_an_existing_repository_agent_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        let source_root = fixture.root.join("agents/fixture-agent");
+        fs::create_dir_all(&source_root).expect("agent source directory");
+        let source = source_root.join("fixture-agent.md");
+        fs::write(
+            &source,
+            "---\nname: fixture-agent\ndescription: Fixture agent\ntools: Read\nmodel: sonnet\n---\nKeep this prompt exact.\n",
+        )
+        .expect("agent source");
+        let context = fixture.context(Platform::Linux);
+        let destination_root = context.home_root.join(".pi/agent/agents");
+        fs::create_dir_all(&destination_root).expect("agent destination directory");
+        let target = fixture.root.join("matching-agent.md");
+        fs::write(
+            &target,
+            pi_agent::rendered_bytes(&source).expect("render bytes"),
+        )
+        .expect("matching target");
+        let destination = destination_root.join("fixture-agent.md");
+        symlink(&target, &destination).expect("agent destination symlink");
+
+        let error = build(&ToolManifest { tools: Vec::new() }, &context)
+            .expect_err("agent symlink rejected");
+
+        assert!(error.to_string().contains("collides with a symlink"));
+    }
+
     #[test]
     fn refuses_adapter_symlink_outside_repository() {
         use std::os::unix::fs::symlink;
