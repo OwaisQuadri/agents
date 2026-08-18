@@ -1,4 +1,4 @@
-# CLAUDE.md: global guidance
+# Global guidance
 
 ## working style: startup, not enterprise
 
@@ -19,7 +19,7 @@ introduce one without its inline expansion. Never guess an unresolved one: when 
 ## personal RAG store
 
 This is persistent memory, not an optional lookup. It covers ~/Documents, agent memories,
-and Claude Code transcripts.
+and agent transcripts.
 
 Recall is automatic: the `hooks/rag-recall` UserPromptSubmit hook searches it on every
 prompt and injects the top 8 chunks as `<persistent-memory-recall>`. Read that block before
@@ -78,7 +78,7 @@ rewritten in Rust, and never patched in place.
 
 This binds computation: checkers, parsers, scanners, anything whose runtime is its own
 work. It does not bind shell that only orchestrates other processes. install.sh, the
-evals/run.sh harnesses, and the git hooks spend their time inside claude and git, so a Rust
+evals/run.sh harnesses, and the git hooks spend their time inside the agent and git, so a Rust
 rewrite there buys nothing.
 
 ## default runner
