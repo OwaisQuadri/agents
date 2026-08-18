@@ -391,7 +391,10 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             tool.pi_extension.as_deref(),
             Some(Path::new("pi/extensions/rag.ts"))
         );
-        assert_eq!(tool.pi_package.as_deref(), Some(Path::new("pi/packages/rag")));
+        assert_eq!(
+            tool.pi_package.as_deref(),
+            Some(Path::new("pi/packages/rag"))
+        );
         assert_eq!(
             tool.skills,
             [
@@ -420,7 +423,10 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             .replace("commands = [\"rag\"]", "commands = []")
             .replace("pi/packages/rag", ".");
         let manifest = load_text(&text).expect("manifest loads");
-        assert_eq!(manifest.tools[0].pi_package.as_deref(), Some(Path::new(".")));
+        assert_eq!(
+            manifest.tools[0].pi_package.as_deref(),
+            Some(Path::new("."))
+        );
     }
 
     #[test]
@@ -529,7 +535,10 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
         assert_eq!(tool.platforms, [Platform::Macos, Platform::Linux]);
         assert_eq!(tool.commands, [PathBuf::from("rag")]);
         assert_eq!(tool.mcp_server.as_deref(), Some("rag"));
-        assert_eq!(tool.pi_extension.as_deref(), Some(Path::new("pi/extensions/rag.ts")));
+        assert_eq!(
+            tool.pi_extension.as_deref(),
+            Some(Path::new("pi/extensions/rag.ts"))
+        );
         assert!(tool.pi_package.is_none());
         assert!(tool.skills.is_empty());
     }

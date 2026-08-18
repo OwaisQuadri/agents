@@ -262,20 +262,21 @@ fn rejects_a_source_path_that_escapes_the_repository() {
         .expect("escape symlink");
     let manifest = fixture.manifest(
         "escape",
-        &format!(
-            r#"[[tools]]
+        r#"[[tools]]
 name = "rag"
 platforms = ["linux"]
 commands = []
 pi_extension = "pi/extensions/rag.ts"
-source = {{ path = "escape" }}
-installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
-"#
-        ),
+source = { path = "escape" }
+installer = { command = "./install.sh", args = ["apply"], preview_args = ["preview"] }
+"#,
     );
     let before = fixture.protected_snapshot(&home);
 
-    let output = fixture.command(&home, &manifest, "linux", true).output().expect("run tool-sync");
+    let output = fixture
+        .command(&home, &manifest, "linux", true)
+        .output()
+        .expect("run tool-sync");
 
     assert!(!output.status.success());
     let error = error_text(&output);
@@ -290,32 +291,36 @@ fn rejects_duplicate_pi_extension_destinations() {
     let home = fixture.home("duplicate-home");
     let manifest = fixture.manifest(
         "duplicate",
-        &format!(
-            r#"[[tools]]
+        r#"[[tools]]
 name = "alpha"
 platforms = ["linux"]
 commands = []
 pi_extension = "pi/extensions/rag.ts"
-source = {{ path = "bundle" }}
-installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
+source = { path = "bundle" }
+installer = { command = "./install.sh", args = ["apply"], preview_args = ["preview"] }
 
 [[tools]]
 name = "beta"
 platforms = ["linux"]
 commands = []
 pi_extension = "other/rag.ts"
-source = {{ path = "bundle" }}
-installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
-"#
-        ),
+source = { path = "bundle" }
+installer = { command = "./install.sh", args = ["apply"], preview_args = ["preview"] }
+"#,
     );
     let before = fixture.protected_snapshot(&home);
 
-    let output = fixture.command(&home, &manifest, "linux", true).output().expect("run tool-sync");
+    let output = fixture
+        .command(&home, &manifest, "linux", true)
+        .output()
+        .expect("run tool-sync");
 
     assert!(!output.status.success());
     let error = error_text(&output);
-    assert!(error.contains("Pi extension rag.ts is duplicated"), "{error}");
+    assert!(
+        error.contains("Pi extension rag.ts is duplicated"),
+        "{error}"
+    );
     assert_eq!(before, fixture.protected_snapshot(&home));
     assert!(!fixture.record().exists());
 }
@@ -340,7 +345,10 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
         ),
     );
 
-    let first = fixture.command(&home, &manifest, "linux", false).output().expect("run tool-sync");
+    let first = fixture
+        .command(&home, &manifest, "linux", false)
+        .output()
+        .expect("run tool-sync");
     assert!(first.status.success(), "{}", error_text(&first));
     let checkout = fixture.checkout(&home);
     assert_eq!(
@@ -356,7 +364,10 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
     fs::write(&dirty, "keep me").expect("dirty checkout file");
     let before = fixture.protected_snapshot(&home);
 
-    let second = fixture.command(&home, &manifest, "linux", false).output().expect("run tool-sync");
+    let second = fixture
+        .command(&home, &manifest, "linux", false)
+        .output()
+        .expect("run tool-sync");
 
     assert!(!second.status.success());
     let error = error_text(&second);
@@ -382,20 +393,21 @@ fn refuses_a_non_symlink_pi_extension_collision() {
     fs::write(home.join(".pi/agent/extensions/rag.ts"), "owned").expect("collision file");
     let manifest = fixture.manifest(
         "collision",
-        &format!(
-            r#"[[tools]]
+        r#"[[tools]]
 name = "rag"
 platforms = ["linux"]
 commands = []
 pi_extension = "pi/extensions/rag.ts"
-source = {{ path = "bundle" }}
-installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
-"#
-        ),
+source = { path = "bundle" }
+installer = { command = "./install.sh", args = ["apply"], preview_args = ["preview"] }
+"#,
     );
     let before = fixture.protected_snapshot(&home);
 
-    let output = fixture.command(&home, &manifest, "linux", false).output().expect("run tool-sync");
+    let output = fixture
+        .command(&home, &manifest, "linux", false)
+        .output()
+        .expect("run tool-sync");
 
     assert!(!output.status.success());
     let error = error_text(&output);
@@ -414,20 +426,21 @@ fn fails_closed_when_the_installer_exits_non_zero() {
     );
     let manifest = fixture.manifest(
         "installer",
-        &format!(
-            r#"[[tools]]
+        r#"[[tools]]
 name = "rag"
 platforms = ["linux"]
 commands = []
 pi_extension = "pi/extensions/rag.ts"
-source = {{ path = "bundle" }}
-installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
-"#
-        ),
+source = { path = "bundle" }
+installer = { command = "./install.sh", args = ["apply"], preview_args = ["preview"] }
+"#,
     );
     let before = fixture.protected_snapshot(&home);
 
-    let output = fixture.command(&home, &manifest, "linux", false).output().expect("run tool-sync");
+    let output = fixture
+        .command(&home, &manifest, "linux", false)
+        .output()
+        .expect("run tool-sync");
 
     assert!(!output.status.success());
     let error = error_text(&output);
@@ -465,7 +478,10 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
         ),
     );
 
-    let first = fixture.command(&home, &manifest, "linux", false).output().expect("run tool-sync");
+    let first = fixture
+        .command(&home, &manifest, "linux", false)
+        .output()
+        .expect("run tool-sync");
     assert!(first.status.success(), "{}", error_text(&first));
     let checkout = fixture.checkout(&home);
     let before = fixture.protected_snapshot(&home);
@@ -479,9 +495,7 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
     let real_git = real_git_path();
     write_executable(
         &wrapper,
-        &format!(
-            "#!/bin/sh\nset -eu\ncount_file=${{GIT_COUNT_FILE:?}}\nmarker_file=${{GIT_MARKER_FILE:?}}\nreal_git=${{REAL_GIT:?}}\nif [ \"${{1:-}}\" = \"-C\" ] && [ \"${{3:-}}\" = \"status\" ] && [ \"${{4:-}}\" = \"--porcelain\" ] && [ \"${{5:-}}\" = \"--untracked-files=all\" ]; then\n  count=0\n  if [ -f \"$count_file\" ]; then\n    count=$(cat \"$count_file\")\n  fi\n  count=$((count + 1))\n  printf '%s\\n' \"$count\" > \"$count_file\"\n  if [ \"$count\" -eq 1 ]; then\n    : > \"$marker_file\"\n  elif [ \"$count\" -eq 2 ]; then\n    sleep 0.25\n  fi\nfi\nexec \"$real_git\" \"$@\"\n",
-        ),
+        "#!/bin/sh\nset -eu\ncount_file=${GIT_COUNT_FILE:?}\nmarker_file=${GIT_MARKER_FILE:?}\nreal_git=${REAL_GIT:?}\nif [ \"${1:-}\" = \"-C\" ] && [ \"${3:-}\" = \"status\" ] && [ \"${4:-}\" = \"--porcelain\" ] && [ \"${5:-}\" = \"--untracked-files=all\" ]; then\n  count=0\n  if [ -f \"$count_file\" ]; then\n    count=$(cat \"$count_file\")\n  fi\n  count=$((count + 1))\n  printf '%s\\n' \"$count\" > \"$count_file\"\n  if [ \"$count\" -eq 1 ]; then\n    : > \"$marker_file\"\n  elif [ \"$count\" -eq 2 ]; then\n    sleep 0.25\n  fi\nfi\nexec \"$real_git\" \"$@\"\n",
     );
     let mut dirtyer = ChildGuard::new(
         Command::new("sh")
@@ -511,7 +525,10 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
 
     assert!(!output.status.success());
     let error = error_text(&output);
-    assert!(error.contains("repository became dirty after planning"), "{error}");
+    assert!(
+        error.contains("repository became dirty after planning"),
+        "{error}"
+    );
     assert_eq!(before, fixture.protected_snapshot(&home));
     assert_eq!(
         fs::read_to_string(fixture.record()).expect("installer invocations"),

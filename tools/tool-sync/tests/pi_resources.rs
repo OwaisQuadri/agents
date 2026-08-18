@@ -32,7 +32,8 @@ impl Fixture {
         git(&work, &["add", "."]);
         git(&work, &["commit", "-qm", "first"]);
         let first_revision = git_text(&work, &["rev-parse", "HEAD"]);
-        let first_revision_contents = fs::read(work.join("revision")).expect("first revision contents");
+        let first_revision_contents =
+            fs::read(work.join("revision")).expect("first revision contents");
         fs::write(work.join("revision"), b"second revision\n").expect("second revision file");
         git(&work, &["commit", "-qam", "second"]);
         let second_revision = git_text(&work, &["rev-parse", "HEAD"]);
@@ -143,7 +144,10 @@ fn seed_source_tree(root: &Path, source: &str) {
         &fixture_file(&format!("{source}/skills/grilling")),
         &root.join("skills/grilling"),
     );
-    copy_executable(&fixture_file(&format!("{source}/install.sh")), &root.join("install.sh"));
+    copy_executable(
+        &fixture_file(&format!("{source}/install.sh")),
+        &root.join("install.sh"),
+    );
 }
 
 fn copy_tree(source: &Path, destination: &Path) {
@@ -239,7 +243,10 @@ fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
                 entries.insert(relative.to_owned(), Vec::new());
                 visit(root, &child, entries);
             } else {
-                entries.insert(relative.to_owned(), fs::read(&child).expect("snapshot file"));
+                entries.insert(
+                    relative.to_owned(),
+                    fs::read(&child).expect("snapshot file"),
+                );
             }
         }
     }
@@ -258,20 +265,26 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
     let home = fixture.home("resource-home");
     fs::create_dir_all(&home).expect("home directory");
     assert_ne!(
-        fs::read_to_string(fixture_file("pi-resources/repository/pi/packages/rag/README.md"))
-            .expect("repository package fixture"),
+        fs::read_to_string(fixture_file(
+            "pi-resources/repository/pi/packages/rag/README.md"
+        ))
+        .expect("repository package fixture"),
         fs::read_to_string(fixture_file("pi-resources/pi/packages/rag/README.md"))
             .expect("checkout package fixture")
     );
     assert_ne!(
-        fs::read_to_string(fixture_file("pi-resources/repository/skills/show-me/README.md"))
-            .expect("repository show-me fixture"),
+        fs::read_to_string(fixture_file(
+            "pi-resources/repository/skills/show-me/README.md"
+        ))
+        .expect("repository show-me fixture"),
         fs::read_to_string(fixture_file("pi-resources/skills/show-me/README.md"))
             .expect("checkout show-me fixture")
     );
     assert_ne!(
-        fs::read_to_string(fixture_file("pi-resources/repository/skills/grilling/README.md"))
-            .expect("repository grilling fixture"),
+        fs::read_to_string(fixture_file(
+            "pi-resources/repository/skills/grilling/README.md"
+        ))
+        .expect("repository grilling fixture"),
         fs::read_to_string(fixture_file("pi-resources/skills/grilling/README.md"))
             .expect("checkout grilling fixture")
     );
@@ -300,13 +313,20 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
             .lines()
             .collect::<Vec<_>>(),
         vec![
-            format!("create directory {}", home.join(".cache/tool-sync").display()),
+            format!(
+                "create directory {}",
+                home.join(".cache/tool-sync").display()
+            ),
             format!(
                 "clone {} into {}",
                 fixture.remote.display(),
                 checkout.display()
             ),
-            format!("checkout {} in {}", fixture.first_revision, checkout.display()),
+            format!(
+                "checkout {} in {}",
+                fixture.first_revision,
+                checkout.display()
+            ),
             format!(
                 "install rag in {}: ./install.sh [\"preview\"]",
                 checkout.display()
@@ -344,18 +364,27 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
         fixture.first_revision_contents
     );
     assert_eq!(
-        normalize_private_path_text(&fs::read_link(home.join(".pi/agent/extensions/rag")).expect("package link")),
+        normalize_private_path_text(
+            &fs::read_link(home.join(".pi/agent/extensions/rag")).expect("package link")
+        ),
         normalize_private_path_text(&package_source)
     );
     assert_eq!(
-        normalize_private_path_text(&fs::read_link(home.join(".agents/skills/show-me")).expect("show-me link")),
+        normalize_private_path_text(
+            &fs::read_link(home.join(".agents/skills/show-me")).expect("show-me link")
+        ),
         normalize_private_path_text(&show_me_source)
     );
     assert_eq!(
-        normalize_private_path_text(&fs::read_link(home.join(".agents/skills/grilling")).expect("grilling link")),
+        normalize_private_path_text(
+            &fs::read_link(home.join(".agents/skills/grilling")).expect("grilling link")
+        ),
         normalize_private_path_text(&grilling_source)
     );
-    assert_eq!(fs::read(&notes).expect("notes after apply"), b"keep this home content\n");
+    assert_eq!(
+        fs::read(&notes).expect("notes after apply"),
+        b"keep this home content\n"
+    );
     assert_eq!(
         normalize_private_prefix(&fs::read_to_string(fixture.record()).expect("apply record")),
         normalize_private_prefix(&format!("{}|apply\n", checkout.display()))
@@ -365,9 +394,20 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
             .lines()
             .collect::<Vec<_>>(),
         vec![
-            format!("create directory {}", home.join(".cache/tool-sync").display()),
-            format!("clone {} into {}", fixture.remote.display(), checkout.display()),
-            format!("checkout {} in {}", fixture.first_revision, checkout.display()),
+            format!(
+                "create directory {}",
+                home.join(".cache/tool-sync").display()
+            ),
+            format!(
+                "clone {} into {}",
+                fixture.remote.display(),
+                checkout.display()
+            ),
+            format!(
+                "checkout {} in {}",
+                fixture.first_revision,
+                checkout.display()
+            ),
             format!(
                 "install rag in {}: ./install.sh [\"apply\"]",
                 checkout.display()
@@ -398,7 +438,10 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
     let repeated = fixture.run(&home, &manifest, "linux", false);
 
     assert!(repeated.status.success(), "{}", error_text(&repeated));
-    assert_eq!(git_text(&checkout, &["rev-parse", "HEAD"]), fixture.first_revision);
+    assert_eq!(
+        git_text(&checkout, &["rev-parse", "HEAD"]),
+        fixture.first_revision
+    );
     assert_eq!(
         fs::read(checkout.join("revision")).expect("repeated checkout revision file"),
         fixture.first_revision_contents
@@ -421,10 +464,19 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
         ),
         normalize_private_path_text(&grilling_source)
     );
-    assert_eq!(fs::read(&notes).expect("notes after repeated apply"), b"keep this home content\n");
     assert_eq!(
-        normalize_private_prefix(&fs::read_to_string(fixture.record()).expect("repeated apply record")),
-        normalize_private_prefix(&format!("{}|apply\n{}|apply\n", checkout.display(), checkout.display()))
+        fs::read(&notes).expect("notes after repeated apply"),
+        b"keep this home content\n"
+    );
+    assert_eq!(
+        normalize_private_prefix(
+            &fs::read_to_string(fixture.record()).expect("repeated apply record")
+        ),
+        normalize_private_prefix(&format!(
+            "{}|apply\n{}|apply\n",
+            checkout.display(),
+            checkout.display()
+        ))
     );
     assert_eq!(
         normalize_private_prefix(&output_text(&repeated))
@@ -432,7 +484,11 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
             .collect::<Vec<_>>(),
         vec![
             format!("fetch repository {}", checkout.display()),
-            format!("checkout {} in {}", fixture.first_revision, checkout.display()),
+            format!(
+                "checkout {} in {}",
+                fixture.first_revision,
+                checkout.display()
+            ),
             format!(
                 "install rag in {}: ./install.sh [\"apply\"]",
                 checkout.display()

@@ -118,7 +118,8 @@ pub fn builtin_overlaps(sources: &[PathBuf]) -> Result<Vec<String>, SyncError> {
 }
 
 pub fn parse(source: &Path) -> Result<AgentSource, SyncError> {
-    let text = fs::read_to_string(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
+    let text =
+        fs::read_to_string(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
     let (frontmatter_start, frontmatter_end, body_start) = split_frontmatter(&text)
         .ok_or_else(|| invalid(source, "has no closed frontmatter fence"))?;
     let frontmatter = &text[frontmatter_start..frontmatter_end];
@@ -194,7 +195,8 @@ fn collect_sources(root: &Path, sources: &mut Vec<PathBuf>) -> Result<(), SyncEr
     let mut entries = read_dir_paths(root)?;
     entries.sort();
     for entry in entries {
-        let metadata = fs::symlink_metadata(&entry).map_err(|error| SyncError::Io(entry.clone(), error))?;
+        let metadata =
+            fs::symlink_metadata(&entry).map_err(|error| SyncError::Io(entry.clone(), error))?;
         if metadata.file_type().is_symlink() {
             return Err(unsafe_path(&entry, "is a symlink"));
         }
@@ -227,7 +229,8 @@ fn validate_tree_root(root: &Path) -> Result<(), SyncError> {
         return Err(unsafe_path(root, "contains parent directory components"));
     }
 
-    let metadata = fs::symlink_metadata(root).map_err(|error| SyncError::Io(root.to_path_buf(), error))?;
+    let metadata =
+        fs::symlink_metadata(root).map_err(|error| SyncError::Io(root.to_path_buf(), error))?;
     if metadata.file_type().is_symlink() {
         return Err(unsafe_path(root, "is a symlink"));
     }
@@ -267,7 +270,10 @@ fn parse_frontmatter(source: &Path, frontmatter: &str) -> Result<ParsedFrontmatt
         }
 
         let Some((key, raw_value)) = trimmed.split_once(':') else {
-            return Err(invalid(source, format!("frontmatter line {line:?} is malformed")));
+            return Err(invalid(
+                source,
+                format!("frontmatter line {line:?} is malformed"),
+            ));
         };
         let key = key.trim();
         let value = raw_value.trim_start();
@@ -292,7 +298,8 @@ fn parse_frontmatter(source: &Path, frontmatter: &str) -> Result<ParsedFrontmatt
 
     Ok(ParsedFrontmatter {
         name: name.ok_or_else(|| invalid(source, "frontmatter has no name"))?,
-        description: description.ok_or_else(|| invalid(source, "frontmatter has no description"))?,
+        description: description
+            .ok_or_else(|| invalid(source, "frontmatter has no description"))?,
         tools: tools.ok_or_else(|| invalid(source, "frontmatter has no tools"))?,
         model: model.ok_or_else(|| invalid(source, "frontmatter has no model"))?,
     })
@@ -305,7 +312,10 @@ fn set_field(
     value: &str,
 ) -> Result<(), SyncError> {
     if slot.is_some() {
-        return Err(invalid(source, format!("frontmatter {field} is duplicated")));
+        return Err(invalid(
+            source,
+            format!("frontmatter {field} is duplicated"),
+        ));
     }
     *slot = Some(parse_scalar_field(source, field, value)?);
     Ok(())
@@ -317,7 +327,10 @@ fn parse_scalar_field(source: &Path, field: &str, value: &str) -> Result<String,
         return Err(invalid(source, format!("frontmatter has no {field}")));
     }
     if field == "model" && value.starts_with('-') {
-        return Err(invalid(source, "frontmatter model must not start with a hyphen"));
+        return Err(invalid(
+            source,
+            "frontmatter model must not start with a hyphen",
+        ));
     }
     Ok(value)
 }
@@ -325,7 +338,10 @@ fn parse_scalar_field(source: &Path, field: &str, value: &str) -> Result<String,
 fn parse_name(source: &Path, value: &str) -> Result<String, SyncError> {
     let name = parse_scalar_field(source, "name", value)?;
     if !is_safe_agent_name(&name) {
-        return Err(invalid(source, format!("frontmatter name {name} cannot name an output file")));
+        return Err(invalid(
+            source,
+            format!("frontmatter name {name} cannot name an output file"),
+        ));
     }
     Ok(name)
 }
@@ -367,7 +383,11 @@ fn parse_scalar(value: &str) -> String {
     let quoted = value
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
-        .or_else(|| value.strip_prefix('\'').and_then(|rest| rest.strip_suffix('\'')));
+        .or_else(|| {
+            value
+                .strip_prefix('\'')
+                .and_then(|rest| rest.strip_suffix('\''))
+        });
     quoted.unwrap_or(value).to_string()
 }
 
@@ -485,8 +505,8 @@ fn accept_exact_destination(destination: &Path, rendered: &[u8]) -> Result<(), S
         return Err(SyncError::DestinationCollision(destination.to_path_buf()));
     }
 
-    let observed = fs::read(destination)
-        .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+    let observed =
+        fs::read(destination).map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
     if observed != rendered
         || !matches!(fs::symlink_metadata(destination), Ok(metadata) if metadata.is_file())
     {
@@ -579,7 +599,10 @@ mod tests {
 
     fn fixture_dir(name: &str) -> PathBuf {
         let id = FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("tool-sync-pi-agent-{name}-{id}-{}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "tool-sync-pi-agent-{name}-{id}-{}",
+            std::process::id()
+        ))
     }
 
     fn write_agent(dir: &Path, name: &str, frontmatter: &str, body: &str) -> PathBuf {
@@ -706,14 +729,38 @@ mod tests {
             let source_before = fs::read_to_string(&source).expect("read source");
             let parsed = parse(&source).expect("parse source");
             assert_eq!(parsed.name, case.name, "{name}", name = case.name);
-            assert_eq!(parsed.description, case.description, "{name}", name = case.name);
+            assert_eq!(
+                parsed.description,
+                case.description,
+                "{name}",
+                name = case.name
+            );
             assert_eq!(parsed.tools, case.source_tools, "{name}", name = case.name);
-            assert_eq!(parsed.model, if case.model == "claude-opus-4-7" { "opus" } else { "sonnet" }, "{name}", name = case.name);
-            assert_eq!(prompt_hash(&parsed.prompt), case.prompt_hash, "{name}", name = case.name);
+            assert_eq!(
+                parsed.model,
+                if case.model == "claude-opus-4-7" {
+                    "opus"
+                } else {
+                    "sonnet"
+                },
+                "{name}",
+                name = case.name
+            );
+            assert_eq!(
+                prompt_hash(&parsed.prompt),
+                case.prompt_hash,
+                "{name}",
+                name = case.name
+            );
 
             let adapted = adapt(parsed.clone()).expect("adapt source");
             assert_eq!(adapted.name, case.name, "{name}", name = case.name);
-            assert_eq!(adapted.description, case.description, "{name}", name = case.name);
+            assert_eq!(
+                adapted.description,
+                case.description,
+                "{name}",
+                name = case.name
+            );
             assert_eq!(adapted.tools, case.tools, "{name}", name = case.name);
             assert_eq!(adapted.model, case.model, "{name}", name = case.name);
             assert_eq!(adapted.prompt, parsed.prompt, "{name}", name = case.name);
@@ -721,17 +768,35 @@ mod tests {
             let destination = destination_root.join(format!("{}.md", case.name));
             render(&source, &destination).expect("render source");
 
-            assert_eq!(fs::read_to_string(&source).expect("source unchanged"), source_before);
+            assert_eq!(
+                fs::read_to_string(&source).expect("source unchanged"),
+                source_before
+            );
             let rendered = fs::read_to_string(&destination).expect("read rendered file");
-            assert_eq!(rendered, expected_render(&adapted), "{name}", name = case.name);
+            assert_eq!(
+                rendered,
+                expected_render(&adapted),
+                "{name}",
+                name = case.name
+            );
 
             let round_trip = parse(&destination).expect("parse rendered file");
             assert_eq!(round_trip.name, case.name, "{name}", name = case.name);
-            assert_eq!(round_trip.description, case.description, "{name}", name = case.name);
+            assert_eq!(
+                round_trip.description,
+                case.description,
+                "{name}",
+                name = case.name
+            );
             assert_eq!(round_trip.tools, case.tools, "{name}", name = case.name);
             assert_eq!(round_trip.model, case.model, "{name}", name = case.name);
             assert_eq!(round_trip.prompt, parsed.prompt, "{name}", name = case.name);
-            assert_eq!(prompt_hash(&round_trip.prompt), case.prompt_hash, "{name}", name = case.name);
+            assert_eq!(
+                prompt_hash(&round_trip.prompt),
+                case.prompt_hash,
+                "{name}",
+                name = case.name
+            );
         }
     }
 
@@ -752,7 +817,10 @@ mod tests {
             render(&source, &foreign_file),
             Err(SyncError::DestinationCollision(path)) if path == foreign_file
         ));
-        assert_eq!(fs::read(&foreign_file).expect("read foreign file"), b"foreign bytes\0");
+        assert_eq!(
+            fs::read(&foreign_file).expect("read foreign file"),
+            b"foreign bytes\0"
+        );
 
         let target = root.join("target.md");
         fs::write(&target, rendered_bytes(&source).expect("rendered bytes"))
@@ -763,7 +831,10 @@ mod tests {
             render(&source, &foreign_symlink),
             Err(SyncError::DestinationCollision(path)) if path == foreign_symlink
         ));
-        assert_eq!(fs::read_link(&foreign_symlink).expect("read symlink target"), target);
+        assert_eq!(
+            fs::read_link(&foreign_symlink).expect("read symlink target"),
+            target
+        );
 
         let foreign_directory = root.join("foreign-directory.md");
         fs::create_dir(&foreign_directory).expect("create foreign directory");
@@ -777,7 +848,10 @@ mod tests {
             fs::read(foreign_directory.join("owned")).expect("read directory contents"),
             b"directory bytes\0"
         );
-        assert_eq!(fs::read(&unrelated).expect("read unrelated file"), b"unrelated bytes\0");
+        assert_eq!(
+            fs::read(&unrelated).expect("read unrelated file"),
+            b"unrelated bytes\0"
+        );
     }
 
     #[test]
@@ -786,7 +860,9 @@ mod tests {
             .into_iter()
             .map(|case| agent_file(case.name))
             .collect::<Vec<_>>();
-        assert!(builtin_overlaps(&current).expect("current agents").is_empty());
+        assert!(builtin_overlaps(&current)
+            .expect("current agents")
+            .is_empty());
 
         let root = fixture_dir("builtin-overlaps");
         let scout = write_agent(
@@ -814,8 +890,9 @@ mod tests {
             "name: unsupported-tool\ndescription: bad tool\ntools: Read, Fly\nmodel: sonnet\n",
             "body\n",
         );
-        let unsupported_tool_error = adapt(parse(&unsupported_tool).expect("parse unsupported tool"))
-            .expect_err("unsupported tool must fail");
+        let unsupported_tool_error =
+            adapt(parse(&unsupported_tool).expect("parse unsupported tool"))
+                .expect_err("unsupported tool must fail");
         assert!(unsupported_tool_error.to_string().contains("unsupported"));
 
         let unresolved_model = write_agent(
@@ -824,8 +901,9 @@ mod tests {
             "name: unresolved-model\ndescription: bad model\ntools: Read\nmodel: haiku\n",
             "body\n",
         );
-        let unresolved_model_error = adapt(parse(&unresolved_model).expect("parse unresolved model"))
-            .expect_err("unresolved model must fail");
+        let unresolved_model_error =
+            adapt(parse(&unresolved_model).expect("parse unresolved model"))
+                .expect_err("unresolved model must fail");
         assert!(unresolved_model_error.to_string().contains("unsupported"));
     }
 
@@ -931,7 +1009,10 @@ mod tests {
             "---\nname: missing-description\ntools: Read\nmodel: opus\n---\nbody\n",
         )
         .expect("write missing description");
-        assert!(parse(&missing_description).expect_err("missing description fails").to_string().contains("frontmatter has no description"));
+        assert!(parse(&missing_description)
+            .expect_err("missing description fails")
+            .to_string()
+            .contains("frontmatter has no description"));
 
         let malformed_tools = root.join("malformed-tools.md");
         fs::write(
@@ -939,7 +1020,10 @@ mod tests {
             "---\nname: malformed-tools\ndescription: bad tools\ntools: Read, , Bash\nmodel: opus\n---\nbody\n",
         )
         .expect("write malformed tools");
-        assert!(parse(&malformed_tools).expect_err("malformed tools fail").to_string().contains("frontmatter tools list is malformed"));
+        assert!(parse(&malformed_tools)
+            .expect_err("malformed tools fail")
+            .to_string()
+            .contains("frontmatter tools list is malformed"));
 
         let hyphen_model = root.join("hyphen-model.md");
         fs::write(
@@ -947,7 +1031,10 @@ mod tests {
             "---\nname: hyphen-model\ndescription: bad model\ntools: Read\nmodel: -bad\n---\nbody\n",
         )
         .expect("write hyphen model");
-        assert!(parse(&hyphen_model).expect_err("hyphen model fails").to_string().contains("must not start with a hyphen"));
+        assert!(parse(&hyphen_model)
+            .expect_err("hyphen model fails")
+            .to_string()
+            .contains("must not start with a hyphen"));
     }
 
     #[test]

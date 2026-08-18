@@ -545,9 +545,7 @@ mod tests {
         let skill_destination = skill_root.join("skill");
         let plan = Plan {
             actions: vec![
-                Action::CreateDirectory {
-                    path: package_root,
-                },
+                Action::CreateDirectory { path: package_root },
                 Action::LinkPiPackage {
                     source: package_source,
                     destination: package_destination,
@@ -728,8 +726,14 @@ mod tests {
 
         run(&plan, false).expect("apply succeeds");
 
-        assert_eq!(fs::read_link(package_destination).expect("package link"), package_source);
-        assert_eq!(fs::read_link(skill_destination).expect("skill link"), skill_source);
+        assert_eq!(
+            fs::read_link(package_destination).expect("package link"),
+            package_source
+        );
+        assert_eq!(
+            fs::read_link(skill_destination).expect("skill link"),
+            skill_source
+        );
     }
 
     #[test]
@@ -781,9 +785,14 @@ mod tests {
 
         run(&plan, false).expect("render succeeds");
 
-        let rendered_prompt = pi_agent::parse(&destination).expect("parse rendered").prompt;
+        let rendered_prompt = pi_agent::parse(&destination)
+            .expect("parse rendered")
+            .prompt;
         assert_eq!(rendered_prompt, source_prompt);
-        assert_eq!(fs::read_to_string(agent_source("anchor-verifier")).expect("source after"), source_before);
+        assert_eq!(
+            fs::read_to_string(agent_source("anchor-verifier")).expect("source after"),
+            source_before
+        );
     }
 
     #[test]
@@ -814,9 +823,7 @@ mod tests {
     fn exact_existing_agent_is_accepted_without_replacing_the_file() {
         let fixture = Fixture::new();
         let source = agent_source("anchor-verifier");
-        let destination = fixture
-            .0
-            .join("home/.pi/agent/agents/anchor-verifier.md");
+        let destination = fixture.0.join("home/.pi/agent/agents/anchor-verifier.md");
         pi_agent::render(&source, &destination).expect("seed exact agent");
         let metadata = fs::metadata(&destination).expect("agent metadata");
         use std::os::unix::fs::MetadataExt;
@@ -851,8 +858,11 @@ mod tests {
         let destination_root = fixture.0.join("home/.pi/agent/agents");
         fs::create_dir_all(&destination_root).expect("destination root");
         let target = fixture.0.join("matching-agent.md");
-        fs::write(&target, pi_agent::rendered_bytes(&source).expect("render bytes"))
-            .expect("matching target");
+        fs::write(
+            &target,
+            pi_agent::rendered_bytes(&source).expect("render bytes"),
+        )
+        .expect("matching target");
         let destination = destination_root.join("anchor-verifier.md");
         symlink(&target, &destination).expect("agent symlink");
         let uncreated = fixture.0.join("first");
@@ -936,9 +946,18 @@ mod tests {
             run(&plan, false),
             Err(SyncError::DestinationCollision(path)) if path == destination
         ));
-        assert_eq!(fs::read(&destination).expect("destination bytes"), b"foreign bytes\0");
-        assert_eq!(fs::read(&foreign).expect("foreign bytes"), b"foreign bytes\0");
-        assert_eq!(fs::read(&unrelated).expect("unrelated bytes"), b"unrelated bytes\0");
+        assert_eq!(
+            fs::read(&destination).expect("destination bytes"),
+            b"foreign bytes\0"
+        );
+        assert_eq!(
+            fs::read(&foreign).expect("foreign bytes"),
+            b"foreign bytes\0"
+        );
+        assert_eq!(
+            fs::read(&unrelated).expect("unrelated bytes"),
+            b"unrelated bytes\0"
+        );
     }
 
     #[cfg(unix)]
@@ -977,9 +996,15 @@ mod tests {
             run(&plan, false),
             Err(SyncError::DestinationCollision(path)) if path == destination
         ));
-        assert_eq!(fs::read_link(&destination).expect("destination target"), target);
+        assert_eq!(
+            fs::read_link(&destination).expect("destination target"),
+            target
+        );
         assert_eq!(fs::read(&target).expect("target bytes"), b"target bytes\0");
-        assert_eq!(fs::read(&unrelated).expect("unrelated bytes"), b"unrelated bytes\0");
+        assert_eq!(
+            fs::read(&unrelated).expect("unrelated bytes"),
+            b"unrelated bytes\0"
+        );
     }
 
     #[test]
@@ -1025,7 +1050,13 @@ mod tests {
             run(&plan, false),
             Err(SyncError::DestinationCollision(path)) if path == destination
         ));
-        assert_eq!(fs::read(&destination).expect("destination bytes"), old_render);
-        assert_eq!(fs::read(&unrelated).expect("unrelated bytes"), b"unrelated bytes\0");
+        assert_eq!(
+            fs::read(&destination).expect("destination bytes"),
+            old_render
+        );
+        assert_eq!(
+            fs::read(&unrelated).expect("unrelated bytes"),
+            b"unrelated bytes\0"
+        );
     }
 }

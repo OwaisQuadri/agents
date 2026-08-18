@@ -10,12 +10,12 @@ pub mod apply;
 pub mod cli;
 /// Contains executable-tool manifest parsing and validation.
 pub mod manifest;
-/// Exposes ordered installation action data.
-/// It takes no module-level inputs, exports plan values, and cannot fail.
-pub mod plan;
 /// Discovers and renders project agent definitions for Pi.
 /// It takes source and destination paths, returns discovered or rendered paths, and reports invalid frontmatter or filesystem failures as `SyncError`.
 pub mod pi_agent;
+/// Exposes ordered installation action data.
+/// It takes no module-level inputs, exports plan values, and cannot fail.
+pub mod plan;
 /// Exposes installation planning without changing managed state.
 /// It takes a manifest and context, returns a plan, and reports unsafe state as `SyncError`.
 pub mod planner;

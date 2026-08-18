@@ -36,9 +36,10 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
         }
 
         let (working_directory, is_checkout_present) = match &tool.source {
-            ToolSource::Embedded { path } => {
-                (resolve_inside(&context.repository_root, path, "embedded source")?, true)
-            }
+            ToolSource::Embedded { path } => (
+                resolve_inside(&context.repository_root, path, "embedded source")?,
+                true,
+            ),
             ToolSource::Git { url, revision } => {
                 let checkout = context.cache_root.join(&tool.name);
                 let is_checkout_present = match fs::symlink_metadata(&checkout) {
@@ -140,12 +141,8 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
             add_directory(&skill_directory, &mut planned_paths, &mut actions)?;
 
             for skill in &tool.skills {
-                let source = resource_source(
-                    &working_directory,
-                    skill,
-                    "skill",
-                    is_checkout_present,
-                )?;
+                let source =
+                    resource_source(&working_directory, skill, "skill", is_checkout_present)?;
                 let destination = skill_directory.join(
                     skill
                         .file_name()
@@ -733,8 +730,7 @@ mod tests {
         assert_eq!(
             plan.actions[5],
             Action::LinkPiPackage {
-                source: fs::canonicalize(checkout.join("packages/rag"))
-                    .expect("canonical package"),
+                source: fs::canonicalize(checkout.join("packages/rag")).expect("canonical package"),
                 destination: context.home_root.join(".pi/agent/extensions/rag"),
             }
         );
@@ -747,8 +743,7 @@ mod tests {
         assert_eq!(
             plan.actions[7],
             Action::LinkSkill {
-                source: fs::canonicalize(checkout.join("skills/show-me"))
-                    .expect("canonical skill"),
+                source: fs::canonicalize(checkout.join("skills/show-me")).expect("canonical skill"),
                 destination: context.home_root.join(".agents/skills/show-me"),
             }
         );
@@ -759,7 +754,8 @@ mod tests {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.root.join("bundle")).expect("bundle source");
         fs::create_dir_all(fixture.root.join("bundle/skills/first/show-me")).expect("first skill");
-        fs::create_dir_all(fixture.root.join("bundle/skills/second/show-me")).expect("second skill");
+        fs::create_dir_all(fixture.root.join("bundle/skills/second/show-me"))
+            .expect("second skill");
         let mut spec = tool(ToolSource::Embedded {
             path: PathBuf::from("bundle"),
         });
@@ -874,9 +870,7 @@ mod tests {
         )
         .expect("agent source");
         let context = fixture.context(Platform::Linux);
-        let destination = context
-            .home_root
-            .join(".pi/agent/agents/fixture-agent.md");
+        let destination = context.home_root.join(".pi/agent/agents/fixture-agent.md");
         pi_agent::render(&source, &destination).expect("seed exact render");
 
         let plan = build(&ToolManifest { tools: Vec::new() }, &context)
@@ -914,8 +908,11 @@ mod tests {
         let destination_root = context.home_root.join(".pi/agent/agents");
         fs::create_dir_all(&destination_root).expect("agent destination directory");
         let target = fixture.root.join("matching-agent.md");
-        fs::write(&target, pi_agent::rendered_bytes(&source).expect("render bytes"))
-            .expect("matching target");
+        fs::write(
+            &target,
+            pi_agent::rendered_bytes(&source).expect("render bytes"),
+        )
+        .expect("matching target");
         let destination = destination_root.join("fixture-agent.md");
         symlink(&target, &destination).expect("agent destination symlink");
 
