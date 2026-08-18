@@ -98,3 +98,13 @@ Standing input to the next GEPA pass. Read this before proposing any mutation.
 - `evals/run.sh` grades a plan rather than a live run. A plan that cites the right command
   and a run that executes it are not the same evidence. A sandboxed fixture repo would be
   stronger, and costs a temp clone per case.
+
+## recovered from the live clone, 2026-08-18
+
+Two observations from the pre-rewrite working copy, salvaged when the PR flow landed:
+
+- **`git branch --merged` as the only delete gate.** On 2026-08-14 in the rag repo, "cleanup
+  the stale branches" would have deleted `origin/map/RAG-0001` — 43 commits, 12,677
+  insertions, a Rust rewrite last touched the previous day. The gate is what caught it.
+- The report shape is untested against a repo with more than one remote. No case covers
+  `upstream` plus `origin`.
