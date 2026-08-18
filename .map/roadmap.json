@@ -180,7 +180,7 @@
     {
       "id": "AGNT-0012",
       "kind": "ticket",
-      "status": "in progress",
+      "status": "resolved",
       "short": "Install the pinned Pi stack with private telemetry.",
       "long": "Install nicobailon/pi-subagents, Plannotator, HumanLayer show-me, Wayfinder, and grilling from pinned upstream revisions. Keep each upstream checkout unchanged. Add a project-owned Pi extension that records package version, invocation, duration, result status, human correction, and exposed cost fields. Do not record prompts or file contents by default.\n\nDerive Pi-compatible agent metadata from the existing definitions without creating a second prompt source. Disable overlapping bundled agents only after representative project roles pass. Require three reproduced failures with one source-level cause before a fork. Test dry runs, repeated installs, telemetry redaction, and representative agent discovery.",
       "deps": [
