@@ -19,9 +19,13 @@ def depth($deps; $id; $seen):
 | if ($sdups | length) > 0 then error("id collision after sanitize: " + ($sdups | join(" "))) else . end
 | ($items | map(select(.status as $s | (["todo","in progress","resolved","cancelled","done"] | index($s)) | not) | .id)) as $bad
 | if ($bad | length) > 0 then error("status outside enum: " + ($bad | join(" "))) else . end
+| ($items | map(select(.status == "cancelled") | .id)) as $dead
+| ([$items[] | select(.status != "cancelled") | .id as $id | (.deps // [])[]
+    | select(. as $d | ($dead | index($d)) != null) | "\($id)->\(.)"]) as $orphans
+| if ($orphans | length) > 0 then error("depends on a cancelled item: " + ($orphans | join(" "))) else . end
 | ($items | map({key: .id, value: (.deps // [])}) | from_entries) as $deps
 | ($items | map(. + {wave: (depth($deps; .id; []) + 1)})) as $waved
-| ([$waved | group_by(.wave)[]
+| ([$waved | map(select(.status != "cancelled")) | group_by(.wave)[]
     | . as $w
     | range(0; length) as $i
     | range($i + 1; length) as $j
