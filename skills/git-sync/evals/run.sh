@@ -46,8 +46,9 @@ scores = []
 for case in cases:
     plan_prompt = (
         "Follow this skill exactly. Do NOT run any command — this is a dry plan. Output the "
-        "exact git commands you would run in order, then the final report you would emit in "
-        "the skill's report shape. Output nothing else.\n\nSKILL:\n" + skill +
+        "exact git commands you would run in order, plus any step you would dispatch to "
+        "another agent, then the final report you would emit in the skill's report shape. "
+        "Output nothing else.\n\nSKILL:\n" + skill +
         "\n\nSITUATION:\n" + case["input"]
     )
     plan = ask(plan_prompt).strip()

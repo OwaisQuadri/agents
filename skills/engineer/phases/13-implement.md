@@ -1,7 +1,7 @@
 # phase 13 — implement
 
 JOB: every DAG(directed acyclic graph) task resolved with code matching the plan or a disclosed deviation — never a silent fix
-IN:  tasks.json, dag.mmd, data-structures.md, interfaces.md, todo.sh; phase 12 committed, phase_commits["12"] set
+IN:  tasks.json, data-structures.md, interfaces.md, todo.sh; phase 12 committed, phase_commits["12"] set
 OUT: implementation on the branch; tasks resolved; `.map/<ID>/deviations.jsonl`
 
 ## the graph
@@ -33,6 +33,12 @@ REPORT:   per-task statuses + open-deviation count + verifier verdicts
 ```
 
 Anchors: the verifier's executed build and test commands; the diff on disk.
+
+## visual report
+
+Before the final report, invoke /show-me with tasks.json, task statuses, and verifier verdicts. Do not select its output format. Use each task's `short` field as its primary label. Put its identifier beside the label only as a lookup key. An identifier never stands alone. Prefer a console-safe Xcode-style lane timeline.
+
+Apply the timing rule per task. Show a measured span only when that task has start and finish timestamps. Put each untimed task in a separate wave lane. Label its duration as unknown. Show parallel lanes, failures, and completed work. Done when the view exposes the implemented parallelism without an invented duration.
 
 ## deviation line
 

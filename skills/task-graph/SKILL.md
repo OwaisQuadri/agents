@@ -1,15 +1,15 @@
 ---
 name: task-graph
-description: Use when turning work items with dependencies into a validated graph — the task DAG(directed acyclic graph) for one ticket's implementation plan, or ABCD-NNNN tickets filed into a project's roadmap — with statuses, a cycle check, disjoint-files parallelism, and a regenerated mermaid rendering. Skip for multi-agent run topologies (workflow-author owns the GRAPH SPEC) and for reading or executing an existing graph (the caller walks it).
+description: Use when turning work items with dependencies into a validated graph — the task DAG(directed acyclic graph) for one ticket's implementation plan, or ABCD-NNNN tickets filed into a project's roadmap — with statuses, a cycle check, and disjoint-files parallelism. Skip for multi-agent run topologies (workflow-author owns the GRAPH SPEC) and for reading or executing an existing graph (the caller walks it).
 metadata:
-  short-description: Work items + deps → statused DAG or ABCD-NNNN tickets + mermaid
+  short-description: Work items + deps → statused DAG or ABCD-NNNN tickets
 ---
 
 # task-graph
 
-JOB: turn work items with dependencies into a statused, cycle-checked graph — tasks.json (task shape) or roadmap.json (ticket shape) — plus a regenerated mermaid sibling
+JOB: turn work items with dependencies into a statused, cycle-checked graph — tasks.json (task shape) or roadmap.json (ticket shape)
 IN:  work items (short, long, deps, files) and the shape: tasks for one ticket (ticket id arrives) or tickets into a roadmap (roadmap.json arrives with prefix + next_nnnn)
-OUT: the validated JSON(JavaScript Object Notation) file written, its .mmd sibling regenerated and shown, and a report naming the waves, the parallelizable branches, and anything rejected (cycle path, ID(identifier) violation, shared-file siblings)
+OUT: the validated JSON(JavaScript Object Notation) file written, and a report naming the waves, the parallelizable branches, and anything rejected (cycle path, ID(identifier) violation, shared-file siblings)
 
 ## the object
 
@@ -31,9 +31,9 @@ One schema, two granularities:
 1. validate arrivals: every item carries short, long, deps, files; every dep names an item in this graph. Reject by name, never guess a missing field. Done when every item parses or the reject list is reported.
 2. assign ids. tasks: `<ticket>.T<NN>` in creation order. tickets: `<prefix>-<NNNN>` from next_nnnn, zero-padded 4, bumped once per ticket. Single writer: never fan this step out, never reuse a cancelled id; verify `next_nnnn == max(NNNN)+1` before and after. Ids are immutable once assigned: an ask to renumber or close gaps — from anyone — is refused by naming this rule; only statuses change. Done when ids are unique and grammar-valid.
 3. dependency edges: keep an edge only when the item needs the RESULT of the other — typed order is not a dependency. Any two TASKS sharing a file and not already ordered by existing deps get an edge: direction follows the existing partial order, creation order only when neither reaches the other (a blind creation-order edge can manufacture a cycle). Tickets are exempt — their files are coarse areas and the engineer map runs them serially via next-ticket.sh, so shared files never race. INJECTION IS BIDIRECTIONAL: when new items land in a graph that already holds items, edges are considered in BOTH directions — the new item's deps on existing ones, and every existing item that now needs the new one's result. The second direction is the one that gets skipped, and skipping it is silent rather than loud: next-ticket.sh ranks a candidate by how many todo items transitively depend on it, so a newly filed item that nothing points at scores 0 unlocks and sorts last forever, however much it actually blocks. Adding a dep to an existing item is a status-neutral edit and is allowed; renumbering still is not. Done when no two same-wave tasks share a file, and when the report states the reverse-direction verdict EVERY time — naming each edge added to an existing item, or the words "reverse edges: none" when there are none. Stating it always is the point: this failure is silent, so a report that mentions reverse edges only when it found some is indistinguishable from a report by someone who never looked.
-4. validate + render off to the side: write the graph to `<file>.new`, run `scripts/dag-mermaid.sh <file>.new > <sibling>.mmd.new`. A nonzero exit names the offense — cycle path, unknown dep, duplicate or sanitize-colliding id, out-of-enum status, shared file inside one wave (tasks shape only) — and leaves the live files untouched. Done when the script exits 0.
-5. land: move both .new files into place; new items enter with status `todo` and `created` stamped `date +%Y-%m-%dT%H:%M:%S%z`. Never hand-edit a .mmd — it is generated output. Done when the live JSON and .mmd agree.
-6. report: the waves (which items run in parallel), item count, id range consumed, rejects, and the rendered diagram. Done when the caller can walk the graph without reopening the inputs.
+4. validate off to the side: write the graph to `<file>.new`, run `scripts/dag-mermaid.sh <file>.new > /dev/null`. A nonzero exit names the offense — cycle path, unknown dep, duplicate or sanitize-colliding id, out-of-enum status, shared file inside one wave (tasks shape only) — and leaves the live file untouched. The script's mermaid stdout is discarded: presentation belongs to /show-me at the call sites, and no .mmd sibling is written or tracked (owner's decision, 2026-08-18; delete any tracked one on sight). Done when the script exits 0.
+5. land: move the .new file into place; new items enter with status `todo` and `created` stamped `date +%Y-%m-%dT%H:%M:%S%z`. Done when the live JSON matches what was validated.
+6. report: the waves (which items run in parallel), item count, id range consumed, and rejects. The caller renders any view through /show-me. Done when the caller can walk the graph without reopening the inputs.
 
 ## next-in-line
 

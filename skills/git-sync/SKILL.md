@@ -14,9 +14,9 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
 ## hard rules
 
 - Never commit, merge, squash, or push directly on main. Every change reaches main through a PR.
-- A branch is deletable only when `git branch --merged origin/main` lists it. Never infer stale status from its name or age.
+- A branch is deletable only on one of two proofs: `git branch --merged origin/main` lists it, OR `git diff origin/main <branch>` is run and shown empty. Never infer stale status from its name or age. The second proof exists because a squash-merged PR never makes its branch an ancestor of main, so `--merged` alone would keep every squash-landed branch forever.
 - Never delete the current PR branch during the run. A squash merge does not make that branch an ancestor of main.
-- Never use `git branch -D`. Keep every branch that the merged-branch command does not list.
+- `git branch -D` is legal only directly after the empty-diff proof, because `-d` refuses a squash-merged branch however completely main holds it. Without that shown proof, keep the branch.
 - Never force-push. A rejected push means that the remote diverged. Stop and ask the user.
 - Never rebase a branch after another person can use its pushed commits.
 - No AI(Artificial Intelligence) attribution can enter a commit or PR body. Inspect both outputs before reporting success.
@@ -41,7 +41,7 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
    git branch --merged origin/main | grep -v '^\*'
    git branch --no-merged origin/main
    ```
-   Copy deletion candidates only from the first command. Keep the current PR branch even if the first command lists it. For each unmerged branch, run `git rev-list --count origin/main..<branch>` and `git diff --shortstat origin/main...<branch>`. Delete candidates only with `git branch -d`. Done when every local branch has a recorded verdict.
+   Copy deletion candidates from the first command, and delete those with `git branch -d`. For each unmerged branch, run `git diff origin/main <branch>`: an empty diff proves main holds the content and `git branch -D` with that shown proof deletes it; a non-empty diff means work, and the branch stays with its `git rev-list --count origin/main..<branch>` recorded. Keep the current PR branch even when a proof lists it. Done when every local branch has a recorded verdict.
 
 8. **Verify and report.** Run `git rev-parse HEAD` and `git rev-parse @{u}`. Compare the hashes literally. Verify the PR base is main and its head is the current branch. Emit exactly this shape:
    ```text

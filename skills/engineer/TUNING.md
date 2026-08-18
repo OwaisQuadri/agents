@@ -5,6 +5,25 @@ tune the map, and not when you walk a ticket.
 
 ## accepted mutations
 
+- 2026-08-11, phase 12 gained gate F. Owner, mid-run on RAG-0001: "when in the engineer skill
+  do i get to read the todos? that should be in the implementation human gate". He never did.
+  Phase 12 placed the markers, wrote `todo.sh`, committed the stash anchor, and fell straight
+  into phase 13's fan-out. Gate B at phase 11 cannot cover it, because neither the markers nor
+  `todo.sh` exist at that point. The run that surfaced it supplies the evidence. `todo.sh`'s
+  phase-05 FIX step ran a package install on his machine from a script he had never seen. And
+  25 markers went into 25 files unreviewed, three of them live modules that a hook executes on
+  every prompt in every session. Both arms of the gate test hold. A marker at the wrong site
+  sends parallel fresh builders to the wrong place before anyone sees it, and no cheaper stop
+  exists. The gate is lettered F, not inserted as a new C. C, D and E are named in phase files,
+  in every `state.json.gates` entry, and in finished run records. Renumbering buys alphabetical
+  order and costs correctness. The letters are identities, never a firing order.
+- 2026-08-17, engineering views now use human-readable task names as their primary labels.
+  A live phase-11 plan showed all 55 tasks only as identifiers. The owner said that the
+  numbers meant nothing to him. Phase 11, phase 13, and phase 22 now use each `short` value as
+  the primary label. Each view keeps the identifier beside the name only for exact lookup.
+  This is a defect fix. The user's correction is the reproduction, and the blind `g9` case
+  scored 9 of 10. The full run scored 8.77 over 13 non-holdout cases. The holdout run scored
+  9.00 over 5 cases.
 - 2026-08-10, phase 22 files edges both ways. Owner, at the live CPU-0026 gate D. Injecting a
   ticket computed only that ticket's own dependencies. So a new ticket that blocks three filed
   ones landed with nothing pointing at it. `next-ticket.sh` ranks by transitive dependents, so

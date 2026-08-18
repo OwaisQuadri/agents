@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 19,
+  "next_nnnn": 26,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -147,7 +147,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Prove tool sync on real Linux.",
-      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository\u2019s continuous integration output.",
       "deps": [
         "AGNT-0008"
       ],
@@ -309,6 +309,103 @@
       ],
       "blame_phase": null,
       "created": "2026-08-17T20:27:34-0400"
+    },
+    {
+      "id": "AGNT-0019",
+      "short": "keep a task's file list true to what the task actually touches",
+      "long": "Phase 18's stash content check compares the stashed files against the union of every task's `files` array. On RAG-0001 four files were in the stash that no task claimed: `Cargo.lock`, `.gitignore`, `parity/config.toml` and `src/env_lock.rs`. Two classes of gap produced them. A task that edits `Cargo.toml` generates `Cargo.lock` and never declares it. And a phase-15 fix that CREATES a file never appends it to the owning task, so the file exists with no owner. The check then reads as a possible contaminated stash when it is really an incomplete inventory, which costs a careful reader real time at the one gate where a wrong call is catastrophic. Recorded as D-22. FIX: phase 08 declares generated companions alongside their source, and a phase-15 resolution appends any file it creates to the task it belongs to.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "skills/engineer/phases/08-task-breakdown.md",
+        "skills/engineer/phases/15-diagnose.md"
+      ],
+      "blame_phase": 21,
+      "created": "2026-08-14",
+      "kind": "bug"
+    },
+    {
+      "id": "AGNT-0020",
+      "short": "validate a break panel's oracle before trusting its verdicts",
+      "long": "A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "skills/engineer/phases/19-break-panel.md"
+      ],
+      "blame_phase": 21,
+      "created": "2026-08-14",
+      "kind": "bug"
+    },
+    {
+      "id": "AGNT-0021",
+      "short": "assert the ticket counter against the filed ids",
+      "long": "`next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "skills/engineer/phases/22-tickets.md",
+        "skills/task-graph/SKILL.md"
+      ],
+      "blame_phase": 21,
+      "created": "2026-08-14",
+      "kind": "bug"
+    },
+    {
+      "id": "AGNT-0022",
+      "short": "a canary marker per message to time compaction",
+      "long": "A long session cannot tell when the harness summarized or truncated its context. Compaction timing is therefore a guess. Add a canary marker to each message. A session or a hook then detects context loss the moment the earliest canary disappears. Compaction runs on evidence instead of on feel.\n\nResearch the mechanism first: where the marker lives, who checks it, and what the check costs per turn. The user's 2026-08-18 note asks for a canary in each message to time compaction.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "hooks/",
+        "config/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0023",
+      "short": "start Claude and Codex sessions with a memory search",
+      "long": "The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "hooks/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0024",
+      "short": "fork show-me into this repo's skills",
+      "long": "The show-me skill runs from a symlink into the tool-sync plugin cache under ~/.cache/tool-sync/humanlayer-skills. A cache re-sync overwrites anything edited there, so the skill cannot hold local changes.\n\nCopy the skill into skills/show-me in this repo. Repoint ~/.claude/skills/show-me at the repo copy through the installer. Record the upstream plugin revision inside the fork. A later maintainer then diffs upstream improvements in deliberately. The user's words, 2026-08-18: clone the skill into the AGNT skills instead of using it from remote.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "skills/show-me/",
+        "install.sh"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0025",
+      "short": "compact engineering views on the forked show-me",
+      "long": "The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
+      "deps": [
+        "AGNT-0024"
+      ],
+      "status": "todo",
+      "files": [
+        "skills/show-me/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
     }
   ]
 }
