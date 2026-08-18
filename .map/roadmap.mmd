@@ -16,6 +16,9 @@ flowchart TD
     AGNT_0019["AGNT-0019 keep a task's file list true to what the task actually touches"]:::todo
     AGNT_0020["AGNT-0020 validate a break panel's oracle before trusting its verdicts"]:::todo
     AGNT_0021["AGNT-0021 assert the ticket counter against the filed ids"]:::todo
+    AGNT_0022["AGNT-0022 a canary marker per message to time compaction"]:::todo
+    AGNT_0023["AGNT-0023 start Claude and Codex sessions with a memory search"]:::todo
+    AGNT_0024["AGNT-0024 fork show-me into this repo's skills"]:::todo
   end
   subgraph wave2 ["wave 2 — parallel"]
     AGNT_0010["AGNT-0010 Prove tool sync on real Linux."]:::todo
@@ -23,6 +26,7 @@ flowchart TD
     AGNT_0012["AGNT-0012 Install the pinned Pi stack with private telemetry."]:::resolved
     AGNT_0014["AGNT-0014 Create the two-tab Herdr worktree setup."]:::todo
     AGNT_0015["AGNT-0015 Show live request and overall diffs in Pi."]:::todo
+    AGNT_0025["AGNT-0025 compact engineering views on the forked show-me"]:::todo
   end
   subgraph wave3 ["wave 3 — parallel"]
     AGNT_0009["AGNT-0009 Manage shell entries and protect generated files."]:::todo
@@ -47,3 +51,4 @@ flowchart TD
   AGNT_0015 --> AGNT_0017
   AGNT_0012 --> AGNT_0018
   AGNT_0013 --> AGNT_0018
+  AGNT_0024 --> AGNT_0025

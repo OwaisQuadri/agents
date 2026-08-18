@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 22,
+  "next_nnnn": 26,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -350,6 +350,62 @@
       "blame_phase": 21,
       "created": "2026-08-14",
       "kind": "bug"
+    },
+    {
+      "id": "AGNT-0022",
+      "short": "a canary marker per message to time compaction",
+      "long": "A long session cannot tell when the harness summarized or truncated its context. Compaction timing is therefore a guess. Add a canary marker to each message. A session or a hook then detects context loss the moment the earliest canary disappears. Compaction runs on evidence instead of on feel.\n\nResearch the mechanism first: where the marker lives, who checks it, and what the check costs per turn. The user's 2026-08-18 note asks for a canary in each message to time compaction.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "hooks/",
+        "config/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0023",
+      "short": "start Claude and Codex sessions with a memory search",
+      "long": "The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "hooks/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0024",
+      "short": "fork show-me into this repo's skills",
+      "long": "The show-me skill runs from a symlink into the tool-sync plugin cache under ~/.cache/tool-sync/humanlayer-skills. A cache re-sync overwrites anything edited there, so the skill cannot hold local changes.\n\nCopy the skill into skills/show-me in this repo. Repoint ~/.claude/skills/show-me at the repo copy through the installer. Record the upstream plugin revision inside the fork. A later maintainer then diffs upstream improvements in deliberately. The user's words, 2026-08-18: clone the skill into the AGNT skills instead of using it from remote.",
+      "deps": [],
+      "status": "todo",
+      "files": [
+        "skills/show-me/",
+        "install.sh"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0025",
+      "short": "compact engineering views on the forked show-me",
+      "long": "The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
+      "deps": [
+        "AGNT-0024"
+      ],
+      "status": "todo",
+      "files": [
+        "skills/show-me/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-18T18:48:03-0400",
+      "kind": "ticket"
     }
   ]
 }
