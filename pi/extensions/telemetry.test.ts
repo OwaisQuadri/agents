@@ -525,6 +525,32 @@ test("telemetry feedback helper leaves memory unchanged when append fails", asyn
 		await assert.rejects(attachFeedback(runtime, "run-1", "accepted", validFeedbackRecord.createdAt), /directory|EISDIR/i);
 		assert.equal(runtime.store.records.length, 1);
 		await assert.rejects(readFile(runtime.store.path, "utf8"));
+
+		runtime.store.path = join(blockedDirectory, "retry.jsonl");
+		await writeFile(runtime.store.path, `${JSON.stringify(validRunRecord)}\n`);
+		await attachFeedback(runtime, "run-1", "accepted", validFeedbackRecord.createdAt);
+		assert.equal(runtime.store.records.length, 2);
+		assert.equal((await loadStore(runtime.store.path)).records.length, 2);
+	});
+});
+
+test("telemetry serializes concurrent feedback for one run", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "telemetry-feedback-concurrent-"));
+	await withTelemetryDirectory(directory, async () => {
+		const store = await loadStore();
+		await appendRecord(store, validRunRecord);
+		const runtime = createTelemetryRuntime(store);
+
+		const first = attachFeedback(runtime, "run-1", "accepted", validFeedbackRecord.createdAt);
+		const second = attachFeedback(runtime, "run-1", "corrected", validFeedbackRecord.createdAt);
+
+		await assert.rejects(second, /already pending/);
+		await first;
+		assert.deepEqual(
+			store.records.filter((record) => record.recordType === "feedback").map((record) => record.value),
+			["accepted"],
+		);
+		assert.equal((await loadStore()).records.length, 2);
 	});
 });
 
@@ -759,6 +785,33 @@ test("telemetry start and settle validation preserve active runs on append failu
 		assert.equal(runtime.activeRuns.has("run-direct"), true);
 		assert.deepEqual(runtime.store.records, []);
 		await assert.rejects(readFile(store.path, "utf8"));
+
+		runtime.store.path = join(blockedDirectory, "retry.jsonl");
+		await settleRun(runtime, "run-direct", null, "9.9.9", "succeeded", tokens, null, settledAt);
+		assert.equal(runtime.activeRuns.has("run-direct"), false);
+		assert.equal((await loadStore(runtime.store.path)).records.length, 1);
+	});
+});
+
+test("telemetry serializes concurrent settlement for one run", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "telemetry-settle-concurrent-"));
+	await withTelemetryDirectory(directory, async () => {
+		const store = await loadStore();
+		const runtime = createTelemetryRuntime(store);
+		const startedAt = "2026-08-17T02:24:00.000Z";
+		const settledAt = "2026-08-17T02:24:05.000Z";
+		const tokens = { input: null, output: null, cacheRead: null, cacheWrite: null };
+		startRun(runtime, "run-concurrent", "custom-package", null, startedAt);
+
+		const first = settleRun(runtime, "run-concurrent", null, "9.9.9", "succeeded", tokens, null, settledAt);
+		const second = settleRun(runtime, "run-concurrent", null, "9.9.9", "failed", tokens, null, settledAt);
+
+		await assert.rejects(second, /already pending/);
+		await first;
+		assert.equal(runtime.activeRuns.has("run-concurrent"), false);
+		assert.equal(store.records.length, 1);
+		assert.equal((store.records[0] as RunRecord).status, "succeeded");
+		assert.equal((await loadStore()).records.length, 1);
 	});
 });
 
@@ -1046,5 +1099,35 @@ test("telemetry shutdown cancels remaining active runs", async () => {
 				assertRunRecord(record as Record<string, unknown>);
 			}
 		}
+	});
+});
+
+test("telemetry shutdown attempts every run and reports partial failure", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "telemetry-shutdown-partial-"));
+	await withTelemetryDirectory(directory, async () => {
+		const store = await loadStore();
+		const runtime = createTelemetryRuntime(store);
+		const api = createFakeExtensionAPI();
+		const recordingUi = createRecordingUi();
+		registerLifecycle(api.api, runtime);
+		startRun(runtime, "invalid-shutdown", "other-package", null, "2026-08-17T02:24:00.000Z");
+		startRun(runtime, "valid-shutdown", runtime.packageName, null, "2026-08-17T02:24:01.000Z");
+
+		const shutdownHandler = api.on("session_shutdown");
+		const ctx = createFakeLifecycleContext(recordingUi);
+		await assert.rejects(invoke(shutdownHandler, { type: "session_shutdown", reason: "quit" }, ctx), (error: unknown) => {
+			assert.ok(error instanceof AggregateError);
+			assert.match(error.message, /failed to settle 1 active run/);
+			assert.equal(error.errors.length, 1);
+			assert.match(String(error.errors[0]), /packageVersion/);
+			return true;
+		});
+
+		assert.deepEqual([...runtime.activeRuns.keys()], ["invalid-shutdown"]);
+		assert.equal(store.records.length, 1);
+		assert.equal((store.records[0] as RunRecord).runId, "valid-shutdown");
+		assert.equal((store.records[0] as RunRecord).status, "cancelled");
+		assert.deepEqual(recordingUi.statuses.at(-1), { key: "telemetry", text: "active: 1 failed: 0" });
+		assert.equal((await loadStore()).records.length, 1);
 	});
 });

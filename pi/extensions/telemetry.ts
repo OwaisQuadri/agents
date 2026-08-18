@@ -74,6 +74,13 @@ type TelemetryRuntime = {
 	currentParentRunId: string | null;
 };
 
+type PendingTelemetryMutations = {
+	settlementRunIds: Set<string>;
+	feedbackRunIds: Set<string>;
+};
+
+const pendingTelemetryMutations = new WeakMap<TelemetryRuntime, PendingTelemetryMutations>();
+
 type NormalizedMetrics = {
 	tokens: TokenUsage;
 	costUsd: number | null;
@@ -567,6 +574,18 @@ export function createTelemetryRuntime(store: TelemetryStore): TelemetryRuntime 
 	};
 }
 
+function pendingMutations(runtime: TelemetryRuntime): PendingTelemetryMutations {
+	let pending = pendingTelemetryMutations.get(runtime);
+	if (pending === undefined) {
+		pending = {
+			settlementRunIds: new Set(),
+			feedbackRunIds: new Set(),
+		};
+		pendingTelemetryMutations.set(runtime, pending);
+	}
+	return pending;
+}
+
 function ensureAvailableRunId(runtime: TelemetryRuntime, runId: string): void {
 	if (runtime.activeRuns.has(runId) || runtime.store.records.some((record) => record.recordType === "run" && record.runId === runId)) {
 		throw new Error(`telemetry run ${runId} already exists`);
@@ -795,6 +814,22 @@ function finalizeSettledRun(runtime: TelemetryRuntime, runId: string): void {
 	}
 }
 
+async function appendSettledRun(runtime: TelemetryRuntime, record: RunRecord): Promise<RunRecord> {
+	const pending = pendingMutations(runtime);
+	if (pending.settlementRunIds.has(record.runId)) {
+		throw new Error(`telemetry run ${record.runId} settlement is already pending`);
+	}
+
+	pending.settlementRunIds.add(record.runId);
+	try {
+		await appendRecord(runtime.store, record);
+		finalizeSettledRun(runtime, record.runId);
+		return record;
+	} finally {
+		pending.settlementRunIds.delete(record.runId);
+	}
+}
+
 function settleActiveRun(
 	runtime: TelemetryRuntime,
 	runId: string,
@@ -806,11 +841,7 @@ function settleActiveRun(
 	settledAt: string,
 ): Promise<RunRecord> {
 	const { record } = prepareSettledRun(runtime, runId, parentRunId, packageVersion, status, tokens, costUsd, settledAt);
-
-	return appendRecord(runtime.store, record).then(() => {
-		finalizeSettledRun(runtime, runId);
-		return record;
-	});
+	return appendSettledRun(runtime, record);
 }
 
 /**
@@ -867,11 +898,7 @@ export function settleRun(
 	settledAt: string,
 ): Promise<RunRecord> {
 	const { record } = prepareSettledRun(runtime, runId, parentRunId, packageVersion, status, tokens, costUsd, settledAt);
-
-	return appendRecord(runtime.store, record).then(() => {
-		finalizeSettledRun(runtime, runId);
-		return record;
-	});
+	return appendSettledRun(runtime, record);
 }
 
 function parseRunId(value: AsyncStartedEvent): string {
@@ -972,17 +999,19 @@ function settleParentRun(runtime: TelemetryRuntime, status: TelemetryStatus): Pr
 	);
 }
 
-function settleAllActiveRuns(runtime: TelemetryRuntime, status: TelemetryStatus): Promise<RunRecord[]> {
+async function settleAllActiveRuns(runtime: TelemetryRuntime, status: TelemetryStatus): Promise<RunRecord[]> {
 	const runIds = [...runtime.activeRuns.keys()];
 	const settledAt = new Date().toISOString();
 	const records: RunRecord[] = [];
+	const failures: unknown[] = [];
 
-	return runIds.reduce<Promise<void>>((chain, runId) => {
-		return chain.then(async () => {
-			const active = runtime.activeRuns.get(runId);
-			if (active === undefined) {
-				return;
-			}
+	for (const runId of runIds) {
+		const active = runtime.activeRuns.get(runId);
+		if (active === undefined) {
+			continue;
+		}
+
+		try {
 			const record = await settleActiveRun(
 				runtime,
 				runId,
@@ -994,8 +1023,16 @@ function settleAllActiveRuns(runtime: TelemetryRuntime, status: TelemetryStatus)
 				settledAt,
 			);
 			records.push(record);
-		});
-	}, Promise.resolve()).then(() => records);
+		} catch (error) {
+			failures.push(error);
+		}
+	}
+
+	if (failures.length > 0) {
+		throw new AggregateError(failures, `telemetry failed to settle ${failures.length} active run(s)`);
+	}
+
+	return records;
 }
 
 function parseShutdownEvent(event: ShutdownEvent): void {
@@ -1162,6 +1199,11 @@ export async function attachFeedback(
 		throw new Error(`telemetry feedback run ${runId} already exists`);
 	}
 
+	const pending = pendingMutations(runtime);
+	if (pending.feedbackRunIds.has(runId)) {
+		throw new Error(`telemetry feedback run ${runId} is already pending`);
+	}
+
 	const record: FeedbackRecord = {
 		recordType: "feedback",
 		runId,
@@ -1169,8 +1211,13 @@ export async function attachFeedback(
 		createdAt: normalizedCreatedAt,
 	};
 
-	await appendRecord(runtime.store, record);
-	return record;
+	pending.feedbackRunIds.add(runId);
+	try {
+		await appendRecord(runtime.store, record);
+		return record;
+	} finally {
+		pending.feedbackRunIds.delete(runId);
+	}
 }
 
 export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): void {
