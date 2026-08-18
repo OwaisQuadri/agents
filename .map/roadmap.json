@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 18,
+  "next_nnnn": 19,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -290,6 +290,25 @@
       ],
       "blame_phase": null,
       "created": "2026-08-17T01:57:33-0400"
+    },
+    {
+      "id": "AGNT-0018",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Design harness-independent model routing by task value.",
+      "long": "Design the routing system and its evaluation plan. Do not implement the router. Define a harness-neutral architecture that chooses a model and access path for each task class. Admit newly released models through discovered capability, availability, quota, and price data instead of a hard-coded model list.\n\nSeparate the model, provider, account, and harness so the design can use a model through any allowed route. Cover the Claude Code and Codex memberships and the user's free OpenRouter account. Study an OpenRouter route from the Claude harness as one example. Do not assume that a membership pays for Application Programming Interface (API) use or that each harness exposes each provider.\n\nDefine a repeatable evaluation and benchmark system for the tasks this repository delegates. Include representative task classes, fixed inputs, blind grading, repeated trials, uncertainty, model and harness version capture, and content-free result summaries. Compare completion quality, success probability, latency, marginal price, membership quota impact, and fallback behavior. Define the utility rule that trades task success against price paid. Include a cold-start policy for new models and an exploration limit that cannot spend beyond an approved budget.\n\nProduce the architecture, adapter contracts, data shapes, benchmark protocol, privacy rules, routing decision record, and an implementation ticket breakdown. Show how existing telemetry supplies outcomes without storing prompts or outputs. Name which benchmark artifacts require reviewed content. Include one worked comparison across membership-backed Claude Code, membership-backed Codex, and OpenRouter routes. End with a testable design acceptance checklist and no runtime code.",
+      "deps": [
+        "AGNT-0012",
+        "AGNT-0013"
+      ],
+      "files": [
+        "docs/",
+        "evals/",
+        "agents/",
+        "pi/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-17T20:27:34-0400"
     }
   ]
 }
