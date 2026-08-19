@@ -158,6 +158,9 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
         }
     }
 
+    // TODO(AGNT-0014.T02): inside the per-tool loop above, after the skills block: for
+    // tool.herdr_plugin = Some(subdir), push Action::LinkHerdrPlugin
+    // { tool: tool.name, source: working_directory.join(subdir) } with tests
     let agent_sources = discover_project_agents(&context.repository_root)?;
     let _builtin_overlap_evidence = pi_agent::builtin_overlaps(&agent_sources)?;
     if !agent_sources.is_empty() {

@@ -159,6 +159,7 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         let platforms = platforms_of(name, raw_tool.platforms)?;
         validate_installer(name, &raw_tool.installer)?;
 
+        // TODO(AGNT-0014.T01): count herdr_plugin as resource-only alongside the Pi fields
         let is_resource_only = raw_tool.pi_extension.is_some()
             || raw_tool.pi_package.is_some()
             || !raw_tool.skills.is_empty();
@@ -220,6 +221,8 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
                 })?;
             }
         }
+        // TODO(AGNT-0014.T01): validate herdr_plugin as a relative, non-escaping subdir
+        // (mirror the pi_package rules, "." allowed) and add mod tests coverage
         for skill in &raw_tool.skills {
             validate_relative(name, "skill", skill)?;
             skill.file_name().ok_or_else(|| {
@@ -237,6 +240,7 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
             pi_extension: raw_tool.pi_extension,
             pi_package: raw_tool.pi_package,
             skills: raw_tool.skills,
+            // TODO(AGNT-0014.T01): herdr_plugin: raw_tool.herdr_plugin
         });
     }
 

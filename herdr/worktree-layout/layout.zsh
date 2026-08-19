@@ -8,6 +8,7 @@
 set -euo pipefail
 
 # event_workspace_id — parse HERDR_PLUGIN_EVENT_JSON, print the workspace id.
+# TODO(AGNT-0014.T04): implement via jq; exit 1 tagged on missing/malformed env
 event_workspace_id() { print "unimplemented" >&2; exit 42 }
 
 # event_worktree_path — parse HERDR_PLUGIN_EVENT_JSON, print the worktree path.
@@ -15,16 +16,19 @@ event_worktree_path() { print "unimplemented" >&2; exit 42 }
 
 # tab_id_by_label <workspace_id> <label> — print the tab id carrying <label> in
 # the workspace, or nothing when absent.
+# TODO(AGNT-0014.T04): read `herdr tab list`; args pass as single argv words
 tab_id_by_label() { print "unimplemented" >&2; exit 42 }
 
 # ensure_tab <workspace_id> <label> <cwd> <main_cmd> — make the labeled tab
 # exist with main_cmd at 0.75 and a shell at 0.25; replace a stale one.
+# TODO(AGNT-0014.T04): match -> leave untouched; stale -> create fresh then close stale
 ensure_tab() { print "unimplemented" >&2; exit 42 }
 
 # focus_agent <workspace_id> — focus the agent tab and its main pane.
 focus_agent() { print "unimplemented" >&2; exit 42 }
 
 # main — apply both tabs, then focus.
+# TODO(AGNT-0014.T04): agent(pi) then editor(nvim .), focus_agent; never run git
 main() { print "unimplemented" >&2; exit 42 }
 
 main "$@"

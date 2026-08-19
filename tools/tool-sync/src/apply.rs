@@ -76,6 +76,8 @@ fn render_action(action: &Action, is_dry_run: bool) -> String {
             source.display(),
             destination.display()
         ),
+        // TODO(AGNT-0014.T03): render arm for Action::LinkHerdrPlugin naming tool + source
+
         Action::RenderPiAgent {
             source,
             destination,
@@ -260,6 +262,9 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
             source,
             destination,
         } => create_verified_link(source, destination),
+        // TODO(AGNT-0014.T03): run arm for Action::LinkHerdrPlugin spawning
+        // `herdr plugin link <source>`, nonzero exit or missing herdr -> SyncError naming tool
+
         Action::RenderPiAgent {
             source,
             destination,
