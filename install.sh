@@ -325,4 +325,37 @@ else
   done
 fi
 
+# 16. workspace trust for this repo's own worktrees. Claude Code skips the status line
+#     AND every hook in a directory whose trust dialog was never accepted, so a worktree
+#     silently loses rag-recall and the attribution guard with no error. Trust follows the
+#     repo: only git worktrees of REPO_TARGET, and only those under $HOME, so a throwaway
+#     checkout under /tmp never becomes a trusted directory.
+CLAUDE_JSON="$HOME/.claude.json"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping the worktree trust sync" >&2
+elif [[ ! -f "$CLAUDE_JSON" ]]; then
+  echo "warn: $CLAUDE_JSON not found yet, skipping the worktree trust sync" >&2
+else
+  TRUST_PATHS="$(git -C "$REPO_TARGET" worktree list --porcelain 2>/dev/null \
+    | awk '/^worktree /{print $2}' | grep "^$HOME/" | grep -v '^$' || true)"
+  if [[ -z "$TRUST_PATHS" ]]; then
+    plan "ok   no in-home worktrees to trust"
+  else
+    TRUST_JSON="$(printf '%s\n' "$TRUST_PATHS" | jq -R . | jq -s .)"
+    TRUSTED="$(jq --argjson paths "$TRUST_JSON" \
+      'reduce $paths[] as $p (.; .projects[$p].hasTrustDialogAccepted = true)' "$CLAUDE_JSON")" \
+      || { echo "FATAL: $CLAUDE_JSON is not valid JSON" >&2; exit 1; }
+    if [[ "$(printf '%s' "$TRUSTED" | jq -S .)" == "$(jq -S . "$CLAUDE_JSON")" ]]; then
+      plan "ok   every in-home worktree is already trusted"
+    else
+      printf '%s\n' "$TRUST_PATHS" | while IFS= read -r wt; do
+        jq -e --arg p "$wt" '.projects[$p].hasTrustDialogAccepted == true' "$CLAUDE_JSON" >/dev/null 2>&1 \
+          || plan "trust $wt"
+      done
+      backup "$CLAUDE_JSON"
+      (( IS_DRY )) || printf '%s\n' "$TRUSTED" > "$CLAUDE_JSON"
+    fi
+  fi
+fi
+
 plan "done"
