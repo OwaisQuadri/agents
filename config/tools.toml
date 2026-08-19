@@ -49,6 +49,14 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "statusline"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/statusline.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "pi-anthropic-auth"
 platforms = ["macos", "linux"]
 commands = []
