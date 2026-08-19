@@ -182,6 +182,23 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   fi
 fi
 
+# 10b. usage-limit-watch: reads a plain-text log for Codex/Claude usage-limit phrasing,
+#      secondary to the pi_extension in pi/extensions/usage-limit-continue.ts (that one
+#      covers Pi itself via the extension API; this covers headless codex/claude runs
+#      whose output is redirected to a file).
+CRATE="$REPO_TARGET/tools/usage-limit-watch"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/usage-limit-watch" "$CRATE/target/release/usage-limit-watch"
+  else
+    echo "warn: cargo not found, skipping the usage-limit-watch build" >&2
+  fi
+fi
+
 # 11. sync the live configs. the binary runs outside run() on purpose, so its own
 #     --dry-run prints the real plan. no ~/.claude.json yet → skip; the next pull converges
 SYNC_BIN="$HOME/.local/bin/mcp-sync"
