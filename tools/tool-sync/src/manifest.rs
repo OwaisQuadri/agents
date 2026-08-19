@@ -22,6 +22,7 @@ pub struct ToolSpec {
     pub pi_extension: Option<PathBuf>,
     pub pi_package: Option<PathBuf>,
     pub skills: Vec<PathBuf>,
+    pub herdr_plugin: Option<PathBuf>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -65,6 +66,8 @@ struct RawTool {
     pi_package: Option<PathBuf>,
     #[serde(default)]
     skills: Vec<PathBuf>,
+    #[serde(default)]
+    herdr_plugin: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]

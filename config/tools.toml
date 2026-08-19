@@ -63,3 +63,19 @@ commands = []
 pi_package = "."
 source = { url = "https://github.com/gotgenes/pi-anthropic-auth", revision = "c6605e2db9ad3e783c3fe8b23d269848e0981d26" }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "herdr-fresh-worktree"
+platforms = ["macos", "linux"]
+commands = []
+herdr_plugin = "."
+source = { url = "https://github.com/persiyanov/herdr-fresh-worktree.git", revision = "012de485147bc57012f5138ea44611fd7128a049" }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "herdr-worktree-layout"
+platforms = ["macos", "linux"]
+commands = []
+herdr_plugin = "herdr/worktree-layout"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
