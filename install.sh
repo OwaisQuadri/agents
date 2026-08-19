@@ -244,15 +244,40 @@ else
   fi
 fi
 
-# 14. cld: claude with permission prompts off. a shim, not a shell alias, so it also
-#     resolves from scripts and from an agent's own Bash tool. AGNT-0009 folds it into
-#     the managed shell file.
+# 14. cld: claude with permission prompts off, reaching every shell. the .zshrc alias
+#     covers interactive sessions; the ~/.local/bin shim covers scripts, git hooks, and
+#     an agent's own Bash tool, none of which source .zshrc. where both apply zsh expands
+#     the alias first. AGNT-0009 replaces the block with the rendered managed shell file.
 CLD_SRC="$REPO_TARGET/config/cld"
 if [[ -f "$CLD_SRC" ]]; then
   run chmod +x "$CLD_SRC"
   plan "ensure $HOME/.local/bin"
   run mkdir -p "$HOME/.local/bin"
   link "$HOME/.local/bin/cld" "$CLD_SRC"
+fi
+
+ZSHRC="$HOME/.zshrc"
+CLD_BEGIN="# >>> agents managed (cld) >>>"
+CLD_END="# <<< agents managed (cld) <<<"
+CLD_BLOCK="$CLD_BEGIN
+alias cld='claude --dangerously-skip-permissions'
+$CLD_END"
+CURRENT=""
+[[ -f "$ZSHRC" ]] && CURRENT="$(cat "$ZSHRC")"
+# drop any previous block, then re-append: an edit to the alias lands on the next run
+STRIPPED="$(printf '%s\n' "$CURRENT" | awk -v b="$CLD_BEGIN" -v e="$CLD_END" '
+  $0 == b { skip = 1 }
+  !skip   { print }
+  $0 == e { skip = 0 }' | sed -e :a -e '/^$/{$d;N;ba' -e '}')"
+DESIRED="$STRIPPED
+
+$CLD_BLOCK"
+if [[ "$CURRENT" == "$DESIRED" ]]; then
+  plan "ok   $ZSHRC alias cld"
+else
+  backup "$ZSHRC"
+  plan "set  $ZSHRC alias cld -> claude --dangerously-skip-permissions"
+  (( IS_DRY )) || printf '%s\n' "$DESIRED" > "$ZSHRC"
 fi
 
 # 15. prune the Codex import residue. the ChatGPT app mirrors ~/.codex/config.toml's
