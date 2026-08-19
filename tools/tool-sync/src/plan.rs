@@ -52,6 +52,10 @@ pub enum Action {
         source: PathBuf,
         destination: PathBuf,
     },
+    LinkHerdrPlugin {
+        tool: String,
+        source: PathBuf,
+    },
     RenderPiAgent {
         source: PathBuf,
         destination: PathBuf,
