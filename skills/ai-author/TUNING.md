@@ -21,6 +21,12 @@ loads it. Open it when you tune this skill, and not when you run it.
   no harness means not done. A fenced author built 15 cases, held 5 out, and proved
   discrimination against 8 defect stubs. Two stubs raise the visible mean while a holdout case
   catches them.
+- 2026-08-19, the strict-YAML frontmatter rule (authoring contract). The engineer skill's
+  description held a bare `: ` in a plain scalar. Claude Code's lenient parser accepted it,
+  and pi's strict `yaml` loader rejected the whole skill ("Nested mappings are not allowed
+  in compact mappings"). One observed failure in the wild. The rule: a frontmatter value
+  containing `: ` is written as a `>-` block scalar, checked with the strict parser before
+  shipping. **UNMEASURED** — no harness case grades it yet.
 - 2026-08-10, the answer-key fence. The judge's own fix, taken over banning self-tuning,
   because the weaker rule catches more. Cases written with sight of the candidate were the
   failure, and every author can write those.

@@ -87,6 +87,15 @@ Every artifact this skill authors ships:
   votes/votes.jsonl  # blind judge votes; written ONLY by scripts/submit_vote.py
 ```
 
+Frontmatter must parse under strict YAML, not just the lenient parser one client happens
+to use. A plain scalar that contains `: ` (colon plus space) is illegal YAML and breaks
+pi's loader even though Claude Code accepts it. Any frontmatter value containing `: ` is
+written as a `>-` block scalar. Check before shipping:
+
+```sh
+node -e "const y=require('yaml'),fs=require('fs');y.parse(fs.readFileSync(process.argv[1],'utf8').split('---')[1])" <artifact>.md
+```
+
 No harness = not done. No `## logging` section = not done. `templates/eval-harness.md`
 carries both the harness files and the paste-ready logging section. A draft goes live
 only when every non-holdout case passes and the holdout slice holds (rule in the template).

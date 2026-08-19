@@ -226,15 +226,19 @@ else
     fi
   fi
 
-  if [[ -f "$PI_SETTINGS" ]] && jq -e --arg s "$ZSH_PATH" '.shellPath == $s' "$PI_SETTINGS" >/dev/null 2>&1; then
-    plan "ok   $PI_SETTINGS shell -> $ZSH_PATH"
+  # shellPath is the shell preference; warnings.anthropicExtraUsage=false suppresses pi's
+  # Anthropic extra-usage billing warning on subscription auth.
+  if [[ -f "$PI_SETTINGS" ]] && jq -e --arg s "$ZSH_PATH" \
+    '.shellPath == $s and .warnings.anthropicExtraUsage == false' "$PI_SETTINGS" >/dev/null 2>&1; then
+    plan "ok   $PI_SETTINGS shell -> $ZSH_PATH, anthropic warning off"
   else
     backup "$PI_SETTINGS"
-    plan "set  $PI_SETTINGS shell -> $ZSH_PATH"
+    plan "set  $PI_SETTINGS shell -> $ZSH_PATH, anthropic warning off"
     if (( IS_DRY == 0 )); then
       CURRENT='{}'
       [[ -f "$PI_SETTINGS" ]] && CURRENT="$(cat "$PI_SETTINGS")"
-      UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" '.shellPath = $s')" \
+      UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" \
+        '.shellPath = $s | .warnings.anthropicExtraUsage = false')" \
         || { echo "FATAL: $PI_SETTINGS is not valid JSON" >&2; exit 1; }
       printf '%s\n' "$UPDATED" > "$PI_SETTINGS"
     fi
