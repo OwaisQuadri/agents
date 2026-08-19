@@ -142,6 +142,32 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
   "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
 fi
 
+CRATE="$REPO_TARGET/tools/pr-review-filter"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/pr-review-filter" "$CRATE/target/release/pr-review-filter"
+  else
+    echo "warn: cargo not found, skipping the pr-review-filter build" >&2
+  fi
+fi
+
+CRATE="$REPO_TARGET/tools/tool-wizard"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/tool-wizard" "$CRATE/target/release/tool-wizard"
+  else
+    echo "warn: cargo not found, skipping the tool-wizard build" >&2
+  fi
+fi
+
 # 10. mcp-sync: rebuilt every pass so the binary matches the manifest it syncs
 CRATE="$REPO_TARGET/tools/mcp-sync"
 if [[ -f "$CRATE/Cargo.toml" ]]; then

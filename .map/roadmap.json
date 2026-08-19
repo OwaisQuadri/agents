@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 26,
+  "next_nnnn": 27,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -147,7 +147,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Prove tool sync on real Linux.",
-      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository\u2019s continuous integration output.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
       "deps": [
         "AGNT-0008"
       ],
@@ -406,6 +406,21 @@
       "blame_phase": null,
       "created": "2026-08-18T18:48:03-0400",
       "kind": "ticket"
+    },
+    {
+      "id": "AGNT-0026",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "pr-review skill: a phased review run from the filter output",
+      "long": "Author skills/pr-review, a review skill with the same phased intensity as the engineer skill. The run starts from pr-review-filter --json (tools/pr-review-filter, landed with this ticket branch): the inbox group first, then the unclaimed group, in stack order bottom first. Per-repo behavior comes from config/pr-review.toml, which selects the github or graphite platform and the filter defaults. The spine: select one PR, research its context and linked tickets, dispatch fresh-context review agents per dimension (correctness, security, tests, style) per the standing fresh-context review rule, adversarially verify findings, draft the review with severity-ranked comments, hold a human gate before anything posts, then post through gh or the Graphite flow and record the outcome. The skill ships with evals/, logs/, and votes/ per the authoring contract in ai-author.",
+      "deps": [],
+      "files": [
+        "skills/pr-review/",
+        "tools/pr-review-filter/",
+        "config/pr-review.toml"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-19T01:03:03-0400"
     }
   ]
 }

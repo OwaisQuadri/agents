@@ -13,7 +13,7 @@ platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
 skills = ["skills/pi-subagents"]
-source = { url = "https://github.com/nicobailon/pi-subagents.git", revision = "27784eed57dd62021a7add4990ac2dada6690baa" }
+source = { url = "https://github.com/nicobailon/pi-subagents.git", revision = "c20f49ef951ca523e09e24d1da8eb1598a1c7cec" }
 installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
@@ -21,7 +21,7 @@ name = "plannotator"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "apps/pi-extension"
-source = { url = "https://github.com/backnotprop/plannotator.git", revision = "e1ce7dabe10474b3a653bef9ed5134b73e0b5336" }
+source = { url = "https://github.com/backnotprop/plannotator.git", revision = "8d735cb7dd2bd7b61074b36bbc5871b3dc994f1b" }
 installer = { command = "/bin/sh", args = ["-c", "bun install --frozen-lockfile && bun run build:pi"], preview_args = ["-c", "bun --version"] }
 
 [[tools]]
@@ -46,4 +46,12 @@ platforms = ["macos", "linux"]
 commands = []
 pi_extension = "pi/extensions/telemetry.ts"
 source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "pi-anthropic-auth"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "."
+source = { url = "https://github.com/gotgenes/pi-anthropic-auth", revision = "c6605e2db9ad3e783c3fe8b23d269848e0981d26" }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }

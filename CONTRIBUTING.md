@@ -2,6 +2,16 @@
 
 `config/tools.toml` is the manifest for executable tools. `tool-sync` installs its entries on macOS and Linux.
 
+## Add or update entries with the wizard
+
+`tool-wizard` writes manifest entries for you. Run `tool-wizard add` for a new Git entry. Run `tool-wizard update` to move pinned revisions to each remote `HEAD`. Run `tool-wizard` with no argument for the menu.
+
+The add flow asks for the repository, the platforms, and what the entry provides: commands, skills, or a Pi extension package. It pins the current commit, inspects a shallow clone for `SKILL.md` directories and a lockfile, and proposes an installer. It validates the result with the manifest rules before it writes `config/tools.toml`.
+
+The update flow lists the Git entries. Select numbers, or `a` for all. It writes only the revisions that changed, then offers the preview and apply runs.
+
+`install.sh` builds the wizard and links `$HOME/.local/bin/tool-wizard`. For a manual build, run `cargo build --release --manifest-path tools/tool-wizard/Cargo.toml`.
+
 ## Add a manifest entry
 
 Add one `[[tools]]` table for each tool:
