@@ -10,8 +10,8 @@ cols=${COLUMNS:-80}
 case "$cols" in '' | *[!0-9]*) cols=80 ;; esac
 if [ "$cols" -lt 20 ]; then cols=80; fi
 
-exec jq -r --argjson now "$(date +%s)" --argjson cols "$cols" '
-  .model.display_name as $m
+out=$(jq -r --argjson now "$(date +%s)" --argjson cols "$cols" '
+  (.model.display_name // .model.id // "claude") as $m
 | (.effort.level // "") as $e
 | (if $e != "" then $m + " (" + $e + ")" else $m end) as $modelstr
 
@@ -67,4 +67,12 @@ exec jq -r --argjson now "$(date +%s)" --argjson cols "$cols" '
      | if ($onelineplain | length) <= $avail then ralign($onelineplain; $onelinecolor)
        else ralign($modelstr; $modelstr) + "\n" + ralign($usage.plain; $usage.color) end
   end
-'
+')
+
+# Claude Code paints a whitespace-only line as a blank status line, but keeps the
+# previous text when the command exits non-zero on empty stdout. Blank is the worse of
+# the two, so an all-space render becomes a no-update instead.
+case "$(printf '%s' "$out" | tr -d ' \n')" in
+  '') exit 1 ;;
+esac
+printf '%s\n' "$out"

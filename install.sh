@@ -244,4 +244,134 @@ else
   fi
 fi
 
+# 14. cld: claude with permission prompts off, reaching every shell. the .zshrc alias
+#     covers interactive sessions; the ~/.local/bin shim covers scripts, git hooks, and
+#     an agent's own Bash tool, none of which source .zshrc. where both apply zsh expands
+#     the alias first. AGNT-0009 replaces the block with the rendered managed shell file.
+CLD_SRC="$REPO_TARGET/config/cld"
+if [[ -f "$CLD_SRC" ]]; then
+  run chmod +x "$CLD_SRC"
+  plan "ensure $HOME/.local/bin"
+  run mkdir -p "$HOME/.local/bin"
+  link "$HOME/.local/bin/cld" "$CLD_SRC"
+fi
+
+ZSHRC="$HOME/.zshrc"
+CLD_BEGIN="# >>> agents managed (cld) >>>"
+CLD_END="# <<< agents managed (cld) <<<"
+CLD_BLOCK="$CLD_BEGIN
+alias cld='claude --dangerously-skip-permissions'
+$CLD_END"
+CURRENT=""
+[[ -f "$ZSHRC" ]] && CURRENT="$(cat "$ZSHRC")"
+# drop any previous block, then re-append: an edit to the alias lands on the next run
+STRIPPED="$(printf '%s\n' "$CURRENT" | awk -v b="$CLD_BEGIN" -v e="$CLD_END" '
+  $0 == b { skip = 1 }
+  !skip   { print }
+  $0 == e { skip = 0 }' | sed -e :a -e '/^$/{$d;N;ba' -e '}')"
+DESIRED="$STRIPPED
+
+$CLD_BLOCK"
+if [[ "$CURRENT" == "$DESIRED" ]]; then
+  plan "ok   $ZSHRC alias cld"
+else
+  backup "$ZSHRC"
+  plan "set  $ZSHRC alias cld -> claude --dangerously-skip-permissions"
+  (( IS_DRY )) || printf '%s\n' "$DESIRED" > "$ZSHRC"
+fi
+
+# 15. prune the Codex import residue. the ChatGPT app mirrors ~/.codex/config.toml's
+#     [marketplaces.*] tables into the Claude and Pi settings, but its source is a flat
+#     string where Claude Code wants a tagged union, so every mirrored entry fails schema
+#     validation. drop any marketplace whose source carries no known tag, then drop the
+#     plugin keys left pointing at a marketplace no longer registered. re-runs after each
+#     import, so the settings converge instead of drifting.
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+PI_SETTINGS="$HOME/.pi/agent/settings.json"
+KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
+PRUNE_JQ='
+def tags: ["github","git","directory","url","npm","archive","command"];
+def ok_source: (.source | objects | .source | strings) as $t
+  | ($t != null and (tags | index($t) != null));
+(if has("extraKnownMarketplaces")
+   then .extraKnownMarketplaces |= with_entries(select(.value | ok_source))
+   else . end)
+| (((.extraKnownMarketplaces // {}) | keys) + ($known | keys)) as $mp
+| (if has("enabledPlugins")
+     then .enabledPlugins |= with_entries(
+       (.key | split("@")) as $p
+       | select(($p | length) == 2 and ($mp | index($p[1]) != null)))
+     else . end)
+| (if has("plugins")
+     then .plugins |= with_entries(select(.key | test("@")))
+     else . end)
+'
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping the settings prune" >&2
+else
+  KNOWN='{}'
+  [[ -f "$KNOWN_MARKETPLACES" ]] && KNOWN="$(cat "$KNOWN_MARKETPLACES")"
+  for target in "$CLAUDE_SETTINGS" "$PI_SETTINGS"; do
+    [[ -f "$target" ]] || continue
+    PRUNED="$(jq --argjson known "$KNOWN" "$PRUNE_JQ" "$target")" \
+      || { echo "FATAL: $target is not valid JSON" >&2; exit 1; }
+    if [[ "$(printf '%s' "$PRUNED" | jq -S .)" == "$(jq -S . "$target")" ]]; then
+      plan "ok   $target has no import residue"
+      continue
+    fi
+    backup "$target"
+    plan "prune $target (malformed marketplaces, unresolvable plugin keys)"
+    (( IS_DRY )) || printf '%s\n' "$PRUNED" > "$target"
+  done
+fi
+
+# 16. workspace trust for this repo's own worktrees. Claude Code skips the status line
+#     AND every hook in a directory whose trust dialog was never accepted, so a worktree
+#     silently loses rag-recall and the attribution guard with no error. Trust follows the
+#     repo: only git worktrees of REPO_TARGET, and only those under $HOME, so a throwaway
+#     checkout under /tmp never becomes a trusted directory.
+CLAUDE_JSON="$HOME/.claude.json"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping the worktree trust sync" >&2
+elif [[ ! -f "$CLAUDE_JSON" ]]; then
+  echo "warn: $CLAUDE_JSON not found yet, skipping the worktree trust sync" >&2
+else
+  TRUST_PATHS="$(git -C "$REPO_TARGET" worktree list --porcelain 2>/dev/null \
+    | awk '/^worktree /{print $2}' | grep "^$HOME/" | grep -v '^$' || true)"
+  if [[ -z "$TRUST_PATHS" ]]; then
+    plan "ok   no in-home worktrees to trust"
+  else
+    TRUST_JSON="$(printf '%s\n' "$TRUST_PATHS" | jq -R . | jq -s .)"
+    TRUSTED="$(jq --argjson paths "$TRUST_JSON" \
+      'reduce $paths[] as $p (.; .projects[$p].hasTrustDialogAccepted = true)' "$CLAUDE_JSON")" \
+      || { echo "FATAL: $CLAUDE_JSON is not valid JSON" >&2; exit 1; }
+    if [[ "$(printf '%s' "$TRUSTED" | jq -S .)" == "$(jq -S . "$CLAUDE_JSON")" ]]; then
+      plan "ok   every in-home worktree is already trusted"
+    else
+      printf '%s\n' "$TRUST_PATHS" | while IFS= read -r wt; do
+        jq -e --arg p "$wt" '.projects[$p].hasTrustDialogAccepted == true' "$CLAUDE_JSON" >/dev/null 2>&1 \
+          || plan "trust $wt"
+      done
+      backup "$CLAUDE_JSON"
+      (( IS_DRY )) || printf '%s\n' "$TRUSTED" > "$CLAUDE_JSON"
+    fi
+  fi
+fi
+
+# 17. policy drift check, never a write. The policy file outranks every writer of the user
+#     settings, which is the point of it, but it lives under /Library and needs sudo, and
+#     post-merge runs this installer from a git hook with no terminal to prompt on. So this
+#     reports drift and install-policy.sh owns the escalation.
+POLICY_SRC="$REPO_TARGET/config/managed-settings.json"
+POLICY_DEST="/Library/Application Support/ClaudeCode/managed-settings.json"
+if [[ -f "$POLICY_SRC" ]] && command -v jq >/dev/null 2>&1; then
+  POLICY_RENDERED="$(sed -e "s|\$REPO_TARGET|$REPO_TARGET|g" -e "s|\$HOME|$HOME|g" "$POLICY_SRC")"
+  if [[ -f "$POLICY_DEST" ]] \
+    && [[ "$(printf '%s' "$POLICY_RENDERED" | jq -S .)" == "$(jq -S . "$POLICY_DEST" 2>/dev/null)" ]]; then
+    plan "ok   $POLICY_DEST is current"
+  else
+    echo "warn: the Claude Code policy file is missing or stale; run: $REPO_TARGET/install-policy.sh" >&2
+  fi
+fi
+
 plan "done"

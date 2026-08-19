@@ -13,6 +13,27 @@ cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 
 A fresh checkout needs the one-time build before its first dry run. The dry run exits with the required build command when the binary is absent.
 
+`install.sh` never escalates. It runs from the `post-merge` hook, where a password prompt has no terminal to appear on. It reports policy drift and writes nothing under `/Library`.
+
+### policy file
+
+One separate step pins `env`, `statusLine`, and `hooks` in Claude Code's policy file, which outranks every writer of `~/.claude/settings.json`. Run it by hand after `install.sh`:
+
+```sh
+./install-policy.sh --dry-run   # print the exact file, escalates for nothing
+./install-policy.sh             # prompts for your password before the write
+```
+
+Run it **as yourself, without `sudo`**. It escalates on its own, and prompts once, after it prints the diff and before it writes. `sudo` resets `HOME`. Running it with `sudo` would render every path against `/var/root`, into a root-owned file that needs `sudo` to correct. The script refuses to run as root.
+
+Neither `--dry-run` nor an already-current policy file escalates at all, so neither prompts.
+
+The policy file is the highest-precedence config on the machine. To remove it:
+
+```sh
+sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
+```
+
 ## layout
 
 | path | holds |
@@ -185,6 +206,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supporte
   back into the manifest.
 - `install.sh` selects Z shell (`zsh`) for Claude Code and Pi. Codex uses the login
   shell, and the shared global guidance requires Z shell syntax in every client.
+- Claude Code and the ChatGPT app both write `~/.claude/settings.json`, so nothing in that
+  file is authoritative. `install.sh` prunes the marketplace entries and plugin keys the
+  ChatGPT import leaves behind, and `config/managed-settings.json` pins the settings that
+  must not drift. Preferences stay out of the policy file: a pinned key can no longer be
+  changed from the UI, so `model` and `effortLevel` remain the user file's to own.
+- Claude Code skips the status line and every hook in a directory whose trust dialog was
+  never accepted, and reports nothing when it does. `install.sh` trusts this repo's own
+  worktrees under `$HOME`, and never a checkout under `/tmp`.
 - Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
   cases from real use; blind judge votes land the same way.
 - The `post-checkout` hook copies uncommitted work into a clean worktree or branch at main's tip.

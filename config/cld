@@ -1,0 +1,3 @@
+#!/usr/bin/env zsh
+# cld — claude with permission prompts off. AGNT-0009 folds this into the managed shell file.
+exec claude --dangerously-skip-permissions "$@"
