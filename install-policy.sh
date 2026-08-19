@@ -11,6 +11,13 @@ DEST="/Library/Application Support/ClaudeCode/managed-settings.json"
 IS_DRY=0
 [[ "${1:-}" == "--dry-run" ]] && IS_DRY=1
 
+# run as yourself, never under sudo: sudo resets HOME, and the rendered paths would be
+# baked against /var/root inside a root-owned file that needs sudo to correct
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "FATAL: run this as yourself, not with sudo. It escalates on its own." >&2
+  exit 1
+fi
+
 [[ -f "$SRC" ]] || { echo "FATAL: $SRC not found (set REPO_TARGET)" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "FATAL: jq not found" >&2; exit 1; }
 
