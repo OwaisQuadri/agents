@@ -110,8 +110,9 @@ fi
 
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
 #    because each one sits in a path that is waited on: ste-check in the reply path,
-#    no-ai-attribution in the PreToolUse path ahead of every commit
-for tool in ste-check no-ai-attribution; do
+#    no-ai-attribution in the PreToolUse path ahead of every commit,
+#    session-stats as an on-demand command the user runs by name
+for tool in ste-check no-ai-attribution session-stats; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then
