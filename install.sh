@@ -358,4 +358,20 @@ else
   fi
 fi
 
+# 17. policy drift check, never a write. The policy file outranks every writer of the user
+#     settings, which is the point of it, but it lives under /Library and needs sudo, and
+#     post-merge runs this installer from a git hook with no terminal to prompt on. So this
+#     reports drift and install-policy.sh owns the escalation.
+POLICY_SRC="$REPO_TARGET/config/managed-settings.json"
+POLICY_DEST="/Library/Application Support/ClaudeCode/managed-settings.json"
+if [[ -f "$POLICY_SRC" ]] && command -v jq >/dev/null 2>&1; then
+  POLICY_RENDERED="$(sed -e "s|\$REPO_TARGET|$REPO_TARGET|g" -e "s|\$HOME|$HOME|g" "$POLICY_SRC")"
+  if [[ -f "$POLICY_DEST" ]] \
+    && [[ "$(printf '%s' "$POLICY_RENDERED" | jq -S .)" == "$(jq -S . "$POLICY_DEST" 2>/dev/null)" ]]; then
+    plan "ok   $POLICY_DEST is current"
+  else
+    echo "warn: the Claude Code policy file is missing or stale; run: $REPO_TARGET/install-policy.sh" >&2
+  fi
+fi
+
 plan "done"

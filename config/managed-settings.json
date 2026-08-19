@@ -1,0 +1,35 @@
+{
+  "env": {
+    "CLAUDE_CODE_SHELL": "/bin/zsh"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.claude/statusline.sh"
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$REPO_TARGET/hooks/rag-recall",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/no-ai-attribution",
+            "timeout": 5,
+            "statusMessage": "Checking for AI attribution"
+          }
+        ]
+      }
+    ]
+  }
+}
