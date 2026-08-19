@@ -20,6 +20,8 @@ tools/*/target/
 
 .map/AGNT-*/
 
+.install-test-home/
+
 config/mcp-sync-state.toml
 config/.mcp-sync-apply.lock
 config/*.pre-sync-*
