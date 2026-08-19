@@ -244,4 +244,60 @@ else
   fi
 fi
 
+# 14. cld: claude with permission prompts off. a shim, not a shell alias, so it also
+#     resolves from scripts and from an agent's own Bash tool. AGNT-0009 folds it into
+#     the managed shell file.
+CLD_SRC="$REPO_TARGET/config/cld"
+if [[ -f "$CLD_SRC" ]]; then
+  run chmod +x "$CLD_SRC"
+  plan "ensure $HOME/.local/bin"
+  run mkdir -p "$HOME/.local/bin"
+  link "$HOME/.local/bin/cld" "$CLD_SRC"
+fi
+
+# 15. prune the Codex import residue. the ChatGPT app mirrors ~/.codex/config.toml's
+#     [marketplaces.*] tables into the Claude and Pi settings, but its source is a flat
+#     string where Claude Code wants a tagged union, so every mirrored entry fails schema
+#     validation. drop any marketplace whose source carries no known tag, then drop the
+#     plugin keys left pointing at a marketplace no longer registered. re-runs after each
+#     import, so the settings converge instead of drifting.
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+PI_SETTINGS="$HOME/.pi/agent/settings.json"
+KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
+PRUNE_JQ='
+def tags: ["github","git","directory","url","npm","archive","command"];
+def ok_source: (.source | objects | .source | strings) as $t
+  | ($t != null and (tags | index($t) != null));
+(if has("extraKnownMarketplaces")
+   then .extraKnownMarketplaces |= with_entries(select(.value | ok_source))
+   else . end)
+| (((.extraKnownMarketplaces // {}) | keys) + ($known | keys)) as $mp
+| (if has("enabledPlugins")
+     then .enabledPlugins |= with_entries(
+       (.key | split("@")) as $p
+       | select(($p | length) == 2 and ($mp | index($p[1]) != null)))
+     else . end)
+| (if has("plugins")
+     then .plugins |= with_entries(select(.key | test("@")))
+     else . end)
+'
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping the settings prune" >&2
+else
+  KNOWN='{}'
+  [[ -f "$KNOWN_MARKETPLACES" ]] && KNOWN="$(cat "$KNOWN_MARKETPLACES")"
+  for target in "$CLAUDE_SETTINGS" "$PI_SETTINGS"; do
+    [[ -f "$target" ]] || continue
+    PRUNED="$(jq --argjson known "$KNOWN" "$PRUNE_JQ" "$target")" \
+      || { echo "FATAL: $target is not valid JSON" >&2; exit 1; }
+    if [[ "$(printf '%s' "$PRUNED" | jq -S .)" == "$(jq -S . "$target")" ]]; then
+      plan "ok   $target has no import residue"
+      continue
+    fi
+    backup "$target"
+    plan "prune $target (malformed marketplaces, unresolvable plugin keys)"
+    (( IS_DRY )) || printf '%s\n' "$PRUNED" > "$target"
+  done
+fi
+
 plan "done"
