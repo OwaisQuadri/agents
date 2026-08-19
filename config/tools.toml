@@ -57,6 +57,14 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "usage-limit-continue"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/usage-limit-continue.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "pi-anthropic-auth"
 platforms = ["macos", "linux"]
 commands = []
