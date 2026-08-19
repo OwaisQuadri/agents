@@ -201,9 +201,20 @@ ensure_tab() {
   if [[ -n "$labeled_tab" ]]; then
     count="$(print -rn -- "$panes" | jq -r --arg tab "$labeled_tab" \
       '[.result.panes[] | select(.tab_id == $tab)] | length')"
-    if [[ "$count" == 2 ]] && tab_main_pane "$panes" "$labeled_tab" "$main_word" > /dev/null; then
-      retire_duplicate_labels "$ws" "$labeled_tab" "$label"
-      return 0
+    if [[ "$count" == 2 ]]; then
+      # Check foreground processes directly, not titles (pi's title persists after kill)
+      local pane_id has_main=0
+      for pane_id in $(tab_pane_ids "$panes" "$labeled_tab"); do
+        local fg="$(pane_foreground "$pane_id")"
+        if [[ " $fg " == *" $main_word "* ]]; then
+          has_main=1
+          break
+        fi
+      done
+      if [[ "$has_main" == 1 ]]; then
+        retire_duplicate_labels "$ws" "$labeled_tab" "$label"
+        return 0
+      fi
     fi
   fi
 
@@ -211,6 +222,8 @@ ensure_tab() {
   adopt_tab=""
   for tab_id in $(print -rn -- "$listing" |
     jq -r '.result.tabs | sort_by(.number) | .[].tab_id'); do
+    # Skip the labeled tab if it failed branch (1)'s stricter check
+    [[ -n "$labeled_tab" && "$tab_id" == "$labeled_tab" ]] && continue
     if tab_main_pane "$panes" "$tab_id" "$main_word" > /dev/null; then
       adopt_tab="$tab_id"
       break
