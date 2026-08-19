@@ -1,0 +1,8 @@
+[defaults]
+platform = "github"
+exclude_bots = true
+exclude_authors = []
+require_mergeable = true
+require_checks_pass = false
+include_drafts = false
+max = 10

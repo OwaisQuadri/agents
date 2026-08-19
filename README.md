@@ -44,7 +44,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; reference copies of `settings.json` and `settings.local.json` |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
 | `rules/` | Claude Code rules that load only for matching file paths |
-| `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest |
+| `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass |
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
 | `install.sh` | the top-level installer; it builds the local Rust tools, runs `tool-sync`, and runs `mcp-sync` when its live inputs exist |
@@ -195,6 +195,16 @@ REPO_TARGET="$PWD" ./install.sh
 The tracked `rag` entry installs the `rag` command from its pinned Git revision. Its Pi extension registers the `search_memory` tool.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supported authoring path.
+
+## pr review
+
+`pr-review-filter` starts a review pass. It lists the open PRs in two groups: the review inbox, and unclaimed PRs with no review activity.
+
+Run it inside a repository, or pass `--repo owner/name`. `--json` prints the machine form. `--max N` and `--all` set the group size.
+
+`config/pr-review.toml` holds the defaults, and a `[repos."owner/name"]` table overrides them for one repository. `platform = "graphite"` swaps the review links to the Graphite dashboard. Stacked PRs sort bottom first on both platforms.
+
+Run `pr-review-filter set platform=graphite` inside a repository to write its override table. `pr-review-filter show` prints the effective values for that repository.
 
 ## how it works
 
