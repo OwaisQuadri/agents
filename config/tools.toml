@@ -57,12 +57,28 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "usage-limit-continue"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/usage-limit-continue.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "pi-anthropic-auth"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
 source = { url = "https://github.com/gotgenes/pi-anthropic-auth", revision = "c6605e2db9ad3e783c3fe8b23d269848e0981d26" }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "web"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "."
+source = { url = "https://github.com/nicobailon/pi-web-access", revision = "3b875f574840eebae39e5fede0d99a5f7c71f482" }
+installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
 name = "herdr-fresh-worktree"

@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>session token usage</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #14161a; color: #d8dbe0; font: 13px/1.4 -apple-system, "SF Pro", Helvetica, sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; padding: 12px 16px; border-bottom: 1px solid #2a2e35; }
+  header label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: #9aa0aa; }
+  header input, header select { background: #1e2127; color: #d8dbe0; border: 1px solid #333842; border-radius: 5px; padding: 4px 7px; font-size: 12px; }
+  header input[type=checkbox] { accent-color: #6ea8fe; }
+  .check { flex-direction: row; align-items: center; gap: 5px; padding-bottom: 4px; }
+  #legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 8px 16px; }
+  #legend label { display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 12px; }
+  #legend .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  #chart { display: block; width: 100vw; height: calc(100vh - 130px); }
+  #tip { position: fixed; pointer-events: none; background: #1e2127; border: 1px solid #3a4050; border-radius: 6px; padding: 7px 9px; font-size: 12px; display: none; max-width: 340px; z-index: 2; }
+  #tip b { color: #fff; }
+  #count { padding: 0 16px 6px; color: #9aa0aa; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <label>metric
+    <select id="metric">
+      <option value="total">total tokens</option>
+      <option value="output" selected>output tokens</option>
+      <option value="input">input tokens</option>
+      <option value="cacheRead">cache read tokens</option>
+      <option value="cacheCreate">cache write tokens</option>
+      <option value="messages">assistant messages</option>
+      <option value="elapsedMin">session elapsed (min)</option>
+      <option value="tokPerMin">output tokens / min</option>
+    </select>
+  </label>
+  <label>source
+    <select id="source">
+      <option value="" selected>all</option>
+      <option value="claude">claude</option>
+      <option value="pi">pi</option>
+      <option value="codex">codex</option>
+      <option value="cursor">cursor</option>
+    </select>
+  </label>
+  <label>model contains <input id="modelFilter" placeholder="e.g. sonnet" size="12"></label>
+  <label>project contains <input id="projectFilter" placeholder="e.g. agents" size="12"></label>
+  <label>from <input id="dateFrom" type="date"></label>
+  <label>to <input id="dateTo" type="date"></label>
+  <label>min elapsed (min) <input id="minElapsed" type="number" min="0" value="0" size="5"></label>
+  <label>group
+    <select id="group">
+      <option value="session" selected>per session</option>
+      <option value="span">session span (context)</option>
+      <option value="day">per day (sum)</option>
+      <option value="week">per week (sum)</option>
+    </select>
+  </label>
+  <label class="check"><input id="logScale" type="checkbox"> log scale</label>
+</header>
+<div id="legend"></div>
+<div id="count"></div>
+<svg id="chart"></svg>
+<div id="tip"></div>
+<script>
+const DATA = [/*__DATA__*/];
+
+const PALETTE = ["#6ea8fe","#f97583","#7ee787","#ffcc66","#c792ea","#4dd0e1","#ff9e64","#e0af68","#9ece6a","#f7768e","#7aa2f7","#bb9af7"];
+const svg = document.getElementById("chart");
+const tip = document.getElementById("tip");
+const legend = document.getElementById("legend");
+const count = document.getElementById("count");
+const controls = ["metric","source","modelFilter","projectFilter","dateFrom","dateTo","minElapsed","group","logScale"]
+  .map(id => document.getElementById(id));
+const [metricEl, sourceEl, modelEl, projectEl, fromEl, toEl, minElapsedEl, groupEl, logEl] = controls;
+
+for (const row of DATA) {
+  row.t = Date.parse(row.first);
+  row.tEnd = Date.parse(row.last);
+  row.elapsedMin = Math.max(0, (Date.parse(row.last) - row.t) / 60000);
+  row.total = row.input + row.output + row.cacheRead + row.cacheCreate;
+  row.tokPerMin = row.elapsedMin > 0 ? row.output / row.elapsedMin : 0;
+}
+
+const models = [...new Set(DATA.map(r => r.model))].sort();
+const color = {};
+models.forEach((m, i) => color[m] = PALETTE[i % PALETTE.length]);
+const modelOn = {};
+for (const m of models) {
+  modelOn[m] = true;
+  const label = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = true;
+  box.onchange = () => { modelOn[m] = box.checked; draw(); };
+  const swatch = document.createElement("span");
+  swatch.className = "swatch";
+  swatch.style.background = color[m];
+  label.append(box, swatch, document.createTextNode(m));
+  legend.append(label);
+}
+controls.forEach(el => el.addEventListener("input", draw));
+addEventListener("resize", draw);
+
+function filtered() {
+  const modelQ = modelEl.value.trim().toLowerCase();
+  const projectQ = projectEl.value.trim().toLowerCase();
+  const from = fromEl.value ? Date.parse(fromEl.value) : -Infinity;
+  const to = toEl.value ? Date.parse(toEl.value) + 86400000 : Infinity;
+  const minElapsed = +minElapsedEl.value || 0;
+  return DATA.filter(r =>
+    modelOn[r.model] &&
+    (!sourceEl.value || r.src === sourceEl.value) &&
+    (!modelQ || r.model.toLowerCase().includes(modelQ)) &&
+    (!projectQ || r.project.toLowerCase().includes(projectQ)) &&
+    r.t >= from && r.t <= to &&
+    r.elapsedMin >= minElapsed);
+}
+
+function grouped(rows, metric) {
+  if (groupEl.value === "session")
+    return rows.map(r => ({ t: r.t, v: r[metric], model: r.model, row: r }));
+  const bucketMs = groupEl.value === "day" ? 86400000 : 604800000;
+  const buckets = new Map();
+  for (const r of rows) {
+    const t = Math.floor(r.t / bucketMs) * bucketMs;
+    const key = t + "|" + r.model;
+    const b = buckets.get(key) || { t, v: 0, model: r.model, sessions: 0 };
+    b.v += r[metric];
+    b.sessions++;
+    buckets.set(key, b);
+  }
+  return [...buckets.values()].sort((a, b) => a.t - b.t);
+}
+
+function niceTicks(min, max, n) {
+  const span = max - min || 1;
+  const step = Math.pow(10, Math.floor(Math.log10(span / n)));
+  const err = span / n / step;
+  const mult = err >= 7.5 ? 10 : err >= 3.5 ? 5 : err >= 1.5 ? 2 : 1;
+  const s = step * mult;
+  const ticks = [];
+  for (let v = Math.ceil(min / s) * s; v <= max; v += s) ticks.push(v);
+  return ticks;
+}
+
+function fmt(v) {
+  if (v >= 1e6) return (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + "k";
+  return Math.round(v * 10) / 10 + "";
+}
+
+function draw() {
+  const metric = metricEl.value;
+  const isLog = logEl.checked;
+  const isSpan = groupEl.value === "span";
+  const points = isSpan
+    ? filtered().map(r => ({ t: r.t, tEnd: r.tEnd, v0: r.firstCtx, v1: r.lastCtx, model: r.model, row: r }))
+    : grouped(filtered(), metric);
+  count.textContent = points.length + " points \u00b7 " + DATA.length + " (session, model) rows total";
+  svg.innerHTML = "";
+  const W = svg.clientWidth, H = svg.clientHeight;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  if (!points.length) return;
+
+  const pad = { l: 58, r: 16, t: 12, b: 34 };
+  const t0 = Math.min(...points.map(p => p.t));
+  const t1 = Math.max(...points.map(p => isSpan ? p.tEnd : p.t));
+  const values = isSpan ? points.flatMap(p => [p.v0, p.v1]) : points.map(p => p.v);
+  const vmax = Math.max(...values, 1);
+  const vmin = isLog ? Math.max(1, Math.min(...values.filter(v => v > 0))) : 0;
+  const x = t => pad.l + (W - pad.l - pad.r) * (t1 > t0 ? (t - t0) / (t1 - t0) : 0.5);
+  const y = v => {
+    if (isLog) {
+      const lv = Math.log10(Math.max(v, vmin)), l0 = Math.log10(vmin), l1 = Math.log10(vmax);
+      return H - pad.b - (H - pad.t - pad.b) * (l1 > l0 ? (lv - l0) / (l1 - l0) : 0.5);
+    }
+    return H - pad.b - (H - pad.t - pad.b) * (v / vmax);
+  };
+  const el = (tag, attrs) => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const k in attrs) node.setAttribute(k, attrs[k]);
+    svg.append(node);
+    return node;
+  };
+
+  const yTicks = isLog
+    ? [...Array(Math.floor(Math.log10(vmax)) - Math.floor(Math.log10(vmin)) + 1)]
+        .map((_, i) => Math.pow(10, Math.floor(Math.log10(vmin)) + i))
+    : niceTicks(0, vmax, 6);
+  for (const v of yTicks) {
+    const yy = y(v);
+    el("line", { x1: pad.l, x2: W - pad.r, y1: yy, y2: yy, stroke: "#242830" });
+    el("text", { x: pad.l - 8, y: yy + 4, fill: "#8a919e", "font-size": 11, "text-anchor": "end" }).textContent = fmt(v);
+  }
+  for (const t of niceTicks(t0, t1, Math.min(10, Math.floor(W / 110)))) {
+    const xx = x(t);
+    el("line", { x1: xx, x2: xx, y1: pad.t, y2: H - pad.b, stroke: "#242830" });
+    el("text", { x: xx, y: H - pad.b + 18, fill: "#8a919e", "font-size": 11, "text-anchor": "middle" })
+      .textContent = new Date(t).toISOString().slice(0, 10);
+  }
+
+  if (isSpan) {
+    for (const p of points) {
+      const x0 = x(p.t), x1 = Math.max(x(p.tEnd), x0 + 2), y0 = y(p.v0), y1 = y(p.v1);
+      const seg = el("line", { x1: x0, x2: x1, y1: y0, y2: y1, stroke: color[p.model], "stroke-width": 2, opacity: 0.8 });
+      el("circle", { cx: x0, cy: y0, r: 2.5, fill: "#14161a", stroke: color[p.model], "stroke-width": 1.5 });
+      const end = el("circle", { cx: x1, cy: y1, r: 3.5, fill: color[p.model], opacity: 0.9 });
+      for (const node of [seg, end]) {
+        node.addEventListener("mousemove", e => showTip(e,
+          "<b>" + p.row.model + "</b> \u00b7 " + p.row.src +
+          "<br>context " + fmt(p.v0) + " \u2192 " + fmt(p.v1) +
+          "<br>" + new Date(p.t).toLocaleString() + " \u00b7 " + p.row.elapsedMin.toFixed(1) +
+          " min \u00b7 " + p.row.messages + " msgs" +
+          "<br>" + p.row.project + "<br>" + p.row.session));
+        node.addEventListener("mouseleave", () => tip.style.display = "none");
+      }
+    }
+    return;
+  }
+  if (groupEl.value !== "session") {
+    const byModel = {};
+    for (const p of points) (byModel[p.model] = byModel[p.model] || []).push(p);
+    for (const m in byModel) {
+      const d = byModel[m].map((p, i) => (i ? "L" : "M") + x(p.t) + " " + y(p.v)).join(" ");
+      el("path", { d, fill: "none", stroke: color[m], "stroke-width": 1.5, opacity: 0.7 });
+    }
+  }
+  for (const p of points) {
+    const dot = el("circle", { cx: x(p.t), cy: y(p.v), r: 4, fill: color[p.model], opacity: 0.85 });
+    dot.addEventListener("mousemove", e => showTip(e, p.row
+      ? "<b>" + p.row.model + "</b> \u00b7 " + p.row.src + " \u00b7 " + fmt(p.v) + " " + metric +
+        "<br>" + new Date(p.row.t).toLocaleString() +
+        " \u00b7 " + p.row.elapsedMin.toFixed(1) + " min \u00b7 " + p.row.messages + " msgs" +
+        "<br>in " + fmt(p.row.input) + " \u00b7 out " + fmt(p.row.output) +
+        " \u00b7 cache r " + fmt(p.row.cacheRead) + " / w " + fmt(p.row.cacheCreate) +
+        "<br>" + p.row.project + "<br>" + p.row.session
+      : "<b>" + p.model + "</b> \u00b7 " + fmt(p.v) + " " + metric +
+        "<br>" + new Date(p.t).toISOString().slice(0, 10) + " \u00b7 " + p.sessions + " sessions"));
+    dot.addEventListener("mouseleave", () => tip.style.display = "none");
+  }
+}
+function showTip(e, html) {
+  tip.style.display = "block";
+  tip.innerHTML = html;
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - 360) + "px";
+  const h = tip.offsetHeight;
+  const below = e.clientY + 14;
+  tip.style.top = (below + h > innerHeight ? Math.max(0, e.clientY - 14 - h) : below) + "px";
+}
+draw();
+</script>
+</body>
+</html>

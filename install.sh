@@ -1,14 +1,28 @@
 #!/usr/bin/env bash
 # install.sh — config reset installer. symlinks and one cargo build, never rm. see docs/reset-spec.md
-# usage: ./install.sh [--dry-run]
+# usage: ./install.sh [--dry-run] [--test]
+# HOME_TARGET sandboxes every write below (default: the real $HOME). Point it at a scratch
+# dir to test a worktree's config end to end without touching the real ~/.claude, ~/.codex,
+# ~/.pi, ~/.local/bin, or ~/.zshrc — e.g. HOME_TARGET=/tmp/pi-sandbox ./install.sh
+# --test is shorthand for that: it pins HOME_TARGET to a scratch dir inside THIS worktree
+# (.install-test-home, gitignored), so the worktree tests only itself, every run starts
+# from the same state, and nothing leaves the checkout.
 set -euo pipefail
 shopt -s nullglob
 
-REPO_TARGET="${REPO_TARGET:-$HOME/Documents/agents}"
-SKILLS_ROOT="$HOME/.agents/skills"
-STAMP="$(date +%Y%m%d)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_TARGET="${REPO_TARGET:-$SCRIPT_DIR}"
+HOME_TARGET="${HOME_TARGET:-$HOME}"
 IS_DRY=0
-[[ "${1:-}" == "--dry-run" ]] && IS_DRY=1
+IS_TEST=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) IS_DRY=1 ;;
+    --test) IS_TEST=1; HOME_TARGET="$SCRIPT_DIR/.install-test-home" ;;
+  esac
+done
+SKILLS_ROOT="$HOME_TARGET/.agents/skills"
+STAMP="$(date +%Y%m%d)"
 
 plan() { echo "plan: $*"; }
 
@@ -74,17 +88,17 @@ for lnk in "$SKILLS_ROOT"/*; do
 done
 
 # 4. agent skill roots become single directory symlinks
-plan "ensure $HOME/.claude $HOME/.codex"
-run mkdir -p "$HOME/.claude" "$HOME/.codex"
-link "$HOME/.claude/skills" "$SKILLS_ROOT"
-link "$HOME/.codex/skills" "$SKILLS_ROOT"
+plan "ensure $HOME_TARGET/.claude $HOME_TARGET/.codex"
+run mkdir -p "$HOME_TARGET/.claude" "$HOME_TARGET/.codex"
+link "$HOME_TARGET/.claude/skills" "$SKILLS_ROOT"
+link "$HOME_TARGET/.codex/skills" "$SKILLS_ROOT"
 
 # 5. global CLAUDE.md
-link "$HOME/.claude/CLAUDE.md" "$REPO_TARGET/CLAUDE.md"
-link "$HOME/.claude/rules" "$REPO_TARGET/rules"
+link "$HOME_TARGET/.claude/CLAUDE.md" "$REPO_TARGET/CLAUDE.md"
+link "$HOME_TARGET/.claude/rules" "$REPO_TARGET/rules"
 
 # 6. agents fleet: one directory symlink, definitions resolve from the repo
-link "$HOME/.claude/agents" "$REPO_TARGET/agents"
+link "$HOME_TARGET/.claude/agents" "$REPO_TARGET/agents"
 
 # 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;
 #    post-checkout carries the live checkout's uncommitted work into worktrees cut from main
@@ -96,23 +110,24 @@ fi
 
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
 #    because each one sits in a path that is waited on: ste-check in the reply path,
-#    no-ai-attribution in the PreToolUse path ahead of every commit
-for tool in ste-check no-ai-attribution; do
+#    no-ai-attribution in the PreToolUse path ahead of every commit,
+#    session-stats as an on-demand command the user runs by name
+for tool in ste-check no-ai-attribution session-stats; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then
     plan "build $CRATE (release)"
     run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME/.local/bin"
-    run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/$tool" "$CRATE/target/release/$tool"
+    plan "ensure $HOME_TARGET/.local/bin"
+    run mkdir -p "$HOME_TARGET/.local/bin"
+    link "$HOME_TARGET/.local/bin/$tool" "$CRATE/target/release/$tool"
   else
     echo "warn: cargo not found, skipping the $tool build" >&2
   fi
 done
 
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
-link "$HOME/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
+link "$HOME_TARGET/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
 TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
 TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"
@@ -120,9 +135,9 @@ if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
     plan "build $TOOL_SYNC_CRATE (release)"
     run cargo build --release --quiet --manifest-path "$TOOL_SYNC_CRATE/Cargo.toml"
-    plan "ensure $HOME/.local/bin"
-    run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/tool-sync" "$TOOL_SYNC_BIN"
+    plan "ensure $HOME_TARGET/.local/bin"
+    run mkdir -p "$HOME_TARGET/.local/bin"
+    link "$HOME_TARGET/.local/bin/tool-sync" "$TOOL_SYNC_BIN"
   else
     echo "warn: cargo not found, skipping the tool-sync build" >&2
   fi
@@ -135,7 +150,7 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
   TOOL_SYNC_ARGS=(
     --repository-root "$REPO_TARGET"
     --manifest "$REPO_TARGET/config/tools.toml"
-    --home "$HOME"
+    --home "$HOME_TARGET"
   )
   (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
   plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
@@ -147,9 +162,9 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
     plan "build $CRATE (release)"
     run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME/.local/bin"
-    run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/pr-review-filter" "$CRATE/target/release/pr-review-filter"
+    plan "ensure $HOME_TARGET/.local/bin"
+    run mkdir -p "$HOME_TARGET/.local/bin"
+    link "$HOME_TARGET/.local/bin/pr-review-filter" "$CRATE/target/release/pr-review-filter"
   else
     echo "warn: cargo not found, skipping the pr-review-filter build" >&2
   fi
@@ -160,9 +175,9 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
     plan "build $CRATE (release)"
     run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME/.local/bin"
-    run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/tool-wizard" "$CRATE/target/release/tool-wizard"
+    plan "ensure $HOME_TARGET/.local/bin"
+    run mkdir -p "$HOME_TARGET/.local/bin"
+    link "$HOME_TARGET/.local/bin/tool-wizard" "$CRATE/target/release/tool-wizard"
   else
     echo "warn: cargo not found, skipping the tool-wizard build" >&2
   fi
@@ -174,22 +189,39 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
     plan "build $CRATE (release)"
     run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME/.local/bin"
-    run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
+    plan "ensure $HOME_TARGET/.local/bin"
+    run mkdir -p "$HOME_TARGET/.local/bin"
+    link "$HOME_TARGET/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
   else
     echo "warn: cargo not found, skipping the mcp-sync build" >&2
   fi
 fi
 
+# 10b. usage-limit-watch: reads a plain-text log for Codex/Claude usage-limit phrasing,
+#      secondary to the pi_extension in pi/extensions/usage-limit-continue.ts (that one
+#      covers Pi itself via the extension API; this covers headless codex/claude runs
+#      whose output is redirected to a file).
+CRATE="$REPO_TARGET/tools/usage-limit-watch"
+if [[ -f "$CRATE/Cargo.toml" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    plan "build $CRATE (release)"
+    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
+    plan "ensure $HOME/.local/bin"
+    run mkdir -p "$HOME/.local/bin"
+    link "$HOME/.local/bin/usage-limit-watch" "$CRATE/target/release/usage-limit-watch"
+  else
+    echo "warn: cargo not found, skipping the usage-limit-watch build" >&2
+  fi
+fi
+
 # 11. sync the live configs. the binary runs outside run() on purpose, so its own
 #     --dry-run prints the real plan. no ~/.claude.json yet → skip; the next pull converges
-SYNC_BIN="$HOME/.local/bin/mcp-sync"
-run mkdir -p "$HOME/.codex/agents"
+SYNC_BIN="$HOME_TARGET/.local/bin/mcp-sync"
+run mkdir -p "$HOME_TARGET/.codex/agents"
 if [[ ! -x "$SYNC_BIN" ]]; then
   echo "warn: mcp-sync not built, skipping the config sync" >&2
-elif [[ ! -f "$HOME/.claude.json" ]]; then
-  echo "warn: $HOME/.claude.json not found yet, skipping the config sync" >&2
+elif [[ ! -f "$HOME_TARGET/.claude.json" ]]; then
+  echo "warn: $HOME_TARGET/.claude.json not found yet, skipping the config sync" >&2
 else
   plan "sync configs: MCP_SYNC_REPO=$REPO_TARGET $SYNC_BIN"
   if (( IS_DRY )); then
@@ -207,9 +239,9 @@ if [[ -z "$ZSH_PATH" ]]; then
 elif ! command -v jq >/dev/null 2>&1; then
   echo "warn: jq not found, skipping agent shell preferences" >&2
 else
-  CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-  PI_SETTINGS="$HOME/.pi/agent/settings.json"
-  run mkdir -p "$HOME/.pi/agent"
+  CLAUDE_SETTINGS="$HOME_TARGET/.claude/settings.json"
+  PI_SETTINGS="$HOME_TARGET/.pi/agent/settings.json"
+  run mkdir -p "$HOME_TARGET/.pi/agent"
 
   if [[ -f "$CLAUDE_SETTINGS" ]] && jq -e --arg s "$ZSH_PATH" '.env.CLAUDE_CODE_SHELL == $s' "$CLAUDE_SETTINGS" >/dev/null 2>&1; then
     plan "ok   $CLAUDE_SETTINGS shell -> $ZSH_PATH"
@@ -245,12 +277,35 @@ else
   fi
 fi
 
+# web_search curator: never open the browser. workflow=none skips the curator entirely and
+# returns raw results; autoOpenBrowser=false keeps the window shut even if the curator runs.
+# Config lives in its own file, separate from ~/.pi/agent/settings.json.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping web_search curator preference" >&2
+else
+  PI_WEBSEARCH="$HOME_TARGET/.pi/web-search.json"
+  run mkdir -p "$HOME_TARGET/.pi"
+  if [[ -f "$PI_WEBSEARCH" ]] && jq -e '.workflow == "none" and .autoOpenBrowser == false' "$PI_WEBSEARCH" >/dev/null 2>&1; then
+    plan "ok   $PI_WEBSEARCH curator off"
+  else
+    backup "$PI_WEBSEARCH"
+    plan "set  $PI_WEBSEARCH curator off"
+    if (( IS_DRY == 0 )); then
+      CURRENT='{}'
+      [[ -f "$PI_WEBSEARCH" ]] && CURRENT="$(cat "$PI_WEBSEARCH")"
+      UPDATED="$(printf '%s' "$CURRENT" | jq '.workflow = "none" | .autoOpenBrowser = false')" \
+        || { echo "FATAL: $PI_WEBSEARCH is not valid JSON" >&2; exit 1; }
+      printf '%s\n' "$UPDATED" > "$PI_WEBSEARCH"
+    fi
+  fi
+fi
+
 # 13. status line. the script is repo-owned and linked like every other repo artifact, but
 #     settings.json stays machine-local. Client preferences and MCP config are separate
 #     concerns, so mcp-sync does not reach into this file.
 SL_SRC="$REPO_TARGET/config/statusline.sh"
-SETTINGS="$HOME/.claude/settings.json"
-SL_LINK="$HOME/.claude/statusline.sh"
+SETTINGS="$HOME_TARGET/.claude/settings.json"
+SL_LINK="$HOME_TARGET/.claude/statusline.sh"
 if [[ ! -f "$SL_SRC" ]]; then
   echo "warn: $SL_SRC not found, skipping the status line" >&2
 elif ! command -v jq >/dev/null 2>&1; then
@@ -281,12 +336,12 @@ fi
 CLD_SRC="$REPO_TARGET/config/cld"
 if [[ -f "$CLD_SRC" ]]; then
   run chmod +x "$CLD_SRC"
-  plan "ensure $HOME/.local/bin"
-  run mkdir -p "$HOME/.local/bin"
-  link "$HOME/.local/bin/cld" "$CLD_SRC"
+  plan "ensure $HOME_TARGET/.local/bin"
+  run mkdir -p "$HOME_TARGET/.local/bin"
+  link "$HOME_TARGET/.local/bin/cld" "$CLD_SRC"
 fi
 
-ZSHRC="$HOME/.zshrc"
+ZSHRC="$HOME_TARGET/.zshrc"
 CLD_BEGIN="# >>> agents managed (cld) >>>"
 CLD_END="# <<< agents managed (cld) <<<"
 CLD_BLOCK="$CLD_BEGIN
@@ -316,9 +371,9 @@ fi
 #     validation. drop any marketplace whose source carries no known tag, then drop the
 #     plugin keys left pointing at a marketplace no longer registered. re-runs after each
 #     import, so the settings converge instead of drifting.
-CLAUDE_SETTINGS="$HOME/.claude/settings.json"
-PI_SETTINGS="$HOME/.pi/agent/settings.json"
-KNOWN_MARKETPLACES="$HOME/.claude/plugins/known_marketplaces.json"
+CLAUDE_SETTINGS="$HOME_TARGET/.claude/settings.json"
+PI_SETTINGS="$HOME_TARGET/.pi/agent/settings.json"
+KNOWN_MARKETPLACES="$HOME_TARGET/.claude/plugins/known_marketplaces.json"
 PRUNE_JQ='
 def tags: ["github","git","directory","url","npm","archive","command"];
 def ok_source: (.source | objects | .source | strings) as $t
@@ -360,7 +415,7 @@ fi
 #     silently loses rag-recall and the attribution guard with no error. Trust follows the
 #     repo: only git worktrees of REPO_TARGET, and only those under $HOME, so a throwaway
 #     checkout under /tmp never becomes a trusted directory.
-CLAUDE_JSON="$HOME/.claude.json"
+CLAUDE_JSON="$HOME_TARGET/.claude.json"
 if ! command -v jq >/dev/null 2>&1; then
   echo "warn: jq not found, skipping the worktree trust sync" >&2
 elif [[ ! -f "$CLAUDE_JSON" ]]; then
@@ -394,7 +449,11 @@ fi
 #     reports drift and install-policy.sh owns the escalation.
 POLICY_SRC="$REPO_TARGET/config/managed-settings.json"
 POLICY_DEST="/Library/Application Support/ClaudeCode/managed-settings.json"
-if [[ -f "$POLICY_SRC" ]] && command -v jq >/dev/null 2>&1; then
+if [[ "$HOME_TARGET" != "$HOME" ]]; then
+  # the policy file is per-machine and rendered against the canonical checkout; a
+  # sandboxed run has no machine state to check and its paths never match
+  plan "skip policy drift check (sandboxed HOME_TARGET)"
+elif [[ -f "$POLICY_SRC" ]] && command -v jq >/dev/null 2>&1; then
   POLICY_RENDERED="$(sed -e "s|\$REPO_TARGET|$REPO_TARGET|g" -e "s|\$HOME|$HOME|g" "$POLICY_SRC")"
   if [[ -f "$POLICY_DEST" ]] \
     && [[ "$(printf '%s' "$POLICY_RENDERED" | jq -S .)" == "$(jq -S . "$POLICY_DEST" 2>/dev/null)" ]]; then
@@ -405,3 +464,14 @@ if [[ -f "$POLICY_SRC" ]] && command -v jq >/dev/null 2>&1; then
 fi
 
 plan "done"
+
+# 18. --test drops into pi against the sandbox home so the run is inspectable right away.
+#     The auth symlink borrows the real credential instead of copying it: the sandbox never
+#     holds its own token, and deleting .install-test-home deletes only the link.
+if (( IS_TEST )) && ! (( IS_DRY )); then
+  if [[ -f "$HOME/.pi/agent/auth.json" ]]; then
+    link "$HOME_TARGET/.pi/agent/auth.json" "$HOME/.pi/agent/auth.json"
+  fi
+  plan "launch pi with HOME=$HOME_TARGET"
+  exec env HOME="$HOME_TARGET" pi
+fi

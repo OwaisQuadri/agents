@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 29,
+    "next_nnnn": 30,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -147,7 +147,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Prove tool sync on real Linux.",
-      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository\u2019s continuous integration output.",
       "deps": [
         "AGNT-0008"
       ],
@@ -425,7 +425,23 @@
     },
     {
       "id": "AGNT-0027",
-      "kind": "bug",
+      "kind": "ticket",
+      "status": "done",
+      "short": "Auto-continue agents when a usage limit resets (5h/7d)",
+      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) \u2014 usage-limit-watch covers only redirected/logged output for those two tools.",
+      "deps": [],
+      "files": [
+        "pi/extensions/usage-limit-continue.ts",
+        "pi/extensions/usage-limit-continue.test.ts",
+        "tools/usage-limit-watch/",
+        "config/tools.toml",
+        "install.sh"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-19T00:00:00-0400"
+    },
+    {
+      "id": "AGNT-0028",
       "status": "todo",
       "short": "statusline extension crashes on stale ctx after session replacement",
       "long": "pi/extensions/statusline.ts render() uses a captured extension ctx after session replacement; ExtensionRunner.assertActive throws (runner.js:360 hasUI -> statusline.ts:212 render, :238 refresh). During AGNT-0014 this killed every pi-subagents workflow wrapper and dumped raw Node stack traces into the Pi TUI (owner screenshots, 2026-08-19). Fix per the runner guidance: never use a captured ctx after newSession/fork/switchSession/reload; move post-replacement work into withSession or re-resolve the ctx per render. Verify by running a workflowScript with two parallel children and confirming the wrapper survives and no trace lands in the TUI.",
@@ -437,7 +453,7 @@
       "created": "2026-08-19T21:28:29-0400"
     },
     {
-      "id": "AGNT-0028",
+      "id": "AGNT-0029",
       "kind": "ticket",
       "status": "todo",
       "short": "first-class workspace/worktree palette for herdr",
