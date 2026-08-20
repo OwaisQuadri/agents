@@ -1,7 +1,7 @@
 # model routing
 
 The one policy for which model gets which work, across Pi, Claude Code, and every
-dispatch. Distilled from docs/routing-research-2026-08-20.md; that file holds the full
+dispatch. Distilled from research/pi-harness-routing-research-fable-opus.md; that file holds the full
 rationale.
 
 Model ids live in ONE file: `config/model-tiers.json`. Prose and skills name tiers, never

@@ -6,7 +6,7 @@ tune the map, and not when you walk a ticket.
 ## accepted mutations
 
 - 2026-08-20, the spine gained a `## routing` section. Owner's ask, with his routing research
-  in hand (docs/routing-research-2026-08-20.md): integrate optimized model routing, and
+  in hand (research/pi-harness-routing-research-fable-opus.md): integrate optimized model routing, and
   optimize this skill first because it eats the most context. The map's semantics did not
   move — same phases, same gates, same walk-back. The section binds four routing rules: a
   sticky T3 orchestrator with a GATE A warning when the session enters on fable, fleet
