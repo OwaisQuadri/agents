@@ -733,8 +733,8 @@ test("F-17 the overlay never exceeds its height budget, however many files chang
 	const wideJoined = wideProbe.lines.join("\n");
 	assert.match(
 		wideJoined,
-		/more/,
-		"with 60 changed files in a 24-line budget and room to spell it out, hidden rows must be announced",
+		/[↑↓] \d+/,
+		"with 60 changed files in a 24-line budget and room to spell it out, hidden rows must be announced on the header",
 	);
 });
 

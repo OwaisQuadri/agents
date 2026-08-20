@@ -917,19 +917,25 @@ test("F-17 moving back up scrolls the window back rather than staying pinned", (
 	);
 });
 
-test("F-17 hidden rows are announced with a count, above and below", () => {
+test("F-17 hidden rows are announced with a count on the HEADER row, above and below", () => {
 	const height = 10;
 	let model = initialModel(manyFileStats(100), null);
 	for (let step = 0; step < 50; step += 1) {
 		model = reduce(model, "down").model;
 	}
 	const rows = renderRows(model, 120, false, height);
+	const header = rowText(rows[0]);
 	const hint = rowText(rows[rows.length - 1]);
-	assert.match(hint, /↑ \d+ more/, "rows hidden above must be announced");
-	assert.match(hint, /↓ \d+ more/, "rows hidden below must be announced");
+	assert.match(header, /↑ \d+/, "rows hidden above must be announced on the header");
+	assert.match(header, /↓ \d+/, "rows hidden below must be announced on the header");
+	assert.equal(
+		hint.trimEnd(),
+		"space expand · jk move · hl columns · ⏎ nvim · q close",
+		"the hint row must stay untouched by the scroll indicator",
+	);
 
-	const aboveMatch = hint.match(/↑ (\d+) more/);
-	const belowMatch = hint.match(/↓ (\d+) more/);
+	const aboveMatch = header.match(/↑ (\d+)/);
+	const belowMatch = header.match(/↓ (\d+)/);
 	assert.ok(aboveMatch && belowMatch);
 	const above = Number(aboveMatch[1]);
 	const below = Number(belowMatch[1]);
@@ -943,8 +949,118 @@ test("F-17 hidden rows are announced with a count, above and below", () => {
 test("F-17 no hidden-rows indicator when everything fits", () => {
 	const model = initialModel(manyFileStats(5), null);
 	const rows = renderRows(model, 70, false, 20);
+	const header = rowText(rows[0]);
 	const hint = rowText(rows[rows.length - 1]);
-	assert.ok(!hint.includes("more"), "nothing is hidden, so no indicator appears");
+	assert.ok(!/[↑↓]/.test(header), "nothing is hidden, so no indicator appears on the header");
+	assert.ok(!hint.includes("more"), "nothing is hidden, so no indicator appears on the hint");
+});
+
+test("F-17 the hint row's key legend is never touched by the scroll indicator", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const withHint = rowText(renderRows(model, 120, false, 8).at(-1)).trimEnd();
+	const withoutScrolling = rowText(
+		renderRows(initialModel(manyFileStats(3), null), 120, false, 20).at(-1),
+	).trimEnd();
+	assert.equal(
+		withHint,
+		withoutScrolling,
+		"the hint text is identical whether or not rows are hidden",
+	);
+});
+
+test("F-17 both scroll counts are fully legible when the header has room", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const header = rowText(renderRows(model, 64, false, 8)[0]);
+	assert.match(header, /↑ 45(?!\d)/, "the above count must be complete, not clipped");
+	assert.match(header, /↓ 49(?!\d)/, "the below count must be complete, not clipped");
+});
+
+test("F-17 only the down indicator appears at the top of the list", () => {
+	const model = initialModel(manyFileStats(100), null);
+	const header = rowText(renderRows(model, 64, false, 8)[0]);
+	assert.ok(!header.includes("↑"), "nothing is hidden above at the top");
+	assert.match(header, /↓ \d+/, "rows below must be announced at the top");
+});
+
+test("F-17 only the up indicator appears at the bottom of the list", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 99; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const header = rowText(renderRows(model, 64, false, 8)[0]);
+	assert.match(header, /↑ \d+/, "rows above must be announced at the bottom");
+	assert.ok(!header.includes("↓"), "nothing is hidden below at the bottom");
+});
+
+test("F-17 a width too narrow for the indicator keeps the column names and drops the indicator whole", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	// label "[request] overall" is 18 display columns (this fixture starts in
+	// request mode); the indicator needs a gap of >=1 plus its own width to
+	// appear at all, so the true boundary is measured directly rather than
+	// assumed from a different mode's label length.
+	const narrow = renderRows(model, 20, false, 8);
+	const header = rowText(narrow[0]);
+	assert.ok(
+		header.includes("request") && header.includes("overall"),
+		"the column names must survive even when the indicator does not fit",
+	);
+	assert.ok(
+		!/[↑↓]/.test(header),
+		"no partial indicator glyph may appear when there is no room for the full text",
+	);
+	assert.equal(testDisplayWidth(header), 20, "the header row still fills the width exactly");
+
+	const justWide = renderRows(model, 28, false, 8);
+	const justWideHeader = rowText(justWide[0]);
+	assert.ok(
+		/[↑↓]/.test(justWideHeader),
+		"at the boundary width, the indicator must appear",
+	);
+	assert.equal(testDisplayWidth(justWideHeader), 28);
+
+	const justNarrow = renderRows(model, 27, false, 8);
+	const justNarrowHeader = rowText(justNarrow[0]);
+	assert.ok(
+		!/[↑↓]/.test(justNarrowHeader),
+		"one column narrower than the boundary, the indicator must be dropped whole",
+	);
+	assert.equal(testDisplayWidth(justNarrowHeader), 27);
+});
+
+test("F-17 every row still measures exactly the requested width across every scroll-indicator case", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	for (const width of [15, 20, 27, 28, 30, 64, 120]) {
+		for (const row of renderRows(model, width, false, 8)) {
+			assert.equal(
+				testDisplayWidth(rowText(row)),
+				width,
+				`width ${width}: every row must measure exactly the requested width`,
+			);
+		}
+	}
+});
+
+test("F-17 exactly one row is still selected and the header is still first when the indicator is present", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const rows = renderRows(model, 64, false, 8);
+	assert.equal(rows.filter((row) => row.isSelected).length, 1);
+	assert.equal(rows[0].isSelected, false);
+	assert.match(rowText(rows[0]), /request|overall/);
 });
 
 test("F-17 header stays first and hint stays last no matter the scroll offset", () => {
@@ -954,7 +1070,10 @@ test("F-17 header stays first and hint stays last no matter the scroll offset", 
 	}
 	const rows = renderRows(model, 70, false, 10);
 	assert.match(rowText(rows[0]), /request|overall/);
-	assert.match(rowText(rows[rows.length - 1]), /expand|more/);
+	assert.equal(
+		rowText(rows[rows.length - 1]).trimEnd(),
+		"space expand · jk move · hl columns · ⏎ nvim · q close",
+	);
 	assert.equal(rows[0].isSelected, false);
 	assert.equal(rows[rows.length - 1].isSelected, false);
 });

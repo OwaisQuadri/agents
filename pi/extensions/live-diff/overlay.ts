@@ -188,26 +188,38 @@ export function applyPatch(
 	};
 }
 
-function headerRow(model: OverlayModel, width: number): RenderRow {
+function headerRow(
+	model: OverlayModel,
+	width: number,
+	scrollHint: string | null,
+): RenderRow {
+	const label =
+		model.mode === "request" ? "[request] overall" : " request [overall]";
+	if (scrollHint === null) {
+		return fit([{ text: label, tone: "header" }], width, false);
+	}
+	// The scroll hint is right-aligned after the label, with at least one
+	// space of separation. When the two cannot both fit, the hint is dropped
+	// WHOLE rather than clipped: a half-visible "↑ 4" is worse than nothing,
+	// and the column names must stay legible over the hint every time.
+	const gap = width - displayWidth(label) - displayWidth(scrollHint);
+	if (gap < 1) {
+		return fit([{ text: label, tone: "header" }], width, false);
+	}
 	return fit(
 		[
-			{
-				text:
-					model.mode === "request"
-						? "[request] overall"
-						: " request [overall]",
-				tone: "header",
-			},
+			{ text: label, tone: "header" },
+			{ text: " ".repeat(gap), tone: "header" },
+			{ text: scrollHint, tone: "header" },
 		],
 		width,
 		false,
 	);
 }
 
-function hintRow(width: number, scrollHint: string | null): RenderRow {
+function hintRow(width: number): RenderRow {
 	const base = "space expand · jk move · hl columns · ⏎ nvim · q close";
-	const text = scrollHint === null ? base : `${base}  ${scrollHint}`;
-	return fit([{ text, tone: "hint" }], width, false);
+	return fit([{ text: base, tone: "hint" }], width, false);
 }
 
 interface BodyLine {
@@ -351,8 +363,11 @@ function windowBody(
  *   the cursor row and only the cursor row selected. The header is always
  *   first and the hint always last; when the body is windowed, the cursor's
  *   row stays inside the visible slice and the window only scrolls when the
- *   cursor would otherwise leave it, and a hidden-rows count is folded into
- *   the hint row rather than dropped silently
+ *   cursor would otherwise leave it, and a hidden-rows count is appended to
+ *   the header row, right-aligned, rather than competing with the hint
+ *   row's key legend; when the header has no room for the count it is
+ *   dropped whole rather than clipped mid-word, and the hint row is never
+ *   touched
  */
 export function renderRows(
 	model: OverlayModel,
@@ -374,16 +389,16 @@ export function renderRows(
 	const scrollHint =
 		hiddenAbove > 0 || hiddenBelow > 0
 			? [
-					hiddenAbove > 0 ? `↑ ${hiddenAbove} more` : null,
-					hiddenBelow > 0 ? `↓ ${hiddenBelow} more` : null,
+					hiddenAbove > 0 ? `↑ ${hiddenAbove}` : null,
+					hiddenBelow > 0 ? `↓ ${hiddenBelow}` : null,
 				]
 					.filter((part): part is string => part !== null)
-					.join(" ")
+					.join("  ")
 			: null;
 	return [
-		headerRow(model, width),
+		headerRow(model, width, scrollHint),
 		...visible.map((line) => line.row),
-		hintRow(width, scrollHint),
+		hintRow(width),
 	];
 }
 
