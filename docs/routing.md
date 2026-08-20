@@ -5,7 +5,8 @@ dispatch. Distilled from research/pi-harness-routing-research-fable-opus.md; tha
 rationale.
 
 Model ids live in ONE file: `config/model-tiers.json`. Prose and skills name tiers, never
-models. To swap a model, edit that file and run install.sh. Prices live in the model
+models. To swap a model, edit that file and run install.sh. Each tier also carries a
+`thinking` level, and the installer compiles it with the model. Prices live in the model
 registry (`~/.pi/agent/models-store.json`); re-check them before you lean on a price
 argument.
 
@@ -61,12 +62,12 @@ assigns each fleet role its tier:
 How the assignment reaches each harness:
 
 - Pi: the `pi/agents/` frontmatter carries NO model. The installer compiles the tier file
-  into `subagents.agentOverrides` (model + cross-provider fallback) and
-  `subagents.defaultModel` in `~/.pi/agent/settings.json`. Frontmatter without a model
-  falls through to those overrides.
-- Claude Code: no override layer exists, so `agents/*/` frontmatter keeps the floating
-  alias (haiku/sonnet/opus) that the tier file names in its `claude` field. The installer
-  warns when an alias drifts from the tier file.
+  into `subagents.agentOverrides` (model, cross-provider fallback, thinking) plus
+  `subagents.defaultModel` and `subagents.defaultThinking` in `~/.pi/agent/settings.json`.
+  Frontmatter without a model falls through to those overrides.
+- Claude Code: no override layer exists, so `agents/*/` frontmatter must carry the tier's
+  floating alias, named by the tier file's `claude` field. That line belongs to the
+  installer, which rewrites it when it drifts from the tier file. Never edit it by hand.
 
 The anchor-verifier seat runs per builder wave and per break panel, the highest volume of
 any reviewer. It grades on executed evidence, not judgment, so it rides T3. The

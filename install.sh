@@ -118,9 +118,12 @@ else
   [[ -f "$PI_SETTINGS_TIERS" ]] || { plan "init $PI_SETTINGS_TIERS"; run bash -c "echo '{}' > '$PI_SETTINGS_TIERS'"; }
   TIER_JQ='.subagents = ((.subagents // {})
     | .defaultModel = $t.tiers[$t.orchestrator].pi
+    | .defaultThinking = $t.tiers[$t.orchestrator].thinking
     | .agentOverrides = ((.agentOverrides // {}) + ($t.agents | with_entries(
         .value as $tier
-        | .value = { model: $t.tiers[$tier].pi, fallbackModels: [$t.tiers[$tier].fallback] }))))'
+        | .value = { model: $t.tiers[$tier].pi,
+                     fallbackModels: [$t.tiers[$tier].fallback],
+                     thinking: $t.tiers[$tier].thinking }))))'
   if [[ -f "$PI_SETTINGS_TIERS" ]] && jq -e --argjson t "$(cat "$TIERS")" \
       ". == ($TIER_JQ)" "$PI_SETTINGS_TIERS" >/dev/null 2>&1; then
     plan "ok   $PI_SETTINGS_TIERS subagent routing matches $TIERS"
@@ -129,13 +132,17 @@ else
     run bash -c "jq --argjson t \"\$(cat '$TIERS')\" '$TIER_JQ' '$PI_SETTINGS_TIERS' \
       > '$PI_SETTINGS_TIERS.tmp' && mv '$PI_SETTINGS_TIERS.tmp' '$PI_SETTINGS_TIERS'"
   fi
-  # Claude Code has no override layer, so its frontmatter keeps the floating alias
-  # (haiku/sonnet/opus). Warn when an alias drifts from the tier file.
+  # Claude Code has no override layer, so its frontmatter must carry the tier's floating
+  # alias. The alias line is compiled output: on drift this rewrites it from the tier file.
   while IFS=$'\t' read -r name alias; do
     f="$REPO_TARGET/agents/$name/$name.md"
     [[ -f "$f" ]] || continue
-    grep -q "^model: $alias$" "$f" \
-      || echo "warn: $f model drifts from $TIERS (wants $alias)" >&2
+    if grep -q "^model: $alias$" "$f"; then
+      plan "ok   $f model -> $alias"
+    else
+      plan "set  $f model -> $alias (from $TIERS)"
+      run sed -i '' "1,12 s/^model: .*$/model: $alias/" "$f"
+    fi
   done < <(jq -r '. as $r | .agents | to_entries[]
     | select($r.tiers[.value].claude) | [.key, $r.tiers[.value].claude] | @tsv' "$TIERS")
 fi
