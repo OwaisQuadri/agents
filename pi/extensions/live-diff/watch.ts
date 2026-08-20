@@ -17,7 +17,7 @@ export function isRefreshWorthy(
 ): boolean {
 	const normalized = relativePath.replaceAll("\\", "/");
 	const segments = normalized.split("/");
-	if (segments[0] === GIT_DIR) {
+	if (segments.includes(GIT_DIR)) {
 		return false;
 	}
 	return !isIgnored(relativePath);

@@ -17,6 +17,10 @@ test("isRefreshWorthy rejects git bookkeeping and ignored paths", () => {
 		{ input: "node_modules/x.js", expected: false },
 		{ input: "src/a.ts", expected: true },
 		{ input: "src/gitlab.ts", expected: true },
+		{ input: "vendor/lib/.git/index", expected: false },
+		{ input: "a/.git/b", expected: false },
+		{ input: "x/.git", expected: false },
+		{ input: "x/.gitignore", expected: true },
 	];
 	for (const row of table) {
 		assert.equal(
@@ -30,7 +34,15 @@ test("isRefreshWorthy rejects git bookkeeping and ignored paths", () => {
 test("isRefreshWorthy keeps paths whose names merely contain git", () => {
 	assert.equal(isRefreshWorthy("gitignore-notes.md", isIgnored), true);
 	assert.equal(isRefreshWorthy("src/.gitkeep", isIgnored), true);
-	assert.equal(isRefreshWorthy("a/.git/config", isIgnored), true);
+	assert.equal(isRefreshWorthy("notgit/x", isIgnored), true);
+	assert.equal(isRefreshWorthy("src/git/handler.ts", isIgnored), true);
+});
+
+test("isRefreshWorthy rejects a nested repository's bookkeeping", () => {
+	assert.equal(isRefreshWorthy("a/.git/config", isIgnored), false);
+	assert.equal(isRefreshWorthy("vendor/lib/.git/objects/ab/cd", isIgnored), false);
+	assert.equal(isRefreshWorthy("deep/nest/vendor/.git", isIgnored), false);
+	assert.equal(isRefreshWorthy("vendor\\lib\\.git\\index", isIgnored), false);
 });
 
 function makeTempRoot(t: { after: (fn: () => void) => void }): string {

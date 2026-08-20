@@ -7,10 +7,14 @@ import { test, type TestContext } from "node:test";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import liveDiff from "./live-diff.ts";
+import liveDiff, { setWatcherFactory } from "./live-diff.ts";
 import { captureSnapshot, diffStats, type Exec } from "./live-diff/engine.ts";
-import { makeFixtureRepo, type FixtureRepo } from "./live-diff/fixtures.ts";
-import type { DiffStats } from "./live-diff/types.ts";
+import {
+	addIgnoredFile,
+	makeFixtureRepo,
+	type FixtureRepo,
+} from "./live-diff/fixtures.ts";
+import type { DiffStats, WatcherFactory, WorktreeWatcher } from "./live-diff/types.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type CommandHandler = (args: unknown, ctx: ExtensionContext) => Promise<void>;
@@ -95,6 +99,8 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
+
+
 const testExec: Exec = (command, args, options) =>
 	new Promise((resolvePromise) => {
 		execFile(
@@ -147,6 +153,215 @@ function createHarness(t: TestContext): Harness {
 	const ctx = createFakeCtx(recorder, repo.root);
 	return { pi, recorder, ctx, repo };
 }
+
+interface FakeWatcher {
+	emit(relativePath: string): void;
+	closeCount: number;
+	isStarted: boolean;
+}
+
+function useFakeWatcher(t: TestContext): FakeWatcher {
+	const fake: FakeWatcher = {
+		emit: () => {},
+		closeCount: 0,
+		isStarted: false,
+	};
+	useWatcherFactory(t, (_root, onChange) => {
+		fake.isStarted = true;
+		fake.emit = onChange;
+		const watcher: WorktreeWatcher = {
+			close: () => {
+				fake.closeCount += 1;
+			},
+		};
+		return watcher;
+	});
+	return fake;
+}
+
+function useWatcherFactory(t: TestContext, factory: WatcherFactory): void {
+	setWatcherFactory(factory);
+	t.after(() => setWatcherFactory(() => null));
+}
+
+test("TC-21 an edit outside the agent moves the badge", async (t) => {
+	const watcher = useFakeWatcher(t);
+	const { pi, recorder, ctx, repo } = createHarness(t);
+
+	pi.fire("session_start", {}, ctx);
+	assert.equal(watcher.isStarted, true);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const cleanCount = recorder.setStatusCalls.length;
+	assert.equal(recorder.setStatusCalls[cleanCount - 1].text, "diff clean");
+
+	fs.writeFileSync(path.join(repo.root, "outside.txt"), "edited in nvim\n");
+	watcher.emit("outside.txt");
+
+	await waitFor(() => recorder.setStatusCalls.length > cleanCount);
+	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	assert.match(badge, /all \+1/);
+	assert.notEqual(badge, "diff clean");
+});
+
+test("TC-22 watcher ignores git bookkeeping and ignored paths", async (t) => {
+	const watcher = useFakeWatcher(t);
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	const ignoredPath = addIgnoredFile(repo);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const beforeCount = recorder.setStatusCalls.length;
+
+	fs.appendFileSync(path.join(repo.root, ignoredPath), "more ignored noise\n");
+	watcher.emit(".git/index");
+	watcher.emit(".git/objects/ab/cdef");
+	watcher.emit(ignoredPath);
+
+	await sleep(900);
+	assert.equal(recorder.setStatusCalls.length, beforeCount);
+
+	fs.writeFileSync(path.join(repo.root, "worthy.txt"), "real change\n");
+	watcher.emit("worthy.txt");
+	await waitFor(() => recorder.setStatusCalls.length > beforeCount);
+});
+
+test("TC-23 a burst coalesces into one refresh", async (t) => {
+	const watcher = useFakeWatcher(t);
+	const { pi, recorder, ctx, repo } = createHarness(t);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const beforeCount = recorder.setStatusCalls.length;
+
+	for (let index = 0; index < 200; index += 1) {
+		const name = `burst-${index}.txt`;
+		fs.writeFileSync(path.join(repo.root, name), `burst ${index}\n`);
+		watcher.emit(name);
+	}
+
+	await waitFor(() => recorder.setStatusCalls.length > beforeCount);
+	await sleep(900);
+	const refreshes = recorder.setStatusCalls.length - beforeCount;
+	assert.ok(refreshes >= 1, `expected at least one refresh, saw ${refreshes}`);
+	assert.ok(refreshes <= 2, `expected at most two refreshes, saw ${refreshes}`);
+});
+
+test("TC-23 a burst costs one batched ignore check, not one per change", async (t) => {
+	const watcher = useFakeWatcher(t);
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	const gitDir = path.join(repo.root, ".git");
+	const counterPath = path.join(gitDir, "check-ignore-runs");
+	const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+	const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), "live-diff-gitshim-"));
+	t.after(() => fs.rmSync(shimDir, { recursive: true, force: true }));
+	fs.writeFileSync(
+		path.join(shimDir, "git"),
+		`#!/bin/sh\nfor arg in "$@"; do\n  if [ "$arg" = "check-ignore" ]; then\n    printf x >> ${JSON.stringify(counterPath)}\n    break\n  fi\ndone\nexec ${JSON.stringify(realGit)} "$@"\n`,
+		{ mode: 0o755 },
+	);
+	const realPath = process.env.PATH ?? "";
+	process.env.PATH = `${shimDir}:${realPath}`;
+	t.after(() => {
+		process.env.PATH = realPath;
+	});
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const runsBefore = fs.existsSync(counterPath)
+		? fs.readFileSync(counterPath, "utf8").length
+		: 0;
+	const beforeCount = recorder.setStatusCalls.length;
+
+	for (let index = 0; index < 200; index += 1) {
+		const name = `burst-${index}.txt`;
+		fs.writeFileSync(path.join(repo.root, name), `burst ${index}\n`);
+		watcher.emit(name);
+	}
+
+	await waitFor(() => recorder.setStatusCalls.length > beforeCount);
+	await sleep(900);
+
+	const runsAfter = fs.existsSync(counterPath)
+		? fs.readFileSync(counterPath, "utf8").length
+		: 0;
+	const checkIgnoreRuns = runsAfter - runsBefore;
+	assert.ok(
+		checkIgnoreRuns >= 1,
+		`the batch must ask git about ignores, saw ${checkIgnoreRuns}`,
+	);
+	assert.ok(
+		checkIgnoreRuns <= 3,
+		`200 changes must batch into a few git calls, saw ${checkIgnoreRuns}`,
+	);
+});
+
+test("TC-24 watcher stops at shutdown", async (t) => {
+	const watcher = useFakeWatcher(t);
+	const { pi, recorder, ctx } = createHarness(t);
+	const rejections: unknown[] = [];
+	const onRejection = (reason: unknown) => {
+		rejections.push(reason);
+	};
+	process.on("unhandledRejection", onRejection);
+	try {
+		pi.fire("session_start", {}, ctx);
+		await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+		const beforeShutdown = recorder.setStatusCalls.length;
+		pi.fire("session_shutdown", {}, ctx);
+		recorder.isShutdown = true;
+		assert.equal(watcher.closeCount, 1);
+
+		for (let index = 0; index < 5; index += 1) {
+			watcher.emit(`after-shutdown-${index}.txt`);
+		}
+		await sleep(900);
+
+		assert.equal(recorder.setStatusCalls.length, beforeShutdown);
+		assert.deepEqual(recorder.postShutdownUiCalls, []);
+		assert.equal(rejections.length, 0);
+	} finally {
+		process.off("unhandledRejection", onRejection);
+	}
+});
+
+test("TC-25 an unavailable watcher degrades instead of breaking", async (t) => {
+	useWatcherFactory(t, () => null);
+	const { pi, recorder, ctx, repo } = createHarness(t);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const afterStart = recorder.setStatusCalls.length;
+
+	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "tool edit\n");
+	pi.fire("tool_execution_end", { toolName: "edit" }, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length > afterStart);
+	assert.match(
+		recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text,
+		/all \+1/,
+	);
+});
+
+test("TC-25 a throwing watcher factory degrades instead of breaking", async (t) => {
+	useWatcherFactory(t, () => {
+		throw new Error("watcher unavailable");
+	});
+	const { pi, recorder, ctx, repo } = createHarness(t);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const afterStart = recorder.setStatusCalls.length;
+
+	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "tool edit\n");
+	pi.fire("tool_execution_end", { toolName: "edit" }, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length > afterStart);
+	assert.match(
+		recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text,
+		/all \+1/,
+	);
+});
 
 test("registers the diff command", (t) => {
 	const { pi } = createHarness(t);
