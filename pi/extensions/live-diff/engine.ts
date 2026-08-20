@@ -16,6 +16,8 @@ export type Exec = (
  * @throws Error when cwd is not a git worktree or git exits nonzero
  */
 export function captureSnapshot(exec: Exec, cwd: string): Promise<Snapshot> {
+	// TODO(AGNT-0015.T02): temp GIT_INDEX_FILE (absolute) read-tree/add -A/write-tree;
+	// empty-tree baseline for zero-commit repos; delete temp index; no ref.
 	throw new Error("unimplemented");
 }
 
@@ -35,6 +37,8 @@ export function diffStats(
 	baseTreeSha: string,
 	maxFiles: number,
 ): Promise<DiffStats> {
+	// TODO(AGNT-0015.T03): writeWorktreeTree then diff-tree -r -M --numstat/-z +
+	// --name-status join; binary "- -"; renamedFrom; maxFiles cap sets isTruncated.
 	throw new Error("unimplemented");
 }
 
@@ -54,5 +58,7 @@ export function filePatch(
 	baseTreeSha: string,
 	path: string,
 ): Promise<Hunk[]> {
+	// TODO(AGNT-0015.T04): diff-tree -p single path → Hunk[]; binary → []; tolerate
+	// "\ No newline at end of file".
 	throw new Error("unimplemented");
 }

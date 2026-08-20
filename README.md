@@ -230,3 +230,5 @@ Run `pr-review-filter set platform=graphite` inside a repository to write its ov
   It applies tracked changes with a three-way merge, so tip drift produces conflict markers.
   It copies untracked files that Git does not ignore.
   The hook does not touch a dirty destination, an in-progress rebase, or the live tree.
+
+<!-- TODO(AGNT-0015.T12): live-diff README section — badge, /diff keys, nvim open, tests. -->

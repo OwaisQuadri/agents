@@ -15,5 +15,7 @@ export function openInNvim(
 	cwd: string,
 	path: string,
 ): Promise<boolean> {
+	// TODO(AGNT-0015.T09): herdr api snapshot → workspace by cwd → editor tab →
+	// nvim pane → send :e <abs path>; argv-only; false on any miss; never throw.
 	throw new Error("unimplemented");
 }

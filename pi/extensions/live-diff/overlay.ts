@@ -19,6 +19,7 @@ export function initialModel(
 	requestStats: DiffStats | null,
 	overallStats: DiffStats | null,
 ): OverlayModel {
+	// TODO(AGNT-0015.T06): request-first ranking, mode pick, all folded, cursor 0.
 	throw new Error("unimplemented");
 }
 
@@ -31,6 +32,7 @@ export function initialModel(
  *   the same model and null effect
  */
 export function reduce(model: OverlayModel, key: OverlayKey): OverlayStep {
+	// TODO(AGNT-0015.T06): pure transitions per interfaces.md; ≤1 effect per step.
 	throw new Error("unimplemented");
 }
 
@@ -49,6 +51,7 @@ export function applyPatch(
 	path: string,
 	hunks: Hunk[],
 ): OverlayModel {
+	// TODO(AGNT-0015.T06): attach+unfold iff mode current and row exists; else drop.
 	throw new Error("unimplemented");
 }
 
@@ -60,6 +63,8 @@ export function applyPatch(
  * @returns printable lines, one string per row
  */
 export function renderLines(model: OverlayModel, width: number): string[] {
+	// TODO(AGNT-0015.T07): folded/unfolded rows, hint line, truncation marker,
+	// ANSI-safe names, width clip.
 	throw new Error("unimplemented");
 }
 
@@ -75,5 +80,6 @@ export function badgeText(
 	requestStats: DiffStats | null,
 	overallStats: DiffStats | null,
 ): string {
+	// TODO(AGNT-0015.T07): "req +a ~m −d · all +a ~m −d" / "diff clean".
 	throw new Error("unimplemented");
 }
