@@ -131,14 +131,16 @@ export function reduce(model: OverlayModel, key: OverlayKey): OverlayStep {
 				},
 				effect: null,
 			};
-		case "toggle-mode":
-			return {
-				model: {
-					...model,
-					mode: model.mode === "request" ? "overall" : "request",
-				},
-				effect: null,
-			};
+		case "mode-left":
+			if (model.mode === "request") {
+				return { model, effect: null };
+			}
+			return { model: { ...model, mode: "request" }, effect: null };
+		case "mode-right":
+			if (model.mode === "overall") {
+				return { model, effect: null };
+			}
+			return { model: { ...model, mode: "overall" }, effect: null };
 		case "open":
 			return { model, effect: { kind: "open-in-nvim", path: row.change.path } };
 		default:
@@ -277,8 +279,7 @@ export function renderRows(
 		fit(
 			[
 				{
-					text:
-						"TAB fold · ↑↓ move · ⏎ open in nvim · tab request/overall · q close",
+					text: "space expand · jk move · hl columns · ⏎ nvim · q close",
 					tone: "hint",
 				},
 			],

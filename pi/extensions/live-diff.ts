@@ -158,7 +158,13 @@ function styleRow(theme: ThemeLike, row: RenderRow, padding: string): string {
 	);
 }
 
-function mapKey(data: string): OverlayKey | null {
+/**
+ * Map one raw input byte sequence to an overlay key.
+ *
+ * @param data raw bytes from the terminal
+ * @returns the mapped key, or null when the input is unbound
+ */
+export function mapKey(data: string): OverlayKey | null {
 	switch (data) {
 		case "\x1b[A":
 		case "k":
@@ -166,9 +172,10 @@ function mapKey(data: string): OverlayKey | null {
 		case "\x1b[B":
 		case "j":
 			return "down";
-		case "\t":
-		case "t":
-			return "toggle-mode";
+		case "h":
+			return "mode-left";
+		case "l":
+			return "mode-right";
 		case "\r":
 		case "\n":
 			return "open";
@@ -487,7 +494,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							}
 							const step = reduce(model, key);
 							model = step.model;
-							if (key === "toggle-mode") {
+							if (key === "mode-left" || key === "mode-right") {
 								model = rebuildRows(model, state.requestStats, state.overallStats);
 							}
 							if (step.effect !== null) {

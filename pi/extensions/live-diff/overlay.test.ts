@@ -101,7 +101,7 @@ test("TC-05 fold on a hunks-null row emits load-patch once, cached after applyPa
 	assert.equal(third.model.rows[0].isFolded, false);
 });
 
-test("TC-05 toggle-mode flips mode with rows unchanged; rebuildRows re-ranks and preserves state", () => {
+test("TC-05 mode-right selects overall with rows unchanged; rebuildRows re-ranks and preserves state", () => {
 	const requestStats = threeFileRequest();
 	const overallStats = stats([
 		change("z-outside.ts"),
@@ -114,7 +114,7 @@ test("TC-05 toggle-mode flips mode with rows unchanged; rebuildRows re-ranks and
 	model = reduce(model, "down").model;
 	model = reduce(model, "down").model;
 
-	const flipped = reduce(model, "toggle-mode");
+	const flipped = reduce(model, "mode-right");
 	assert.equal(flipped.effect, null);
 	assert.equal(flipped.model.mode, "overall");
 	assert.equal(flipped.model.rows, model.rows);
@@ -138,6 +138,58 @@ test("TC-05 toggle-mode flips mode with rows unchanged; rebuildRows re-ranks and
 	assert.equal(shrunk.cursor, 0);
 });
 
+test("W9 mode-left selects request from overall", () => {
+	const requestStats = threeFileRequest();
+	const overallStats = stats([change("z-outside.ts"), change("a.ts")]);
+	const model = reduce(
+		initialModel(requestStats, overallStats),
+		"mode-right",
+	).model;
+	assert.equal(model.mode, "overall");
+
+	const back = reduce(model, "mode-left");
+	assert.equal(back.effect, null);
+	assert.equal(back.model.mode, "request");
+	assert.equal(back.model.rows, model.rows);
+});
+
+test("W9 mode-left and mode-right are idempotent", () => {
+	const requestStats = threeFileRequest();
+	const overallStats = stats([change("z-outside.ts"), change("a.ts")]);
+	const model = initialModel(requestStats, overallStats);
+	assert.equal(model.mode, "request");
+
+	const pressedTwice = reduce(reduce(model, "mode-left").model, "mode-left");
+	assert.equal(pressedTwice.effect, null);
+	assert.equal(pressedTwice.model, model);
+
+	const toOverall = reduce(model, "mode-right").model;
+	const pressedTwiceRight = reduce(
+		reduce(toOverall, "mode-right").model,
+		"mode-right",
+	);
+	assert.equal(pressedTwiceRight.effect, null);
+	assert.equal(pressedTwiceRight.model, toOverall);
+});
+
+test("W9 hint line reads the current keymap and stays padded to width", () => {
+	const model = initialModel(threeFileRequest(), null);
+	const width = 60;
+	const hintRow = renderRows(model, width).find((row) =>
+		rowText(row).includes("expand"),
+	);
+	assert.ok(hintRow, "a hint row must be present");
+	assert.equal(
+		rowText(hintRow).trimEnd(),
+		"space expand · jk move · hl columns · ⏎ nvim · q close",
+	);
+	assert.equal(testDisplayWidth(rowText(hintRow)), width);
+	assert.ok(
+		!rowText(hintRow).includes("TAB"),
+		"TAB is unbound and must not appear in the hint",
+	);
+});
+
 test("TC-05 open emits open-in-nvim with the cursor row's path", () => {
 	let model = initialModel(threeFileRequest(), null);
 	model = reduce(model, "down").model;
@@ -153,7 +205,14 @@ test("TC-05 close emits close", () => {
 test("TC-09 empty stats give zero rows and inert keys except close", () => {
 	const model = initialModel(null, stats([]));
 	assert.equal(model.rows.length, 0);
-	const keys: OverlayKey[] = ["up", "down", "fold", "toggle-mode", "open"];
+	const keys: OverlayKey[] = [
+		"up",
+		"down",
+		"fold",
+		"mode-left",
+		"mode-right",
+		"open",
+	];
 	for (const key of keys) {
 		const step = reduce(model, key);
 		assert.equal(step.model, model);
@@ -383,7 +442,8 @@ test("reduce never mutates a frozen model", () => {
 		"up",
 		"down",
 		"fold",
-		"toggle-mode",
+		"mode-left",
+		"mode-right",
 		"open",
 		"close",
 	];
@@ -716,7 +776,7 @@ test("W8 origin labels appear only in overall mode, tagged with the right tone",
 		"request-mode row must carry no origin label",
 	);
 
-	let overall = reduce(model, "toggle-mode").model;
+	let overall = reduce(model, "mode-right").model;
 	overall = rebuildRows(overall, requestStats, overallStats);
 	assert.equal(overall.mode, "overall");
 	const committedRow = renderRows(overall, 80).find((row) =>

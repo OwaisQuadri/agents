@@ -7,7 +7,7 @@ import { test, type TestContext } from "node:test";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import liveDiff, { setWatcherFactory } from "./live-diff.ts";
+import liveDiff, { mapKey, setWatcherFactory } from "./live-diff.ts";
 import { captureSnapshot, diffStats, type Exec } from "./live-diff/engine.ts";
 import {
 	addBranchCommit,
@@ -555,6 +555,31 @@ function visibleWidthOf(line: string): number {
 	return width;
 }
 
+test("W9 mapKey binds space, jk, hl, enter, q and both esc forms; TAB is unbound", () => {
+	assert.equal(mapKey(" "), "fold");
+	assert.equal(mapKey("f"), "fold");
+	assert.equal(mapKey("j"), "down");
+	assert.equal(mapKey("\x1b[B"), "down");
+	assert.equal(mapKey("k"), "up");
+	assert.equal(mapKey("\x1b[A"), "up");
+	assert.equal(mapKey("h"), "mode-left");
+	assert.equal(mapKey("l"), "mode-right");
+	assert.equal(mapKey("\r"), "open");
+	assert.equal(mapKey("\n"), "open");
+	assert.equal(mapKey("q"), "close");
+	assert.equal(mapKey("\x1b"), "close");
+	assert.equal(mapKey("\t"), null, "TAB must be unbound");
+	assert.equal(mapKey("t"), null, "the old toggle-mode letter must be unbound");
+});
+
+test("W9 bare Esc still closes and is never confused with an arrow sequence", () => {
+	// The arrow sequences (\x1b[A, \x1b[B) share the \x1b prefix with bare Esc.
+	// mapKey must match the full sequence, never fall through to close on a prefix.
+	assert.equal(mapKey("\x1b[A"), "up");
+	assert.equal(mapKey("\x1b[B"), "down");
+	assert.equal(mapKey("\x1b"), "close");
+});
+
 interface OverlayProbe {
 	lines: string[];
 	themes: ThemeRecorder;
@@ -714,6 +739,64 @@ test("W8 badge keeps the all label when no branch point resolves", async (t) => 
 	const secondBadge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
 	assert.match(secondBadge, /\ball\b/);
 	assert.ok(!secondBadge.includes("branch "), `expected no "branch" side without a resolvable branch point: ${secondBadge}`);
+});
+
+test("W9 h and l rebuild rows for both columns, not just flip the mode flag", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	// branch-only.txt is committed BEFORE the request snapshot, so it is part
+	// of the snapshot tree and never shows up as a request-side change; it
+	// still differs from the branch point and so appears on the overall side.
+	addBranchCommit(repo, "feature", "branch-only.txt");
+	await pi.fire("agent_start", {}, ctx);
+	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "request edit\n");
+	pi.fire("tool_execution_end", { toolName: "edit" }, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	// Open once and drive it through several render checkpoints, mirroring
+	// openOverlay's own factory-extraction pattern: this overlay's contract
+	// is that the SAME session re-renders differently as keys land, which a
+	// fresh open-per-key-sequence cannot exercise (a fresh /diff always
+	// re-refreshes and starts in whichever mode has content).
+	await pi.command("diff")("", ctx);
+	assert.equal(recorder.customCalls.length, 1);
+	const call = recorder.customCalls[0] as {
+		factory: (
+			tui: unknown,
+			theme: unknown,
+			keybindings: unknown,
+			done: (result: undefined) => void,
+		) => { render(width: number): string[]; handleInput(data: string): void };
+	};
+	const themes = createThemeRecorder();
+	const tui = { requestRender() {} };
+	const component = call.factory(tui, themes.theme, {}, () => {});
+
+	const requestJoined = component.render(100).join("\n");
+	assert.match(requestJoined, /alpha\.txt/, "request mode starts on the row it captured");
+	assert.ok(
+		!requestJoined.includes("branch-only.txt"),
+		"the branch-only file must not appear in request mode",
+	);
+
+	component.handleInput("l");
+	const rightLines = component.render(100);
+	const rightJoined = rightLines.join("\n");
+	assert.match(
+		rightJoined,
+		/branch-only\.txt/,
+		"pressing l must rebuild rows for the overall column, not just flip a flag",
+	);
+	for (const line of rightLines) {
+		assert.equal(visibleWidthOf(line), 100);
+	}
+
+	component.handleInput("h");
+	const backJoined = component.render(100).join("\n");
+	assert.ok(
+		!backJoined.includes("branch-only.txt"),
+		"pressing h must rebuild back to the request column",
+	);
+	assert.match(backJoined, /alpha\.txt/);
 });
 
 test("W8 the overlay shows origin labels for committed and uncommitted rows on the branch basket", async (t) => {
