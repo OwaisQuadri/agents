@@ -50,14 +50,27 @@ usage-limit stop then degrades one tier sideways instead of failing the run.
 The dispatch layer is where routing lives. The `agents` map in `config/model-tiers.json`
 assigns each fleet role its tier:
 
-| agent | tier |
-|-------|------|
-| web-research-summarizer | T2 |
-| debugger | T3 |
-| spec-tester | T3 |
-| maestro-tester | T3 |
-| anchor-verifier | T3 |
-| code-reviewer | T4 |
+| agent | tier | owner |
+|-------|------|-------|
+| web-research-summarizer | T2 | repo |
+| researcher | T2 | package |
+| scout | T2 | package |
+| debugger | T3 | repo |
+| spec-tester | T3 | repo |
+| maestro-tester | T3 | repo |
+| anchor-verifier | T3 | repo |
+| worker | T3 | package |
+| reviewer | T3 | package |
+| code-reviewer | T4 | repo |
+| oracle | T4 | package |
+
+Two package agents stay untiered on purpose, and the tier file records why. `delegate`
+inherits the parent model by design, so a pin defeats the role. `gpt-pro` runs through the
+external-job bridge, so this router never picks its model.
+
+Thinking splits by owner. `agentOverrides.thinking` OVERWRITES an agent's own frontmatter,
+so the installer emits the tier's thinking only for the agents in `pi/agents/`. A package
+agent keeps the thinking its author tuned, and only its model follows the tier.
 
 How the assignment reaches each harness:
 
@@ -82,7 +95,13 @@ code-reviewer seat gives the final coherence verdict and stays T4.
   no session fallback, so `pi/extensions/usage-limit-continue.ts` does it. On a usage limit
   it reads the flat `modelTierFallbacks` map that the installer compiles into pi settings.
   It then calls `setModel` on the tier's backup, and the session continues.
-  A model outside the tier file keeps the old behavior, a scheduled resume at reset time.
+- The chain ends by itself. Only tier primaries are keys in that map, so a session walks
+  one hop per limit and stops on a peer that has no entry. Every hop holds its tier except
+  two. T1 has no free peer and rises to T2, and T5 has no peer and drops to T4.
+- When the chain runs out, the session waits on the model that RETURNS FIRST, not the one
+  that failed last. The extension records each abandoned model with its reset, schedules
+  the resume at the soonest of them, and sets the session back to that model. A model
+  outside the tier file keeps the old behavior, a scheduled resume at its own reset.
 - `pi/agents/` is the versioned fleet; the installer links `~/.pi/agent/agents` to it.
 - OpenRouter calls keep `data_collection: deny` + `zdr` when they carry repo content.
 

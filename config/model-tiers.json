@@ -9,10 +9,19 @@
   "orchestrator": "T3",
   "agents": {
     "web-research-summarizer": "T2",
+    "researcher": "T2",
+    "scout": "T2",
     "debugger": "T3",
     "spec-tester": "T3",
     "maestro-tester": "T3",
     "anchor-verifier": "T3",
-    "code-reviewer": "T4"
+    "worker": "T3",
+    "reviewer": "T3",
+    "code-reviewer": "T4",
+    "oracle": "T4"
+  },
+  "untiered": {
+    "delegate": "inherits the parent model by design; a pin would defeat the role",
+    "gpt-pro": "runs through the external-job bridge, so this router does not pick its model"
   }
 }

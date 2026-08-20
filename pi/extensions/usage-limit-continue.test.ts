@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
 	computeResetPlan,
 	detectUsageLimitSignal,
+	earliestAvailable,
 	fallbackWindowResetMs,
 	findTierFallback,
 	isLocalModel,
@@ -171,6 +172,23 @@ test("findTierFallback: a model outside the tier file has no fallback, so the re
 	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-opus-5"), null);
 	assert.equal(findTierFallback(FALLBACKS, "ollama", "llama-4"), null);
 	assert.equal(findTierFallback({}, "anthropic", "claude-fable-5"), null);
+});
+
+test("earliestAvailable: the resume waits on the model that returns first, not the one that failed last", () => {
+	const soonest = earliestAvailable({
+		"anthropic/claude-fable-5": NOW + 20 * 60_000,
+		"anthropic/claude-opus-5": NOW + 2 * 3_600_000,
+		"openai-codex/gpt-5.6-sol": NOW + 4 * 3_600_000,
+	});
+	assert.deepEqual(soonest, { model: "anthropic/claude-fable-5", resetAtMs: NOW + 20 * 60_000 });
+});
+
+test("earliestAvailable: nothing abandoned yields null, so the old single-reset path still owns it", () => {
+	assert.equal(earliestAvailable({}), null);
+	assert.deepEqual(earliestAvailable({ "anthropic/claude-opus-5": NOW }), {
+		model: "anthropic/claude-opus-5",
+		resetAtMs: NOW,
+	});
 });
 
 test("scheduleResume: writes a pending-job record and refuses a duplicate schedule for the same session", async () => {

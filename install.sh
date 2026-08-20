@@ -118,22 +118,27 @@ elif [[ ! -f "$TIERS" ]]; then
   echo "warn: $TIERS not found, skipping the model-tier sync" >&2
 else
   [[ -f "$PI_SETTINGS_TIERS" ]] || { plan "init $PI_SETTINGS_TIERS"; run bash -c "echo '{}' > '$PI_SETTINGS_TIERS'"; }
+  # agentOverrides.thinking OVERWRITES an agent's own frontmatter (agents.ts applyOverride),
+  # so the tier's thinking is emitted only for agents this repo owns. A package agent that
+  # tuned its own thinking keeps it, and only its model follows the tier.
+  OWNED="$(cd "$REPO_TARGET/pi/agents" 2>/dev/null && ls *.md 2>/dev/null | sed 's/\.md$//' | jq -R . | jq -sc .)"
+  OWNED="${OWNED:-[]}"
   TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
       .value as $tier | { key: $tier.pi, value: $tier.fallback }))
     | .subagents = ((.subagents // {})
     | .defaultModel = $t.tiers[$t.orchestrator].pi
     | .defaultThinking = $t.tiers[$t.orchestrator].thinking
     | .agentOverrides = ((.agentOverrides // {}) + ($t.agents | with_entries(
-        .value as $tier
+        .key as $name | .value as $tier
         | .value = { model: $t.tiers[$tier].pi,
-                     fallbackModels: [$t.tiers[$tier].fallback],
-                     thinking: $t.tiers[$tier].thinking }))))'
-  if [[ -f "$PI_SETTINGS_TIERS" ]] && jq -e --argjson t "$(cat "$TIERS")" \
+                     fallbackModels: [$t.tiers[$tier].fallback] }
+                   + (if ($owned | index($name)) then { thinking: $t.tiers[$tier].thinking } else {} end)))))'
+  if [[ -f "$PI_SETTINGS_TIERS" ]] && jq -e --argjson t "$(cat "$TIERS")" --argjson owned "$OWNED" \
       ". == ($TIER_JQ)" "$PI_SETTINGS_TIERS" >/dev/null 2>&1; then
     plan "ok   $PI_SETTINGS_TIERS subagent routing matches $TIERS"
   else
     plan "set  $PI_SETTINGS_TIERS subagent routing from $TIERS"
-    run bash -c "jq --argjson t \"\$(cat '$TIERS')\" '$TIER_JQ' '$PI_SETTINGS_TIERS' \
+    run bash -c "jq --argjson t \"\$(cat '$TIERS')\" --argjson owned '$OWNED' '$TIER_JQ' '$PI_SETTINGS_TIERS' \
       > '$PI_SETTINGS_TIERS.tmp' && mv '$PI_SETTINGS_TIERS.tmp' '$PI_SETTINGS_TIERS'"
   fi
   # Claude Code has no override layer, so its frontmatter must carry the tier's floating

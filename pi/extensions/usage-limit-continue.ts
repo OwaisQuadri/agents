@@ -232,6 +232,21 @@ export function findTierFallback(fallbacks: FallbackMap, provider: string, model
 	return fallbacks[`${provider}/${modelId}`] ?? null;
 }
 
+/**
+ * Picks the abandoned model that comes back first, so a resume waits the shortest time.
+ * @param resets Abandoned models this session, keyed by `provider/id`, valued by reset epoch ms.
+ * @returns The soonest-returning model and its reset, or null when nothing was abandoned.
+ */
+export function earliestAvailable(resets: Record<string, number>): { model: string; resetAtMs: number } | null {
+	let soonest: { model: string; resetAtMs: number } | null = null;
+	for (const [model, resetAtMs] of Object.entries(resets)) {
+		if (!soonest || resetAtMs < soonest.resetAtMs) {
+			soonest = { model, resetAtMs };
+		}
+	}
+	return soonest;
+}
+
 async function loadFallbacks(): Promise<FallbackMap> {
 	try {
 		const settings = JSON.parse(await readFile(settingsFile(), "utf8")) as { modelTierFallbacks?: FallbackMap };
@@ -328,6 +343,12 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
  * @param ctx Live extension context carrying the active model and registry.
  * @returns The fallback model id on success, or null when no fallback applied.
  */
+async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, qualified: string): Promise<boolean> {
+	const separator = qualified.indexOf("/");
+	const candidate = ctx.modelRegistry.find(qualified.slice(0, separator), qualified.slice(separator + 1));
+	return candidate ? await pi.setModel(candidate) : false;
+}
+
 async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string | null> {
 	const active = ctx.model as ModelLike | undefined;
 	if (!active?.id) {
@@ -337,12 +358,7 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	if (!qualified) {
 		return null;
 	}
-	const separator = qualified.indexOf("/");
-	const candidate = ctx.modelRegistry.find(qualified.slice(0, separator), qualified.slice(separator + 1));
-	if (!candidate) {
-		return null;
-	}
-	return (await pi.setModel(candidate)) ? qualified : null;
+	return (await switchTo(pi, ctx, qualified)) ? qualified : null;
 }
 
 async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
@@ -364,13 +380,22 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 		return;
 	}
 
+	const active = ctx.model as ModelLike | undefined;
+	const abandoned = abandonedByContext.get(ctx) ?? {};
+	if (active?.id && plan.resetAtMs !== null) {
+		abandoned[`${active.provider}/${active.id}`] = plan.resetAtMs;
+		abandonedByContext.set(ctx, abandoned);
+	}
+
 	const fallbackModel = await applyTierFallback(pi, ctx);
 	if (fallbackModel) {
 		ctx.ui.notify(`Usage limit hit. Switched to the tier fallback ${fallbackModel}; the session continues.`, "warning");
 		return;
 	}
 
-	if (plan.resetAtMs === null) {
+	const returning = earliestAvailable(abandoned);
+	const resumeAtMs = returning?.resetAtMs ?? plan.resetAtMs;
+	if (resumeAtMs === null) {
 		ctx.ui.notify("Usage limit hit, but the reset time could not be parsed. Not scheduling an automatic continue.", "warning");
 		return;
 	}
@@ -380,14 +405,21 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 		ctx.ui.notify("Usage limit hit, but this session has no file to resume (--no-session). Not scheduling an automatic continue.", "warning");
 		return;
 	}
-	const job = await scheduleResume(sessionFile, plan.resetAtMs, Date.now());
+	const job = await scheduleResume(sessionFile, resumeAtMs, Date.now());
 	if (job === null) {
 		return;
 	}
-	ctx.ui.notify(`Usage limit hit. Will continue this session in ${formatWait(plan.resetAtMs - Date.now())}.`, "warning");
+	const climbedBack = returning ? await switchTo(pi, ctx, returning.model) : false;
+	const destination = climbedBack ? ` on ${returning?.model}` : "";
+	ctx.ui.notify(`Usage limit hit. Will continue this session${destination} in ${formatWait(resumeAtMs - Date.now())}.`, "warning");
 }
 
 const lastProviderResponseByContext = new WeakMap<ExtensionContext, { status: number; headers: Record<string, string> }>();
+
+// Models this session gave up on, and when each returns. The chain walks tier fallbacks
+// until one has no fallback left, and then the resume waits on whichever returns first
+// rather than on whichever failed last.
+const abandonedByContext = new WeakMap<ExtensionContext, Record<string, number>>();
 
 async function handleStatusCommand(_args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const store = await loadPendingStore();
