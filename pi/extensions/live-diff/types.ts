@@ -53,16 +53,30 @@ export interface OverlayModel {
 	rows: OverlayRow[];
 	cursor: number;
 	isLoadingPatch: boolean;
+	viewer: ViewerState | null;
 }
 
 export type OverlayKey =
 	| "up"
 	| "down"
-	| "fold"
+	| "open-diff"
 	| "mode-left"
 	| "mode-right"
 	| "open"
-	| "close";
+	| "close"
+	| "page-up"
+	| "page-down"
+	| "top"
+	| "bottom"
+	| "next-file"
+	| "prev-file";
+
+export interface ViewerState {
+	path: string;
+	hunks: Hunk[] | null;
+	offset: number;
+	isLoading: boolean;
+}
 
 export type OverlayEffect =
 	| { kind: "open-in-nvim"; path: string }
