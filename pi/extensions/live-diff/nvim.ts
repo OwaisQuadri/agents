@@ -155,15 +155,29 @@ export async function openInNvim(
 			/[\\ |%#]/g,
 			(char) => "\\" + char,
 		);
-		const escOut = await runHerdr(exec, bin, ["pane", "send-keys", nvimPaneId, "esc"]);
-		if (escOut === null) return false;
-		const runOut = await runHerdr(exec, bin, [
+		for (const key of ["esc", "colon", "e", "space"]) {
+			const keyOut = await runHerdr(exec, bin, [
+				"pane",
+				"send-keys",
+				nvimPaneId,
+				key,
+			]);
+			if (keyOut === null) return false;
+		}
+		const textOut = await runHerdr(exec, bin, [
 			"pane",
-			"run",
+			"send-text",
 			nvimPaneId,
-			":e " + escapedPath,
+			escapedPath,
 		]);
-		return runOut !== null;
+		if (textOut === null) return false;
+		const enterOut = await runHerdr(exec, bin, [
+			"pane",
+			"send-keys",
+			nvimPaneId,
+			"enter",
+		]);
+		return enterOut !== null;
 	} catch {
 		return false;
 	}

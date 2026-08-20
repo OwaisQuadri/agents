@@ -740,8 +740,8 @@ test("F-17 the overlay never exceeds its height budget, however many files chang
 	const probe = await openOverlay(pi, recorder, ctx, 60);
 	assert.equal(
 		probe.options.overlayOptions?.maxHeight,
-		24,
-		"ui.custom must be given an explicit maxHeight so the framework never lets the panel run off the terminal",
+		"80%",
+		"the peek window takes 80% of the terminal height, per the owner's ask",
 	);
 	assert.ok(
 		probe.lines.length <= 24,

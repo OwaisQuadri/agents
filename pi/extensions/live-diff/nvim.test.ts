@@ -54,11 +54,36 @@ function makeExec(): {
 	return { exec, calls };
 }
 
-function sentText(calls: RecordedCall[]): string | null {
-	const runCall = calls.find(
-		(call) => call.args[0] === "pane" && call.args[1] === "run",
+// The command line is TYPED with send-keys (colon, e, space) and only the path
+// itself is pasted with send-text. herdr's send-text/run deliver via bracketed
+// paste, which nvim inserts into the BUFFER whatever mode it is in - that bug
+// corrupted a real source file before this shape replaced it. Reconstructing the
+// command here proves the whole sequence, not just its last call.
+function sentCommand(calls: RecordedCall[]): string | null {
+	const keys = calls
+		.filter((call) => call.args[0] === "pane" && call.args[1] === "send-keys")
+		.map((call) => call.args[3]);
+	const textCall = calls.find(
+		(call) => call.args[0] === "pane" && call.args[1] === "send-text",
 	);
-	return runCall === undefined ? null : runCall.args[3];
+	if (textCall === undefined) {
+		return null;
+	}
+	assert.deepEqual(
+		keys,
+		["esc", "colon", "e", "space", "enter"],
+		"the command line must be typed as keys, with enter last",
+	);
+	assert.equal(
+		calls.some((call) => call.args[1] === "run"),
+		false,
+		"pane run pastes into the buffer and must never be used to drive nvim",
+	);
+	return ":e " + textCall.args[3];
+}
+
+function sentText(calls: RecordedCall[]): string | null {
+	return sentCommand(calls);
 }
 
 test("ordinary path opens and sends one escaped argv element", async () => {

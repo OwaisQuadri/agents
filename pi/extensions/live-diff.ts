@@ -37,12 +37,22 @@ const OVERLAY_MIN_WIDTH = 48;
 const OVERLAY_PADDING_X = 1;
 const OVERLAY_PADDING_Y = 1;
 // pi-tui's Component#render(width) receives no live terminal height, and
-// TUI exposes no getter for one either — overlayOptions.maxHeight is a
-// REQUEST to the framework, not a queryable actual. So the visible row
-// budget is a shell-owned constant, matching OVERLAY_WIDTH/OVERLAY_MIN_WIDTH's
-// own pattern, and the same figure is what we ask the framework for via
-// maxHeight. Kept modest so it holds on a small terminal, not just a tall one.
-const OVERLAY_MAX_HEIGHT = 24;
+// The owner asked for a peek window at 80% of the terminal height. TUI exposes
+// no height getter, but the extension runs in Pi's own process, so the terminal
+// row count is on process.stdout. overlayOptions.maxHeight carries the same 80%
+// so the frame and the content agree on the budget.
+const OVERLAY_HEIGHT_RATIO = 0.8;
+const OVERLAY_MAX_HEIGHT = "80%";
+const OVERLAY_MIN_HEIGHT = 8;
+
+function overlayHeightBudget(): number {
+	const rows = process.stdout.rows;
+	const usable = typeof rows === "number" && rows > 0 ? rows : 30;
+	return Math.max(
+		OVERLAY_MIN_HEIGHT,
+		Math.floor(usable * OVERLAY_HEIGHT_RATIO) - OVERLAY_PADDING_Y * 2,
+	);
+}
 const SELECTED_GUTTER = "▌";
 const UNSELECTED_GUTTER = " ";
 const DEBOUNCE_MS = 300;
@@ -478,10 +488,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							done(undefined);
 						}
 					}
-					const viewerHeight = Math.max(
-						1,
-						OVERLAY_MAX_HEIGHT - OVERLAY_PADDING_Y * 2,
-					);
+					const viewerHeight = overlayHeightBudget();
 					return {
 						render(width: number): string[] {
 							const stats =
