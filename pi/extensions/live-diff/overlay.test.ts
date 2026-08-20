@@ -397,6 +397,102 @@ test("reduce never mutates a frozen model", () => {
 	assert.equal(model.rows[0].change.path, "a.ts");
 });
 
+function measureColumns(text: string): number {
+	const wideRanges: [number, number][] = [
+		[0x1100, 0x115f],
+		[0x2e80, 0x303e],
+		[0x3041, 0x33ff],
+		[0x3400, 0x4dbf],
+		[0x4e00, 0x9fff],
+		[0xa000, 0xa4cf],
+		[0xac00, 0xd7a3],
+		[0xf900, 0xfaff],
+		[0xfe30, 0xfe6f],
+		[0xff00, 0xff60],
+		[0xffe0, 0xffe6],
+		[0x1f300, 0x1f64f],
+		[0x1f900, 0x1f9ff],
+		[0x20000, 0x2fffd],
+	];
+	let columns = 0;
+	for (const char of text) {
+		if (/[\p{Mn}\p{Me}]/u.test(char)) {
+			continue;
+		}
+		const code = char.codePointAt(0) ?? 0;
+		const isWide = wideRanges.some(([lo, hi]) => code >= lo && code <= hi);
+		columns += isWide ? 2 : 1;
+	}
+	return columns;
+}
+
+test("F-15 no rendered line exceeds the requested width in display columns", () => {
+	const fullWidth = "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ１２３４５.txt";
+	const emoji = "🎉🎈🎁🎂🎄🎃🎆🎇🧨🧧🧵🧶🧷🧸🧹🧺.txt";
+	const combining = "e\u0301a\u0300o\u0302u\u0308n\u0303c\u0327i\u0301.txt";
+	const cjk = "日本語のファイル名前テスト用ドキュメント.md";
+	const model = initialModel(
+		stats([
+			change(fullWidth),
+			change(emoji),
+			change(combining),
+			change(cjk, { kind: "renamed", renamedFrom: fullWidth }),
+		]),
+		null,
+	);
+	const loaded = applyPatch(model, "request", fullWidth, [
+		{
+			header: `@@ -1,2 +1,3 @@ ${cjk}`,
+			lines: [{ origin: "+", text: `${fullWidth}${emoji}` }],
+		},
+	]);
+	for (const width of [10, 20, 40, 41, 80]) {
+		for (const line of renderLines(loaded, width, true)) {
+			assert.ok(
+				measureColumns(line) <= width,
+				`width ${width}: line measured ${measureColumns(line)} columns: ${JSON.stringify(line)}`,
+			);
+		}
+	}
+});
+
+test("F-15 clipping never splits a surrogate pair or orphans a combining mark", () => {
+	const astral = "🎉🎈🎁🎂🎄🎃🎆🎇🧨🧧.txt";
+	const combining = "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301.txt";
+	const model = initialModel(
+		stats([change(astral), change(combining)]),
+		null,
+	);
+	for (let width = 1; width <= 40; width += 1) {
+		for (const line of renderLines(model, width, false)) {
+			for (let i = 0; i < line.length; i += 1) {
+				const code = line.charCodeAt(i);
+				const isHighSurrogate = code >= 0xd800 && code <= 0xdbff;
+				const isLowSurrogate = code >= 0xdc00 && code <= 0xdfff;
+				if (isHighSurrogate) {
+					const next = line.charCodeAt(i + 1);
+					assert.ok(
+						next >= 0xdc00 && next <= 0xdfff,
+						`width ${width}: lone high surrogate at ${i} in ${JSON.stringify(line)}`,
+					);
+					i += 1;
+					continue;
+				}
+				assert.ok(
+					!isLowSurrogate,
+					`width ${width}: lone low surrogate at ${i} in ${JSON.stringify(line)}`,
+				);
+			}
+			if (/[\p{Mn}\p{Me}]/u.test(line)) {
+				assert.ok(
+					!/^[\p{Mn}\p{Me}]/u.test(line),
+					`width ${width}: line starts with a combining mark: ${JSON.stringify(line)}`,
+				);
+			}
+		}
+	}
+});
+
 test("badgeText shapes: both sides, one side null, present-but-empty side", () => {
 	const requestStats = stats([
 		change("a.ts", { additions: 100, deletions: 5 }),

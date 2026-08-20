@@ -236,9 +236,39 @@ function displayCount(value: number): number {
 	return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
+const WIDE = /^(?:[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1F64F}\u{1F900}-\u{1F9FF}\u{20000}-\u{2FFFD}])$/u;
+const ZERO_WIDTH = /^[\p{Mn}\p{Me}]$/u;
+
+function charWidth(char: string): number {
+	if (ZERO_WIDTH.test(char)) {
+		return 0;
+	}
+	return WIDE.test(char) ? 2 : 1;
+}
+
+function displayWidth(text: string): number {
+	let total = 0;
+	for (const char of text) {
+		total += charWidth(char);
+	}
+	return total;
+}
+
 function clip(line: string, width: number): string {
-	const chars = [...line];
-	return chars.length > width ? chars.slice(0, width).join("") : line;
+	if (displayWidth(line) <= width) {
+		return line;
+	}
+	let kept = "";
+	let used = 0;
+	for (const char of line) {
+		const next = used + charWidth(char);
+		if (next > width) {
+			break;
+		}
+		kept += char;
+		used = next;
+	}
+	return kept;
 }
 
 /**
