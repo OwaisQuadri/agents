@@ -693,6 +693,51 @@ test("TC-28 the highlight follows the cursor and stays single", async (t) => {
 	}
 });
 
+test("F-17 the overlay never exceeds its height budget, however many files changed", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	for (let index = 0; index < 60; index += 1) {
+		fs.writeFileSync(path.join(repo.root, `many-${index}.txt`), `content ${index}\n`);
+	}
+	await pi.fire("agent_start", {}, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 60);
+	assert.equal(
+		probe.options.overlayOptions?.maxHeight,
+		24,
+		"ui.custom must be given an explicit maxHeight so the framework never lets the panel run off the terminal",
+	);
+	assert.ok(
+		probe.lines.length <= 24,
+		`render() must never emit more lines than the requested maxHeight, saw ${probe.lines.length}`,
+	);
+
+	// At a wide enough panel the scroll indicator has room to spell "more"
+	// rather than being clipped to its leading glyph — the row-count
+	// guarantee holds at any width (checked above), but the indicator's
+	// readability is a width concern, checked on a fresh harness so the
+	// two /diff opens do not collide with openOverlay's own one-call check.
+	const wide = createHarness(t);
+	for (let index = 0; index < 60; index += 1) {
+		fs.writeFileSync(path.join(wide.repo.root, `many-${index}.txt`), `content ${index}\n`);
+	}
+	await wide.pi.fire("agent_start", {}, wide.ctx);
+	wide.pi.fire("agent_settled", {}, wide.ctx);
+	await waitFor(() => wide.recorder.setStatusCalls.length >= 1);
+	const wideProbe = await openOverlay(wide.pi, wide.recorder, wide.ctx, 100);
+	assert.ok(
+		wideProbe.lines.length <= 24,
+		`render() must never emit more lines than the requested maxHeight at width 100 either, saw ${wideProbe.lines.length}`,
+	);
+	const wideJoined = wideProbe.lines.join("\n");
+	assert.match(
+		wideJoined,
+		/more/,
+		"with 60 changed files in a 24-line budget and room to spell it out, hidden rows must be announced",
+	);
+});
+
 test("TC-14 /diff during an in-flight refresh opens exactly one overlay", async (t) => {
 	const { pi, recorder, ctx, repo } = createHarness(t);
 	const rejections: unknown[] = [];

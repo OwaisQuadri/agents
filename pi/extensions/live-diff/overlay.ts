@@ -100,8 +100,24 @@ export function rebuildRows(
  *   the same model and null effect
  */
 export function reduce(model: OverlayModel, key: OverlayKey): OverlayStep {
+	// Column-scoped keys act on model.mode rather than model.rows[model.cursor],
+	// so they must stay live even when the current column has zero rows —
+	// otherwise a user who lands on an empty column is trapped there with only
+	// close left to press.
 	if (key === "close") {
 		return { model, effect: { kind: "close" } };
+	}
+	if (key === "mode-left") {
+		if (model.mode === "request") {
+			return { model, effect: null };
+		}
+		return { model: { ...model, mode: "request" }, effect: null };
+	}
+	if (key === "mode-right") {
+		if (model.mode === "overall") {
+			return { model, effect: null };
+		}
+		return { model: { ...model, mode: "overall" }, effect: null };
 	}
 	if (model.rows.length === 0) {
 		return { model, effect: null };
@@ -131,16 +147,6 @@ export function reduce(model: OverlayModel, key: OverlayKey): OverlayStep {
 				},
 				effect: null,
 			};
-		case "mode-left":
-			if (model.mode === "request") {
-				return { model, effect: null };
-			}
-			return { model: { ...model, mode: "request" }, effect: null };
-		case "mode-right":
-			if (model.mode === "overall") {
-				return { model, effect: null };
-			}
-			return { model: { ...model, mode: "overall" }, effect: null };
 		case "open":
 			return { model, effect: { kind: "open-in-nvim", path: row.change.path } };
 		default:
@@ -182,36 +188,56 @@ export function applyPatch(
 	};
 }
 
-/**
- * Render the model to tone-tagged rows for the overlay component.
- *
- * @param model current model
- * @param width panel width in display columns
- * @param isTruncated whether the current mode's stats were capped
- * @returns one row per visual line, each padded or clipped to exactly `width`
- *   display columns, with the cursor row and only the cursor row selected
- */
-export function renderRows(
+function headerRow(model: OverlayModel, width: number): RenderRow {
+	return fit(
+		[
+			{
+				text:
+					model.mode === "request"
+						? "[request] overall"
+						: " request [overall]",
+				tone: "header",
+			},
+		],
+		width,
+		false,
+	);
+}
+
+function hintRow(width: number, scrollHint: string | null): RenderRow {
+	const base = "space expand · jk move · hl columns · ⏎ nvim · q close";
+	const text = scrollHint === null ? base : `${base}  ${scrollHint}`;
+	return fit([{ text, tone: "hint" }], width, false);
+}
+
+interface BodyLine {
+	row: RenderRow;
+	/** Index into model.rows for a per-row line; null for a hunk or truncation line. */
+	modelRowIndex: number | null;
+}
+
+function emptyStateText(mode: DiffMode): string {
+	return mode === "request" ? "no changes in this request yet" : "no changes";
+}
+
+function buildBody(
 	model: OverlayModel,
 	width: number,
-	isTruncated = false,
-): RenderRow[] {
-	const rows: RenderRow[] = [];
-	rows.push(
-		fit(
-			[
-				{
-					text:
-						model.mode === "request"
-							? "[request] overall"
-							: " request [overall]",
-					tone: "header",
-				},
-			],
-			width,
-			false,
-		),
-	);
+	isTruncated: boolean,
+): BodyLine[] {
+	if (model.rows.length === 0) {
+		return [
+			{
+				row: fit(
+					[{ text: emptyStateText(model.mode), tone: "hint" }],
+					width,
+					false,
+				),
+				modelRowIndex: null,
+			},
+		];
+	}
+	const lines: BodyLine[] = [];
 	model.rows.forEach((row, index) => {
 		const isSelected = index === model.cursor;
 		const name = sanitize(rowName(row.change));
@@ -238,21 +264,22 @@ export function renderRows(
 				tone: "removed",
 			});
 		}
-		rows.push(fit(spans, width, isSelected));
+		lines.push({ row: fit(spans, width, isSelected), modelRowIndex: index });
 		if (!isUnfolded || row.hunks === null) {
 			return;
 		}
 		for (const hunk of row.hunks) {
-			rows.push(
-				fit(
+			lines.push({
+				row: fit(
 					[{ text: sanitize(hunk.header), tone: "hunkHeader" }],
 					width,
 					false,
 				),
-			);
+				modelRowIndex: null,
+			});
 			for (const hunkLine of hunk.lines) {
-				rows.push(
-					fit(
+				lines.push({
+					row: fit(
 						[
 							{
 								text: sanitize(hunkLine.origin + hunkLine.text),
@@ -262,32 +289,102 @@ export function renderRows(
 						width,
 						false,
 					),
-				);
+					modelRowIndex: null,
+				});
 			}
 		}
 	});
 	if (isTruncated) {
-		rows.push(
-			fit(
+		lines.push({
+			row: fit(
 				[{ text: "… more files (truncated)", tone: "truncation" }],
 				width,
 				false,
 			),
-		);
+			modelRowIndex: null,
+		});
 	}
-	rows.push(
-		fit(
-			[
-				{
-					text: "space expand · jk move · hl columns · ⏎ nvim · q close",
-					tone: "hint",
-				},
-			],
-			width,
-			false,
-		),
+	return lines;
+}
+
+/**
+ * Window the body so the cursor line stays visible without recentring on
+ * every move: the offset only advances or retreats the minimum amount
+ * needed to keep the cursor's line inside [offset, offset + height).
+ *
+ * @param lines full body, in display order
+ * @param height number of body lines to keep
+ * @param cursorLineIndex index within `lines` that must stay visible
+ * @returns the visible slice plus how many lines are hidden above and below
+ */
+function windowBody(
+	lines: BodyLine[],
+	height: number,
+	cursorLineIndex: number,
+): { visible: BodyLine[]; hiddenAbove: number; hiddenBelow: number } {
+	if (height >= lines.length || height <= 0) {
+		return { visible: lines, hiddenAbove: 0, hiddenBelow: 0 };
+	}
+	const maxOffset = Math.max(lines.length - height, 0);
+	let offset = 0;
+	if (cursorLineIndex >= offset + height) {
+		offset = cursorLineIndex - height + 1;
+	}
+	if (cursorLineIndex < offset) {
+		offset = cursorLineIndex;
+	}
+	offset = Math.min(Math.max(offset, 0), maxOffset);
+	const visible = lines.slice(offset, offset + height);
+	return { visible, hiddenAbove: offset, hiddenBelow: lines.length - offset - visible.length };
+}
+
+/**
+ * Render the model to tone-tagged rows for the overlay component.
+ *
+ * @param model current model
+ * @param width panel width in display columns
+ * @param isTruncated whether the current mode's stats were capped
+ * @param visibleHeight maximum number of rows to emit, header and hint
+ *   included; omitted or infinite means no windowing, which is every
+ *   existing caller's behaviour
+ * @returns rows padded or clipped to exactly `width` display columns, with
+ *   the cursor row and only the cursor row selected. The header is always
+ *   first and the hint always last; when the body is windowed, the cursor's
+ *   row stays inside the visible slice and the window only scrolls when the
+ *   cursor would otherwise leave it, and a hidden-rows count is folded into
+ *   the hint row rather than dropped silently
+ */
+export function renderRows(
+	model: OverlayModel,
+	width: number,
+	isTruncated = false,
+	visibleHeight: number = Number.POSITIVE_INFINITY,
+): RenderRow[] {
+	const body = buildBody(model, width, isTruncated);
+	const bodyHeight = Math.max(visibleHeight - 2, 0);
+	const cursorLineIndex = Math.max(
+		body.findIndex((line) => line.modelRowIndex === model.cursor),
+		0,
 	);
-	return rows;
+	const { visible, hiddenAbove, hiddenBelow } = windowBody(
+		body,
+		bodyHeight,
+		cursorLineIndex,
+	);
+	const scrollHint =
+		hiddenAbove > 0 || hiddenBelow > 0
+			? [
+					hiddenAbove > 0 ? `↑ ${hiddenAbove} more` : null,
+					hiddenBelow > 0 ? `↓ ${hiddenBelow} more` : null,
+				]
+					.filter((part): part is string => part !== null)
+					.join(" ")
+			: null;
+	return [
+		headerRow(model, width),
+		...visible.map((line) => line.row),
+		hintRow(width, scrollHint),
+	];
 }
 
 /**

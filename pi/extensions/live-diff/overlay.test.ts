@@ -202,24 +202,80 @@ test("TC-05 close emits close", () => {
 	assert.deepEqual(reduce(model, "close").effect, { kind: "close" });
 });
 
-test("TC-09 empty stats give zero rows and inert keys except close", () => {
+test("TC-09 empty stats give zero rows; row-scoped keys are inert, close still works", () => {
 	const model = initialModel(null, stats([]));
 	assert.equal(model.rows.length, 0);
-	const keys: OverlayKey[] = [
-		"up",
-		"down",
-		"fold",
-		"mode-left",
-		"mode-right",
-		"open",
-	];
-	for (const key of keys) {
+	const rowScopedKeys: OverlayKey[] = ["up", "down", "fold", "open"];
+	for (const key of rowScopedKeys) {
 		const step = reduce(model, key);
 		assert.equal(step.model, model);
 		assert.equal(step.effect, null);
 	}
 	assert.deepEqual(reduce(model, "close").effect, { kind: "close" });
 	assert.equal(badgeText(null, null), "diff clean");
+});
+
+test("F-16 mode keys always work from an empty column, in both directions", () => {
+	// A user who lands on an empty column must be able to leave it: the
+	// column-scoped keys are never trapped by the row-scoped empty guard.
+	const model = initialModel(null, stats([]));
+	assert.equal(model.rows.length, 0);
+	assert.equal(model.mode, "overall");
+
+	const toRequest = reduce(model, "mode-left");
+	assert.equal(toRequest.effect, null);
+	assert.equal(toRequest.model.mode, "request");
+	assert.notEqual(
+		toRequest.model,
+		model,
+		"mode-left must actually change the mode even with zero rows",
+	);
+
+	const backToOverall = reduce(toRequest.model, "mode-right");
+	assert.equal(backToOverall.effect, null);
+	assert.equal(backToOverall.model.mode, "overall");
+
+	// Idempotent: pressing the same direction twice from an empty column
+	// changes nothing on the second press — the second call returns the exact
+	// model it was given, not merely a structurally-equal copy.
+	const onceLeft = reduce(model, "mode-left").model;
+	const pressedTwice = reduce(onceLeft, "mode-left");
+	assert.equal(pressedTwice.effect, null);
+	assert.equal(pressedTwice.model, onceLeft);
+
+	// Row-scoped keys stay inert throughout, on both empty columns.
+	for (const m of [model, toRequest.model]) {
+		for (const key of ["up", "down", "fold", "open"] as OverlayKey[]) {
+			const step = reduce(m, key);
+			assert.equal(step.model, m);
+			assert.equal(step.effect, null);
+		}
+	}
+});
+
+test("F-16 an empty column renders an explicit empty-state row, per column", () => {
+	const model = initialModel(null, stats([]));
+	assert.equal(model.mode, "overall");
+	const overallRows = renderRows(model, 60);
+	const overallText = overallRows.map(rowText).join("\n");
+	assert.match(overallText, /no changes(?! in this request)/);
+	assert.equal(overallRows[0].isSelected, false);
+	assert.equal(overallRows[overallRows.length - 1].isSelected, false);
+
+	const toRequest = reduce(model, "mode-left").model;
+	assert.equal(toRequest.mode, "request");
+	const requestRows = renderRows(toRequest, 60);
+	const requestText = requestRows.map(rowText).join("\n");
+	assert.match(requestText, /no changes in this request yet/);
+
+	// The empty-state row obeys the same width contract as every other row,
+	// and the header/hint stay present around it.
+	for (const rows of [overallRows, requestRows]) {
+		for (const row of rows) {
+			assert.equal(testDisplayWidth(rowText(row)), 60);
+		}
+		assert.equal(rows.length, 3, "header, empty-state row, hint");
+	}
 });
 
 test("TC-10 truncation row appears only when isTruncated is true", () => {
@@ -753,6 +809,165 @@ test("TC-28 renderLines output is unchanged by the renderRows rewrite", () => {
 				`line ${index} at width ${width} is not the row minus padding`,
 			);
 			assert.ok(testDisplayWidth(line) <= width);
+		}
+	}
+});
+
+function manyFileStats(count: number): DiffStats {
+	return stats(
+		Array.from({ length: count }, (_unused, index) => change(`file-${index}.ts`)),
+	);
+}
+
+test("F-17 with no height limit, renderRows is unwindowed (every existing caller)", () => {
+	const model = initialModel(manyFileStats(100), null);
+	const rows = renderRows(model, 60);
+	assert.equal(rows.length, 102, "header + 100 rows + hint, nothing hidden");
+	const lines = renderLines(model, 60);
+	assert.equal(lines.length, 102);
+});
+
+test("F-17 with a height limit, the returned row count respects it", () => {
+	const model = initialModel(manyFileStats(100), null);
+	const rows = renderRows(model, 60, false, 10);
+	assert.equal(rows.length, 10);
+});
+
+test("F-17 the selected row is always inside the visible window", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 60; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	assert.equal(model.cursor, 60);
+	const rows = renderRows(model, 60, false, 10);
+	const selected = rows.filter((row) => row.isSelected);
+	assert.equal(selected.length, 1, "exactly one selected row survives windowing");
+	assert.match(rowText(selected[0]), /file-60\.ts/);
+});
+
+test("F-17 moving down past the bottom of the window scrolls by one, not a jump", () => {
+	let model = initialModel(manyFileStats(100), null);
+	const height = 10;
+	const bodyHeight = height - 2;
+
+	function visiblePaths(m: typeof model): string[] {
+		return renderRows(m, 60, false, height)
+			.slice(1, -1)
+			.map((row) => rowText(row).match(/file-\d+\.ts/)?.[0] ?? "");
+	}
+
+	// Fill the window from the top: rows 0..bodyHeight-1 are visible without
+	// scrolling, and the cursor moving within that range must not scroll.
+	for (let step = 0; step < bodyHeight - 1; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const beforeScroll = visiblePaths(model);
+	assert.deepEqual(beforeScroll, [
+		"file-0.ts",
+		"file-1.ts",
+		"file-2.ts",
+		"file-3.ts",
+		"file-4.ts",
+		"file-5.ts",
+		"file-6.ts",
+		"file-7.ts",
+	]);
+
+	// One more step pushes the cursor past the bottom of the window: the
+	// window must scroll by exactly one line, not recentre or jump.
+	model = reduce(model, "down").model;
+	const afterScroll = visiblePaths(model);
+	assert.deepEqual(afterScroll, [
+		"file-1.ts",
+		"file-2.ts",
+		"file-3.ts",
+		"file-4.ts",
+		"file-5.ts",
+		"file-6.ts",
+		"file-7.ts",
+		"file-8.ts",
+	]);
+});
+
+test("F-17 moving back up scrolls the window back rather than staying pinned", () => {
+	const height = 10;
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const midRows = renderRows(model, 60, false, height);
+	const midSelected = midRows.find((row) => row.isSelected);
+	assert.ok(midSelected);
+	assert.match(rowText(midSelected), /file-50\.ts/);
+
+	for (let step = 0; step < 45; step += 1) {
+		model = reduce(model, "up").model;
+	}
+	assert.equal(model.cursor, 5);
+	const topRows = renderRows(model, 60, false, height);
+	const topSelected = topRows.find((row) => row.isSelected);
+	assert.ok(topSelected);
+	assert.match(rowText(topSelected), /file-5\.ts/);
+	const topPaths = topRows
+		.slice(1, -1)
+		.map((row) => rowText(row).match(/file-\d+\.ts/)?.[0]);
+	assert.ok(
+		topPaths.includes("file-0.ts"),
+		"scrolling back up must reach the top of the list again",
+	);
+});
+
+test("F-17 hidden rows are announced with a count, above and below", () => {
+	const height = 10;
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const rows = renderRows(model, 120, false, height);
+	const hint = rowText(rows[rows.length - 1]);
+	assert.match(hint, /↑ \d+ more/, "rows hidden above must be announced");
+	assert.match(hint, /↓ \d+ more/, "rows hidden below must be announced");
+
+	const aboveMatch = hint.match(/↑ (\d+) more/);
+	const belowMatch = hint.match(/↓ (\d+) more/);
+	assert.ok(aboveMatch && belowMatch);
+	const above = Number(aboveMatch[1]);
+	const below = Number(belowMatch[1]);
+	assert.equal(
+		above + below + (height - 2),
+		100,
+		"hidden above + hidden below + visible body must account for every row",
+	);
+});
+
+test("F-17 no hidden-rows indicator when everything fits", () => {
+	const model = initialModel(manyFileStats(5), null);
+	const rows = renderRows(model, 70, false, 20);
+	const hint = rowText(rows[rows.length - 1]);
+	assert.ok(!hint.includes("more"), "nothing is hidden, so no indicator appears");
+});
+
+test("F-17 header stays first and hint stays last no matter the scroll offset", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 77; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const rows = renderRows(model, 70, false, 10);
+	assert.match(rowText(rows[0]), /request|overall/);
+	assert.match(rowText(rows[rows.length - 1]), /expand|more/);
+	assert.equal(rows[0].isSelected, false);
+	assert.equal(rows[rows.length - 1].isSelected, false);
+});
+
+test("F-17 every row still measures exactly the requested width when windowed", () => {
+	let model = initialModel(manyFileStats(100), null);
+	for (let step = 0; step < 42; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	for (const width of [40, 60, 100]) {
+		const rows = renderRows(model, width, false, 10);
+		for (const row of rows) {
+			assert.equal(testDisplayWidth(rowText(row)), width);
 		}
 	}
 });

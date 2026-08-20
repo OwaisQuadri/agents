@@ -36,6 +36,13 @@ const OVERLAY_WIDTH = "80%";
 const OVERLAY_MIN_WIDTH = 48;
 const OVERLAY_PADDING_X = 1;
 const OVERLAY_PADDING_Y = 1;
+// pi-tui's Component#render(width) receives no live terminal height, and
+// TUI exposes no getter for one either — overlayOptions.maxHeight is a
+// REQUEST to the framework, not a queryable actual. So the visible row
+// budget is a shell-owned constant, matching OVERLAY_WIDTH/OVERLAY_MIN_WIDTH's
+// own pattern, and the same figure is what we ask the framework for via
+// maxHeight. Kept modest so it holds on a small terminal, not just a tall one.
+const OVERLAY_MAX_HEIGHT = 24;
 const SELECTED_GUTTER = "▌";
 const UNSELECTED_GUTTER = " ";
 const DEBOUNCE_MS = 300;
@@ -465,10 +472,19 @@ export default function liveDiff(pi: ExtensionAPI): void {
 								1,
 								width - OVERLAY_PADDING_X * 2 - SELECTED_GUTTER.length,
 							);
+							// The frame adds OVERLAY_PADDING_Y blank lines above and below
+							// the body, so the body's own budget is the requested maximum
+							// MINUS that padding. Getting this wrong by the padding amount
+							// is exactly how the earlier edge-bleed bug happened.
+							const visibleHeight = Math.max(
+								1,
+								OVERLAY_MAX_HEIGHT - OVERLAY_PADDING_Y * 2,
+							);
 							const rows = renderRows(
 								model,
 								contentWidth,
 								stats?.isTruncated ?? false,
+								visibleHeight,
 							);
 							const pad = " ".repeat(OVERLAY_PADDING_X);
 							const body = rows.map((row) => styleRow(theme, row, pad));
@@ -509,6 +525,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 					overlayOptions: {
 						width: OVERLAY_WIDTH,
 						minWidth: OVERLAY_MIN_WIDTH,
+						maxHeight: OVERLAY_MAX_HEIGHT,
 					},
 				},
 			);
