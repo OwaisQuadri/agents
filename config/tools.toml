@@ -96,4 +96,18 @@ herdr_plugin = "herdr/worktree-layout"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
-# TODO(AGNT-0015.T12): live-diff pi_extension stanza (statusline pattern).
+[[tools]]
+name = "live-diff"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/live-diff.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "live-diff-module"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/live-diff"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }

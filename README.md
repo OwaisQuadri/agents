@@ -231,4 +231,22 @@ Run `pr-review-filter set platform=graphite` inside a repository to write its ov
   It copies untracked files that Git does not ignore.
   The hook does not touch a dirty destination, an in-progress rebase, or the live tree.
 
-<!-- TODO(AGNT-0015.T12): live-diff README section — badge, /diff keys, nvim open, tests. -->
+## live diffs
+
+The `live-diff` extension shows what the agent changes as it works. The statusline badge shows two counters: `req` counts the current request's diff against the snapshot taken when the request started, and `all` counts the overall worktree diff against the session baseline. The badge refreshes after each write-capable tool call and when the agent settles. A clean worktree shows `diff clean`.
+
+The `/diff` command opens the overlay. Its keys:
+
+```text
+tab or t    toggle request/overall
+↑↓ or j/k   move the selection
+space or f  fold a file's hunks in place
+enter       open the selected file in the herdr editor tab's nvim
+q or esc    close
+```
+
+Run the tests:
+
+```sh
+node --test pi/extensions/live-diff/engine.test.ts pi/extensions/live-diff/overlay.test.ts pi/extensions/live-diff.test.ts
+```
