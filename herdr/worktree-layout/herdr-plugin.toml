@@ -1,0 +1,14 @@
+id = "agents.worktree-layout"
+name = "Worktree Layout"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Apply the two-tab agent/editor layout to new and opened worktrees."
+platforms = ["macos", "linux"]
+
+[[events]]
+on = "worktree.created"
+command = ["/bin/zsh", "layout.zsh"]
+
+[[events]]
+on = "worktree.opened"
+command = ["/bin/zsh", "layout.zsh"]

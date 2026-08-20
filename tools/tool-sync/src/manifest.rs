@@ -22,6 +22,7 @@ pub struct ToolSpec {
     pub pi_extension: Option<PathBuf>,
     pub pi_package: Option<PathBuf>,
     pub skills: Vec<PathBuf>,
+    pub herdr_plugin: Option<PathBuf>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -65,6 +66,8 @@ struct RawTool {
     pi_package: Option<PathBuf>,
     #[serde(default)]
     skills: Vec<PathBuf>,
+    #[serde(default)]
+    herdr_plugin: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -158,7 +161,8 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
 
         let is_resource_only = raw_tool.pi_extension.is_some()
             || raw_tool.pi_package.is_some()
-            || !raw_tool.skills.is_empty();
+            || !raw_tool.skills.is_empty()
+            || raw_tool.herdr_plugin.is_some();
         if raw_tool.commands.is_empty() && !is_resource_only {
             return Err(tool_invalid(name, "commands is empty"));
         }
@@ -217,6 +221,17 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
                 })?;
             }
         }
+        if let Some(plugin) = &raw_tool.herdr_plugin {
+            validate_relative(name, "Herdr plugin", plugin)?;
+            if plugin != Path::new(".") {
+                plugin.file_name().ok_or_else(|| {
+                    tool_invalid(
+                        name,
+                        &format!("Herdr plugin {} has no file name", plugin.display()),
+                    )
+                })?;
+            }
+        }
         for skill in &raw_tool.skills {
             validate_relative(name, "skill", skill)?;
             skill.file_name().ok_or_else(|| {
@@ -234,6 +249,7 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
             pi_extension: raw_tool.pi_extension,
             pi_package: raw_tool.pi_package,
             skills: raw_tool.skills,
+            herdr_plugin: raw_tool.herdr_plugin,
         });
     }
 
@@ -427,6 +443,55 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             manifest.tools[0].pi_package.as_deref(),
             Some(Path::new("."))
         );
+    }
+
+    const HERDR_TOOL: &str = r#"
+[[tools]]
+name = "worktree-layout"
+platforms = ["macos", "linux"]
+commands = []
+herdr_plugin = "herdr/worktree-layout"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+"#;
+
+    #[test]
+    fn parses_herdr_plugin_subdir() {
+        let manifest = load_text(HERDR_TOOL).expect("manifest loads");
+        assert_eq!(
+            manifest.tools[0].herdr_plugin.as_deref(),
+            Some(Path::new("herdr/worktree-layout"))
+        );
+    }
+
+    #[test]
+    fn parses_root_herdr_plugin() {
+        let text = HERDR_TOOL.replace("herdr/worktree-layout", ".");
+        let manifest = load_text(&text).expect("manifest loads");
+        assert_eq!(
+            manifest.tools[0].herdr_plugin.as_deref(),
+            Some(Path::new("."))
+        );
+    }
+
+    #[test]
+    fn accepts_herdr_plugin_as_resource_only() {
+        let manifest = load_text(HERDR_TOOL).expect("manifest loads");
+        assert!(manifest.tools[0].commands.is_empty());
+    }
+
+    #[test]
+    fn rejects_escaping_herdr_plugin() {
+        let text = HERDR_TOOL.replace("herdr/worktree-layout", "../escape");
+        let error = load_text(&text).expect_err("escaping path rejected");
+        assert!(error.to_string().contains("worktree-layout"));
+    }
+
+    #[test]
+    fn rejects_absolute_herdr_plugin() {
+        let text = HERDR_TOOL.replace("herdr/worktree-layout", "/abs");
+        let error = load_text(&text).expect_err("absolute path rejected");
+        assert!(error.to_string().contains("worktree-layout"));
     }
 
     #[test]

@@ -28,7 +28,7 @@ out=$(jq -r --argjson now "$(date +%s)" --argjson cols "$cols" '
    elif ($five > 90 and $five > $week) then $session
    else $weekly end) as $u
 
-| (($cols * 25 / 100 | floor) as $b | if $b < 6 then 6 elif $b > 60 then 60 else $b end) as $barw
+| (($cols * 50 / 100 | floor) as $b | if $b < 6 then 6 elif $b > 60 then 60 else $b end) as $barw
 
 | (if $u == null then null else
      ($u.p | floor) as $p

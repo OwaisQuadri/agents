@@ -76,6 +76,9 @@ fn render_action(action: &Action, is_dry_run: bool) -> String {
             source.display(),
             destination.display()
         ),
+        Action::LinkHerdrPlugin { tool, source } => {
+            format!("link herdr plugin {} for {tool}", source.display())
+        }
         Action::RenderPiAgent {
             source,
             destination,
@@ -169,6 +172,7 @@ fn check_stale_state(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
             } => check_agent_destination(source, destination)?,
             Action::CheckoutRevision { .. }
             | Action::RunInstaller { .. }
+            | Action::LinkHerdrPlugin { .. }
             | Action::SkipPlatform { .. } => {}
         }
     }
@@ -260,6 +264,7 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
             source,
             destination,
         } => create_verified_link(source, destination),
+        Action::LinkHerdrPlugin { tool, source } => link_herdr_plugin(tool, source),
         Action::RenderPiAgent {
             source,
             destination,
@@ -334,6 +339,26 @@ fn run_installer(
         .map_err(|error| SyncError::ProcessStart {
             program: command.to_owned(),
             working_directory: working_directory.to_path_buf(),
+            error,
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(SyncError::InstallerFailed {
+            tool: tool.to_owned(),
+            status,
+        })
+    }
+}
+
+fn link_herdr_plugin(tool: &str, source: &Path) -> Result<(), SyncError> {
+    let status = Command::new("herdr")
+        .args(["plugin", "link"])
+        .arg(source)
+        .status()
+        .map_err(|error| SyncError::ProcessStart {
+            program: "herdr".to_owned(),
+            working_directory: source.to_path_buf(),
             error,
         })?;
     if status.success() {
@@ -461,6 +486,22 @@ mod tests {
             render(&plan, true),
             "link Pi package /source/package -> /root/package\nlink skill /source/skill -> /shared/skill"
         );
+    }
+
+    #[test]
+    fn renders_herdr_plugin_link_naming_tool_and_source() {
+        let plan = Plan {
+            actions: vec![Action::LinkHerdrPlugin {
+                tool: "herdr-worktree-layout".into(),
+                source: "/repo/herdr/worktree-layout".into(),
+            }],
+        };
+
+        assert_eq!(
+            render(&plan, true),
+            "link herdr plugin /repo/herdr/worktree-layout for herdr-worktree-layout"
+        );
+        assert_eq!(render(&plan, false), render(&plan, true));
     }
 
     #[test]

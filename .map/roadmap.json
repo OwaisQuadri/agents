@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 28,
+    "next_nnnn": 30,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -126,7 +126,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Manage shell entries and protect generated files.",
-      "long": "Render one managed shell file for Bash and Z shell from the tool manifest. Add cld as claude --dangerously-skip-permissions. Render a managed Secure Shell include for the archlinux Tailscale host, and preserve the user's main Secure Shell config.\n\nInstall guards for Claude Code, Codex, and Pi. The guards block direct agent writes to managed configuration fields. Each refusal names the tracked source file or the adopt command. Human edits and unmanaged fields must survive the installer.\n\nTest repeated installs, existing user shell content, direct write attempts, the approved installer path, and dry runs with a temporary home directory.",
+      "long": "Render one managed shell file for Bash and Z shell from the tool manifest. Add cld as claude --dangerously-skip-permissions. Render a managed Secure Shell include for the archlinux Tailscale host, and preserve the user's main Secure Shell config.\n\nInstall guards for Claude Code, Codex, and Pi. The guards block direct agent writes to managed configuration fields. Each refusal names the tracked source file or the adopt command. Human edits and unmanaged fields must survive the installer.\n\nTest repeated installs, existing user shell content, direct write attempts, the approved installer path, and dry runs with a temporary home directory.\n\nAmendment (owner, 2026-08-19, AGNT-0014 gate D): the shell prompt shows only the folder name (never full path or user@host); the command-entry line sits on its own row below it, highlighted in a distinct color so command boundaries are clear when scrolling. Also adopt the hand-edited ~/.config/herdr/config.toml (worktree-picker keybinding) under managed config.",
       "deps": [
         "AGNT-0008",
         "AGNT-0010"
@@ -180,7 +180,7 @@
     {
       "id": "AGNT-0012",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Install the pinned Pi stack with private telemetry.",
       "long": "Install nicobailon/pi-subagents, Plannotator, HumanLayer show-me, Wayfinder, and grilling from pinned upstream revisions. Keep each upstream checkout unchanged. Add a project-owned Pi extension that records package version, invocation, duration, result status, human correction, and exposed cost fields. Do not record prompts or file contents by default.\n\nDerive Pi-compatible agent metadata from the existing definitions without creating a second prompt source. Disable overlapping bundled agents only after representative project roles pass. Require three reproduced failures with one source-level cause before a fork. Test dry runs, repeated installs, telemetry redaction, and representative agent discovery.",
       "deps": [
@@ -200,7 +200,7 @@
     {
       "id": "AGNT-0013",
       "kind": "ticket",
-      "status": "todo",
+      "status": "resolved",
       "short": "Run Claude Code as a subscription-backed Pi child.",
       "long": "Add a project-owned Pi agent that invokes the installed claude command through the external command runner in nicobailon/pi-subagents. Verify the supported flags from the installed Claude Code command instead of copying an example. Preserve fresh context and worktree isolation for mutation-capable runs. Run one bounded child task and confirm that its result returns to Pi. Verify that the call appears in Claude subscription usage before this route becomes the default.",
       "deps": [
@@ -218,7 +218,7 @@
     {
       "id": "AGNT-0014",
       "kind": "ticket",
-      "status": "todo",
+      "status": "resolved",
       "short": "Create the two-tab Herdr worktree setup.",
       "long": "Install herdr-fresh-worktree from a pinned revision. Add one idempotent, repository-owned Herdr setup for new and opened worktrees. Tab one contains Pi at 75 percent width and a shell at 25 percent. Tab two contains Neovim at 75 percent and a shell at 25 percent. Define event ordering and ownership between herdr-fresh-worktree and hooks/post-checkout before either changes a new worktree. Test repeated setup, dirty destinations, existing tabs, and one temporary worktree.",
       "deps": [
@@ -240,9 +240,10 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Show live request and overall diffs in Pi.",
-      "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.",
+      "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.\n\nAmendment (owner, 2026-08-19, AGNT-0014 gate D): selecting a file in the diff view focuses the herdr editor tab and opens that file in nvim (compose with the AGNT-0014 layout: herdr tab focus + pane send/nvim remote).",
       "deps": [
-        "AGNT-0008"
+        "AGNT-0008",
+        "AGNT-0014"
       ],
       "files": [
         "pi/extensions/",
@@ -438,6 +439,34 @@
       ],
       "blame_phase": null,
       "created": "2026-08-19T00:00:00-0400"
+    },
+    {
+      "id": "AGNT-0028",
+      "status": "todo",
+      "short": "statusline extension crashes on stale ctx after session replacement",
+      "long": "pi/extensions/statusline.ts render() uses a captured extension ctx after session replacement; ExtensionRunner.assertActive throws (runner.js:360 hasUI -> statusline.ts:212 render, :238 refresh). During AGNT-0014 this killed every pi-subagents workflow wrapper and dumped raw Node stack traces into the Pi TUI (owner screenshots, 2026-08-19). Fix per the runner guidance: never use a captured ctx after newSession/fork/switchSession/reload; move post-replacement work into withSession or re-resolve the ctx per render. Verify by running a workflowScript with two parallel children and confirming the wrapper survives and no trace lands in the TUI.",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-19T21:28:29-0400"
+    },
+    {
+      "id": "AGNT-0029",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "first-class workspace/worktree palette for herdr",
+      "long": "Graduate herdr/worktree-picker.zsh (landed with AGNT-0014: prefix+shift+o popup listing open workspaces to switch, all repos worktrees to open, and known folders as create-ws) into the full palette from the owner gate-UX ask, in his words: search and pick any folder in the filesystem; if a git project, open a worktree or create one (open faster); if not a git project, init a local repo there and open a worktree; search by worktree names; quick switch. Adds create-worktree and git-init-then-open actions to the menu, folder roots configuration, and moves the hand-edited ~/.config/herdr/config.toml keybinding under managed config (with AGNT-0009). Iron-man slot: ship it as a proper herdr plugin action rather than a popup script.",
+      "deps": [
+        "AGNT-0014"
+      ],
+      "files": [
+        "herdr/",
+        "config/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-19T21:28:29-0400"
     }
   ]
 }

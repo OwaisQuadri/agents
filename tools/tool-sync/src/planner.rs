@@ -156,6 +156,23 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                 });
             }
         }
+
+        if let Some(plugin) = &tool.herdr_plugin {
+            let source = if plugin == Path::new(".") {
+                working_directory.clone()
+            } else {
+                resource_source(
+                    &working_directory,
+                    plugin,
+                    "herdr plugin",
+                    is_checkout_present,
+                )?
+            };
+            actions.push(Action::LinkHerdrPlugin {
+                tool: tool.name.clone(),
+                source,
+            });
+        }
     }
 
     let agent_sources = discover_project_agents(&context.repository_root)?;
@@ -393,6 +410,7 @@ mod tests {
             pi_extension: None,
             pi_package: None,
             skills: Vec::new(),
+            herdr_plugin: None,
         }
     }
 
@@ -745,6 +763,73 @@ mod tests {
             Action::LinkSkill {
                 source: fs::canonicalize(checkout.join("skills/show-me")).expect("canonical skill"),
                 destination: context.home_root.join(".agents/skills/show-me"),
+            }
+        );
+    }
+
+    #[test]
+    fn plans_git_herdr_plugin_from_planned_checkout() {
+        let fixture = Fixture::new();
+        let mut spec = tool(ToolSource::Git {
+            url: "https://example.test/fresh-worktree.git".to_owned(),
+            revision: "abc123".to_owned(),
+        });
+        spec.commands.clear();
+        spec.herdr_plugin = Some(PathBuf::from("plugins/fresh"));
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+
+        assert_eq!(
+            plan.actions[4],
+            Action::LinkHerdrPlugin {
+                tool: "rag".to_owned(),
+                source: context.cache_root.join("rag/plugins/fresh"),
+            }
+        );
+    }
+
+    #[test]
+    fn plans_embedded_herdr_plugin_from_repository() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("bundle/herdr/worktree-layout"))
+            .expect("plugin source");
+        let mut spec = tool(ToolSource::Embedded {
+            path: PathBuf::from("bundle"),
+        });
+        spec.commands.clear();
+        spec.herdr_plugin = Some(PathBuf::from("herdr/worktree-layout"));
+
+        let plan = build(&manifest(spec), &fixture.context(Platform::Linux)).expect("plan");
+
+        assert_eq!(
+            plan.actions[1],
+            Action::LinkHerdrPlugin {
+                tool: "rag".to_owned(),
+                source: fs::canonicalize(fixture.root.join("bundle/herdr/worktree-layout"))
+                    .expect("canonical plugin"),
+            }
+        );
+    }
+
+    #[test]
+    fn plans_root_herdr_plugin_at_checkout_root() {
+        let fixture = Fixture::new();
+        let mut spec = tool(ToolSource::Git {
+            url: "https://example.test/fresh-worktree.git".to_owned(),
+            revision: "abc123".to_owned(),
+        });
+        spec.commands.clear();
+        spec.herdr_plugin = Some(PathBuf::from("."));
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+
+        assert_eq!(
+            plan.actions[4],
+            Action::LinkHerdrPlugin {
+                tool: "rag".to_owned(),
+                source: context.cache_root.join("rag"),
             }
         );
     }
