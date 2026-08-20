@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import type { Exec } from "./engine.ts";
 
 const HERDR_CANDIDATES = ["herdr", "/opt/homebrew/bin/herdr"];
@@ -55,6 +57,14 @@ function parseSnapshot(json: string): HerdrSnapshot | null {
 	} catch {
 		return null;
 	}
+}
+
+function containedAbsolutePath(cwd: string, path: string): string | null {
+	const root = resolve(cwd);
+	const absolutePath = resolve(root, path);
+	const isContained =
+		absolutePath === root || absolutePath.startsWith(root + "/");
+	return isContained ? absolutePath : null;
 }
 
 function findWorkspaceId(snapshot: HerdrSnapshot, cwd: string): string | null {
@@ -138,7 +148,8 @@ export async function openInNvim(
 		const focusOut = await runHerdr(exec, bin, ["tab", "focus", editorTab.tab_id]);
 		if (focusOut === null) return false;
 
-		const absolutePath = path.startsWith("/") ? path : cwd + "/" + path;
+		const absolutePath = containedAbsolutePath(cwd, path);
+		if (absolutePath === null) return false;
 		if (/[\n\r\t]/.test(absolutePath)) return false;
 		const escapedPath = absolutePath.replace(
 			/[\\ |%#]/g,

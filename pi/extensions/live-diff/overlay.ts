@@ -198,7 +198,7 @@ export function renderLines(
 		const name = sanitize(rowName(row.change));
 		const stat = row.change.isBinary
 			? "binary"
-			: `+${row.change.additions} −${row.change.deletions}`;
+			: `+${displayCount(row.change.additions)} −${displayCount(row.change.deletions)}`;
 		if (row.isFolded || row.hunks === null) {
 			lines.push(`▸ ${name}  ${stat}`);
 			continue;
@@ -226,21 +226,14 @@ function rowName(change: FileChange): string {
 		: change.path;
 }
 
+const DISPLAY_UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
 function sanitize(text: string): string {
-	let clean = "";
-	for (const ch of text) {
-		const code = ch.codePointAt(0) ?? 0;
-		const isControl = (code < 0x20 && code !== 0x09) || code === 0x7f;
-		const isBidi =
-			code === 0x200e ||
-			code === 0x200f ||
-			(code >= 0x202a && code <= 0x202e) ||
-			(code >= 0x2066 && code <= 0x2069);
-		if (!isControl && !isBidi) {
-			clean += ch;
-		}
-	}
-	return clean;
+	return text.replace(DISPLAY_UNSAFE, "");
+}
+
+function displayCount(value: number): number {
+	return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function clip(line: string, width: number): string {
@@ -269,7 +262,7 @@ export function badgeText(
 		const modifiedCount = stats.files.filter(
 			(f) => f.kind === "modified",
 		).length;
-		return `${label} +${stats.additions} ~${modifiedCount} −${stats.deletions}`;
+		return `${label} +${displayCount(stats.additions)} ~${displayCount(modifiedCount)} −${displayCount(stats.deletions)}`;
 	};
 	const parts: string[] = [];
 	if (requestStats !== null) {

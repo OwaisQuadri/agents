@@ -251,6 +251,88 @@ test("TC-16 render strips every bidirectional control, including via renamedFrom
 	assert.ok(lines.some((l) => l.includes("+added")));
 });
 
+test("TC-16 render strips the whole control, format and separator class", () => {
+	const unsafe = [
+		"\u0000",
+		"\u0007",
+		"\u0009",
+		"\u001b",
+		"\u007f",
+		"\u0085",
+		"\u00ad",
+		"\u061c",
+		"\u200e",
+		"\u202e",
+		"\u2066",
+		"\u2028",
+		"\u2029",
+		"\ufeff",
+		"\u{e0001}",
+		"\u{e0041}",
+	];
+	const poison = unsafe.join("");
+	const model = initialModel(
+		stats([
+			change(`plain${poison}.ts`),
+			change(`new${poison}.ts`, {
+				kind: "renamed",
+				renamedFrom: `old${poison}.ts`,
+			}),
+		]),
+		null,
+	);
+	const loaded = applyPatch(model, "request", `plain${poison}.ts`, [
+		{
+			header: `@@ -1,2 +1,3 @@ fn${poison}()`,
+			lines: [{ origin: "+", text: `added${poison}` }],
+		},
+	]);
+	const lines = renderLines(loaded, 200);
+	for (const line of lines) {
+		for (const control of unsafe) {
+			assert.ok(
+				!line.includes(control),
+				`U+${control.codePointAt(0)?.toString(16)} survived into: ${JSON.stringify(line)}`,
+			);
+		}
+	}
+	assert.ok(lines.some((l) => l.includes("old.ts → new.ts")));
+	assert.ok(lines.some((l) => l.includes("@@ -1,2 +1,3 @@ fn()")));
+	assert.ok(lines.some((l) => l.includes("+added")));
+	assert.ok(lines.some((l) => l.includes("plain.ts")));
+});
+
+test("badgeText and row stats render 0 for non-finite and negative counts", () => {
+	const broken = stats([change("a.ts")], {
+		additions: Number.NaN,
+		deletions: -5,
+	});
+	assert.equal(badgeText(broken, null), "req +0 ~1 −0");
+	assert.equal(
+		badgeText(stats([change("a.ts")], { additions: 10, deletions: Infinity }), null),
+		"req +10 ~1 −0",
+	);
+	assert.equal(
+		badgeText(stats([change("a.ts")], { additions: -100, deletions: 5 }), null),
+		"req +0 ~1 −5",
+	);
+	assert.equal(
+		badgeText(stats([change("a.ts")], { additions: -Infinity, deletions: 5 }), null),
+		"req +0 ~1 −5",
+	);
+
+	const model = initialModel(
+		stats([change("a.ts", { additions: Number.NaN, deletions: -5 })]),
+		null,
+	);
+	const rowLine = renderLines(model, 200).find((l) => l.includes("a.ts"));
+	assert.ok(rowLine);
+	assert.ok(!rowLine.includes("NaN"));
+	assert.ok(!rowLine.includes("Infinity"));
+	assert.ok(!rowLine.includes("−-"));
+	assert.ok(rowLine.includes("+0 −0"));
+});
+
 test("duplicate paths collapse to one row through initialModel and rebuildRows", () => {
 	const duplicated = stats([
 		change("dup.ts", { additions: 5 }),
