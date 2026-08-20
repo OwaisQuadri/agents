@@ -218,6 +218,11 @@ export function renderRows(
 		const spans: RenderSpan[] = [
 			{ text: `${marker}${name}  `, tone: "path" },
 		];
+		const originLabel =
+			model.mode === "overall" ? originText(row.change.origin) : null;
+		if (originLabel !== null) {
+			spans.push({ text: originLabel, tone: originTone(row.change.origin) });
+		}
 		if (row.change.isBinary) {
 			spans.push({ text: "binary", tone: "binary" });
 		} else {
@@ -313,6 +318,23 @@ function hunkTone(origin: " " | "+" | "-"): RowTone {
 	return origin === "-" ? "hunkRemove" : "hunkContext";
 }
 
+function originText(origin: FileChange["origin"]): string | null {
+	if (origin === "committed") {
+		return "committed  ";
+	}
+	if (origin === "uncommitted") {
+		return "uncommitted  ";
+	}
+	if (origin === "both") {
+		return "committed+uncommitted  ";
+	}
+	return null;
+}
+
+function originTone(origin: FileChange["origin"]): RowTone {
+	return origin === "uncommitted" ? "originUncommitted" : "originCommitted";
+}
+
 function fit(
 	spans: RenderSpan[],
 	width: number,
@@ -394,12 +416,15 @@ function clip(line: string, width: number): string {
  *
  * @param requestStats current-request diff or null before the first request
  * @param overallStats overall worktree diff or null before the first refresh
- * @returns one-line badge such as "req +101 ~3 −8 · all +214 ~9 −31", or
+ * @param overallLabel label for the second side: "branch" when a branch
+ *   point was resolved, "all" when it fell back to the HEAD tree
+ * @returns one-line badge such as "req +101 ~3 −8 · branch +214 ~9 −31", or
  *   "diff clean" when both are empty
  */
 export function badgeText(
 	requestStats: DiffStats | null,
 	overallStats: DiffStats | null,
+	overallLabel: "branch" | "all" = "all",
 ): string {
 	const isEmpty = (stats: DiffStats | null): boolean =>
 		stats === null || stats.files.length === 0;
@@ -417,7 +442,7 @@ export function badgeText(
 		parts.push(side("req", requestStats));
 	}
 	if (overallStats !== null) {
-		parts.push(side("all", overallStats));
+		parts.push(side(overallLabel, overallStats));
 	}
 	return parts.join(" · ");
 }

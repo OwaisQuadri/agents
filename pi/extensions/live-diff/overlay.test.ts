@@ -696,3 +696,117 @@ test("TC-28 renderLines output is unchanged by the renderRows rewrite", () => {
 		}
 	}
 });
+
+test("W8 origin labels appear only in overall mode, tagged with the right tone", () => {
+	const requestStats = stats([change("req.ts", { origin: "uncommitted" })]);
+	const overallStats = stats([
+		change("committed.ts", { origin: "committed" }),
+		change("uncommitted.ts", { origin: "uncommitted" }),
+	]);
+	const model = initialModel(requestStats, overallStats);
+	assert.equal(model.mode, "request");
+	const requestRow = renderRows(model, 80).find((row) =>
+		rowText(row).includes("req.ts"),
+	);
+	assert.ok(requestRow);
+	assert.ok(
+		!requestRow.spans.some(
+			(span) => span.tone === "originCommitted" || span.tone === "originUncommitted",
+		),
+		"request-mode row must carry no origin label",
+	);
+
+	let overall = reduce(model, "toggle-mode").model;
+	overall = rebuildRows(overall, requestStats, overallStats);
+	assert.equal(overall.mode, "overall");
+	const committedRow = renderRows(overall, 80).find((row) =>
+		rowText(row).includes("committed.ts") && !rowText(row).includes("uncommitted.ts"),
+	);
+	assert.ok(committedRow);
+	assert.match(rowText(committedRow), /committed/);
+	const committedSpan = committedRow.spans.find(
+		(span) => span.tone === "originCommitted",
+	);
+	assert.ok(committedSpan, "committed row must carry the originCommitted tone");
+
+	const uncommittedRow = renderRows(overall, 80).find((row) =>
+		rowText(row).includes("uncommitted.ts"),
+	);
+	assert.ok(uncommittedRow);
+	const uncommittedSpan = uncommittedRow.spans.find(
+		(span) => span.tone === "originUncommitted",
+	);
+	assert.ok(
+		uncommittedSpan,
+		"uncommitted row must carry the originUncommitted tone",
+	);
+});
+
+test("W8 a both-origin row shows both, never silently picking one", () => {
+	const overallStats = stats([change("shared.ts", { origin: "both" })]);
+	const model = initialModel(null, overallStats);
+	assert.equal(model.mode, "overall");
+	const row = renderRows(model, 100).find((r) => rowText(r).includes("shared.ts"));
+	assert.ok(row);
+	const text = rowText(row);
+	assert.match(text, /committed/);
+	assert.match(text, /uncommitted/);
+});
+
+test("W8 a row with no origin set carries no label (existing callers unaffected)", () => {
+	const overallStats = stats([change("plain.ts")]);
+	const model = initialModel(null, overallStats);
+	const row = renderRows(model, 80).find((r) => rowText(r).includes("plain.ts"));
+	assert.ok(row);
+	assert.ok(
+		!row.spans.some(
+			(span) => span.tone === "originCommitted" || span.tone === "originUncommitted",
+		),
+	);
+});
+
+test("W8 every row still measures exactly the requested width with labels present", () => {
+	const overallStats = stats([
+		change("committed.ts", { origin: "committed", additions: 200, deletions: 30 }),
+		change("uncommitted.ts", { origin: "uncommitted" }),
+		change("shared.ts", { origin: "both" }),
+		change(
+			"src/very/deep/nested/directory/structure/with/a/really/long/committed/file/name.ts",
+			{ origin: "committed" },
+		),
+		change("日本語のファイル名テスト.ts", { origin: "uncommitted" }),
+	]);
+	const model = initialModel(null, overallStats);
+	assert.equal(model.mode, "overall");
+	for (const width of [40, 60, 100]) {
+		const rows = renderRows(model, width);
+		assert.ok(rows.length > 0);
+		for (const row of rows) {
+			assert.equal(
+				testDisplayWidth(rowText(row)),
+				width,
+				`width ${width}: ${JSON.stringify(rowText(row))}`,
+			);
+		}
+	}
+});
+
+test("W8 badgeText labels the second side branch or all", () => {
+	const requestStats = stats([change("a.ts", { additions: 5, deletions: 1 })]);
+	const overallStats = stats([
+		change("b.ts", { origin: "committed", additions: 9, deletions: 2 }),
+	]);
+	assert.equal(
+		badgeText(requestStats, overallStats, "branch"),
+		"req +5 ~1 −1 · branch +9 ~1 −2",
+	);
+	assert.equal(
+		badgeText(requestStats, overallStats, "all"),
+		"req +5 ~1 −1 · all +9 ~1 −2",
+	);
+	assert.equal(
+		badgeText(requestStats, overallStats),
+		"req +5 ~1 −1 · all +9 ~1 −2",
+		"omitting the label keeps the existing default",
+	);
+});

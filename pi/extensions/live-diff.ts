@@ -2,7 +2,14 @@ import { execFile } from "node:child_process";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { captureSnapshot, diffStats, filePatch, type Exec } from "./live-diff/engine.ts";
+import {
+	branchStats,
+	captureSnapshot,
+	diffStats,
+	filePatch,
+	resolveBranchPointTree,
+	type Exec,
+} from "./live-diff/engine.ts";
 import { openInNvim } from "./live-diff/nvim.ts";
 import {
 	applyPatch,
@@ -117,6 +124,8 @@ const TONE_COLORS: Record<RowTone, string> = {
 	hunkContext: "toolDiffContext",
 	hint: "muted",
 	truncation: "dim",
+	originCommitted: "dim",
+	originUncommitted: "accent",
 };
 
 function paintBackground(
@@ -196,6 +205,8 @@ export default function liveDiff(pi: ExtensionAPI): void {
 	let lastRefreshAt = 0;
 	let isSessionGone = false;
 	let pendingWatchPaths = new Set<string>();
+	let branchPointTree: string | null = null;
+	let isBranchPointResolved = false;
 
 	function setBadge(ctx: ExtensionContext, text: string): void {
 		if (isSessionGone) {
@@ -207,6 +218,13 @@ export default function liveDiff(pi: ExtensionAPI): void {
 	}
 
 	async function ensureBaseline(ctx: ExtensionContext): Promise<void> {
+		if (!isBranchPointResolved) {
+			branchPointTree = await resolveBranchPointTree(exec, ctx.cwd);
+			isBranchPointResolved = true;
+		}
+		if (branchPointTree !== null) {
+			return;
+		}
 		if (state.overallBaselineSha !== null) {
 			return;
 		}
@@ -225,10 +243,20 @@ export default function liveDiff(pi: ExtensionAPI): void {
 			state.requestStats = state.requestSnapshot
 				? await diffStats(exec, ctx.cwd, state.requestSnapshot.treeSha, MAX_FILES)
 				: null;
-			state.overallStats = state.overallBaselineSha
-				? await diffStats(exec, ctx.cwd, state.overallBaselineSha, MAX_FILES)
-				: null;
-			setBadge(ctx, badgeText(state.requestStats, state.overallStats));
+			state.overallStats =
+				branchPointTree !== null
+					? await branchStats(exec, ctx.cwd, branchPointTree, MAX_FILES)
+					: state.overallBaselineSha
+						? await diffStats(exec, ctx.cwd, state.overallBaselineSha, MAX_FILES)
+						: null;
+			setBadge(
+				ctx,
+				badgeText(
+					state.requestStats,
+					state.overallStats,
+					branchPointTree !== null ? "branch" : "all",
+				),
+			);
 		} catch {
 			setBadge(ctx, "diff ?");
 		} finally {
@@ -377,6 +405,8 @@ export default function liveDiff(pi: ExtensionAPI): void {
 		state.requestStats = null;
 		state.overallStats = null;
 		state.isRefreshing = false;
+		branchPointTree = null;
+		isBranchPointResolved = false;
 	});
 
 	pi.registerCommand("diff", {
@@ -401,7 +431,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							const baseTreeSha =
 								effect.mode === "request"
 									? state.requestSnapshot?.treeSha ?? null
-									: state.overallBaselineSha;
+									: branchPointTree ?? state.overallBaselineSha;
 							if (baseTreeSha === null) {
 								return;
 							}

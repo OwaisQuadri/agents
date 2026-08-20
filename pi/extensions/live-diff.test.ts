@@ -10,7 +10,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import liveDiff, { setWatcherFactory } from "./live-diff.ts";
 import { captureSnapshot, diffStats, type Exec } from "./live-diff/engine.ts";
 import {
+	addBranchCommit,
 	addIgnoredFile,
+	addUnstagedEdit,
 	makeFixtureRepo,
 	type FixtureRepo,
 } from "./live-diff/fixtures.ts";
@@ -683,5 +685,66 @@ test("TC-14 /diff during an in-flight refresh opens exactly one overlay", async 
 		assert.equal(rejections.length, 0);
 	} finally {
 		process.off("unhandledRejection", onRejection);
+	}
+});
+
+test("W8 badge labels the second side branch when a branch point resolves", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	addBranchCommit(repo);
+	addUnstagedEdit(repo);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	assert.match(badge, /\bbranch\b/);
+	assert.ok(!badge.includes("all "), `expected no "all" side once a branch point resolves: ${badge}`);
+});
+
+test("W8 badge keeps the all label when no branch point resolves", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	assert.equal(badge, "diff clean");
+
+	fs.writeFileSync(path.join(repo.root, "plain-edit.txt"), "no branch here\n");
+	pi.fire("tool_execution_end", { toolName: "edit" }, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 2);
+	const secondBadge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	assert.match(secondBadge, /\ball\b/);
+	assert.ok(!secondBadge.includes("branch "), `expected no "branch" side without a resolvable branch point: ${secondBadge}`);
+});
+
+test("W8 the overlay shows origin labels for committed and uncommitted rows on the branch basket", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	addBranchCommit(repo, "feature", "committed-on-branch.txt");
+	addUnstagedEdit(repo);
+
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 100, []);
+	const joined = probe.lines.join("\n");
+	assert.match(
+		joined,
+		/ request \[overall\]/,
+		"overall mode should already be active: no agent_start fired, so requestStats stays null",
+	);
+	assert.match(joined, /committed-on-branch\.txt/);
+	assert.match(joined, /committed/);
+	assert.match(joined, /uncommitted/);
+
+	const originColors = new Set(
+		probe.themes.fgCalls
+			.filter((call) => call.text.includes("committed"))
+			.map((call) => call.color),
+	);
+	assert.ok(
+		originColors.has("dim") || originColors.has("accent"),
+		"origin labels must be styled through the theme, not left plain",
+	);
+	for (const line of probe.lines) {
+		assert.equal(visibleWidthOf(line), 100);
 	}
 });
