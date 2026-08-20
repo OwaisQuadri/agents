@@ -59,7 +59,8 @@ export type OverlayKey =
 	| "up"
 	| "down"
 	| "fold"
-	| "toggle-mode"
+	| "mode-left"
+	| "mode-right"
 	| "open"
 	| "close";
 
