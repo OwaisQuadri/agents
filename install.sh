@@ -100,6 +100,10 @@ link "$HOME_TARGET/.claude/rules" "$REPO_TARGET/rules"
 # 6. agents fleet: one directory symlink, definitions resolve from the repo
 link "$HOME_TARGET/.claude/agents" "$REPO_TARGET/agents"
 
+# 6b. pi agents fleet: same fleet, pi-subagents format, model pins per docs/routing.md
+run mkdir -p "$HOME_TARGET/.pi/agent"
+link "$HOME_TARGET/.pi/agent/agents" "$REPO_TARGET/pi/agents"
+
 # 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;
 #    post-checkout carries the live checkout's uncommitted work into worktrees cut from main
 if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
