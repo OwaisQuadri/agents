@@ -573,9 +573,11 @@ test("W9 mapKey binds space, jk, hl, enter, q and both esc forms; TAB is unbound
 	assert.equal(mapKey("t"), null, "the old toggle-mode letter must be unbound");
 });
 
-test("W9 mapKey binds the viewer motions: ctrl-d/u, g/G, ]/[", () => {
-	assert.equal(mapKey("\x04"), "page-down");
-	assert.equal(mapKey("\x15"), "page-up");
+test("W9 mapKey binds the viewer motions: d/u, g/G, ]/[", () => {
+	assert.equal(mapKey("d"), "page-down");
+	assert.equal(mapKey("u"), "page-up");
+	assert.equal(mapKey("\x04"), null, "ctrl-d never reached the component; it is unbound");
+	assert.equal(mapKey("\x15"), null, "ctrl-u never reached the component; it is unbound");
 	assert.equal(mapKey("g"), "top");
 	assert.equal(mapKey("G"), "bottom");
 	assert.equal(mapKey("]"), "next-file");

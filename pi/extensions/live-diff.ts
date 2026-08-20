@@ -191,9 +191,9 @@ export function mapKey(data: string): OverlayKey | null {
 		case " ":
 		case "f":
 			return "open-diff";
-		case "\x04":
+		case "d":
 			return "page-down";
-		case "\x15":
+		case "u":
 			return "page-up";
 		case "g":
 			return "top";
@@ -478,6 +478,10 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							done(undefined);
 						}
 					}
+					const viewerHeight = Math.max(
+						1,
+						OVERLAY_MAX_HEIGHT - OVERLAY_PADDING_Y * 2,
+					);
 					return {
 						render(width: number): string[] {
 							const stats =
@@ -490,15 +494,11 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							// the body, so the body's own budget is the requested maximum
 							// MINUS that padding. Getting this wrong by the padding amount
 							// is exactly how the earlier edge-bleed bug happened.
-							const visibleHeight = Math.max(
-								1,
-								OVERLAY_MAX_HEIGHT - OVERLAY_PADDING_Y * 2,
-							);
 							const rows = renderRows(
 								model,
 								contentWidth,
 								stats?.isTruncated ?? false,
-								visibleHeight,
+								viewerHeight,
 							);
 							const pad = " ".repeat(OVERLAY_PADDING_X);
 							const body = rows.map((row) => styleRow(theme, row, pad));
@@ -522,7 +522,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							if (key === null) {
 								return;
 							}
-							const step = reduce(model, key);
+							const step = reduce(model, key, viewerHeight);
 							model = step.model;
 							if (key === "mode-left" || key === "mode-right") {
 								model = rebuildRows(model, state.requestStats, state.overallStats);

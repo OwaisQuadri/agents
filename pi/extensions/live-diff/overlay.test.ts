@@ -1231,7 +1231,9 @@ test("W9 viewer: scrolling clamps at both ends", () => {
 		initialModel(threeFileRequest(), null),
 		"open-diff",
 	).model;
-	model = applyPatch(model, "request", "a.ts", bigHunks(10));
+	// The diff must be longer than a window for scrolling to mean anything:
+	// content shorter than the viewport correctly never scrolls at all.
+	model = applyPatch(model, "request", "a.ts", bigHunks(120));
 	assert.ok(model.viewer);
 	assert.equal(model.viewer.offset, 0);
 
@@ -1240,13 +1242,29 @@ test("W9 viewer: scrolling clamps at both ends", () => {
 	assert.equal(model.viewer?.offset, 0);
 
 	// Scroll down one line at a time to the bottom, then confirm it clamps.
-	for (let step = 0; step < 50; step += 1) {
+	for (let step = 0; step < 400; step += 1) {
 		model = reduce(model, "down").model;
 	}
 	const maxOffset = model.viewer?.offset;
 	assert.ok(typeof maxOffset === "number" && maxOffset > 0);
 	model = reduce(model, "down").model;
 	assert.equal(model.viewer?.offset, maxOffset, "offset must not exceed the max");
+
+	// The bottom is PAGE-aligned, not line-aligned: scrolling to the end must
+	// leave the tail of the diff filling the window, with at most a fifth of it
+	// blank. Clamping to lineCount - 1 would leave a single line on screen.
+	const height = 10;
+	const lineCount = (model.viewer?.hunks ?? []).reduce(
+		(total, hunk) => total + 1 + hunk.lines.length,
+		0,
+	);
+	const atBottom = reduce(model, "bottom", height).model;
+	const visibleTail = lineCount - (atBottom.viewer?.offset ?? 0);
+	assert.ok(
+		visibleTail >= Math.ceil(height * 0.8),
+		`the last page must stay full: ${visibleTail} lines visible of ${height}`,
+	);
+	assert.ok(visibleTail <= height, "and must not claim more than the window holds");
 });
 
 test("W9 viewer: page-up and page-down move by the page size and respect the clamp", () => {
@@ -1312,10 +1330,15 @@ test("W9 viewer: next-file and prev-file move within the current column, reset o
 	assert.deepEqual(toC.effect, { kind: "load-patch", path: "c.ts", mode: "request" });
 	assert.equal(toC.model.viewer?.path, "c.ts");
 
-	// next-file past the last row is inert: no effect, no change.
-	const pastEnd = reduce(toC.model, "next-file");
-	assert.equal(pastEnd.effect, null);
-	assert.equal(pastEnd.model, toC.model);
+	// next-file past the last row WRAPS to the first, and prev-file from the
+	// first wraps to the last.
+	const wrapped = reduce(toC.model, "next-file");
+	assert.deepEqual(wrapped.effect, { kind: "load-patch", path: "a.ts", mode: "request" });
+	assert.equal(wrapped.model.viewer?.path, "a.ts");
+	assert.equal(wrapped.model.cursor, 0, "the cursor follows the wrap");
+	const wrappedBack = reduce(wrapped.model, "prev-file");
+	assert.deepEqual(wrappedBack.effect, { kind: "load-patch", path: "c.ts", mode: "request" });
+	assert.equal(wrappedBack.model.viewer?.path, "c.ts");
 
 	const backToB = reduce(toC.model, "prev-file");
 	assert.deepEqual(backToB.effect, { kind: "load-patch", path: "b.ts", mode: "request" });
@@ -1324,10 +1347,11 @@ test("W9 viewer: next-file and prev-file move within the current column, reset o
 	const backToA = reduce(backToB.model, "prev-file");
 	assert.equal(backToA.model.viewer?.path, "a.ts");
 
-	// prev-file before the first row is inert.
+	// prev-file from the first row WRAPS to the last.
 	const beforeStart = reduce(backToA.model, "prev-file");
-	assert.equal(beforeStart.effect, null);
-	assert.equal(beforeStart.model, backToA.model);
+	assert.deepEqual(beforeStart.effect, { kind: "load-patch", path: "c.ts", mode: "request" });
+	assert.equal(beforeStart.model.viewer?.path, "c.ts");
+	assert.equal(beforeStart.model.cursor, 2, "the cursor follows the wrap backwards");
 });
 
 test("W9 viewer: close returns to the list with cursor and column preserved", () => {

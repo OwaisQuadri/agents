@@ -111,8 +111,14 @@ function viewerLineCount(hunks: Hunk[] | null): number {
 	return hunks.reduce((total, hunk) => total + 1 + hunk.lines.length, 0);
 }
 
-function clampViewerOffset(offset: number, hunks: Hunk[] | null): number {
-	const maxOffset = Math.max(viewerLineCount(hunks) - 1, 0);
+function clampViewerOffset(
+	offset: number,
+	hunks: Hunk[] | null,
+	visibleLines = 1,
+): number {
+	const lineCount = viewerLineCount(hunks);
+	const keptOnScreen = Math.max(Math.ceil(visibleLines * 0.8), 1);
+	const maxOffset = Math.max(lineCount - keptOnScreen, 0);
 	return Math.min(Math.max(offset, 0), maxOffset);
 }
 
@@ -124,17 +130,22 @@ function clampViewerOffset(offset: number, hunks: Hunk[] | null): number {
  * @param key mapped key
  * @returns next model plus at most one effect
  */
-function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
+function reduceViewer(
+	model: OverlayModel,
+	key: OverlayKey,
+	viewportHeight: number,
+): OverlayStep {
 	const viewer = model.viewer;
 	if (viewer === null) {
 		return { model, effect: null };
 	}
+	const pageSize = Math.max(viewportHeight - 1, 1);
 	switch (key) {
 		case "up":
 			return {
 				model: {
 					...model,
-					viewer: { ...viewer, offset: clampViewerOffset(viewer.offset - 1, viewer.hunks) },
+					viewer: { ...viewer, offset: clampViewerOffset(viewer.offset - 1, viewer.hunks, viewportHeight) },
 				},
 				effect: null,
 			};
@@ -142,7 +153,7 @@ function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
 			return {
 				model: {
 					...model,
-					viewer: { ...viewer, offset: clampViewerOffset(viewer.offset + 1, viewer.hunks) },
+					viewer: { ...viewer, offset: clampViewerOffset(viewer.offset + 1, viewer.hunks, viewportHeight) },
 				},
 				effect: null,
 			};
@@ -152,7 +163,7 @@ function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
 					...model,
 					viewer: {
 						...viewer,
-						offset: clampViewerOffset(viewer.offset - VIEWER_PAGE_SIZE, viewer.hunks),
+						offset: clampViewerOffset(viewer.offset - pageSize, viewer.hunks, viewportHeight),
 					},
 				},
 				effect: null,
@@ -163,7 +174,7 @@ function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
 					...model,
 					viewer: {
 						...viewer,
-						offset: clampViewerOffset(viewer.offset + VIEWER_PAGE_SIZE, viewer.hunks),
+						offset: clampViewerOffset(viewer.offset + pageSize, viewer.hunks, viewportHeight),
 					},
 				},
 				effect: null,
@@ -176,7 +187,7 @@ function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
 					...model,
 					viewer: {
 						...viewer,
-						offset: clampViewerOffset(Number.POSITIVE_INFINITY, viewer.hunks),
+						offset: clampViewerOffset(Number.POSITIVE_INFINITY, viewer.hunks, viewportHeight),
 					},
 				},
 				effect: null,
@@ -187,10 +198,12 @@ function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
 			if (index === -1) {
 				return { model, effect: null };
 			}
-			const nextIndex = key === "next-file" ? index + 1 : index - 1;
-			if (nextIndex < 0 || nextIndex >= model.rows.length) {
+			if (model.rows.length < 2) {
 				return { model, effect: null };
 			}
+			const step = key === "next-file" ? 1 : -1;
+			const nextIndex =
+				(index + step + model.rows.length) % model.rows.length;
 			const nextPath = model.rows[nextIndex].change.path;
 			return {
 				model: {
@@ -216,9 +229,13 @@ function reduceViewer(model: OverlayModel, key: OverlayKey): OverlayStep {
  * @returns next model plus at most one effect; unknown transitions return
  *   the same model and null effect
  */
-export function reduce(model: OverlayModel, key: OverlayKey): OverlayStep {
+export function reduce(
+	model: OverlayModel,
+	key: OverlayKey,
+	viewportHeight = 20,
+): OverlayStep {
 	if (model.viewer !== null) {
-		return reduceViewer(model, key);
+		return reduceViewer(model, key, viewportHeight);
 	}
 	// Column-scoped keys act on model.mode rather than model.rows[model.cursor],
 	// so they must stay live even when the current column has zero rows —
