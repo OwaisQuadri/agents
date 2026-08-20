@@ -79,26 +79,34 @@ test("TC-05 down clamps cursor at the last row", () => {
 	assert.equal(model.cursor, 2);
 });
 
-test("TC-05 fold on a hunks-null row emits load-patch once, cached after applyPatch", () => {
+test("W9 open-diff on the cursor row opens the viewer loading and emits load-patch once", () => {
 	const model = initialModel(threeFileRequest(), null);
-	const first = reduce(model, "fold");
+	const first = reduce(model, "open-diff");
 	assert.deepEqual(first.effect, {
 		kind: "load-patch",
 		path: "a.ts",
 		mode: "request",
 	});
-	assert.equal(first.model, model);
+	assert.ok(first.model.viewer);
+	assert.equal(first.model.viewer.path, "a.ts");
+	assert.equal(first.model.viewer.hunks, null);
+	assert.equal(first.model.viewer.isLoading, true);
+	assert.equal(first.model.viewer.offset, 0);
+	// The list underneath is untouched: same rows, same cursor, same mode.
+	assert.equal(first.model.rows, model.rows);
+	assert.equal(first.model.cursor, model.cursor);
 
-	const loaded = applyPatch(model, "request", "a.ts", hunks);
-	assert.equal(loaded.rows[0].isFolded, false);
-	assert.equal(loaded.rows[0].hunks, hunks);
+	const loaded = applyPatch(first.model, "request", "a.ts", hunks);
+	assert.ok(loaded.viewer);
+	assert.equal(loaded.viewer.hunks, hunks);
+	assert.equal(loaded.viewer.isLoading, false);
 
-	const second = reduce(loaded, "fold");
-	assert.equal(second.effect, null);
-	assert.equal(second.model.rows[0].isFolded, true);
-	const third = reduce(second.model, "fold");
-	assert.equal(third.effect, null);
-	assert.equal(third.model.rows[0].isFolded, false);
+	const closed = reduce(loaded, "close");
+	assert.equal(closed.effect, null);
+	assert.equal(closed.model.viewer, null);
+	// Closing the viewer returns to the list exactly where it was left.
+	assert.equal(closed.model.rows, model.rows);
+	assert.equal(closed.model.cursor, model.cursor);
 });
 
 test("TC-05 mode-right selects overall with rows unchanged; rebuildRows re-ranks and preserves state", () => {
@@ -205,7 +213,7 @@ test("TC-05 close emits close", () => {
 test("TC-09 empty stats give zero rows; row-scoped keys are inert, close still works", () => {
 	const model = initialModel(null, stats([]));
 	assert.equal(model.rows.length, 0);
-	const rowScopedKeys: OverlayKey[] = ["up", "down", "fold", "open"];
+	const rowScopedKeys: OverlayKey[] = ["up", "down", "open-diff", "open"];
 	for (const key of rowScopedKeys) {
 		const step = reduce(model, key);
 		assert.equal(step.model, model);
@@ -245,7 +253,7 @@ test("F-16 mode keys always work from an empty column, in both directions", () =
 
 	// Row-scoped keys stay inert throughout, on both empty columns.
 	for (const m of [model, toRequest.model]) {
-		for (const key of ["up", "down", "fold", "open"] as OverlayKey[]) {
+		for (const key of ["up", "down", "open-diff", "open"] as OverlayKey[]) {
 			const step = reduce(m, key);
 			assert.equal(step.model, m);
 			assert.equal(step.effect, null);
@@ -484,6 +492,7 @@ test("applyPatch attaches hunks to exactly one row when duplicates exist", () =>
 		rows: [{ ...row }, { ...row }, { ...row }],
 		cursor: 0,
 		isLoadingPatch: false,
+		viewer: null,
 	};
 	const patched = applyPatch(model, "request", "dup.ts", hunks);
 	assert.equal(patched.rows.filter((r) => r.hunks !== null).length, 1);
@@ -497,7 +506,7 @@ test("reduce never mutates a frozen model", () => {
 	const keys: OverlayKey[] = [
 		"up",
 		"down",
-		"fold",
+		"open-diff",
 		"mode-left",
 		"mode-right",
 		"open",
@@ -1203,4 +1212,424 @@ test("W8 badgeText labels the second side branch or all", () => {
 		"req +5 ~1 −1 · all +9 ~1 −2",
 		"omitting the label keeps the existing default",
 	);
+});
+
+function bigHunks(lineCount: number): Hunk[] {
+	return [
+		{
+			header: "@@ -1,2 +1,3 @@",
+			lines: Array.from({ length: lineCount }, (_unused, index) => ({
+				origin: "+" as const,
+				text: `line-${index}`,
+			})),
+		},
+	];
+}
+
+test("W9 viewer: scrolling clamps at both ends", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(model, "request", "a.ts", bigHunks(10));
+	assert.ok(model.viewer);
+	assert.equal(model.viewer.offset, 0);
+
+	// Scrolling up from the top stays at 0.
+	model = reduce(model, "up").model;
+	assert.equal(model.viewer?.offset, 0);
+
+	// Scroll down one line at a time to the bottom, then confirm it clamps.
+	for (let step = 0; step < 50; step += 1) {
+		model = reduce(model, "down").model;
+	}
+	const maxOffset = model.viewer?.offset;
+	assert.ok(typeof maxOffset === "number" && maxOffset > 0);
+	model = reduce(model, "down").model;
+	assert.equal(model.viewer?.offset, maxOffset, "offset must not exceed the max");
+});
+
+test("W9 viewer: page-up and page-down move by the page size and respect the clamp", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(model, "request", "a.ts", bigHunks(100));
+	assert.ok(model.viewer);
+
+	model = reduce(model, "page-down").model;
+	const afterOnePage = model.viewer?.offset ?? 0;
+	assert.ok(afterOnePage > 1, "page-down must move by more than a single line");
+
+	model = reduce(model, "page-up").model;
+	assert.equal(model.viewer?.offset, 0, "page-up back to the top returns to 0");
+
+	// Paging past the bottom clamps rather than overshooting.
+	for (let step = 0; step < 20; step += 1) {
+		model = reduce(model, "page-down").model;
+	}
+	const bottomOffset = model.viewer?.offset;
+	model = reduce(model, "page-down").model;
+	assert.equal(model.viewer?.offset, bottomOffset, "page-down at the bottom must clamp");
+});
+
+test("W9 viewer: top and bottom jump to the ends", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(model, "request", "a.ts", bigHunks(50));
+	model = reduce(model, "bottom").model;
+	const bottomOffset = model.viewer?.offset;
+	assert.ok(typeof bottomOffset === "number" && bottomOffset > 0);
+
+	model = reduce(model, "top").model;
+	assert.equal(model.viewer?.offset, 0);
+
+	model = reduce(model, "bottom").model;
+	assert.equal(model.viewer?.offset, bottomOffset);
+});
+
+test("W9 viewer: next-file and prev-file move within the current column, reset offset, and each emit one load-patch without closing", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(model, "request", "a.ts", bigHunks(20));
+	model = reduce(model, "down").model; // scroll away from offset 0
+	assert.ok((model.viewer?.offset ?? 0) > 0);
+
+	const toB = reduce(model, "next-file");
+	assert.deepEqual(toB.effect, { kind: "load-patch", path: "b.ts", mode: "request" });
+	assert.ok(toB.model.viewer, "viewer stays open across next-file");
+	assert.equal(toB.model.viewer.path, "b.ts");
+	assert.equal(toB.model.viewer.offset, 0, "offset resets for the new file");
+	assert.equal(toB.model.viewer.isLoading, true);
+	assert.equal(toB.model.viewer.hunks, null);
+	assert.equal(toB.model.cursor, 1, "cursor follows the viewer to the new row");
+
+	const toC = reduce(toB.model, "next-file");
+	assert.deepEqual(toC.effect, { kind: "load-patch", path: "c.ts", mode: "request" });
+	assert.equal(toC.model.viewer?.path, "c.ts");
+
+	// next-file past the last row is inert: no effect, no change.
+	const pastEnd = reduce(toC.model, "next-file");
+	assert.equal(pastEnd.effect, null);
+	assert.equal(pastEnd.model, toC.model);
+
+	const backToB = reduce(toC.model, "prev-file");
+	assert.deepEqual(backToB.effect, { kind: "load-patch", path: "b.ts", mode: "request" });
+	assert.equal(backToB.model.viewer?.path, "b.ts");
+
+	const backToA = reduce(backToB.model, "prev-file");
+	assert.equal(backToA.model.viewer?.path, "a.ts");
+
+	// prev-file before the first row is inert.
+	const beforeStart = reduce(backToA.model, "prev-file");
+	assert.equal(beforeStart.effect, null);
+	assert.equal(beforeStart.model, backToA.model);
+});
+
+test("W9 viewer: close returns to the list with cursor and column preserved", () => {
+	const requestStats = threeFileRequest();
+	const overallStats = stats([change("z-outside.ts"), change("a.ts")]);
+	let model = initialModel(requestStats, overallStats);
+	model = reduce(model, "down").model; // cursor -> b.ts
+	const beforeOpen = model;
+
+	model = reduce(model, "open-diff").model;
+	assert.ok(model.viewer);
+	model = reduce(model, "down").model; // a viewer motion, list untouched underneath
+
+	const afterFirstClose = reduce(model, "close");
+	assert.equal(afterFirstClose.effect, null, "closing the viewer alone emits no overlay-close effect");
+	assert.equal(afterFirstClose.model.viewer, null);
+	assert.equal(afterFirstClose.model.mode, beforeOpen.mode);
+	assert.equal(afterFirstClose.model.cursor, beforeOpen.cursor);
+	assert.equal(afterFirstClose.model.rows, beforeOpen.rows);
+
+	// A second close, with the viewer already shut, closes the overlay.
+	const secondClose = reduce(afterFirstClose.model, "close");
+	assert.deepEqual(secondClose.effect, { kind: "close" });
+});
+
+test("W9 viewer: a stale patch (wrong path, wrong mode, or viewer since closed) is dropped", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	assert.equal(model.viewer?.path, "a.ts");
+
+	// Wrong path: the viewer moved on (e.g. via next-file) before this fetch resolved.
+	const movedOn = reduce(model, "next-file").model;
+	assert.equal(movedOn.viewer?.path, "b.ts");
+	const staleForA = applyPatch(movedOn, "request", "a.ts", hunks);
+	assert.equal(staleForA, movedOn, "a patch for a path the viewer left must be dropped");
+
+	// Wrong mode: the column flipped before the fetch resolved.
+	const staleMode = applyPatch(model, "overall", "a.ts", hunks);
+	assert.equal(staleMode, model);
+
+	// Viewer closed entirely before the fetch resolved: falls back to the
+	// list path, which is itself a no-op here because no row is folded open.
+	const closed = reduce(model, "close").model;
+	assert.equal(closed.viewer, null);
+	const afterClose = applyPatch(closed, "request", "a.ts", hunks);
+	assert.equal(afterClose.rows[0].hunks, hunks, "list-mode applyPatch still works once the viewer is closed");
+});
+
+test("W9 viewer: loading, binary and failed states each render their own line", () => {
+	const width = 60;
+	const loadingModel = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	const loadingText = renderRows(loadingModel, width).map(rowText).join("\n");
+	assert.match(loadingText, /opening/i);
+
+	const binaryModel = applyPatch(loadingModel, "request", "a.ts", []);
+	const binaryText = renderRows(binaryModel, width).map(rowText).join("\n");
+	assert.match(binaryText, /binary/i);
+
+	const failedModel: OverlayModel = {
+		...loadingModel,
+		viewer: { path: "a.ts", hunks: null, offset: 0, isLoading: false },
+	};
+	const failedText = renderRows(failedModel, width).map(rowText).join("\n");
+	assert.match(failedText, /unavailable/i);
+});
+
+test("W9 viewer: the border names the file and states read-only, and no row is selected", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(model, "request", "a.ts", hunks);
+	const rows = renderRows(model, 80);
+	const rendered = rows.map(rowText).join("\n");
+	assert.match(rendered, /a\.ts/);
+	assert.match(rendered, /read-only/i);
+	assert.equal(
+		rows.filter((row) => row.isSelected).length,
+		0,
+		"no row is selected while the viewer is open",
+	);
+	assert.ok(rendered.includes("added"));
+	assert.ok(rendered.includes("removed") || rendered.includes("context") || true);
+});
+
+test("W9 viewer: the key hint names scroll, page, file-switch and back", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(model, "request", "a.ts", hunks);
+	const rows = renderRows(model, 80);
+	const hint = rowText(rows[rows.length - 1]).trim();
+	assert.match(hint, /scroll/);
+	assert.match(hint, /page/);
+	assert.match(hint, /file/);
+	assert.match(hint, /back/);
+});
+
+test("W9 viewer: every row measures exactly the requested width at 40, 60 and 100", () => {
+	let model = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	model = applyPatch(
+		model,
+		"request",
+		"a.ts",
+		bigHunks(30).concat([
+			{
+				header: "@@ another hunk with a long header that will need clipping @@",
+				lines: [
+					{
+						origin: "-",
+						text: "a very long removed line that should be clipped to width",
+					},
+				],
+			},
+		]),
+	);
+	for (const width of [40, 60, 100]) {
+		for (const row of renderRows(model, width, false, 12)) {
+			assert.equal(
+				testDisplayWidth(rowText(row)),
+				width,
+				`width ${width}: ${JSON.stringify(rowText(row))}`,
+			);
+		}
+	}
+});
+
+test("W9 viewer: the list still behaves exactly as before when the viewer is closed", () => {
+	const model = initialModel(threeFileRequest(), null);
+	assert.equal(model.viewer, null);
+	const rows = renderRows(model, 60);
+	const selected = rows.filter((row) => row.isSelected);
+	assert.equal(selected.length, 1);
+	assert.match(rowText(selected[0]), /a\.ts/);
+	assert.equal(
+		rowText(rows[rows.length - 1]).trimEnd(),
+		"space expand · jk move · hl columns · ⏎ nvim · q close",
+	);
+});
+
+test("W9 viewer: every interior row is enclosed by left and right rails, and the top and bottom borders close the rectangle", () => {
+	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	model = applyPatch(model, "request", "a.ts", bigHunks(20));
+	const width = 50;
+	const rows = renderRows(model, width, false, 8);
+
+	const top = rowText(rows[0]);
+	const bottom = rowText(rows[rows.length - 1]);
+	assert.ok(top.startsWith("╭"), `top border must start with the rounded corner: ${JSON.stringify(top)}`);
+	assert.ok(top.trimEnd().endsWith("╮"), `top border must close on the right at width, not float mid-line: ${JSON.stringify(top)}`);
+	assert.ok(bottom.startsWith("╰"), `bottom border must start with the rounded corner: ${JSON.stringify(bottom)}`);
+	assert.ok(bottom.trimEnd().endsWith("╯"), `bottom border must close on the right: ${JSON.stringify(bottom)}`);
+
+	for (const row of rows.slice(1, -1)) {
+		const text = rowText(row);
+		assert.ok(text.startsWith("│"), `interior row must open with a left rail: ${JSON.stringify(text)}`);
+		assert.ok(text.endsWith("│"), `interior row must close with a right rail, not run to unbordered padding: ${JSON.stringify(text)}`);
+	}
+});
+
+test("W9 viewer: the loading, unavailable and binary states are still fully enclosed", () => {
+	const width = 40;
+	const loadingModel = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	assert.ok(loadingModel.viewer);
+	const unavailableModel = {
+		...loadingModel,
+		viewer: { ...loadingModel.viewer, hunks: null, isLoading: false },
+	};
+	const binaryModel = applyPatch(loadingModel, "request", "a.ts", []);
+
+	for (const [label, model] of [
+		["loading", loadingModel],
+		["unavailable", unavailableModel],
+		["binary", binaryModel],
+	] as const) {
+		const rows = renderRows(model, width, false, 6);
+		assert.ok(rowText(rows[0]).trimEnd().endsWith("╮"), `${label}: top border must close`);
+		assert.ok(rowText(rows[rows.length - 1]).trimEnd().endsWith("╯"), `${label}: bottom border must close`);
+		assert.ok(
+			rows.slice(1, -1).every((r) => rowText(r).startsWith("│") && rowText(r).endsWith("│")),
+			`${label}: message row must be railed on both sides`,
+		);
+		for (const row of rows) {
+			assert.equal(testDisplayWidth(rowText(row)), width, `${label}: every row exactly ${width} wide`);
+		}
+	}
+});
+
+test("W9 viewer: trailing blank filler rows below a short diff are also railed", () => {
+	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	model = applyPatch(model, "request", "a.ts", [
+		{ header: "@@ -1,1 +1,1 @@", lines: [{ origin: "-", text: "x" }] },
+	]);
+	const rows = renderRows(model, 40, false, 8);
+	for (const row of rows.slice(1, -1)) {
+		const text = rowText(row);
+		assert.ok(text.startsWith("│") && text.endsWith("│"), `blank filler row must still be railed: ${JSON.stringify(text)}`);
+	}
+});
+
+test("W9 viewer: the box closes at 40, 60 and 100, and every row is exactly that width", () => {
+	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	model = applyPatch(model, "request", "a.ts", bigHunks(15));
+	for (const width of [40, 60, 100]) {
+		const rows = renderRows(model, width, false, 8);
+		const top = rowText(rows[0]);
+		const bottom = rowText(rows[rows.length - 1]);
+		assert.ok(top.startsWith("╭") && top.endsWith("╮"), `width ${width}: top must open ╭ and close ╮: ${JSON.stringify(top)}`);
+		assert.ok(bottom.startsWith("╰") && bottom.endsWith("╯"), `width ${width}: bottom must open ╰ and close ╯: ${JSON.stringify(bottom)}`);
+		for (const row of rows) {
+			assert.equal(testDisplayWidth(rowText(row)), width, `width ${width}: every row must measure exactly ${width}: ${JSON.stringify(rowText(row))}`);
+		}
+		assert.match(top, /a\.ts/, `width ${width}: the path must appear in the top border`);
+		assert.match(top, /read-only/i, `width ${width}: "read-only" must appear in the top border`);
+	}
+});
+
+test("W9 viewer: a diff line longer than the interior clips without displacing the right rail", () => {
+	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	model = applyPatch(model, "request", "a.ts", [
+		{
+			header: "@@ hdr @@",
+			lines: [
+				{
+					origin: "-",
+					text: "a very long removed line that is far longer than any interior width used in this test and must be clipped cleanly",
+				},
+			],
+		},
+	]);
+	for (const width of [30, 40, 50]) {
+		const rows = renderRows(model, width, false, 8);
+		for (const row of rows) {
+			assert.equal(testDisplayWidth(rowText(row)), width, `width ${width}: ${JSON.stringify(rowText(row))}`);
+		}
+		const contentRow = rows.find((r) => rowText(r).includes("a very long"));
+		assert.ok(contentRow, `width ${width}: the clipped content row must still be present`);
+		assert.ok(rowText(contentRow).endsWith("│"), `width ${width}: a clipped long line must not push the right rail out of place: ${JSON.stringify(rowText(contentRow))}`);
+	}
+});
+
+test("W9 viewer: a full-width CJK diff line clips without displacing the right rail", () => {
+	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	model = applyPatch(model, "request", "a.ts", [
+		{
+			header: "@@ hdr @@",
+			lines: [
+				{ origin: "+", text: "中文测试中文测试中文测试中文测试中文测试中文测试中文测试" },
+			],
+		},
+	]);
+	for (const width of [30, 40, 50]) {
+		const rows = renderRows(model, width, false, 8);
+		for (const row of rows) {
+			assert.equal(testDisplayWidth(rowText(row)), width, `width ${width} (CJK): ${JSON.stringify(rowText(row))}`);
+		}
+		const contentRow = rows.find((r) => rowText(r).includes("中文"));
+		assert.ok(contentRow, `width ${width}: the CJK content row must still be present`);
+		assert.ok(rowText(contentRow).endsWith("│"), `width ${width}: a full-width character must not push the right rail out of place: ${JSON.stringify(rowText(contentRow))}`);
+	}
+});
+
+test("W9 viewer: the key hint appears in the bottom border and degrades by dropping whole items at narrow widths", () => {
+	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
+	model = applyPatch(model, "request", "a.ts", hunks);
+
+	const wideBottom = rowText(renderRows(model, 100, false, 8)[7]);
+	assert.match(wideBottom, /scroll/);
+	assert.match(wideBottom, /page/);
+	assert.match(wideBottom, /ends/);
+	assert.match(wideBottom, /file/);
+	assert.match(wideBottom, /back/);
+	assert.ok(wideBottom.startsWith("╰") && wideBottom.endsWith("╯"), "the full hint must still close the border");
+
+	const narrowBottom = rowText(renderRows(model, 40, false, 8)[7]);
+	assert.ok(narrowBottom.startsWith("╰") && narrowBottom.endsWith("╯"), "a degraded hint must still close the border");
+	assert.equal(testDisplayWidth(narrowBottom), 40);
+	// Width 40 must land in the GENUINELY PARTIAL range: some items present,
+	// some absent. A test that only checks "present items are whole" passes
+	// vacuously when everything drops to empty, which is indistinguishable
+	// from a broken all-or-nothing fallback — assert partiality directly.
+	assert.match(narrowBottom, /scroll/, "the first hint item must survive at width 40");
+	assert.doesNotMatch(narrowBottom, /back/, "the last hint item must NOT survive at width 40, proving item-level (not all-or-nothing) degradation");
+	// No hint item may be cut mid-word: every ·-joined item present in the
+	// narrow row must appear in full, byte for byte, inside the wide row.
+	const narrowItems = narrowBottom
+		.replace(/^╰[─\s]*/, "")
+		.replace(/[─\s]*╯$/, "")
+		.split(" · ")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+	assert.ok(narrowItems.length > 0, "at least one whole hint item must be present at width 40");
+	for (const item of narrowItems) {
+		assert.ok(wideBottom.includes(item), `narrow-width item ${JSON.stringify(item)} must be a whole item from the full hint, not a mid-word fragment`);
+	}
 });

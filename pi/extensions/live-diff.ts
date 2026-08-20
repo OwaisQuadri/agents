@@ -172,6 +172,8 @@ function styleRow(theme: ThemeLike, row: RenderRow, padding: string): string {
  * @returns the mapped key, or null when the input is unbound
  */
 export function mapKey(data: string): OverlayKey | null {
+	// Full sequences are matched before the bare-Esc case below, so the shared
+	// \x1b prefix of \x1b[A / \x1b[B never falls through to "close".
 	switch (data) {
 		case "\x1b[A":
 		case "k":
@@ -188,7 +190,19 @@ export function mapKey(data: string): OverlayKey | null {
 			return "open";
 		case " ":
 		case "f":
-			return "fold";
+			return "open-diff";
+		case "\x04":
+			return "page-down";
+		case "\x15":
+			return "page-up";
+		case "g":
+			return "top";
+		case "G":
+			return "bottom";
+		case "]":
+			return "next-file";
+		case "[":
+			return "prev-file";
 		case "q":
 		case "\x1b":
 			return "close";

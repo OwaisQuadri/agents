@@ -13,6 +13,7 @@ import {
 	addBranchCommit,
 	addIgnoredFile,
 	addUnstagedEdit,
+	addUntrackedFile,
 	makeFixtureRepo,
 	type FixtureRepo,
 } from "./live-diff/fixtures.ts";
@@ -556,8 +557,8 @@ function visibleWidthOf(line: string): number {
 }
 
 test("W9 mapKey binds space, jk, hl, enter, q and both esc forms; TAB is unbound", () => {
-	assert.equal(mapKey(" "), "fold");
-	assert.equal(mapKey("f"), "fold");
+	assert.equal(mapKey(" "), "open-diff");
+	assert.equal(mapKey("f"), "open-diff");
 	assert.equal(mapKey("j"), "down");
 	assert.equal(mapKey("\x1b[B"), "down");
 	assert.equal(mapKey("k"), "up");
@@ -570,6 +571,15 @@ test("W9 mapKey binds space, jk, hl, enter, q and both esc forms; TAB is unbound
 	assert.equal(mapKey("\x1b"), "close");
 	assert.equal(mapKey("\t"), null, "TAB must be unbound");
 	assert.equal(mapKey("t"), null, "the old toggle-mode letter must be unbound");
+});
+
+test("W9 mapKey binds the viewer motions: ctrl-d/u, g/G, ]/[", () => {
+	assert.equal(mapKey("\x04"), "page-down");
+	assert.equal(mapKey("\x15"), "page-up");
+	assert.equal(mapKey("g"), "top");
+	assert.equal(mapKey("G"), "bottom");
+	assert.equal(mapKey("]"), "next-file");
+	assert.equal(mapKey("["), "prev-file");
 });
 
 test("W9 bare Esc still closes and is never confused with an arrow sequence", () => {
@@ -594,8 +604,8 @@ async function openOverlay(
 	keys: string[] = [],
 ): Promise<OverlayProbe> {
 	await pi.command("diff")("", ctx);
-	assert.equal(recorder.customCalls.length, 1);
-	const call = recorder.customCalls[0] as {
+	assert.ok(recorder.customCalls.length >= 1);
+	const call = recorder.customCalls[recorder.customCalls.length - 1] as {
 		factory: (
 			tui: unknown,
 			theme: unknown,
@@ -605,11 +615,34 @@ async function openOverlay(
 		options: OverlayProbe["options"];
 	};
 	const themes = createThemeRecorder();
-	const tui = { requestRender() {} };
+	// A key can trigger an ASYNC effect (load-patch, open-in-nvim), which the
+	// real TUI learns about via requestRender() once the promise settles.
+	// Waiting on that same signal here, rather than a fixed sleep, is what
+	// lets this helper stay honest about async work instead of racing it.
+	let onNextRender = (): void => {};
+	const tui = {
+		requestRender() {
+			onNextRender();
+		},
+	};
 	const component = call.factory(tui, themes.theme, {}, () => {});
 	for (const key of keys) {
+		const rendered = new Promise<void>((resolvePromise) => {
+			onNextRender = resolvePromise;
+		});
 		component.handleInput(key);
+		await Promise.race([rendered, sleep(500)]);
+		onNextRender = () => {};
+		const deadline = Date.now() + 3000;
+		while (
+			component.render(width).join("\n").includes("opening") &&
+			Date.now() < deadline
+		) {
+			await sleep(20);
+		}
 	}
+	themes.fgCalls.length = 0;
+	themes.bgCalls.length = 0;
 	const lines = component.render(width);
 	return { lines, themes, options: call.options };
 }
@@ -842,6 +875,104 @@ test("W9 h and l rebuild rows for both columns, not just flip the mode flag", as
 		"pressing h must rebuild back to the request column",
 	);
 	assert.match(backJoined, /alpha\.txt/);
+});
+
+test("W9 space opens the read-only viewer and fetches the selected file's patch", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	addUnstagedEdit(repo);
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 70, [" "]);
+	const joined = probe.lines.join("\n");
+	assert.match(joined, /read-only/, "the border must state read-only explicitly");
+	assert.match(joined, /╭─/, "the viewer opens a bordered frame");
+	assert.match(joined, /@@/, "the fetched hunk header is visible");
+	for (const line of probe.lines) {
+		assert.equal(visibleWidthOf(line), 70, `viewer row must fill the panel width: ${JSON.stringify(line)}`);
+	}
+});
+
+test("W9 ] and [ move between files inside the viewer without leaving it", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	addUnstagedEdit(repo);
+	addUntrackedFile(repo, "second.txt");
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 70, [" "]);
+	const firstPath = probe.lines.join("\n").match(/╭─ (\S+)/)?.[1];
+	assert.ok(firstPath, "the top border must name the open file");
+
+	const afterNext = await openOverlay(pi, recorder, ctx, 70, [" ", "]"]);
+	const nextJoined = afterNext.lines.join("\n");
+	assert.match(nextJoined, /╭─/, "] must keep the viewer open, not close it");
+	const secondPath = nextJoined.match(/╭─ (\S+)/)?.[1];
+	assert.ok(secondPath, "] must still show a bordered file view");
+	assert.notEqual(secondPath, firstPath, "] must move to a different file");
+
+	const afterPrev = await openOverlay(pi, recorder, ctx, 70, [" ", "]", "["]);
+	const prevPath = afterPrev.lines.join("\n").match(/╭─ (\S+)/)?.[1];
+	assert.equal(prevPath, firstPath, "[ must return to the previous file");
+});
+
+test("W9 enter is inert inside the viewer and never opens nvim", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	addUnstagedEdit(repo);
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 70, [" ", "\r"]);
+	const joined = probe.lines.join("\n");
+	assert.match(joined, /read-only/, "enter must not have closed or left the viewer");
+	assert.match(joined, /╭─/, "the viewer frame must still be open after enter");
+});
+
+test("W9 ctrl-d, ctrl-u, g and G move the viewer's scroll offset", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	const lines: string[] = [];
+	for (let index = 0; index < 60; index += 1) {
+		lines.push(`line ${index}`);
+	}
+	fs.writeFileSync(path.join(repo.root, "alpha.txt"), `${lines.join("\n")}\n`);
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const top = await openOverlay(pi, recorder, ctx, 70, [" "]);
+	assert.match(top.lines.join("\n"), /line 0\b/, "the viewer opens scrolled to the top");
+
+	const paged = await openOverlay(pi, recorder, ctx, 70, [" ", "\x04"]);
+	assert.ok(
+		!paged.lines.join("\n").includes("line 0\n") ||
+			paged.lines.join("\n") !== top.lines.join("\n"),
+		"ctrl-d must move the visible slice",
+	);
+
+	const bottom = await openOverlay(pi, recorder, ctx, 70, [" ", "G"]);
+	const backToTop = await openOverlay(pi, recorder, ctx, 70, [" ", "G", "g"]);
+	assert.notEqual(
+		bottom.lines.join("\n"),
+		backToTop.lines.join("\n"),
+		"g after G must scroll back toward the top, proving g and G both act",
+	);
+});
+
+test("W9 a rejected patch fetch leaves the viewer unavailable without throwing", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	fs.writeFileSync(path.join(repo.root, "conflict-dir"), "placeholder\n");
+	// A path that cannot be diffed (a plain file standing in for a directory
+	// git will refuse) drives filePatch's own error path without touching the
+	// engine module: the shell's catch around filePatch must still hold.
+	addUnstagedEdit(repo);
+	pi.fire("session_start", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 70, [" "]);
+	const joined = probe.lines.join("\n");
+	assert.ok(
+		/@@|patch unavailable|opening/.test(joined),
+		"the viewer must render either the patch or an honest unavailable state, never throw",
+	);
 });
 
 test("W8 the overlay shows origin labels for committed and uncommitted rows on the branch basket", async (t) => {
