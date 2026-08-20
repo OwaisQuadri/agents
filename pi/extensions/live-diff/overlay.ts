@@ -177,6 +177,8 @@ export function applyPatch(
 	};
 }
 
+// TODO(AGNT-0015.T18): add renderRows -> RenderRow[] beside this: tone spans,
+// exactly one isSelected row, every row padded to width in display columns.
 /**
  * Render the model to plain terminal lines for the overlay component.
  *

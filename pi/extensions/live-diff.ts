@@ -334,6 +334,8 @@ export default function liveDiff(pi: ExtensionAPI): void {
 			}
 			let model = initialModel(state.requestStats, state.overallStats);
 			await ctx.ui.custom<undefined>(
+				// TODO(AGNT-0015.T19): use the theme (currently ignored as _theme) and
+				// pass overlayOptions + a Box background so nothing bleeds through.
 				(tui, _theme, _keybindings, done) => {
 					async function runEffect(effect: OverlayEffect): Promise<void> {
 						if (effect.kind === "close") {
