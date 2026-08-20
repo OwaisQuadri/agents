@@ -69,6 +69,39 @@ function sweepStaleFixtureDirs(tmpdir: string): void {
 }
 
 /**
+ * Branch off the repository's default branch and commit one new file on it.
+ *
+ * @param repo fixture repository
+ * @param branch branch name to create, default "feature"
+ * @param name file to create and commit on the branch, default "feature.txt"
+ * @returns the committed file path relative to the repo root
+ * @throws Error when git exits nonzero
+ */
+export function addBranchCommit(
+	repo: FixtureRepo,
+	branch = "feature",
+	name = "feature.txt",
+): string {
+	repo.git(["checkout", "-q", "-b", branch]);
+	fs.writeFileSync(path.join(repo.root, name), "feature line one\n");
+	repo.git(["add", name]);
+	repo.git(["commit", "-q", "-m", `add ${name}`]);
+	return name;
+}
+
+/**
+ * Commit every pending change in the fixture repository.
+ *
+ * @param repo fixture repository
+ * @param message commit message, default "commit pending work"
+ * @throws Error when git exits nonzero
+ */
+export function commitAll(repo: FixtureRepo, message = "commit pending work"): void {
+	repo.git(["add", "-A"]);
+	repo.git(["commit", "-q", "-m", message]);
+}
+
+/**
  * Stage an edit to the committed baseline file alpha.txt.
  *
  * @param repo fixture repository

@@ -2,9 +2,23 @@ import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DiffStats, FileChange, FileChangeKind, Hunk, Snapshot } from "./types.ts";
+import type {
+	ChangeOrigin,
+	DiffStats,
+	FileChange,
+	FileChangeKind,
+	Hunk,
+	Snapshot,
+} from "./types.ts";
 
 export const TEMP_INDEX_PREFIX = "live-diff-index-";
+
+const DEFAULT_BRANCH_CANDIDATES = [
+	"origin/main",
+	"origin/master",
+	"main",
+	"master",
+];
 
 const STALE_TEMP_AGE_MS = 60 * 60 * 1000;
 
@@ -148,12 +162,184 @@ export async function diffStats(
 			additions: row.additions,
 			deletions: row.deletions,
 			isBinary: row.isBinary,
+			origin: "uncommitted",
 		};
 		if (!change.isBinary) {
 			additions += change.additions;
 			deletions += change.deletions;
 		}
 		files.push(change);
+	}
+	const isTruncated = files.length > maxFiles;
+	return {
+		files: isTruncated ? files.slice(0, maxFiles) : files,
+		additions,
+		deletions,
+		isTruncated,
+	};
+}
+
+/**
+ * Resolve the tree of the merge-base between HEAD and the default branch.
+ *
+ * @param exec command runner
+ * @param cwd repository worktree root
+ * @returns the merge-base commit's tree sha, or null when no branch point
+ *   applies — a detached HEAD, a repo sitting on its own default branch, a
+ *   repo with no commits, or no resolvable default branch
+ */
+export async function resolveBranchPointTree(
+	exec: Exec,
+	cwd: string,
+): Promise<string | null> {
+	try {
+		const head = await exec("git", ["rev-parse", "--verify", "--quiet", "HEAD"], {
+			cwd,
+		});
+		if (head.code !== 0) {
+			return null;
+		}
+		const current = await exec("git", ["branch", "--show-current"], { cwd });
+		const currentBranch = current.code === 0 ? current.stdout.trim() : "";
+		if (currentBranch === "") {
+			return null;
+		}
+		for (const candidate of await branchCandidates(exec, cwd)) {
+			if (candidate === currentBranch || candidate === `origin/${currentBranch}`) {
+				continue;
+			}
+			const exists = await exec(
+				"git",
+				["rev-parse", "--verify", "--quiet", `${candidate}^{commit}`],
+				{ cwd },
+			);
+			if (exists.code !== 0) {
+				continue;
+			}
+			const base = await exec("git", ["merge-base", "HEAD", candidate], { cwd });
+			if (base.code !== 0 || base.stdout.trim() === "") {
+				continue;
+			}
+			const tree = await exec(
+				"git",
+				["rev-parse", `${base.stdout.trim()}^{tree}`],
+				{ cwd },
+			);
+			if (tree.code !== 0 || tree.stdout.trim() === "") {
+				continue;
+			}
+			return tree.stdout.trim();
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+async function branchCandidates(exec: Exec, cwd: string): Promise<string[]> {
+	const symref = await exec(
+		"git",
+		["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+		{ cwd },
+	);
+	if (symref.code !== 0) {
+		return DEFAULT_BRANCH_CANDIDATES;
+	}
+	const resolved = symref.stdout.trim().replace(/^refs\/remotes\//, "");
+	if (resolved === "") {
+		return DEFAULT_BRANCH_CANDIDATES;
+	}
+	return [resolved, ...DEFAULT_BRANCH_CANDIDATES];
+}
+
+/**
+ * Diff the branch point against both HEAD and the worktree, merged per path.
+ *
+ * @param exec command runner
+ * @param cwd repository worktree root
+ * @param branchPointTree tree to diff from, from resolveBranchPointTree
+ * @returns one row per path with origin committed, uncommitted, or both, and
+ *   counts summed across the committed and uncommitted sides
+ * @throws Error when git exits nonzero
+ */
+export async function branchStats(
+	exec: Exec,
+	cwd: string,
+	branchPointTree: string,
+	maxFiles: number,
+): Promise<DiffStats> {
+	const headTreeSha = await resolveBaselineTree(exec, cwd);
+	const worktreeSha = await writeWorktreeTree(exec, cwd);
+	const committed = await treeDiff(exec, cwd, branchPointTree, headTreeSha);
+	const uncommitted = await treeDiff(exec, cwd, headTreeSha, worktreeSha);
+	return mergeSides(committed, uncommitted, maxFiles);
+}
+
+async function treeDiff(
+	exec: Exec,
+	cwd: string,
+	baseTreeSha: string,
+	targetTreeSha: string,
+): Promise<FileChange[]> {
+	if (baseTreeSha === targetTreeSha) {
+		return [];
+	}
+	const numstatOut = await run(exec, cwd, [
+		"diff-tree", "-r", "-M", "--numstat", "-z", baseTreeSha, targetTreeSha,
+	]);
+	const nameStatusOut = await run(exec, cwd, [
+		"diff-tree", "-r", "-M", "--name-status", "-z", baseTreeSha, targetTreeSha,
+	]);
+	const statusByPath = parseNameStatus(nameStatusOut);
+	const changes: FileChange[] = [];
+	for (const row of parseNumstat(numstatOut)) {
+		const status = statusByPath.get(row.path);
+		changes.push({
+			path: row.path,
+			renamedFrom: status?.renamedFrom ?? row.renamedFrom,
+			kind: row.isBinary ? "binary" : (status?.kind ?? "modified"),
+			additions: row.additions,
+			deletions: row.deletions,
+			isBinary: row.isBinary,
+			origin: "uncommitted",
+		});
+	}
+	return changes;
+}
+
+function mergeSides(
+	committed: FileChange[],
+	uncommitted: FileChange[],
+	maxFiles: number,
+): DiffStats {
+	const byPath = new Map<string, FileChange>();
+	for (const change of committed) {
+		byPath.set(change.path, { ...change, origin: "committed" });
+	}
+	for (const change of uncommitted) {
+		const existing = byPath.get(change.path);
+		if (existing === undefined) {
+			byPath.set(change.path, { ...change, origin: "uncommitted" });
+			continue;
+		}
+		byPath.set(change.path, {
+			path: change.path,
+			renamedFrom: existing.renamedFrom ?? change.renamedFrom,
+			kind: existing.isBinary || change.isBinary ? "binary" : change.kind,
+			additions: existing.additions + change.additions,
+			deletions: existing.deletions + change.deletions,
+			isBinary: existing.isBinary || change.isBinary,
+			origin: "both",
+		});
+	}
+	const files = [...byPath.values()];
+	let additions = 0;
+	let deletions = 0;
+	for (const change of files) {
+		if (!change.isBinary) {
+			additions += change.additions;
+			deletions += change.deletions;
+		}
 	}
 	const isTruncated = files.length > maxFiles;
 	return {
