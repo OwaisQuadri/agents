@@ -1,4 +1,8 @@
-import type { WatcherFactory } from "./types.ts";
+import { watch } from "node:fs";
+
+import type { WatcherFactory, WorktreeWatcher } from "./types.ts";
+
+const GIT_DIR = ".git";
 
 /**
  * Decide whether a changed path should trigger a refresh.
@@ -11,8 +15,12 @@ export function isRefreshWorthy(
 	relativePath: string,
 	isIgnored: (path: string) => boolean,
 ): boolean {
-	// TODO(AGNT-0015.T17): reject .git and its descendants, reject ignored paths.
-	throw new Error("unimplemented");
+	const normalized = relativePath.replaceAll("\\", "/");
+	const segments = normalized.split("/");
+	if (segments[0] === GIT_DIR) {
+		return false;
+	}
+	return !isIgnored(relativePath);
 }
 
 /**
@@ -23,7 +31,26 @@ export function isRefreshWorthy(
  * @returns a watcher, or null when recursive watching is unavailable
  */
 export const createWatcher: WatcherFactory = (root, onChange) => {
-	// TODO(AGNT-0015.T17): fs.watch(root,{recursive:true}); never throw, return
-	// null when unavailable.
-	throw new Error("unimplemented");
+	let isClosed = false;
+	try {
+		const handle = watch(root, { recursive: true }, (_event, filename) => {
+			if (isClosed || filename === null) {
+				return;
+			}
+			onChange(typeof filename === "string" ? filename : filename.toString());
+		});
+		handle.on("error", () => {});
+		const watcher: WorktreeWatcher = {
+			close: () => {
+				if (isClosed) {
+					return;
+				}
+				isClosed = true;
+				handle.close();
+			},
+		};
+		return watcher;
+	} catch {
+		return null;
+	}
 };

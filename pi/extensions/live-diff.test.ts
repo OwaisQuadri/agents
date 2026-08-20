@@ -1,4 +1,5 @@
 import * as assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -7,7 +8,9 @@ import { test, type TestContext } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import liveDiff from "./live-diff.ts";
+import { captureSnapshot, diffStats, type Exec } from "./live-diff/engine.ts";
 import { makeFixtureRepo, type FixtureRepo } from "./live-diff/fixtures.ts";
+import type { DiffStats } from "./live-diff/types.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type CommandHandler = (args: unknown, ctx: ExtensionContext) => Promise<void>;
@@ -90,6 +93,32 @@ function createFakePi() {
 
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+const testExec: Exec = (command, args, options) =>
+	new Promise((resolvePromise) => {
+		execFile(
+			command,
+			args,
+			{
+				cwd: options?.cwd,
+				env: options?.env ? { ...process.env, ...options.env } : process.env,
+				maxBuffer: 64 * 1024 * 1024,
+			},
+			(error, stdout, stderr) => {
+				const rawCode = (error as NodeJS.ErrnoException | null)?.code;
+				const code = error ? (typeof rawCode === "number" ? rawCode : 1) : 0;
+				resolvePromise({ code, stdout: String(stdout), stderr: String(stderr) });
+			},
+		);
+	});
+
+async function currentOverallStats(
+	ctx: ExtensionContext,
+	repo: FixtureRepo,
+): Promise<DiffStats> {
+	const snapshot = await captureSnapshot(testExec, repo.root);
+	return diffStats(testExec, ctx.cwd, snapshot.baselineSha, 400);
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
@@ -210,6 +239,45 @@ test("TC-19 shutdown during an in-flight refresh reports nothing afterwards", as
 	} finally {
 		process.off("unhandledRejection", onRejection);
 	}
+});
+
+test("TC-20 pre-session uncommitted work counts as overall", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "pre-session edit\n");
+
+	pi.fire("session_start", {}, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+
+	const overallStats = await currentOverallStats(ctx, repo);
+	assert.deepEqual(
+		overallStats.files.map((file) => file.path),
+		["alpha.txt"],
+	);
+	assert.match(badge, /all \+1/);
+	assert.doesNotMatch(badge, /req/);
+});
+
+test("TC-20 zero-commit repo still reports a sane badge", async (t) => {
+	const pi = createFakePi();
+	liveDiff(pi.api);
+	const recorder = createRecorder();
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "live-diff-fixture-empty-"));
+	t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+	execFileSync("git", ["init", "-q"], { cwd: root });
+	execFileSync("git", ["config", "user.name", "fixture"], { cwd: root });
+	execFileSync("git", ["config", "user.email", "fixture@example.invalid"], { cwd: root });
+	fs.writeFileSync(path.join(root, "only.txt"), "content before any commit\n");
+	const ctx = createFakeCtx(recorder, root);
+
+	pi.fire("session_start", {}, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+
+	assert.notEqual(badge, "diff ?");
+	assert.match(badge, /all \+1/);
 });
 
 test("TC-14 /diff during an in-flight refresh opens exactly one overlay", async (t) => {
