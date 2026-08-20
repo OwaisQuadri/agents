@@ -7,6 +7,7 @@ import {
 	rebuildRows,
 	reduce,
 	renderLines,
+	renderRows,
 } from "./overlay.ts";
 import type {
 	DiffStats,
@@ -512,4 +513,186 @@ test("badgeText shapes: both sides, one side null, present-but-empty side", () =
 		badgeText(stats([]), overallStats),
 		"req +0 ~0 −0 · all +214 ~1 −31",
 	);
+});
+
+function testCharWidth(char: string): number {
+	const code = char.codePointAt(0) ?? 0;
+	if (/^[\p{Mn}\p{Me}]$/u.test(char)) {
+		return 0;
+	}
+	const isWide =
+		(code >= 0x1100 && code <= 0x115f) ||
+		(code >= 0x2e80 && code <= 0x303e) ||
+		(code >= 0x3041 && code <= 0x33ff) ||
+		(code >= 0x3400 && code <= 0x4dbf) ||
+		(code >= 0x4e00 && code <= 0x9fff) ||
+		(code >= 0xa000 && code <= 0xa4cf) ||
+		(code >= 0xac00 && code <= 0xd7a3) ||
+		(code >= 0xf900 && code <= 0xfaff) ||
+		(code >= 0xfe30 && code <= 0xfe6f) ||
+		(code >= 0xff00 && code <= 0xff60) ||
+		(code >= 0xffe0 && code <= 0xffe6) ||
+		(code >= 0x1f300 && code <= 0x1f64f) ||
+		(code >= 0x1f900 && code <= 0x1f9ff) ||
+		(code >= 0x20000 && code <= 0x2fffd);
+	return isWide ? 2 : 1;
+}
+
+function testDisplayWidth(text: string): number {
+	let total = 0;
+	for (const char of text) {
+		total += testCharWidth(char);
+	}
+	return total;
+}
+
+function rowText(row: { spans: { text: string }[] }): string {
+	return row.spans.map((span) => span.text).join("");
+}
+
+test("TC-26 exactly one row is selected, and it is the cursor row", () => {
+	const model = initialModel(
+		stats([change("a.ts"), change("b.ts"), change("c.ts"), change("d.ts")]),
+		null,
+	);
+	const selectedAt = (m: OverlayModel): string[] =>
+		renderRows(m, 60)
+			.filter((row) => row.isSelected)
+			.map((row) => rowText(row));
+
+	const first = selectedAt(model);
+	assert.equal(first.length, 1);
+	assert.match(first[0], /a\.ts/);
+
+	let moved = model;
+	for (const key of ["down", "down"] as OverlayKey[]) {
+		moved = reduce(moved, key).model;
+	}
+	const third = selectedAt(moved);
+	assert.equal(third.length, 1);
+	assert.match(third[0], /c\.ts/);
+	assert.equal(moved.rows[moved.cursor].change.path, "c.ts");
+
+	const empty = initialModel(stats([]), stats([]));
+	const emptyRows = renderRows(empty, 60);
+	assert.equal(emptyRows.filter((row) => row.isSelected).length, 0);
+	assert.ok(emptyRows.length >= 2);
+});
+
+test("TC-26 header, hunk, truncation and hint rows are never selected", () => {
+	const model = initialModel(stats([change("a.ts")]), null);
+	const loaded = applyPatch(model, model.mode, "a.ts", hunks);
+	const rows = renderRows(loaded, 80, true);
+	const selected = rows.filter((row) => row.isSelected);
+	assert.equal(selected.length, 1);
+	assert.match(rowText(selected[0]), /a\.ts/);
+	assert.equal(rows[0].isSelected, false);
+	assert.equal(rows[rows.length - 1].isSelected, false);
+	for (const row of rows) {
+		const text = rowText(row);
+		if (
+			text.includes("@@") ||
+			text.includes("truncated") ||
+			text.includes("TAB fold")
+		) {
+			assert.equal(row.isSelected, false);
+		}
+	}
+});
+
+test("TC-27 every row measures exactly the requested width", () => {
+	const model = initialModel(
+		stats([
+			change("a.ts"),
+			change(
+				"src/very/deep/nested/directory/structure/with/a/really/long/file/name.ts",
+			),
+			change("日本語のファイル名テスト.ts"),
+			change("bin.png", { isBinary: true }),
+			change("new.ts", { kind: "renamed", renamedFrom: "old.ts" }),
+		]),
+		null,
+	);
+	const loaded = applyPatch(model, model.mode, "a.ts", hunks);
+	for (const width of [40, 60, 100]) {
+		for (const isTruncated of [false, true]) {
+			const rows = renderRows(loaded, width, isTruncated);
+			assert.ok(rows.length > 0);
+			for (const row of rows) {
+				assert.equal(
+					testDisplayWidth(rowText(row)),
+					width,
+					`width ${width} truncated=${isTruncated}: ${JSON.stringify(rowText(row))}`,
+				);
+			}
+		}
+	}
+});
+
+test("TC-27 short rows are padded rather than left short", () => {
+	const model = initialModel(stats([change("a.ts")]), null);
+	const rows = renderRows(model, 100);
+	for (const row of rows) {
+		assert.equal(testDisplayWidth(rowText(row)), 100);
+	}
+	const fileRow = rows.find((row) => rowText(row).includes("a.ts"));
+	assert.ok(fileRow);
+	assert.ok(rowText(fileRow).endsWith(" "));
+});
+
+test("TC-28 spans carry tones and never escape bytes", () => {
+	const model = initialModel(
+		stats([
+			change("a.ts", { additions: 12, deletions: 3 }),
+			change("bin.png", { isBinary: true }),
+		]),
+		null,
+	);
+	const loaded = applyPatch(model, model.mode, "a.ts", hunks);
+	const rows = renderRows(loaded, 80, true);
+	const tones = new Set<string>();
+	for (const row of rows) {
+		for (const span of row.spans) {
+			assert.ok(
+				!span.text.includes("\u001b"),
+				`span carried an escape byte: ${JSON.stringify(span.text)}`,
+			);
+			tones.add(span.tone);
+		}
+	}
+	for (const expected of [
+		"header",
+		"path",
+		"added",
+		"removed",
+		"binary",
+		"hunkHeader",
+		"hunkAdd",
+		"hunkRemove",
+		"hunkContext",
+		"hint",
+		"truncation",
+	]) {
+		assert.ok(tones.has(expected), `missing tone ${expected}`);
+	}
+});
+
+test("TC-28 renderLines output is unchanged by the renderRows rewrite", () => {
+	const model = initialModel(
+		stats([change("a.ts"), change("日本語.ts")]),
+		null,
+	);
+	const loaded = applyPatch(model, model.mode, "a.ts", hunks);
+	for (const width of [20, 40, 60, 100]) {
+		const lines = renderLines(loaded, width, true);
+		const rows = renderRows(loaded, width, true);
+		assert.equal(lines.length, rows.length);
+		for (const [index, line] of lines.entries()) {
+			assert.ok(
+				rowText(rows[index]).startsWith(line),
+				`line ${index} at width ${width} is not the row minus padding`,
+			);
+			assert.ok(testDisplayWidth(line) <= width);
+		}
+	}
 });

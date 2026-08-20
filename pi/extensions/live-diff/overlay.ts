@@ -7,6 +7,9 @@ import type {
 	OverlayModel,
 	OverlayRow,
 	OverlayStep,
+	RenderRow,
+	RenderSpan,
+	RowTone,
 } from "./types.ts";
 
 function rowsForMode(
@@ -177,8 +180,110 @@ export function applyPatch(
 	};
 }
 
-// TODO(AGNT-0015.T18): add renderRows -> RenderRow[] beside this: tone spans,
-// exactly one isSelected row, every row padded to width in display columns.
+/**
+ * Render the model to tone-tagged rows for the overlay component.
+ *
+ * @param model current model
+ * @param width panel width in display columns
+ * @param isTruncated whether the current mode's stats were capped
+ * @returns one row per visual line, each padded or clipped to exactly `width`
+ *   display columns, with the cursor row and only the cursor row selected
+ */
+export function renderRows(
+	model: OverlayModel,
+	width: number,
+	isTruncated = false,
+): RenderRow[] {
+	const rows: RenderRow[] = [];
+	rows.push(
+		fit(
+			[
+				{
+					text:
+						model.mode === "request"
+							? "[request] overall"
+							: " request [overall]",
+					tone: "header",
+				},
+			],
+			width,
+			false,
+		),
+	);
+	model.rows.forEach((row, index) => {
+		const isSelected = index === model.cursor;
+		const name = sanitize(rowName(row.change));
+		const isUnfolded = !row.isFolded && row.hunks !== null;
+		const marker = isUnfolded ? "▾ " : "▸ ";
+		const spans: RenderSpan[] = [
+			{ text: `${marker}${name}  `, tone: "path" },
+		];
+		if (row.change.isBinary) {
+			spans.push({ text: "binary", tone: "binary" });
+		} else {
+			spans.push({
+				text: `+${displayCount(row.change.additions)}`,
+				tone: "added",
+			});
+			spans.push({ text: " ", tone: "path" });
+			spans.push({
+				text: `−${displayCount(row.change.deletions)}`,
+				tone: "removed",
+			});
+		}
+		rows.push(fit(spans, width, isSelected));
+		if (!isUnfolded || row.hunks === null) {
+			return;
+		}
+		for (const hunk of row.hunks) {
+			rows.push(
+				fit(
+					[{ text: sanitize(hunk.header), tone: "hunkHeader" }],
+					width,
+					false,
+				),
+			);
+			for (const hunkLine of hunk.lines) {
+				rows.push(
+					fit(
+						[
+							{
+								text: sanitize(hunkLine.origin + hunkLine.text),
+								tone: hunkTone(hunkLine.origin),
+							},
+						],
+						width,
+						false,
+					),
+				);
+			}
+		}
+	});
+	if (isTruncated) {
+		rows.push(
+			fit(
+				[{ text: "… more files (truncated)", tone: "truncation" }],
+				width,
+				false,
+			),
+		);
+	}
+	rows.push(
+		fit(
+			[
+				{
+					text:
+						"TAB fold · ↑↓ move · ⏎ open in nvim · tab request/overall · q close",
+					tone: "hint",
+				},
+			],
+			width,
+			false,
+		),
+	);
+	return rows;
+}
+
 /**
  * Render the model to plain terminal lines for the overlay component.
  *
@@ -192,34 +297,44 @@ export function renderLines(
 	width: number,
 	isTruncated = false,
 ): string[] {
-	const lines: string[] = [];
-	lines.push(
-		model.mode === "request" ? "[request] overall" : " request [overall]",
-	);
-	for (const row of model.rows) {
-		const name = sanitize(rowName(row.change));
-		const stat = row.change.isBinary
-			? "binary"
-			: `+${displayCount(row.change.additions)} −${displayCount(row.change.deletions)}`;
-		if (row.isFolded || row.hunks === null) {
-			lines.push(`▸ ${name}  ${stat}`);
-			continue;
+	return renderRows(model, width, isTruncated).map((row) => {
+		const spans = row.spans;
+		const last = spans[spans.length - 1];
+		const isPadOnly = last !== undefined && PAD_ONLY.test(last.text);
+		const kept = isPadOnly ? spans.slice(0, -1) : spans;
+		return kept.map((span) => span.text).join("");
+	});
+}
+
+function hunkTone(origin: " " | "+" | "-"): RowTone {
+	if (origin === "+") {
+		return "hunkAdd";
+	}
+	return origin === "-" ? "hunkRemove" : "hunkContext";
+}
+
+function fit(
+	spans: RenderSpan[],
+	width: number,
+	isSelected: boolean,
+): RenderRow {
+	const fitted: RenderSpan[] = [];
+	let used = 0;
+	for (const span of spans) {
+		if (used >= width) {
+			break;
 		}
-		lines.push(`▾ ${name}  ${stat}`);
-		for (const hunk of row.hunks) {
-			lines.push(sanitize(hunk.header));
-			for (const hunkLine of hunk.lines) {
-				lines.push(sanitize(hunkLine.origin + hunkLine.text));
-			}
+		const text = clip(span.text, width - used);
+		if (text.length > 0) {
+			fitted.push({ text, tone: span.tone });
+			used += displayWidth(text);
 		}
 	}
-	if (isTruncated) {
-		lines.push("… more files (truncated)");
+	if (used < width) {
+		const tone = fitted.length > 0 ? fitted[fitted.length - 1].tone : "path";
+		fitted.push({ text: " ".repeat(width - used), tone });
 	}
-	lines.push(
-		"TAB fold · ↑↓ move · ⏎ open in nvim · tab request/overall · q close",
-	);
-	return lines.map((line) => clip(line, width));
+	return { spans: fitted, isSelected };
 }
 
 function rowName(change: FileChange): string {
@@ -229,6 +344,7 @@ function rowName(change: FileChange): string {
 }
 
 const DISPLAY_UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+const PAD_ONLY = /^ +$/u;
 
 function sanitize(text: string): string {
 	return text.replace(DISPLAY_UNSAFE, "");
