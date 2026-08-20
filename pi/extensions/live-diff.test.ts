@@ -495,6 +495,177 @@ test("TC-20 zero-commit repo still reports a sane badge", async (t) => {
 	assert.match(badge, /all \+1/);
 });
 
+interface ThemeRecorder {
+	fgCalls: { color: string; text: string }[];
+	bgCalls: { background: string; text: string }[];
+	theme: {
+		fg(color: string, text: string): string;
+		bg(background: string, text: string): string;
+		bold(text: string): string;
+		inverse(text: string): string;
+	};
+}
+
+function createThemeRecorder(): ThemeRecorder {
+	const fgCalls: { color: string; text: string }[] = [];
+	const bgCalls: { background: string; text: string }[] = [];
+	return {
+		fgCalls,
+		bgCalls,
+		theme: {
+			fg(color: string, text: string): string {
+				fgCalls.push({ color, text });
+				return `\x1b[35m${text}\x1b[39m`;
+			},
+			bg(background: string, text: string): string {
+				bgCalls.push({ background, text });
+				return `\x1b[45m${text}\x1b[49m`;
+			},
+			bold(text: string): string {
+				return text;
+			},
+			inverse(text: string): string {
+				return text;
+			},
+		},
+	};
+}
+
+function visibleWidthOf(line: string): number {
+	const bare = line.replace(/\x1b\[[0-9;]*m/g, "");
+	let width = 0;
+	for (const char of bare) {
+		const code = char.codePointAt(0) ?? 0;
+		if (/\p{Mn}|\p{Me}/u.test(char)) {
+			continue;
+		}
+		const isWide =
+			(code >= 0x1100 && code <= 0x115f) ||
+			(code >= 0x2e80 && code <= 0x303e) ||
+			(code >= 0x3041 && code <= 0x33ff) ||
+			(code >= 0x3400 && code <= 0x4dbf) ||
+			(code >= 0x4e00 && code <= 0x9fff) ||
+			(code >= 0xac00 && code <= 0xd7a3) ||
+			(code >= 0xff00 && code <= 0xff60) ||
+			(code >= 0x1f300 && code <= 0x1f64f);
+		width += isWide ? 2 : 1;
+	}
+	return width;
+}
+
+interface OverlayProbe {
+	lines: string[];
+	themes: ThemeRecorder;
+	options: { overlay?: boolean; overlayOptions?: { width?: unknown; minWidth?: unknown } };
+}
+
+async function openOverlay(
+	pi: ReturnType<typeof createFakePi>,
+	recorder: Recorder,
+	ctx: ExtensionContext,
+	width: number,
+	keys: string[] = [],
+): Promise<OverlayProbe> {
+	await pi.command("diff")("", ctx);
+	assert.equal(recorder.customCalls.length, 1);
+	const call = recorder.customCalls[0] as {
+		factory: (
+			tui: unknown,
+			theme: unknown,
+			keybindings: unknown,
+			done: (result: undefined) => void,
+		) => { render(width: number): string[]; handleInput(data: string): void };
+		options: OverlayProbe["options"];
+	};
+	const themes = createThemeRecorder();
+	const tui = { requestRender() {} };
+	const component = call.factory(tui, themes.theme, {}, () => {});
+	for (const key of keys) {
+		component.handleInput(key);
+	}
+	const lines = component.render(width);
+	return { lines, themes, options: call.options };
+}
+
+test("TC-28 the overlay is a bounded opaque panel with a highlighted selection", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "styled overlay\n");
+	fs.writeFileSync(path.join(repo.root, "added.txt"), "fresh file\n");
+	await pi.fire("agent_start", {}, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 60);
+
+	assert.equal(probe.options.overlay, true);
+	assert.ok(
+		probe.options.overlayOptions !== undefined,
+		"ui.custom must receive overlayOptions",
+	);
+	assert.ok(
+		probe.options.overlayOptions?.width !== undefined,
+		"overlayOptions must carry an explicit width",
+	);
+
+	const selectedBgCalls = probe.themes.bgCalls.filter(
+		(call) => call.background === "selectedBg",
+	);
+	assert.equal(
+		selectedBgCalls.length,
+		1,
+		"exactly one row carries the selection background",
+	);
+	assert.ok(
+		selectedBgCalls[0].text.includes("▌"),
+		"the selected row carries a gutter glyph so the affordance survives without colour",
+	);
+	assert.equal(
+		visibleWidthOf(selectedBgCalls[0].text),
+		60,
+		"the selection highlight spans the full padded row width",
+	);
+
+	const colors = new Set(probe.themes.fgCalls.map((call) => call.color));
+	assert.ok(colors.has("toolDiffAdded"), "additions use toolDiffAdded");
+	assert.ok(colors.has("toolDiffRemoved"), "deletions use toolDiffRemoved");
+	assert.ok(colors.has("muted"), "the hint line uses muted");
+	assert.ok(colors.has("borderAccent"), "the header uses borderAccent");
+
+	const panelBgCalls = probe.themes.bgCalls.filter(
+		(call) => call.background === "customMessageBg",
+	);
+	assert.ok(
+		panelBgCalls.length > 1,
+		"unselected rows and the frame are painted opaque",
+	);
+	for (const line of probe.lines) {
+		assert.equal(
+			visibleWidthOf(line),
+			60,
+			`every emitted line fills the panel width exactly: ${JSON.stringify(line)}`,
+		);
+	}
+});
+
+test("TC-28 the highlight follows the cursor and stays single", async (t) => {
+	const { pi, recorder, ctx, repo } = createHarness(t);
+	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "row one\n");
+	fs.writeFileSync(path.join(repo.root, "added.txt"), "row two\n");
+	await pi.fire("agent_start", {}, ctx);
+	pi.fire("agent_settled", {}, ctx);
+	await waitFor(() => recorder.setStatusCalls.length >= 1);
+
+	const probe = await openOverlay(pi, recorder, ctx, 60, ["\x1b[B"]);
+	const selected = probe.themes.bgCalls.filter(
+		(call) => call.background === "selectedBg",
+	);
+	assert.equal(selected.length, 1, "still exactly one selected row after moving");
+	assert.equal(visibleWidthOf(selected[0].text), 60);
+	for (const line of probe.lines) {
+		assert.equal(visibleWidthOf(line), 60);
+	}
+});
+
 test("TC-14 /diff during an in-flight refresh opens exactly one overlay", async (t) => {
 	const { pi, recorder, ctx, repo } = createHarness(t);
 	const rejections: unknown[] = [];

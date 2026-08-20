@@ -10,19 +10,27 @@ import {
 	initialModel,
 	rebuildRows,
 	reduce,
-	renderLines,
+	renderRows,
 } from "./live-diff/overlay.ts";
 import type {
 	Hunk,
 	LiveDiffState,
 	OverlayEffect,
 	OverlayKey,
+	RenderRow,
+	RowTone,
 	WatcherFactory,
 	WorktreeWatcher,
 } from "./live-diff/types.ts";
 import { createWatcher, isRefreshWorthy } from "./live-diff/watch.ts";
 
 const MAX_FILES = 400;
+const OVERLAY_WIDTH = "80%";
+const OVERLAY_MIN_WIDTH = 48;
+const OVERLAY_PADDING_X = 1;
+const OVERLAY_PADDING_Y = 1;
+const SELECTED_GUTTER = "▌";
+const UNSELECTED_GUTTER = " ";
 const DEBOUNCE_MS = 300;
 const WATCH_COALESCE_MS = 300;
 const WATCH_BATCH_LIMIT = 500;
@@ -91,6 +99,55 @@ const exec: Exec = (command, args, options) =>
 			},
 		);
 	});
+
+type ThemeLike = {
+	fg(color: string, text: string): string;
+	bg(background: string, text: string): string;
+};
+
+const TONE_COLORS: Record<RowTone, string> = {
+	header: "borderAccent",
+	path: "text",
+	added: "toolDiffAdded",
+	removed: "toolDiffRemoved",
+	binary: "dim",
+	hunkHeader: "accent",
+	hunkAdd: "toolDiffAdded",
+	hunkRemove: "toolDiffRemoved",
+	hunkContext: "toolDiffContext",
+	hint: "muted",
+	truncation: "dim",
+};
+
+function paintBackground(
+	theme: ThemeLike,
+	background: string,
+	line: string,
+): string {
+	try {
+		return theme.bg(background, line);
+	} catch {
+		return line;
+	}
+}
+
+function styleRow(theme: ThemeLike, row: RenderRow, padding: string): string {
+	const gutter = row.isSelected ? SELECTED_GUTTER : UNSELECTED_GUTTER;
+	let body = "";
+	for (const span of row.spans) {
+		try {
+			body += theme.fg(TONE_COLORS[span.tone], span.text);
+		} catch {
+			body += span.text;
+		}
+	}
+	const line = padding + gutter + body + padding;
+	return paintBackground(
+		theme,
+		row.isSelected ? "selectedBg" : "customMessageBg",
+		line,
+	);
+}
 
 function mapKey(data: string): OverlayKey | null {
 	switch (data) {
@@ -334,9 +391,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 			}
 			let model = initialModel(state.requestStats, state.overallStats);
 			await ctx.ui.custom<undefined>(
-				// TODO(AGNT-0015.T19): use the theme (currently ignored as _theme) and
-				// pass overlayOptions + a Box background so nothing bleeds through.
-				(tui, _theme, _keybindings, done) => {
+				(tui, theme, _keybindings, done) => {
 					async function runEffect(effect: OverlayEffect): Promise<void> {
 						if (effect.kind === "close") {
 							done(undefined);
@@ -369,7 +424,31 @@ export default function liveDiff(pi: ExtensionAPI): void {
 						render(width: number): string[] {
 							const stats =
 								model.mode === "request" ? state.requestStats : state.overallStats;
-							return renderLines(model, width, stats?.isTruncated ?? false);
+							const contentWidth = Math.max(
+								1,
+								width - OVERLAY_PADDING_X * 2 - SELECTED_GUTTER.length,
+							);
+							const rows = renderRows(
+								model,
+								contentWidth,
+								stats?.isTruncated ?? false,
+							);
+							const pad = " ".repeat(OVERLAY_PADDING_X);
+							const body = rows.map((row) => styleRow(theme, row, pad));
+							const blank = paintBackground(
+								theme,
+								"customMessageBg",
+								" ".repeat(width),
+							);
+							const frame: string[] = [];
+							for (let index = 0; index < OVERLAY_PADDING_Y; index += 1) {
+								frame.push(blank);
+							}
+							frame.push(...body);
+							for (let index = 0; index < OVERLAY_PADDING_Y; index += 1) {
+								frame.push(blank);
+							}
+							return frame;
 						},
 						handleInput(data: string): void {
 							const key = mapKey(data);
@@ -388,7 +467,13 @@ export default function liveDiff(pi: ExtensionAPI): void {
 						},
 					};
 				},
-				{ overlay: true },
+				{
+					overlay: true,
+					overlayOptions: {
+						width: OVERLAY_WIDTH,
+						minWidth: OVERLAY_MIN_WIDTH,
+					},
+				},
 			);
 		},
 	});
