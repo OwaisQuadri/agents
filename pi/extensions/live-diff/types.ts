@@ -77,4 +77,15 @@ export interface LiveDiffState {
 	overallStats: DiffStats | null;
 	refreshTimer: ReturnType<typeof setTimeout> | null;
 	isRefreshing: boolean;
+	watcher: WorktreeWatcher | null;
+	watchTimer: ReturnType<typeof setTimeout> | null;
 }
+
+export interface WorktreeWatcher {
+	close(): void;
+}
+
+export type WatcherFactory = (
+	root: string,
+	onChange: (relativePath: string) => void,
+) => WorktreeWatcher | null;
