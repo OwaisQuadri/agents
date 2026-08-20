@@ -218,7 +218,7 @@
     {
       "id": "AGNT-0014",
       "kind": "ticket",
-      "status": "in progress",
+      "status": "resolved",
       "short": "Create the two-tab Herdr worktree setup.",
       "long": "Install herdr-fresh-worktree from a pinned revision. Add one idempotent, repository-owned Herdr setup for new and opened worktrees. Tab one contains Pi at 75 percent width and a shell at 25 percent. Tab two contains Neovim at 75 percent and a shell at 25 percent. Define event ordering and ownership between herdr-fresh-worktree and hooks/post-checkout before either changes a new worktree. Test repeated setup, dirty destinations, existing tabs, and one temporary worktree.",
       "deps": [
