@@ -99,6 +99,8 @@ export default function liveDiff(pi: ExtensionAPI): void {
 		if (state.overallBaselineSha !== null) {
 			return;
 		}
+		// TODO(AGNT-0015.T16): baseline must be the HEAD tree, not the session-start
+		// worktree tree, so pre-session uncommitted work counts as overall.
 		const snapshot = await captureSnapshot(exec, ctx.cwd);
 		state.overallBaselineSha = snapshot.treeSha;
 	}
