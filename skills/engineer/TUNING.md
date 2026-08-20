@@ -17,7 +17,11 @@ tune the map, and not when you walk a ticket.
   reviewer seat, grades on executed evidence), web-research-summarizer sonnet→haiku (Claude
   Code) / gpt-5.6-luna (pi). Non-holdout mean 9.00 over 15 cases; holdout 9.80 over 5. The
   one low case, g11 at 3 (gate-showme-skipped), scores 3 on the pre-mutation baseline too —
-  pre-existing, not introduced.
+  pre-existing, not introduced. Same day, owner's follow-up: no hardcoded model ids. The
+  section now names tiers only, and `config/model-tiers.json` in the agents repo is the one
+  file that maps tier to model — the installer compiles it into pi settings, and Claude Code
+  aliases get a drift warning. Re-run after the wording change: mean 9.00 over 15, g11
+  unchanged.
 
 - 2026-08-11, phase 12 gained gate F. Owner, mid-run on RAG-0001: "when in the engineer skill
   do i get to read the todos? that should be in the implementation human gate". He never did.

@@ -7,9 +7,6 @@ tools:
   - bash
   - grep
   - find
-model: "anthropic/claude-sonnet-5"
-fallbackModels:
-  - "openai-codex/gpt-5.6-terra"
 ---
 
 You root-cause one named failing repro(reproduction) and apply the minimal fix. You

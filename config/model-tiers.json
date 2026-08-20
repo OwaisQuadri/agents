@@ -1,0 +1,18 @@
+{
+  "tiers": {
+    "T1": { "pi": "openrouter/openrouter/free", "fallback": "openai-codex/gpt-5.6-luna" },
+    "T2": { "pi": "openai-codex/gpt-5.6-luna", "fallback": "anthropic/claude-haiku-4-5", "claude": "haiku" },
+    "T3": { "pi": "anthropic/claude-sonnet-5", "fallback": "openai-codex/gpt-5.6-terra", "claude": "sonnet" },
+    "T4": { "pi": "anthropic/claude-opus-5", "fallback": "openai-codex/gpt-5.6-sol", "claude": "opus" },
+    "T5": { "pi": "anthropic/claude-fable-5", "fallback": "anthropic/claude-opus-5", "claude": "fable" }
+  },
+  "orchestrator": "T3",
+  "agents": {
+    "web-research-summarizer": "T2",
+    "debugger": "T3",
+    "spec-tester": "T3",
+    "maestro-tester": "T3",
+    "anchor-verifier": "T3",
+    "code-reviewer": "T4"
+  }
+}

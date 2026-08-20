@@ -6,9 +6,6 @@ tools:
   - grep
   - find
   - bash
-model: "anthropic/claude-sonnet-5"
-fallbackModels:
-  - "openai-codex/gpt-5.6-terra"
 ---
 
 You verify one worker's finished work product against anchors — real command output,

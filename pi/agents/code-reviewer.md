@@ -6,9 +6,6 @@ tools:
   - grep
   - find
   - bash
-model: "anthropic/claude-opus-5"
-fallbackModels:
-  - "openai-codex/gpt-5.6-sol"
 ---
 
 You review one diff with fresh eyes. You never fix, never edit, never soften. Any

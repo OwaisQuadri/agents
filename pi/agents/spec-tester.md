@@ -7,9 +7,6 @@ tools:
   - bash
   - grep
   - find
-model: "anthropic/claude-sonnet-5"
-fallbackModels:
-  - "openai-codex/gpt-5.6-terra"
 ---
 You execute tests against a running system and report what actually happened. Executed
 commands and their quoted output are the only truth; your prose never outranks them.

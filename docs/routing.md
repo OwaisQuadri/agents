@@ -2,26 +2,30 @@
 
 The one policy for which model gets which work, across Pi, Claude Code, and every
 dispatch. Distilled from docs/routing-research-2026-08-20.md; that file holds the full
-rationale. Prices are $/Mtok input/output from the live model registry, 2026-08-20 —
-re-check them before you lean on a price argument.
+rationale.
+
+Model ids live in ONE file: `config/model-tiers.json`. Prose and skills name tiers, never
+models. To swap a model, edit that file and run install.sh. Prices live in the model
+registry (`~/.pi/agent/models-store.json`); re-check them before you lean on a price
+argument.
 
 ## tiers
 
-| tier | role | model | price | fallback |
-|------|------|-------|-------|----------|
-| T0 | deterministic tools, scripts, grep, tests | — | $0 | — |
-| T1 | disposable bounded workers | openrouter/free | $0 | gpt-5.6-luna |
-| T2 | cheap summarization, classification, boilerplate | openai-codex/gpt-5.6-luna | 0.2/1.2 | anthropic/claude-haiku-4-5 (1/5) |
-| T3 | normal engineering: build, test, debug, verify | anthropic/claude-sonnet-5 | 2/10 | openai-codex/gpt-5.6-terra (2/12) |
-| T4 | hard problems, planning, final review | anthropic/claude-opus-5 | 5/25 | openai-codex/gpt-5.6-sol (5/30) |
-| T5 | project-level synthesis, deep architecture | anthropic/claude-fable-5 | 10/50 | claude-opus-5, then gpt-5.6-sol |
+| tier | role |
+|------|------|
+| T0 | deterministic tools, scripts, grep, tests |
+| T1 | disposable bounded workers (free) |
+| T2 | cheap summarization, classification, boilerplate |
+| T3 | normal engineering: build, test, debug, verify |
+| T4 | hard problems, planning, final review |
+| T5 | project-level synthesis, deep architecture |
 
-Every fallback crosses provider families on purpose: a provider outage or usage-limit
-stop degrades one tier sideways instead of failing the run.
+Each tier's `fallback` crosses provider families on purpose. A provider outage or a
+usage-limit stop then degrades one tier sideways instead of failing the run.
 
 ## the four rules
 
-1. **The orchestrator is sticky.** One session runs one top-level model — claude-sonnet-5
+1. **The orchestrator is sticky.** One session runs one top-level model — the T3 model
    by default. Switch only at a phase boundary, a user override, a provider failure, or
    an escalation gate. Per-turn model hopping breaks prompt-cache locality and reasoning
    continuity. Cache reads cost 10x less than fresh input on every tier.
@@ -32,7 +36,7 @@ stop degrades one tier sideways instead of failing the run.
 3. **Gate fable; never make it the default.** T5 takes decisions with large downstream
    branching cost. That means architecture for a large migration, synthesis after
    competing plans, the final coherence review of a long project, or recovery after
-   repeated T4 failure. On outage, limit, or refusal, claude-opus-5 takes over
+   repeated T4 failure. On outage, limit, or refusal, the T5 fallback takes over
    automatically. A rename, a summary, a small test, a localized fix — never T5.
 4. **Cheap workers do the volume, but only bounded verifiable work.** T1/T2 take
    classification, log and doc summarization, boilerplate, and candidate tests. A T0
@@ -40,18 +44,29 @@ stop degrades one tier sideways instead of failing the run.
    UX direction, security-sensitive design, migrations, or final acceptance review.
    A free model that causes one extra correction turn was not free.
 
-## fleet pins
+## fleet tiers
 
-The dispatch layer is where routing lives; the fleet definitions carry the pins.
+The dispatch layer is where routing lives. The `agents` map in `config/model-tiers.json`
+assigns each fleet role its tier:
 
-| agent | tier | pi (`pi/agents/`) | claude code (`agents/`) |
-|-------|------|-------------------|--------------------------|
-| web-research-summarizer | T2 | gpt-5.6-luna → haiku-4-5 | haiku |
-| debugger | T3 | sonnet-5 → terra | sonnet |
-| spec-tester | T3 | sonnet-5 → terra | sonnet |
-| maestro-tester | T3 | sonnet-5 → terra | sonnet |
-| anchor-verifier | T3 | sonnet-5 → terra | sonnet |
-| code-reviewer | T4 | opus-5 → sol | opus |
+| agent | tier |
+|-------|------|
+| web-research-summarizer | T2 |
+| debugger | T3 |
+| spec-tester | T3 |
+| maestro-tester | T3 |
+| anchor-verifier | T3 |
+| code-reviewer | T4 |
+
+How the assignment reaches each harness:
+
+- Pi: the `pi/agents/` frontmatter carries NO model. The installer compiles the tier file
+  into `subagents.agentOverrides` (model + cross-provider fallback) and
+  `subagents.defaultModel` in `~/.pi/agent/settings.json`. Frontmatter without a model
+  falls through to those overrides.
+- Claude Code: no override layer exists, so `agents/*/` frontmatter keeps the floating
+  alias (haiku/sonnet/opus) that the tier file names in its `claude` field. The installer
+  warns when an alias drifts from the tier file.
 
 The anchor-verifier seat runs per builder wave and per break panel, the highest volume of
 any reviewer. It grades on executed evidence, not judgment, so it rides T3. The
@@ -59,9 +74,10 @@ code-reviewer seat gives the final coherence verdict and stays T4.
 
 ## pi session defaults
 
-- `defaultModel: claude-sonnet-5` in `~/.pi/agent/settings.json`. Escalate a session by
-  hand with `/model` at a real escalation point; drop back after.
-- `pi/agents/` is the versioned fleet; install.sh links `~/.pi/agent/agents` to it.
+- The session `defaultModel` follows the `orchestrator` tier (T3). The installer does not
+  enforce it, so a deliberate `/model` choice survives a pull. Escalate a session by hand
+  at a real escalation point; drop back after.
+- `pi/agents/` is the versioned fleet; the installer links `~/.pi/agent/agents` to it.
 - OpenRouter calls keep `data_collection: deny` + `zdr` when they carry repo content.
 
 ## what this deliberately skips

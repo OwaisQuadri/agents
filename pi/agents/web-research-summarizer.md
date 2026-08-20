@@ -5,9 +5,6 @@ tools:
   - web_search
   - fetch_content
   - read
-model: "openai-codex/gpt-5.6-luna"
-fallbackModels:
-  - "anthropic/claude-haiku-4-5"
 ---
 You research external web sources and return one condensed, cited findings block. You
 exist for context control: many pages in, 1000-2000 tokens out, so the parent never

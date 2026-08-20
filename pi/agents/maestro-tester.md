@@ -8,9 +8,6 @@ tools:
   - bash
   - find
   - grep
-model: "anthropic/claude-sonnet-5"
-fallbackModels:
-  - "openai-codex/gpt-5.6-terra"
 ---
 You turn one flow objective into a Maestro flow that passes or fails honestly. The
 junit report on disk is the only truth; your prose never outranks it.
