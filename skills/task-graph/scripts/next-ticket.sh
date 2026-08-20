@@ -18,11 +18,13 @@ def tdeps($deps; $id; $seen):
    ranked: ([$todo[]
      | select([.deps[] | $status[.] == "done"] | all)
      | . as $c
-     | {id: .id, unlocks: ([$todo[] | select(.id != $c.id) | select(tdeps($deps; .id; []) | index($c.id))] | length)}]
-     | sort_by([-.unlocks, .id]))}
+     | {id: .id, priority: (.priority // "med"),
+        prio_rank: ({"urgent":0,"high":1,"med":2,"low":3}[.priority // "med"] // 2),
+        unlocks: ([$todo[] | select(.id != $c.id) | select(tdeps($deps; .id; []) | index($c.id))] | length)}]
+     | sort_by([.prio_rank, -.unlocks, .id]))}
 ' "$1")
 printf '%s\n' "$report" | jq -r '.replan[] | "needs-replan: " + . + " (cancelled dep)"' >&2
-printf '%s\n' "$report" | jq -r '.ranked[] | "  " + .id + " unlocks " + (.unlocks | tostring)' >&2
+printf '%s\n' "$report" | jq -r '.ranked[] | "  " + .id + " [" + .priority + "] unlocks " + (.unlocks | tostring)' >&2
 next=$(printf '%s\n' "$report" | jq -r '.ranked[0].id // empty')
 [ -n "$next" ] || { echo "no runnable ticket: every todo ticket is blocked" >&2; exit 1; }
 printf '%s\n' "$next"

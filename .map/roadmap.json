@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-    "next_nnnn": 30,
+  "next_nnnn": 30,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -48,7 +48,8 @@
         "tools/mcp-sync/src/codex.rs"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T21:44:43-0400"
+      "created": "2026-08-12T21:44:43-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0004",
@@ -61,21 +62,23 @@
         "tools/mcp-sync/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T21:44:43-0400"
+      "created": "2026-08-12T21:44:43-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0005",
       "kind": "ticket",
       "status": "todo",
-      "short": "Gate the rag-recall injection",
-      "long": "The hook injects the top eight chunks on every prompt. Gated retrieval beat that pattern by 2.2 points while it retrieved 70 percent less (TARG). Low-relevance chunks measurably degrade output quality (Chroma context-rot study, 18 models). Stale memories decay into confident wrong answers as the time gap grows.\n\nThe fix: inject only when the prompt turns on past work, and otherwise stay silent. The counter-finding sets the bar: a crude keyword gate scored worse than always-on retrieval. The gate must beat that bar, or the hook stays as it is. Anthropic ships the on-demand pattern in its memory tool, which is the fallback shape.\n\nPer the tooling rule, a change to this Python script means a Rust rewrite, never a patch in place. The Codex and Claude registrations both point at the new binary when it lands.",
+      "short": "Rust rag-recall with a relevance gate, registered on Claude and Codex",
+      "long": "The hook injects the top eight chunks on every prompt. Gated retrieval beat that pattern by 2.2 points while it retrieved 70 percent less (TARG). Low-relevance chunks measurably degrade output quality (Chroma context-rot study, 18 models). Stale memories decay into confident wrong answers as the time gap grows.\n\nThe fix: inject only when the prompt turns on past work, and otherwise stay silent. The counter-finding sets the bar: a crude keyword gate scored worse than always-on retrieval. The gate must beat that bar, or the hook stays as it is. Anthropic ships the on-demand pattern in its memory tool, which is the fallback shape.\n\nPer the tooling rule, a change to this Python script means a Rust rewrite, never a patch in place. The Codex and Claude registrations both point at the new binary when it lands.\n\nFOLDED IN AGNT-0023 (owner, gate A, 2026-08-20): The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
       "deps": [],
       "files": [
-        "hooks/",
-        "config/"
+        "config/",
+        "hooks/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T22:05:50-0400"
+      "created": "2026-08-12T22:05:50-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0006",
@@ -88,7 +91,8 @@
         "skills/engineer/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T22:05:50-0400"
+      "created": "2026-08-12T22:05:50-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0007",
@@ -101,7 +105,8 @@
         "workflows/research-sweep/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T22:05:50-0400"
+      "created": "2026-08-12T22:05:50-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0008",
@@ -140,7 +145,8 @@
         "CLAUDE.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-16T20:10:56-0400"
+      "created": "2026-08-16T20:10:56-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0010",
@@ -157,7 +163,8 @@
         "install.sh"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T00:00:36-0400"
+      "created": "2026-08-17T00:00:36-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0011",
@@ -175,7 +182,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T00:00:36-0400"
+      "created": "2026-08-17T00:00:36-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0012",
@@ -218,7 +226,7 @@
     {
       "id": "AGNT-0014",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Create the two-tab Herdr worktree setup.",
       "long": "Install herdr-fresh-worktree from a pinned revision. Add one idempotent, repository-owned Herdr setup for new and opened worktrees. Tab one contains Pi at 75 percent width and a shell at 25 percent. Tab two contains Neovim at 75 percent and a shell at 25 percent. Define event ordering and ownership between herdr-fresh-worktree and hooks/post-checkout before either changes a new worktree. Test repeated setup, dirty destinations, existing tabs, and one temporary worktree.",
       "deps": [
@@ -238,7 +246,7 @@
     {
       "id": "AGNT-0015",
       "kind": "ticket",
-      "status": "todo",
+      "status": "in progress",
       "short": "Show live request and overall diffs in Pi.",
       "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.\n\nAmendment (owner, 2026-08-19, AGNT-0014 gate D): selecting a file in the diff view focuses the herdr editor tab and opens that file in nvim (compose with the AGNT-0014 layout: herdr tab focus + pane send/nvim remote).",
       "deps": [
@@ -251,7 +259,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0016",
@@ -270,7 +279,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0017",
@@ -290,7 +300,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0018",
@@ -309,28 +320,33 @@
         "pi/"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T20:27:34-0400"
+      "created": "2026-08-17T20:27:34-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0019",
-      "short": "keep a task's file list true to what the task actually touches",
-      "long": "Phase 18's stash content check compares the stashed files against the union of every task's `files` array. On RAG-0001 four files were in the stash that no task claimed: `Cargo.lock`, `.gitignore`, `parity/config.toml` and `src/env_lock.rs`. Two classes of gap produced them. A task that edits `Cargo.toml` generates `Cargo.lock` and never declares it. And a phase-15 fix that CREATES a file never appends it to the owning task, so the file exists with no owner. The check then reads as a possible contaminated stash when it is really an incomplete inventory, which costs a careful reader real time at the one gate where a wrong call is catastrophic. Recorded as D-22. FIX: phase 08 declares generated companions alongside their source, and a phase-15 resolution appends any file it creates to the task it belongs to.",
+      "short": "engineer map defect batch from RAG-0001 (files truth, oracle check, counter assert)",
+      "long": "Phase 18's stash content check compares the stashed files against the union of every task's `files` array. On RAG-0001 four files were in the stash that no task claimed: `Cargo.lock`, `.gitignore`, `parity/config.toml` and `src/env_lock.rs`. Two classes of gap produced them. A task that edits `Cargo.toml` generates `Cargo.lock` and never declares it. And a phase-15 fix that CREATES a file never appends it to the owning task, so the file exists with no owner. The check then reads as a possible contaminated stash when it is really an incomplete inventory, which costs a careful reader real time at the one gate where a wrong call is catastrophic. Recorded as D-22. FIX: phase 08 declares generated companions alongside their source, and a phase-15 resolution appends any file it creates to the task it belongs to.\n\nFOLDED IN AGNT-0020 (owner, gate A, 2026-08-20): A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.\n\nFOLDED IN AGNT-0021 (owner, gate A, 2026-08-20): `next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
       "deps": [],
       "status": "todo",
       "files": [
         "skills/engineer/phases/08-task-breakdown.md",
-        "skills/engineer/phases/15-diagnose.md"
+        "skills/engineer/phases/15-diagnose.md",
+        "skills/engineer/phases/19-break-panel.md",
+        "skills/engineer/phases/22-tickets.md",
+        "skills/task-graph/SKILL.md"
       ],
       "blame_phase": 21,
       "created": "2026-08-14",
-      "kind": "bug"
+      "kind": "bug",
+      "priority": "med"
     },
     {
       "id": "AGNT-0020",
       "short": "validate a break panel's oracle before trusting its verdicts",
-      "long": "A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.",
+      "long": "FOLDED INTO AGNT-0019 (owner, gate A, 2026-08-20). A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.",
       "deps": [],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "skills/engineer/phases/19-break-panel.md"
       ],
@@ -341,9 +357,9 @@
     {
       "id": "AGNT-0021",
       "short": "assert the ticket counter against the filed ids",
-      "long": "`next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
+      "long": "FOLDED INTO AGNT-0019 (owner, gate A, 2026-08-20). `next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
       "deps": [],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "skills/engineer/phases/22-tickets.md",
         "skills/task-graph/SKILL.md"
@@ -364,14 +380,15 @@
       ],
       "blame_phase": null,
       "created": "2026-08-18T18:48:03-0400",
-      "kind": "ticket"
+      "kind": "ticket",
+      "priority": "med"
     },
     {
       "id": "AGNT-0023",
       "short": "start Claude and Codex sessions with a memory search",
-      "long": "The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
+      "long": "FOLDED INTO AGNT-0005 (owner, gate A, 2026-08-20). The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
       "deps": [],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "hooks/"
       ],
@@ -381,26 +398,27 @@
     },
     {
       "id": "AGNT-0024",
-      "short": "fork show-me into this repo's skills",
-      "long": "The show-me skill runs from a symlink into the tool-sync plugin cache under ~/.cache/tool-sync/humanlayer-skills. A cache re-sync overwrites anything edited there, so the skill cannot hold local changes.\n\nCopy the skill into skills/show-me in this repo. Repoint ~/.claude/skills/show-me at the repo copy through the installer. Record the upstream plugin revision inside the fork. A later maintainer then diffs upstream improvements in deliberately. The user's words, 2026-08-18: clone the skill into the AGNT skills instead of using it from remote.",
+      "short": "fork show-me into this repo and build compact engineering views on it",
+      "long": "The show-me skill runs from a symlink into the tool-sync plugin cache under ~/.cache/tool-sync/humanlayer-skills. A cache re-sync overwrites anything edited there, so the skill cannot hold local changes.\n\nCopy the skill into skills/show-me in this repo. Repoint ~/.claude/skills/show-me at the repo copy through the installer. Record the upstream plugin revision inside the fork. A later maintainer then diffs upstream improvements in deliberately. The user's words, 2026-08-18: clone the skill into the AGNT skills instead of using it from remote.\n\nFOLDED IN AGNT-0025 (owner, gate A, 2026-08-20): The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
       "deps": [],
       "status": "todo",
       "files": [
-        "skills/show-me/",
-        "install.sh"
+        "install.sh",
+        "skills/show-me/"
       ],
       "blame_phase": null,
       "created": "2026-08-18T18:48:03-0400",
-      "kind": "ticket"
+      "kind": "ticket",
+      "priority": "med"
     },
     {
       "id": "AGNT-0025",
       "short": "compact engineering views on the forked show-me",
-      "long": "The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
+      "long": "FOLDED INTO AGNT-0024 (owner, gate A, 2026-08-20). The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
       "deps": [
         "AGNT-0024"
       ],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "skills/show-me/"
       ],
@@ -421,7 +439,8 @@
         "config/pr-review.toml"
       ],
       "blame_phase": null,
-      "created": "2026-08-19T01:03:03-0400"
+      "created": "2026-08-19T01:03:03-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0027",
@@ -450,7 +469,8 @@
         "pi/extensions/statusline.ts"
       ],
       "blame_phase": null,
-      "created": "2026-08-19T21:28:29-0400"
+      "created": "2026-08-19T21:28:29-0400",
+      "priority": "urgent"
     },
     {
       "id": "AGNT-0029",
@@ -466,7 +486,8 @@
         "config/"
       ],
       "blame_phase": null,
-      "created": "2026-08-19T21:28:29-0400"
+      "created": "2026-08-19T21:28:29-0400",
+      "priority": "med"
     }
   ]
 }
