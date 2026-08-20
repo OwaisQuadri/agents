@@ -62,7 +62,8 @@ acquire_workspace_lock() {
       exit 0
     fi
   fi
-  # Lock acquired successfully; trap will be set in main() after return
+  # no EXIT trap here: a function-scoped trap fires on return in zsh and would
+  # drop the lock instantly (F-09); main owns the trap
 }
 
 # tab_id_by_label <workspace_id> <label> — print the tab id carrying <label> in
@@ -202,7 +203,7 @@ ensure_tab() {
     count="$(print -rn -- "$panes" | jq -r --arg tab "$labeled_tab" \
       '[.result.panes[] | select(.tab_id == $tab)] | length')"
     if [[ "$count" == 2 ]]; then
-      # Check foreground processes directly, not titles (pi's title persists after kill)
+      # terminal titles outlive dead processes (F-11): only live foregrounds count
       local pane_id has_main=0
       for pane_id in $(tab_pane_ids "$panes" "$labeled_tab"); do
         local fg="$(pane_foreground "$pane_id")"
