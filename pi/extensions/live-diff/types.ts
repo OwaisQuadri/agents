@@ -7,6 +7,8 @@ export type FileChangeKind =
 	| "renamed"
 	| "binary";
 
+export type ChangeOrigin = "committed" | "uncommitted" | "both";
+
 export interface FileChange {
 	path: string;
 	renamedFrom: string | null;
@@ -14,6 +16,7 @@ export interface FileChange {
 	additions: number;
 	deletions: number;
 	isBinary: boolean;
+	origin: ChangeOrigin;
 }
 
 export interface DiffStats {
@@ -92,7 +95,9 @@ export type RowTone =
 	| "hunkRemove"
 	| "hunkContext"
 	| "hint"
-	| "truncation";
+	| "truncation"
+	| "originCommitted"
+	| "originUncommitted";
 
 export interface RenderSpan {
 	text: string;
