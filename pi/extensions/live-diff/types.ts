@@ -81,6 +81,29 @@ export interface LiveDiffState {
 	watchTimer: ReturnType<typeof setTimeout> | null;
 }
 
+export type RowTone =
+	| "header"
+	| "path"
+	| "added"
+	| "removed"
+	| "binary"
+	| "hunkHeader"
+	| "hunkAdd"
+	| "hunkRemove"
+	| "hunkContext"
+	| "hint"
+	| "truncation";
+
+export interface RenderSpan {
+	text: string;
+	tone: RowTone;
+}
+
+export interface RenderRow {
+	spans: RenderSpan[];
+	isSelected: boolean;
+}
+
 export interface WorktreeWatcher {
 	close(): void;
 }
