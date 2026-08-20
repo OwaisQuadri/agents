@@ -10,9 +10,14 @@ import { join } from "node:path";
 // (it re-exports Model only structurally). This mirrors the fields this file reads.
 type ModelLike = {
 	provider: string;
+	id?: string;
 	baseUrl?: string;
 	cost: { input: number; output: number; cacheRead: number };
 };
+
+// install.sh compiles config/model-tiers.json into this flat map in pi settings, so the
+// tier file stays the one place model ids live and this file needs no repo path.
+type FallbackMap = Record<string, string>;
 
 // AgentMessage has no exported type name from @earendil-works/pi-coding-agent either;
 // this mirrors the fields this file reads off an assistant message.
@@ -47,6 +52,10 @@ function stateFile(): string {
 
 function logFile(): string {
 	return join(stateDir(), "resume.log");
+}
+
+function settingsFile(): string {
+	return join(homedir(), ".pi", "agent", "settings.json");
 }
 
 const RESUME_PROMPT = "continue";
@@ -212,6 +221,26 @@ export function computeResetPlan(input: {
 	return { isDetected: true, resetAtMs, matchedText: input.text };
 }
 
+/**
+ * Finds the tier fallback for a model, so a usage limit degrades one tier sideways.
+ * @param fallbacks Compiled tier fallback map, keyed by `provider/id`.
+ * @param provider Provider id of the model that hit the limit.
+ * @param modelId Model id of the model that hit the limit.
+ * @returns The fallback model id as `provider/id`, or null when the model has no tier.
+ */
+export function findTierFallback(fallbacks: FallbackMap, provider: string, modelId: string): string | null {
+	return fallbacks[`${provider}/${modelId}`] ?? null;
+}
+
+async function loadFallbacks(): Promise<FallbackMap> {
+	try {
+		const settings = JSON.parse(await readFile(settingsFile(), "utf8")) as { modelTierFallbacks?: FallbackMap };
+		return settings.modelTierFallbacks ?? {};
+	} catch {
+		return {};
+	}
+}
+
 function extractErrorText(message: AssistantMessageLike): string {
 	if (message.role !== "assistant") {
 		return "";
@@ -293,7 +322,30 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
 	return job;
 }
 
-async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext): Promise<void> {
+/**
+ * Switches the session to the current model's tier fallback.
+ * @param pi Extension API used to set the model.
+ * @param ctx Live extension context carrying the active model and registry.
+ * @returns The fallback model id on success, or null when no fallback applied.
+ */
+async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string | null> {
+	const active = ctx.model as ModelLike | undefined;
+	if (!active?.id) {
+		return null;
+	}
+	const qualified = findTierFallback(await loadFallbacks(), active.provider, active.id);
+	if (!qualified) {
+		return null;
+	}
+	const separator = qualified.indexOf("/");
+	const candidate = ctx.modelRegistry.find(qualified.slice(0, separator), qualified.slice(separator + 1));
+	if (!candidate) {
+		return null;
+	}
+	return (await pi.setModel(candidate)) ? qualified : null;
+}
+
+async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
 	const errorText = extractErrorText(message);
 	if (!errorText) {
 		return;
@@ -309,6 +361,12 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 	});
 	lastProviderResponseByContext.delete(ctx);
 	if (!plan?.isDetected) {
+		return;
+	}
+
+	const fallbackModel = await applyTierFallback(pi, ctx);
+	if (fallbackModel) {
+		ctx.ui.notify(`Usage limit hit. Switched to the tier fallback ${fallbackModel}; the session continues.`, "warning");
 		return;
 	}
 
@@ -351,7 +409,7 @@ export default async function usageLimitContinueExtension(pi: ExtensionAPI): Pro
 	});
 
 	pi.on("message_end", async (event, ctx) => {
-		await handleMessageEnd(event.message, ctx);
+		await handleMessageEnd(event.message, ctx, pi);
 	});
 
 	pi.registerCommand("usage-limit-status", {

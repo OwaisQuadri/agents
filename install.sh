@@ -106,8 +106,10 @@ run mkdir -p "$HOME_TARGET/.pi/agent"
 link "$HOME_TARGET/.pi/agent/agents" "$REPO_TARGET/pi/agents"
 
 # 6c. model tiers -> pi settings: subagents.defaultModel from the orchestrator tier,
-#     subagents.agentOverrides per agent (model + cross-provider fallback). Frontmatter
-#     without a model falls through to these, so the JSON file is the one place ids live.
+#     subagents.agentOverrides per agent (model + cross-provider fallback), and the flat
+#     modelTierFallbacks map the usage-limit extension reads to degrade the SESSION model
+#     one tier sideways. Frontmatter without a model falls through to these, so the JSON
+#     file is the one place ids live.
 TIERS="$REPO_TARGET/config/model-tiers.json"
 PI_SETTINGS_TIERS="$HOME_TARGET/.pi/agent/settings.json"
 if ! command -v jq >/dev/null 2>&1; then
@@ -116,7 +118,9 @@ elif [[ ! -f "$TIERS" ]]; then
   echo "warn: $TIERS not found, skipping the model-tier sync" >&2
 else
   [[ -f "$PI_SETTINGS_TIERS" ]] || { plan "init $PI_SETTINGS_TIERS"; run bash -c "echo '{}' > '$PI_SETTINGS_TIERS'"; }
-  TIER_JQ='.subagents = ((.subagents // {})
+  TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
+      .value as $tier | { key: $tier.pi, value: $tier.fallback }))
+    | .subagents = ((.subagents // {})
     | .defaultModel = $t.tiers[$t.orchestrator].pi
     | .defaultThinking = $t.tiers[$t.orchestrator].thinking
     | .agentOverrides = ((.agentOverrides // {}) + ($t.agents | with_entries(

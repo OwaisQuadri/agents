@@ -19,7 +19,7 @@ argument.
 | T2 | cheap summarization, classification, boilerplate |
 | T3 | normal engineering: build, test, debug, verify |
 | T4 | hard problems, planning, final review |
-| T5 | project-level synthesis, deep architecture |
+| T5 | project-level synthesis, deep architecture (falls back to T4) |
 
 Each tier's `fallback` crosses provider families on purpose. A provider outage or a
 usage-limit stop then degrades one tier sideways instead of failing the run.
@@ -78,6 +78,11 @@ code-reviewer seat gives the final coherence verdict and stays T4.
 - The session `defaultModel` follows the `orchestrator` tier (T3). The installer does not
   enforce it, so a deliberate `/model` choice survives a pull. Escalate a session by hand
   at a real escalation point; drop back after.
+- The SESSION model falls back on a usage limit, the same way a dispatch does. Pi core has
+  no session fallback, so `pi/extensions/usage-limit-continue.ts` does it. On a usage limit
+  it reads the flat `modelTierFallbacks` map that the installer compiles into pi settings.
+  It then calls `setModel` on the tier's backup, and the session continues.
+  A model outside the tier file keeps the old behavior, a scheduled resume at reset time.
 - `pi/agents/` is the versioned fleet; the installer links `~/.pi/agent/agents` to it.
 - OpenRouter calls keep `data_collection: deny` + `zdr` when they carry repo content.
 

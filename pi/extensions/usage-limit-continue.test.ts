@@ -7,11 +7,18 @@ import {
 	computeResetPlan,
 	detectUsageLimitSignal,
 	fallbackWindowResetMs,
+	findTierFallback,
 	isLocalModel,
 	parseResetFromHeaders,
 	parseResetFromText,
 	scheduleResume,
 } from "./usage-limit-continue.ts";
+
+const FALLBACKS = {
+	"openai-codex/gpt-5.6-luna": "anthropic/claude-haiku-4-5",
+	"anthropic/claude-sonnet-5": "openai-codex/gpt-5.6-terra",
+	"anthropic/claude-fable-5": "anthropic/claude-opus-5",
+};
 
 const NOW = new Date("2026-08-19T12:00:00.000-04:00").getTime();
 
@@ -152,6 +159,18 @@ test("computeResetPlan: neither a 429 nor usage-limit text returns null", () => 
 test("computeResetPlan: detected but unparseable time reports isDetected with a null resetAtMs", () => {
 	const plan = computeResetPlan({ status: 429, headers: {}, text: "usage limit reached", model: anthropicModel(), nowMs: NOW });
 	assert.deepEqual(plan, { isDetected: true, resetAtMs: null, matchedText: "usage limit reached" });
+});
+
+test("findTierFallback: fable falls back to opus, and every other tier resolves its own backup", () => {
+	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-fable-5"), "anthropic/claude-opus-5");
+	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-sonnet-5"), "openai-codex/gpt-5.6-terra");
+	assert.equal(findTierFallback(FALLBACKS, "openai-codex", "gpt-5.6-luna"), "anthropic/claude-haiku-4-5");
+});
+
+test("findTierFallback: a model outside the tier file has no fallback, so the resume path still owns it", () => {
+	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-opus-5"), null);
+	assert.equal(findTierFallback(FALLBACKS, "ollama", "llama-4"), null);
+	assert.equal(findTierFallback({}, "anthropic", "claude-fable-5"), null);
 });
 
 test("scheduleResume: writes a pending-job record and refuses a duplicate schedule for the same session", async () => {
