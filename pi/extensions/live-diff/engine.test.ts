@@ -225,6 +225,19 @@ test("TC-18 engine writes nothing into the worktree", async (t) => {
 });
 
 test("a snapshot sweeps stale temp index dirs and spares fresh ones", async (t) => {
+	// The sweep reads os.tmpdir(), which every other test process is also
+	// filling with live-diff-index-* dirs (~119 per suite run) and emptying
+	// again. Asserting on that directory's contents from inside a 10-way
+	// parallel run is a race whatever the assertion says, so this test gets a
+	// private tmpdir: os.tmpdir() re-reads TMPDIR on each call.
+	const previousTmpdir = process.env.TMPDIR;
+	const privateTmp = fs.mkdtempSync(path.join(previousTmpdir ?? "/tmp", "live-diff-sweep-"));
+	process.env.TMPDIR = privateTmp;
+	t.after(() => {
+		process.env.TMPDIR = previousTmpdir;
+		fs.rmSync(privateTmp, { recursive: true, force: true });
+	});
+
 	const repo = makeFixtureRepo(tmpdir());
 	t.after(() => repo.cleanup());
 	const staleDir = fs.mkdtempSync(path.join(tmpdir(), TEMP_INDEX_PREFIX));

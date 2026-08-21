@@ -46,23 +46,81 @@ test("isRefreshWorthy rejects a nested repository's bookkeeping", () => {
 });
 
 function makeTempRoot(t: { after: (fn: () => void) => void }): string {
-	const root = fs.mkdtempSync(path.join(os.tmpdir(), "live-diff-watch-"));
+	const root = fs.realpathSync(
+		fs.mkdtempSync(path.join(os.tmpdir(), "live-diff-watch-")),
+	);
 	t.after(() => {
 		fs.rmSync(root, { recursive: true, force: true });
 	});
 	return root;
 }
 
+const WATCH_DEADLINE_MS = 15_000;
+
+// fs.watch(recursive) is FSEvents on macOS, and FSEvents arms ASYNCHRONOUSLY:
+// a write issued immediately after watch() returns is missed outright, not
+// merely delivered late. Every test here writes as soon as it has a watcher, so
+// each one must first prove the watcher is live, then start from a clean slate.
+async function armWatcher(root: string, seen: string[]): Promise<void> {
+	const deadline = Date.now() + WATCH_DEADLINE_MS;
+	for (let probe = 0; Date.now() < deadline; probe += 1) {
+		const sentinel = path.join(root, `.arm-${probe}`);
+		fs.writeFileSync(sentinel, "arm");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		if (seen.length > 0) {
+			for (const entry of fs.readdirSync(root)) {
+				if (entry.startsWith(".arm-")) {
+					fs.rmSync(path.join(root, entry), { force: true });
+				}
+			}
+			await quiesce(seen);
+			return;
+		}
+	}
+	throw new Error(`watcher never armed within ${WATCH_DEADLINE_MS}ms`);
+}
+
+// Wait for the event stream to go quiet, then drop everything the arming
+// probes produced, so a test's assertions see only its own writes.
+async function quiesce(seen: string[]): Promise<void> {
+	let previous = -1;
+	while (previous !== seen.length) {
+		previous = seen.length;
+		await new Promise((resolve) => setTimeout(resolve, 150));
+	}
+	seen.length = 0;
+}
+
 async function waitForChanges(
 	seen: string[],
 	minimum: number,
 ): Promise<void> {
-	for (let attempt = 0; attempt < 100; attempt += 1) {
+	const deadline = Date.now() + WATCH_DEADLINE_MS;
+	while (Date.now() < deadline) {
 		if (seen.length >= minimum) {
 			return;
 		}
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
+	// A filesystem event that never arrives is a failed test, never a passed
+	// one. Falling through silently turned FSEvents latency into an assertion
+	// failure somewhere further down, which read as a defect in the watcher.
+	throw new Error(
+		`waited ${WATCH_DEADLINE_MS}ms for ${minimum} change(s); saw ${JSON.stringify(seen)}`,
+	);
+}
+
+async function waitForPath(seen: string[], expected: string): Promise<void> {
+	const deadline = Date.now() + WATCH_DEADLINE_MS;
+	while (Date.now() < deadline) {
+		if (seen.includes(expected)) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	throw new Error(
+		`waited ${WATCH_DEADLINE_MS}ms for ${JSON.stringify(expected)}; saw ${JSON.stringify(seen)}`,
+	);
 }
 
 test("createWatcher reports a written file relative to root", async (t) => {
@@ -73,9 +131,10 @@ test("createWatcher reports a written file relative to root", async (t) => {
 	});
 	assert.notEqual(watcher, null);
 	t.after(() => watcher?.close());
+	await armWatcher(root, seen);
 
 	fs.writeFileSync(path.join(root, "alpha.txt"), "one");
-	await waitForChanges(seen, 1);
+	await waitForPath(seen, "alpha.txt");
 
 	assert.ok(seen.includes("alpha.txt"), `saw ${JSON.stringify(seen)}`);
 	assert.ok(
@@ -92,10 +151,11 @@ test("createWatcher reports nested paths relative to root", async (t) => {
 	});
 	assert.notEqual(watcher, null);
 	t.after(() => watcher?.close());
+	await armWatcher(root, seen);
 
 	fs.mkdirSync(path.join(root, "nested"));
 	fs.writeFileSync(path.join(root, "nested", "beta.txt"), "two");
-	await waitForChanges(seen, 1);
+	await waitForPath(seen, path.join("nested", "beta.txt"));
 
 	assert.ok(
 		seen.some((entry) => entry === path.join("nested", "beta.txt")),
@@ -110,6 +170,8 @@ test("close stops further callbacks and is idempotent", async (t) => {
 		seen.push(relativePath);
 	});
 	assert.notEqual(watcher, null);
+	t.after(() => watcher?.close());
+	await armWatcher(root, seen);
 
 	fs.writeFileSync(path.join(root, "before.txt"), "one");
 	await waitForChanges(seen, 1);
@@ -129,12 +191,20 @@ test("close stops further callbacks and is idempotent", async (t) => {
 test("close guards the callback itself, not only the handle", async (t) => {
 	const root = makeTempRoot(t);
 	const seen: string[] = [];
+	// The self-close is what this test measures, so it must not fire during
+	// arming: the arming probe is an event like any other and would close the
+	// watcher before the test writes anything.
+	let isArmed = false;
 	const watcher = createWatcher(root, (relativePath) => {
 		seen.push(relativePath);
-		watcher?.close();
+		if (isArmed) {
+			watcher?.close();
+		}
 	});
 	assert.notEqual(watcher, null);
 	t.after(() => watcher?.close());
+	await armWatcher(root, seen);
+	isArmed = true;
 
 	fs.writeFileSync(path.join(root, "first.txt"), "one");
 	fs.writeFileSync(path.join(root, "second.txt"), "two");
