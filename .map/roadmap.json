@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 59,
+  "next_nnnn": 60,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -955,6 +955,21 @@
       "blame_phase": null,
       "created": "2026-08-21T12:11:31-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0059",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Stop burning weekly Codex Spark quota on subagent dispatches",
+      "long": "Owner report (2026-08-21, mid-AGNT-0028 phase 19 break-panel): 'codex spark model needs to be used sparingly. I just realized i basically used up all my weekly usage in a few runs.' During this one ticket's break-panel phase, 8 spec-tester dispatches ran, several defaulting to openai-codex/gpt-5.3-codex-spark, and at least one hit 'Codex error: The usage limit has been reached' mid-run and silently fell back to anthropic/claude-sonnet-5. A handful of fresh-context subagent dispatches (research, testing, verification -- the normal cost of this engineering map) exhausted a whole week's Spark allowance. Router changes needed: config/model-tiers.json / docs/routing.md currently route some subagent roles to Spark by default; either move those roles off Spark to a tier with headroom, add a usage-aware fallback that never silently burns the last of a weekly quota, or budget-gate Spark-tier dispatches so a single ticket's fan-out can't exhaust the week. Investigate actual routing.md + model-tiers.json for which tiers/roles currently resolve to Spark and why.",
+      "deps": [],
+      "files": [
+        "config/model-tiers.json",
+        "docs/routing.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:02:26-0400",
+      "priority": "high"
     }
   ]
 }
