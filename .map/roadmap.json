@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 41,
+  "next_nnnn": 43,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -659,6 +659,41 @@
       ],
       "blame_phase": null,
       "created": "2026-08-20T22:26:35-0400"
+    },
+    {
+      "id": "AGNT-0041",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "the expanded diff should word wrap instead of clipping long lines",
+      "long": "In the live-diff read-only viewer (pi/extensions/live-diff/overlay.ts, renderViewer and viewerBodyLines), a diff line longer than the frame's interior is CLIPPED, so the tail of a long line is unreadable and there is no horizontal scroll to reach it. It should wrap onto continuation rows instead. Constraints the current code already holds and must keep: every emitted row measures EXACTLY the requested width in display columns, East Asian wide characters count two, no span carries ANSI, and the left and right rails stay aligned. A wrapped continuation row needs a gutter treatment that does not read as a new source line - the line-number gutter should be blank on continuations, not repeated. Decide and record whether wrapping is always on or a toggle, and whether it breaks at a word boundary or at the column; a hard column break is simpler and never hides a character, a word break reads better for prose but can leave a ragged right edge in code.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff/overlay.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:36:46-0400"
+    },
+    {
+      "id": "AGNT-0042",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "the viewer's hint says esc closes it, but only q works",
+      "long": "The read-only viewer's bottom border advertises \"esc back\" and Esc does nothing; q is what actually returns to the list. The hint lies, which is the same defect class as the earlier TAB hint that advertised one key for two jobs. This CONFIRMS a question left open during the AGNT-0015 run: mapKey does map the bare Esc byte to close, and the reducer does step back one level, so the byte is not reaching the component. Pi's ui.custom factory hands the extension a KeybindingsManager that the code ignores, and Pi very likely binds Escape at the app level to dismiss an overlay, consuming it first. Fix means one of: claim Escape through the keybindings manager the factory already provides, or accept that Pi owns Escape and correct the hint to name q. Whichever is chosen, the hint must state what is actually bound - a hint that names an unbound key is worse than no hint.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.ts",
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:36:46-0400"
     }
   ]
 }
