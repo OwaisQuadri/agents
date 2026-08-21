@@ -846,7 +846,7 @@ function charWidth(char: string): number {
 	return WIDE.test(char) ? 2 : 1;
 }
 
-function displayWidth(text: string): number {
+export function displayWidth(text: string): number {
 	let total = 0;
 	for (const char of text) {
 		total += charWidth(char);

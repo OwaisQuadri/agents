@@ -478,9 +478,9 @@ export default function liveDiff(pi: ExtensionAPI): void {
 			let model = initialModel(state.requestStats, state.overallStats);
 			await ctx.ui.custom<undefined>(
 				(tui, theme, _keybindings, done) => {
-					// Any render after an await may land once the session is gone: the
-					// overlay outlives its own async work. The latch is the guard, and
-					// requestRender must never throw into Pi.
+					// An effect awaits git or herdr for seconds, and Pi may tear the
+					// overlay down while it waits, so every callback back into the TUI
+					// happens after the session may already be gone.
 					function safeRequestRender(): void {
 						if (isSessionGone) {
 							return;
@@ -490,9 +490,18 @@ export default function liveDiff(pi: ExtensionAPI): void {
 						} catch {}
 					}
 
+					function safeDone(): void {
+						if (isSessionGone) {
+							return;
+						}
+						try {
+							done(undefined);
+						} catch {}
+					}
+
 					async function runEffect(effect: OverlayEffect): Promise<void> {
 						if (effect.kind === "close") {
-							done(undefined);
+							safeDone();
 							return;
 						}
 						if (effect.kind === "load-patch") {
@@ -515,7 +524,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 						}
 						const isOpened = await openInNvim(exec, ctx.cwd, effect.path);
 						if (isOpened) {
-							done(undefined);
+							safeDone();
 						}
 					}
 					const viewerHeight = overlayHeightBudget();
@@ -561,9 +570,9 @@ export default function liveDiff(pi: ExtensionAPI): void {
 								model = rebuildRows(model, state.requestStats, state.overallStats);
 							}
 							if (step.effect !== null) {
-								void runEffect(step.effect);
+								void runEffect(step.effect).catch(() => {});
 							}
-							tui.requestRender();
+							safeRequestRender();
 						},
 					};
 				},

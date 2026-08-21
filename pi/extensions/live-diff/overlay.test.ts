@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
 	applyPatch,
 	badgeText,
+	displayWidth,
 	initialModel,
 	rebuildRows,
 	reduce,
@@ -513,34 +514,44 @@ test("reduce never mutates a frozen model", () => {
 	assert.equal(model.rows[0].change.path, "a.ts");
 });
 
-function measureColumns(text: string): number {
-	const wideRanges: [number, number][] = [
-		[0x1100, 0x115f],
-		[0x2e80, 0x303e],
-		[0x3041, 0x33ff],
-		[0x3400, 0x4dbf],
-		[0x4e00, 0x9fff],
-		[0xa000, 0xa4cf],
-		[0xac00, 0xd7a3],
-		[0xf900, 0xfaff],
-		[0xfe30, 0xfe6f],
-		[0xff00, 0xff60],
-		[0xffe0, 0xffe6],
-		[0x1f300, 0x1f64f],
-		[0x1f900, 0x1f9ff],
-		[0x20000, 0x2fffd],
-	];
-	let columns = 0;
-	for (const char of text) {
-		if (/[\p{Mn}\p{Me}]/u.test(char)) {
-			continue;
-		}
-		const code = char.codePointAt(0) ?? 0;
-		const isWide = wideRanges.some(([lo, hi]) => code >= lo && code <= hi);
-		columns += isWide ? 2 : 1;
+const measureColumns = displayWidth;
+
+test("F-15 displayWidth matches known East Asian Width answers", () => {
+	// Verified against Python's unicodedata 16.0.0 (east_asian_width in W/F
+	// means two columns). Every width assertion in this file now measures with
+	// production's own displayWidth, so this is the one place that checks
+	// displayWidth against the standard instead of against itself.
+	const twoColumns = [
+		["\u{1F680}", "rocket, the emoji block a hand-written table missed"],
+		["\u{1F7E0}", "large orange circle"],
+		["\u{1FA90}", "ringed planet"],
+		["\u{2705}", "white heavy check mark"],
+		["\u{231A}", "watch"],
+		["\u{26A1}", "high voltage"],
+		["\u{2B50}", "white medium star"],
+		["\u{65E5}", "CJK ideograph"],
+		["\u{FF41}", "fullwidth latin a"],
+		["\u{AC00}", "hangul syllable"],
+		["\u{4DC0}", "Yijing hexagram, W only since Unicode 16"],
+	] as const;
+	for (const [char, name] of twoColumns) {
+		assert.equal(displayWidth(char), 2, `${name} must measure 2 columns`);
 	}
-	return columns;
-}
+
+	const oneColumn = [
+		["a", "ascii"],
+		["\u{00E9}", "latin e with acute"],
+		["\u{2502}", "box drawing light vertical, the viewer rail"],
+		["\u{258C}", "left half block, the selected-row gutter"],
+		["\u{2212}", "minus sign, the deletion marker"],
+	] as const;
+	for (const [char, name] of oneColumn) {
+		assert.equal(displayWidth(char), 1, `${name} must measure 1 column`);
+	}
+
+	assert.equal(displayWidth("\u{0301}"), 0, "combining acute must measure 0");
+	assert.equal(displayWidth("a\u{1F680}b"), 4, "widths must sum across a string");
+});
 
 test("F-15 no rendered line exceeds the requested width in display columns", () => {
 	const fullWidth = "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ１２３４５.txt";
@@ -630,36 +641,9 @@ test("badgeText shapes: both sides, one side null, present-but-empty side", () =
 	);
 });
 
-function testCharWidth(char: string): number {
-	const code = char.codePointAt(0) ?? 0;
-	if (/^[\p{Mn}\p{Me}]$/u.test(char)) {
-		return 0;
-	}
-	const isWide =
-		(code >= 0x1100 && code <= 0x115f) ||
-		(code >= 0x2e80 && code <= 0x303e) ||
-		(code >= 0x3041 && code <= 0x33ff) ||
-		(code >= 0x3400 && code <= 0x4dbf) ||
-		(code >= 0x4e00 && code <= 0x9fff) ||
-		(code >= 0xa000 && code <= 0xa4cf) ||
-		(code >= 0xac00 && code <= 0xd7a3) ||
-		(code >= 0xf900 && code <= 0xfaff) ||
-		(code >= 0xfe30 && code <= 0xfe6f) ||
-		(code >= 0xff00 && code <= 0xff60) ||
-		(code >= 0xffe0 && code <= 0xffe6) ||
-		(code >= 0x1f300 && code <= 0x1f64f) ||
-		(code >= 0x1f900 && code <= 0x1f9ff) ||
-		(code >= 0x20000 && code <= 0x2fffd);
-	return isWide ? 2 : 1;
-}
+const testCharWidth = displayWidth;
 
-function testDisplayWidth(text: string): number {
-	let total = 0;
-	for (const char of text) {
-		total += testCharWidth(char);
-	}
-	return total;
-}
+const testDisplayWidth = displayWidth;
 
 function rowText(row: { spans: { text: string }[] }): string {
 	return row.spans.map((span) => span.text).join("");
