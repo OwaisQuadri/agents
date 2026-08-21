@@ -38,6 +38,15 @@ const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const FIVE_HOUR_SECONDS = 5 * 3600;
 const SEVEN_DAY_SECONDS = 7 * 86400;
 
+function isCtxActive(ctx: ExtensionContext): boolean {
+	try {
+		void ctx.hasUI;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function clampPercent(value: number): number {
 	if (!Number.isFinite(value) || value < 0) return 0;
 	return value > 100 ? 100 : value;
@@ -209,6 +218,7 @@ export default function statusline(pi: ExtensionAPI) {
 	}
 
 	function render(ctx: ExtensionContext) {
+		if (!isCtxActive(ctx)) return;
 		if (!ctx.hasUI) return;
 		const provider = activeProvider(ctx);
 		const usage = provider ? usageByProvider.get(provider) : undefined;
@@ -217,6 +227,7 @@ export default function statusline(pi: ExtensionAPI) {
 	}
 
 	async function refresh(ctx: ExtensionContext, isForced = false) {
+		if (!isCtxActive(ctx)) return;
 		const provider = activeProvider(ctx);
 		if (!provider) {
 			render(ctx);
@@ -235,6 +246,7 @@ export default function statusline(pi: ExtensionAPI) {
 		} catch {
 			// A fetch failure keeps the previous bar; the next poll retries.
 		}
+		if (!isCtxActive(ctx)) return;
 		render(ctx);
 	}
 
