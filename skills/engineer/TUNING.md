@@ -114,3 +114,16 @@ tune the map, and not when you walk a ticket.
   reads untracked files, and its suite rerun uses fresh testers. The panel re-attacks after
   fixes. Resume honours open walks. Take-over's phase 12 marks only unimplemented sites. Plan
   reviews got their own counter.
+
+## 2026-08-20 — gate E route: PR by default
+
+Mutation: phase 23's landing route is chosen by `git remote`. A project WITH a remote lands
+through a PR; only a repo with no remote lands by local squash merge. This reverses the
+2026-08-07 default ("merge locally into main (squash always)"), on the owner's instruction
+during the AGNT-0015 run: "gate e will run through PR as is the new standard for git projects
+with a remote". Propagated to SKILL.md's OUT line, its phase-index row for 23 and its gate E
+sentence, to phase 23's JOB, OUT, step 5 and step 7, and to phase 01's close-out sweep, which
+previously justified itself with "the owner squash-merges always" and now names which route
+each half of the sweep serves. Path used: owner instruction, not a harness win — no eval case
+measures which route a run picks, and inventing one would measure the instruction rather than
+the behaviour.

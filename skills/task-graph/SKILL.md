@@ -23,6 +23,7 @@ One schema, two granularities:
 - status ∈ `todo | in progress | resolved | cancelled | done`. resolved = the worker finished and a verifier passed it; done = close-out (tasks) or merge (tickets) confirmed it. cancelled ids are never reused.
 - kind ∈ `code | command | ticket`. command tasks materialize as todo.sh steps (the engineer skill's phase 12 owns todo.sh). Roadmap items always carry `kind: ticket`.
 - ids: tickets match `^[A-Z]{2,4}-[0-9]{4}$` (prefix from roadmap.json); tasks are `<ticket>.T<NN>`, NN zero-padded 2 and growing to three digits past 99, assigned max+1 in creation order. Creation order never implies completion order. An empty roadmap starts next_nnnn at 1.
+- priority ∈ `urgent | high | med | low`. Optional; a missing or unknown value reads as `med`. Priority ranks SELECTION only (next-ticket.sh sorts on it before unlock count) and never adds an edge: a low ticket that blocks an urgent one is surfaced by the urgent ticket's deps, not by inflating the low one.
 - blame_phase: null at creation; the engineer map's diagnosis phase sets it later.
 - files: the paths this item owns — non-empty for code tasks, coarse areas for tickets. Parallelism is decided on these.
 - wrappers: tasks.json is `{"ticket":"MJLS-0042","tasks":[…]}`; roadmap.json is `{"prefix":"MJLS","next_nnnn":43,"tickets":[…]}`.
@@ -38,7 +39,7 @@ One schema, two granularities:
 
 ## next-in-line
 
-`scripts/next-ticket.sh roadmap.json` prints the runnable ticket that unlocks the most: among status=todo tickets whose deps are all done, the one with the most transitive todo descendants; ties go to the lower NNNN. It rejects unknown deps and cycles by name. A ticket with a cancelled dep is listed as needs-replan on stderr — never auto-selected. The caller may override the pick with a recorded one-line reason (the engineer map stores it in state.json.next_override).
+`scripts/next-ticket.sh roadmap.json` prints the runnable ticket ranked by priority (urgent > high > med > low, missing = med), then by how many todo tickets it unlocks (most transitive todo descendants), then lower NNNN. It rejects unknown deps and cycles by name. A ticket with a cancelled dep is listed as needs-replan on stderr — never auto-selected. The caller may override the pick with a recorded one-line reason (the engineer map stores it in state.json.next_override).
 
 ## evals
 

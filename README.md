@@ -230,3 +230,38 @@ Run `pr-review-filter set platform=graphite` inside a repository to write its ov
   It applies tracked changes with a three-way merge, so tip drift produces conflict markers.
   It copies untracked files that Git does not ignore.
   The hook does not touch a dirty destination, an in-progress rebase, or the live tree.
+
+## live diffs
+
+The `live-diff` extension shows what the agent changes as it works.
+
+The statusline badge carries two counters, coloured by the theme. `turn` counts the current turn's changes against a snapshot taken when the turn started. `branch` counts everything since the branch point — the merge-base with the default branch — so committed and uncommitted work sit in one basket and committing does not empty the badge. When no branch point resolves, that side falls back to `all` against the HEAD tree. A clean worktree reads `diff clean`.
+
+The badge refreshes after each write-capable tool call, when the agent settles, and when a filesystem watcher sees a change made outside the agent — an edit in another editor moves it while the agent is idle. The watcher ignores `.git` and anything git ignores, and coalesces bursts into one refresh.
+
+The `/diff` command opens the overlay. Its keys:
+
+```text
+j k         move the selection
+h l         switch columns: h is the turn, l is the branch
+space       open the selected file's diff in a read-only window
+enter       open the selected file in the herdr editor tab's nvim
+q or esc    close
+```
+
+The read-only window shows one file's diff with line numbers:
+
+```text
+j k         scroll a line
+d u         page down and up
+g G         jump to the top and the bottom
+] [         next and previous file, wrapping at both ends
+enter       open this file in nvim
+q or esc    back to the list
+```
+
+Run the tests:
+
+```sh
+node --test pi/extensions/live-diff/engine.test.ts pi/extensions/live-diff/overlay.test.ts pi/extensions/live-diff/nvim.test.ts pi/extensions/live-diff/watch.test.ts pi/extensions/live-diff.test.ts
+```

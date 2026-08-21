@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 33,
+  "next_nnnn": 57,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -48,7 +48,8 @@
         "tools/mcp-sync/src/codex.rs"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T21:44:43-0400"
+      "created": "2026-08-12T21:44:43-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0004",
@@ -61,21 +62,23 @@
         "tools/mcp-sync/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T21:44:43-0400"
+      "created": "2026-08-12T21:44:43-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0005",
       "kind": "ticket",
       "status": "todo",
-      "short": "Gate the rag-recall injection",
-      "long": "The hook injects the top eight chunks on every prompt. Gated retrieval beat that pattern by 2.2 points while it retrieved 70 percent less (TARG). Low-relevance chunks measurably degrade output quality (Chroma context-rot study, 18 models). Stale memories decay into confident wrong answers as the time gap grows.\n\nThe fix: inject only when the prompt turns on past work, and otherwise stay silent. The counter-finding sets the bar: a crude keyword gate scored worse than always-on retrieval. The gate must beat that bar, or the hook stays as it is. Anthropic ships the on-demand pattern in its memory tool, which is the fallback shape.\n\nPer the tooling rule, a change to this Python script means a Rust rewrite, never a patch in place. The Codex and Claude registrations both point at the new binary when it lands.",
+      "short": "Rust rag-recall with a relevance gate, registered on Claude and Codex",
+      "long": "The hook injects the top eight chunks on every prompt. Gated retrieval beat that pattern by 2.2 points while it retrieved 70 percent less (TARG). Low-relevance chunks measurably degrade output quality (Chroma context-rot study, 18 models). Stale memories decay into confident wrong answers as the time gap grows.\n\nThe fix: inject only when the prompt turns on past work, and otherwise stay silent. The counter-finding sets the bar: a crude keyword gate scored worse than always-on retrieval. The gate must beat that bar, or the hook stays as it is. Anthropic ships the on-demand pattern in its memory tool, which is the fallback shape.\n\nPer the tooling rule, a change to this Python script means a Rust rewrite, never a patch in place. The Codex and Claude registrations both point at the new binary when it lands.\n\nFOLDED IN AGNT-0023 (owner, gate A, 2026-08-20): The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
       "deps": [],
       "files": [
-        "hooks/",
-        "config/"
+        "config/",
+        "hooks/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T22:05:50-0400"
+      "created": "2026-08-12T22:05:50-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0006",
@@ -88,7 +91,8 @@
         "skills/engineer/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T22:05:50-0400"
+      "created": "2026-08-12T22:05:50-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0007",
@@ -101,7 +105,8 @@
         "workflows/research-sweep/"
       ],
       "blame_phase": null,
-      "created": "2026-08-12T22:05:50-0400"
+      "created": "2026-08-12T22:05:50-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0008",
@@ -140,14 +145,15 @@
         "CLAUDE.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-16T20:10:56-0400"
+      "created": "2026-08-16T20:10:56-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0010",
       "kind": "ticket",
       "status": "todo",
       "short": "Prove tool sync on real Linux.",
-      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository\u2019s continuous integration output.",
       "deps": [
         "AGNT-0008"
       ],
@@ -157,7 +163,8 @@
         "install.sh"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T00:00:36-0400"
+      "created": "2026-08-17T00:00:36-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0011",
@@ -175,7 +182,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T00:00:36-0400"
+      "created": "2026-08-17T00:00:36-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0012",
@@ -218,7 +226,7 @@
     {
       "id": "AGNT-0014",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Create the two-tab Herdr worktree setup.",
       "long": "Install herdr-fresh-worktree from a pinned revision. Add one idempotent, repository-owned Herdr setup for new and opened worktrees. Tab one contains Pi at 75 percent width and a shell at 25 percent. Tab two contains Neovim at 75 percent and a shell at 25 percent. Define event ordering and ownership between herdr-fresh-worktree and hooks/post-checkout before either changes a new worktree. Test repeated setup, dirty destinations, existing tabs, and one temporary worktree.",
       "deps": [
@@ -238,7 +246,7 @@
     {
       "id": "AGNT-0015",
       "kind": "ticket",
-      "status": "todo",
+      "status": "resolved",
       "short": "Show live request and overall diffs in Pi.",
       "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.\n\nAmendment (owner, 2026-08-19, AGNT-0014 gate D): selecting a file in the diff view focuses the herdr editor tab and opens that file in nvim (compose with the AGNT-0014 layout: herdr tab focus + pane send/nvim remote).",
       "deps": [
@@ -251,7 +259,9 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "priority": "med",
+      "pr": "https://github.com/OwaisQuadri/agents/pull/41"
     },
     {
       "id": "AGNT-0016",
@@ -270,7 +280,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0017",
@@ -290,7 +301,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0018",
@@ -311,28 +323,33 @@
       ],
       "blame_phase": null,
       "created": "2026-08-17T20:27:34-0400",
+      "priority": "med",
       "rescoped": "2026-08-20T20:29:21-0400"
     },
     {
       "id": "AGNT-0019",
-      "short": "keep a task's file list true to what the task actually touches",
-      "long": "Phase 18's stash content check compares the stashed files against the union of every task's `files` array. On RAG-0001 four files were in the stash that no task claimed: `Cargo.lock`, `.gitignore`, `parity/config.toml` and `src/env_lock.rs`. Two classes of gap produced them. A task that edits `Cargo.toml` generates `Cargo.lock` and never declares it. And a phase-15 fix that CREATES a file never appends it to the owning task, so the file exists with no owner. The check then reads as a possible contaminated stash when it is really an incomplete inventory, which costs a careful reader real time at the one gate where a wrong call is catastrophic. Recorded as D-22. FIX: phase 08 declares generated companions alongside their source, and a phase-15 resolution appends any file it creates to the task it belongs to.",
+      "short": "engineer map defect batch from RAG-0001 (files truth, oracle check, counter assert)",
+      "long": "Phase 18's stash content check compares the stashed files against the union of every task's `files` array. On RAG-0001 four files were in the stash that no task claimed: `Cargo.lock`, `.gitignore`, `parity/config.toml` and `src/env_lock.rs`. Two classes of gap produced them. A task that edits `Cargo.toml` generates `Cargo.lock` and never declares it. And a phase-15 fix that CREATES a file never appends it to the owning task, so the file exists with no owner. The check then reads as a possible contaminated stash when it is really an incomplete inventory, which costs a careful reader real time at the one gate where a wrong call is catastrophic. Recorded as D-22. FIX: phase 08 declares generated companions alongside their source, and a phase-15 resolution appends any file it creates to the task it belongs to.\n\nFOLDED IN AGNT-0020 (owner, gate A, 2026-08-20): A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.\n\nFOLDED IN AGNT-0021 (owner, gate A, 2026-08-20): `next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
       "deps": [],
       "status": "todo",
       "files": [
         "skills/engineer/phases/08-task-breakdown.md",
-        "skills/engineer/phases/15-diagnose.md"
+        "skills/engineer/phases/15-diagnose.md",
+        "skills/engineer/phases/19-break-panel.md",
+        "skills/engineer/phases/22-tickets.md",
+        "skills/task-graph/SKILL.md"
       ],
       "blame_phase": 21,
       "created": "2026-08-14",
-      "kind": "bug"
+      "kind": "bug",
+      "priority": "med"
     },
     {
       "id": "AGNT-0020",
       "short": "validate a break panel's oracle before trusting its verdicts",
-      "long": "A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.",
+      "long": "FOLDED INTO AGNT-0019 (owner, gate A, 2026-08-20). A break-panel verdict is only as good as the oracle it is measured against, and nothing in phase 19 checks the oracle. On RAG-0001 the terminal harness used `pyte`, which SILENTLY DISCARDS the rest of a line after U+200D. Every bidi and zero-width-joiner verdict it produced was therefore unsound. It generated a finding that survived TWO rounds and consumed a debugging cycle before round 3 replaced the oracle with tmux and got 77 of 77 agreement with the binary - proving the code had been right the whole time. The failure mode is worse than a missed bug, because it manufactures work and can drive a correct implementation into being changed. FIX: before a harness's verdicts are trusted, run it against a case with a known answer and confirm it agrees. Where an angle depends on a third-party emulator or parser, name it and its version in the report.",
       "deps": [],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "skills/engineer/phases/19-break-panel.md"
       ],
@@ -343,9 +360,9 @@
     {
       "id": "AGNT-0021",
       "short": "assert the ticket counter against the filed ids",
-      "long": "`next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
+      "long": "FOLDED INTO AGNT-0019 (owner, gate A, 2026-08-20). `next_nnnn` drifted to one less than it should be on the RAG-0001 run, so the next ticket filed would have collided with an existing id. THE CAUSE WAS NOT THE SKILL: a ticket was filed by hand at gate C, outside phase 22, and phase 22 already states that only its own step may increment the counter. So this ticket is a guard against a rule already being broken, not a missing rule. It is filed anyway because the failure is silent and permanent - a duplicate id cannot be renumbered, since /task-graph refuses renumbering by design - and the check is one line. FIX: assert `next_nnnn == max(NNNN) + 1` on entry to phase 22 and on any roadmap write, and fail loudly.",
       "deps": [],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "skills/engineer/phases/22-tickets.md",
         "skills/task-graph/SKILL.md"
@@ -366,14 +383,15 @@
       ],
       "blame_phase": null,
       "created": "2026-08-18T18:48:03-0400",
-      "kind": "ticket"
+      "kind": "ticket",
+      "priority": "med"
     },
     {
       "id": "AGNT-0023",
       "short": "start Claude and Codex sessions with a memory search",
-      "long": "The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
+      "long": "FOLDED INTO AGNT-0005 (owner, gate A, 2026-08-20). The hooks/rag-recall hook injects the top-8 chunks into every Claude Code prompt. Codex sessions have no equivalent, so half of all sessions start without memory. Wire Codex's hook surface to the same rag search --json call and the same injection format. Both harnesses then open with one recall shape.\n\nThis ticket refiles cancelled RAG-0031 because its files live in this repo. The user split the roadmaps by repo on 2026-08-18. His words: claude and codex messages should start with searching memories using rag search.",
       "deps": [],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "hooks/"
       ],
@@ -383,26 +401,27 @@
     },
     {
       "id": "AGNT-0024",
-      "short": "fork show-me into this repo's skills",
-      "long": "The show-me skill runs from a symlink into the tool-sync plugin cache under ~/.cache/tool-sync/humanlayer-skills. A cache re-sync overwrites anything edited there, so the skill cannot hold local changes.\n\nCopy the skill into skills/show-me in this repo. Repoint ~/.claude/skills/show-me at the repo copy through the installer. Record the upstream plugin revision inside the fork. A later maintainer then diffs upstream improvements in deliberately. The user's words, 2026-08-18: clone the skill into the AGNT skills instead of using it from remote.",
+      "short": "fork show-me into this repo and build compact engineering views on it",
+      "long": "The show-me skill runs from a symlink into the tool-sync plugin cache under ~/.cache/tool-sync/humanlayer-skills. A cache re-sync overwrites anything edited there, so the skill cannot hold local changes.\n\nCopy the skill into skills/show-me in this repo. Repoint ~/.claude/skills/show-me at the repo copy through the installer. Record the upstream plugin revision inside the fork. A later maintainer then diffs upstream improvements in deliberately. The user's words, 2026-08-18: clone the skill into the AGNT skills instead of using it from remote.\n\nFOLDED IN AGNT-0025 (owner, gate A, 2026-08-20): The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
       "deps": [],
       "status": "todo",
       "files": [
-        "skills/show-me/",
-        "install.sh"
+        "install.sh",
+        "skills/show-me/"
       ],
       "blame_phase": null,
       "created": "2026-08-18T18:48:03-0400",
-      "kind": "ticket"
+      "kind": "ticket",
+      "priority": "med"
     },
     {
       "id": "AGNT-0025",
       "short": "compact engineering views on the forked show-me",
-      "long": "The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
+      "long": "FOLDED INTO AGNT-0024 (owner, gate A, 2026-08-20). The RAG-0001 run researched compact engineering views on 2026-08-18 with fifteen cited sources. Build the upgrades on the forked skill. The selection rule: console text first, and HTML only when a diagram family has no terminal story. Class and entity-relationship diagrams stay in that no-terminal family, and sequence and activity diagrams render in text.\n\nAdopt the ascii-dag crate for dependency-graph views. No terminal lane or Gantt renderer exists to adopt. Build that view as a small Rust renderer over tasks.json and measured spans. Keep the agent's payload small and let the renderer draw. A row-per-task data contract costs fewer output tokens than generated markup. The full scan sits in the RAG-0001 run record, exploration.md, agents-repo section.",
       "deps": [
         "AGNT-0024"
       ],
-      "status": "todo",
+      "status": "cancelled",
       "files": [
         "skills/show-me/"
       ],
@@ -423,14 +442,15 @@
         "config/pr-review.toml"
       ],
       "blame_phase": null,
-      "created": "2026-08-19T01:03:03-0400"
+      "created": "2026-08-19T01:03:03-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0027",
       "kind": "ticket",
       "status": "done",
       "short": "Auto-continue agents when a usage limit resets (5h/7d)",
-      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) — usage-limit-watch covers only redirected/logged output for those two tools.",
+      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) \u2014 usage-limit-watch covers only redirected/logged output for those two tools.",
       "deps": [],
       "files": [
         "pi/extensions/usage-limit-continue.ts",
@@ -452,7 +472,8 @@
         "pi/extensions/statusline.ts"
       ],
       "blame_phase": null,
-      "created": "2026-08-19T21:28:29-0400"
+      "created": "2026-08-19T21:28:29-0400",
+      "priority": "urgent"
     },
     {
       "id": "AGNT-0029",
@@ -468,7 +489,8 @@
         "config/"
       ],
       "blame_phase": null,
-      "created": "2026-08-19T21:28:29-0400"
+      "created": "2026-08-19T21:28:29-0400",
+      "priority": "med"
     },
     {
       "id": "AGNT-0030",
@@ -512,6 +534,399 @@
       ],
       "blame_phase": null,
       "created": "2026-08-20T23:03:07-0400"
+    },
+    {
+      "id": "AGNT-0033",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "phase 07 must probe a surface before writing a contract against it",
+      "long": "Four separate defects in the AGNT-0015 run share one cause: contracts written from reading type declarations, without ever executing the surface they describe. D-05, ExtensionContext.exec has no env passthrough, so the engine could not inject GIT_INDEX_FILE. D-08, Pi's require-based loader could not resolve a relative import through a symlink that Node's ESM import resolved fine, which broke extension loading in every Pi session until it was caught. D-13, pi-tui's Box is not importable from this repo at all, so the contract named a dependency that would have thrown at load. And INV-015 was applied to the shell boundary but not to nvim's command line, which is where the injection actually lived. Phase 07 should require one executed probe per external surface a contract names, with the probe's output recorded, before the contract is written.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/07-interfaces.md",
+        "skills/engineer/invariants.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0034",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "phase 16's stash check must name the ticket run dir, not all of .map",
+      "long": "AGNT-0015 deviation D-09: phase 16's check reads 'the stash names no .map/ path', but the repo-level map files (roadmap.json, invariants.md, inspiration.md, ideation/) are tracked on purpose and are legitimately part of a change, so the check fires on a correct state. It should read '.map/<TICKET-ID>/' \u2014 the gitignored run dir is the thing that must never be stashed. One line of wording; the current text teaches the reader to wave a real check through.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/16-stash.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0035",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "every fix must ship a repo test, or it can vanish silently",
+      "long": "AGNT-0015 failure F-08: two verified fixes (bidi stripping and row dedup) were lost before ever reaching a commit, and the suite stayed green throughout because both had been proven only by scratch probes, never encoded as repo tests. git log -S showed the code had never existed in any commit. The break panel found the regression rounds later. The engineer map should require that every fix ship a test inside the repo suite \u2014 which is exactly what task T15 had to enforce by hand on this run \u2014 so that losing the fix turns the suite red.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/13-implement.md",
+        "skills/engineer/phases/15-diagnose.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0036",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "gate C needs rendered visual evidence before it is presented",
+      "long": "On AGNT-0015 the owner found five defects that four full break-panel rounds missed: the selection highlight was invisible, chat text bled through the panel edges, one key was advertised for two jobs, an empty column trapped the user with no way out, and the list had no viewport so anything past the panel height was unreachable. Every one is about what the surface looks like and feels like; none is computable from the code, which is why testers driving the renderer as a function proved it correct while it was unusable. The map should require a rendered artifact \u2014 a captured frame or screenshot \u2014 as part of preparing gate C, so those defects reach the human before the gate rather than after it.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/20-signoff.md",
+        "skills/engineer/phases/19-break-panel.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0037",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "tool-sync's apply and check disagree about Pi agent destinations",
+      "long": "tool-sync --check fails with 'Pi agent destination ~/.pi/agent/agents/anchor-verifier.md collides with a non-symlink', but those files are precisely what tool-sync's own apply step renders: 'render Pi agent <repo>/agents/X/X.md -> ~/.pi/agent/agents/X.md'. Rendering writes a real file; the check demands a symlink. Confirmed not caused by AGNT-0015 \u2014 the same failure reproduces with the pre-ticket manifest from commit e2e9de6. The consequence is worse than the bug: any run whose verification includes a tool-sync check now reports a red it cannot fix, which teaches everyone to ignore that check.",
+      "deps": [],
+      "files": [
+        "tools/tool-sync/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0038",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "a ticket's todo.sh goes stale as walk-backs add tasks",
+      "long": "AGNT-0015's todo.sh step1 was written in phase 12 against three test files and never updated when later walk-backs added nvim.test.ts and watch.test.ts, so the ticket's own verification command silently ran 118 of its 138 tests and reported success. Nothing in the map re-checks that todo.sh still matches the task list. Phase 18's exit gate should assert that every test file owned by a task appears in the verification steps, so the script cannot drift away from the work it is supposed to verify.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/12-todos.md",
+        "skills/engineer/phases/18-final-implement.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0039",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "standalone diff TUI in its own herdr pane, harness-independent",
+      "long": "A standalone terminal UI for the live diff, run in its own herdr pane beside the agent - the owner's shape is a terminal at the bottom and the diff at the top - rather than an overlay inside one agent. WHY IT BEATS THE EXTENSION: this repo runs Claude Code, Codex and Pi, and a Pi extension can only ever serve Pi. A standalone process serves all three, and it sidesteps every constraint that cost this ticket time: no keybinding to steal (Pi already binds ctrl+ a b c d g l n o p r s t u v x z, and the rest are standard readline keys), no bracketed-paste behaviour to work around, no stale-context hazard of the AGNT-0028 class, no overlay taking focus, and no coupling to one harness's lifecycle. CENTRAL DESIGN QUESTION, to be answered before building: a standalone process does not know when an agent TURN starts, and the turn counter is what makes the current badge agent-aware. Three candidate answers, all with costs: the Pi extension (and later equivalents for Claude Code and Codex) writes turn markers to a file the TUI reads, which keeps turn-awareness but re-introduces per-harness coupling; the TUI infers turns from write quiescence, which needs no coupling but guesses; or it drops the turn column and shows only the branch basket, which is honest and simplest and loses a feature the owner has been using. SCOPE: Rust per this repo's tooling rule, which means re-implementing the engine that AGNT-0015 built in TypeScript - snapshot via a temp GIT_INDEX_FILE plus write-tree, branch-point baseline through merge-base, committed and uncommitted merged into one origin-tagged basket, per-file patch parsing - plus a ratatui front end for the list and the read-only viewer, and a filesystem watcher. AGNT-0015's contracts, test cases and break-panel findings are the specification: reuse them rather than rediscovering the bidi class rule, the display-width clipping, the nested .git ignore rule, the temp-dir sweep and the rest. RELATIONSHIP TO AGNT-0015: that ticket ships and stays. This one does not replace it until it is at least as good; if it proves out, retiring the extension is a later decision, not a precondition. Related: AGNT-0014 owns the two-tab herdr layout this pane joins, and AGNT-0029 the workspace palette.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "tools/",
+        "herdr/",
+        "config/tools.toml",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:17:14-0400"
+    },
+    {
+      "id": "AGNT-0040",
+      "kind": "ticket",
+      "status": "resolved",
+      "priority": "med",
+      "short": "gate E lands through a PR when the project has a remote",
+      "long": "The engineer skill's phase 23 records the owner's default from 2026-08-07 as a local squash merge into main. He revised it on 2026-08-20: \"gate e will run through PR as is the new standard for git projects with a remote\". Update skills/engineer/phases/23-close.md so the PR route is the default whenever a remote exists, and the local squash merge remains the route only for a repo with no remote - including the consequence phase 01 already documents, that a squash merge is invisible to its merged-branch sweep and so the ticket must be flipped to done at close, whereas the PR route leaves that flip to the next run's phase 01 after the merge. RESOLVED on the AGNT-0015 branch: the owner asked for the change to be propagated during that run rather than deferred, so SKILL.md, phase 01 and phase 23 all carry the remote-decides-the-route rule and TUNING.md records the reversal.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/23-close.md",
+        "skills/engineer/phases/01-setup.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:26:35-0400"
+    },
+    {
+      "id": "AGNT-0041",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "the expanded diff should word wrap instead of clipping long lines",
+      "long": "In the live-diff read-only viewer (pi/extensions/live-diff/overlay.ts, renderViewer and viewerBodyLines), a diff line longer than the frame's interior is CLIPPED, so the tail of a long line is unreadable and there is no horizontal scroll to reach it. It should wrap onto continuation rows instead. Constraints the current code already holds and must keep: every emitted row measures EXACTLY the requested width in display columns, East Asian wide characters count two, no span carries ANSI, and the left and right rails stay aligned. A wrapped continuation row needs a gutter treatment that does not read as a new source line - the line-number gutter should be blank on continuations, not repeated. Decide and record whether wrapping is always on or a toggle, and whether it breaks at a word boundary or at the column; a hard column break is simpler and never hides a character, a word break reads better for prose but can leave a ragged right edge in code.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff/overlay.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:36:46-0400"
+    },
+    {
+      "id": "AGNT-0042",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "the viewer's hint says esc closes it, but only q works",
+      "long": "The read-only viewer's bottom border advertises \"esc back\" and Esc does nothing; q is what actually returns to the list. The hint lies, which is the same defect class as the earlier TAB hint that advertised one key for two jobs. This CONFIRMS a question left open during the AGNT-0015 run: mapKey does map the bare Esc byte to close, and the reducer does step back one level, so the byte is not reaching the component. Pi's ui.custom factory hands the extension a KeybindingsManager that the code ignores, and Pi very likely binds Escape at the app level to dismiss an overlay, consuming it first. Fix means one of: claim Escape through the keybindings manager the factory already provides, or accept that Pi owns Escape and correct the hint to name q. Whichever is chosen, the hint must state what is actually bound - a hint that names an unbound key is worse than no hint.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.ts",
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:36:46-0400"
+    },
+    {
+      "id": "AGNT-0043",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: a dropped refresh is never re-run, so the badge can stay stale",
+      "long": "Static review of the AGNT-0015 branch, live-diff.ts around the isRefreshing latch and the settle handler: a refresh that arrives while another is in flight sets a dirty flag and returns, but nothing re-runs it when the in-flight one finishes. The next EVENT consumes the flag, so on a turn whose last write collides with the settle refresh the badge can hold a stale count until the user does something else. Fix: when a refresh finishes and the dirty flag is set, run one more pass, guarded so it cannot loop.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.ts",
+        "pi/extensions/live-diff.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0044",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: the origin merge takes the wrong kind for a file changed on both sides",
+      "long": "Static review, engine.ts in the branchStats merge: when a path appears on both the committed and the uncommitted side, the merged row takes the UNCOMMITTED side's kind. A file ADDED on the branch and then edited in the worktree therefore reports 'modified' against a branch point where it does not exist, and a committed rename that is edited afterwards stops rendering as a rename. Fix: the kind must describe the whole span from the branch point to the worktree - added wins over modified, and a rename on either side survives - and the row should keep renamedFrom from whichever side carries it.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/engine.ts",
+        "pi/extensions/live-diff/engine.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0045",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: overlay height is sampled once and can exceed the frame",
+      "long": "Two related findings from the static review of live-diff.ts. First, OVERLAY_MIN_HEIGHT can raise the content budget above the frame's own maxHeight, so on a short terminal the component emits more rows than the frame will hold. Second, the viewer's height budget is read once when the overlay opens, so resizing the terminal while it is open leaves the rendered row count and overlayOptions.maxHeight disagreeing until it is reopened. Fix: clamp the budget to the frame's maximum, and re-read the terminal size per render rather than at open.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.ts",
+        "pi/extensions/live-diff.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0046",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: the temp sweep scans a shared tmpdir on every tree write",
+      "long": "Static review, engine.ts sweepStaleTempDirs: the sweep runs on every worktree tree write, which is two to three times per refresh, and each run reads the whole shared temp directory and removes any live-diff-index-* directory older than the cutoff regardless of which process owns it. On a busy machine that is a directory scan per refresh, and two agents sharing a tmpdir can in principle remove each other's directories once one is older than the age guard. Fix: sweep at most once per session or on a timer rather than per write, and scope removal to this process's own prefix.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/engine.ts",
+        "pi/extensions/live-diff/engine.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0047",
+      "kind": "ticket",
+      "status": "resolved",
+      "priority": "med",
+      "short": "live-diff: prune comments to the whitelist and drop private-function docstrings",
+      "long": "The static review audited the AGNT-0015 diff against docs/comment-style.md and found comments matching none of the five whitelisted shapes. Seven full docstrings sit on MODULE-PRIVATE functions in overlay.ts (viewerLineCount, reduceViewer, windowBody, railed, viewerBorderRow, fitHintItems, renderViewer), and the whitelist admits a docstring only on a declaration used from outside its module; two of those also explain the body. Several comments narrate the line below them and should become an extracted, named helper instead - isColumnScopedKey for the empty-column guard, hintFitsBeside for the header gap branch, padToBodyHeight for the frame filler. Three are war stories that belong in the commit trail, including one about a corrupted source file. One genuine cross-component contract about herdr's bracketed-paste behaviour sits in nvim.test.ts and belongs beside the send-keys loop in nvim.ts, where a reader of that file will actually see it. Test files carry roughly thirty comments that restate the assertion below them; those fold into the test name or the assertion message. RESOLVED on the AGNT-0015 branch rather than deferred, on the owner's instruction: the prune was meant as a task in this run, not a follow-up. Seven private-function docstrings deleted, the unused VIEWER_PAGE_SIZE constant and its docstring deleted, four narration comments replaced by named code (isColumnScopedKey/reduceColumnScoped, hintGapBeside, padToBodyHeight) which also removed three now-unreachable branches, three war stories deleted, the herdr bracketed-paste contract moved from nvim.test.ts to nvim.ts beside the send-keys loop, BodyLine.modelRowIndex renamed selectableRowIndex so the field needs no docstring, and roughly forty assertion-restating comments removed from the two test files. Every remaining docstring in the diff sits on an exported declaration; the four surviving line comments are all contracts with something outside their file.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff/nvim.ts",
+        "pi/extensions/live-diff.test.ts",
+        "pi/extensions/live-diff/overlay.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0048",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "low",
+      "short": "live-diff tests: share one git fixture instead of a repo per test",
+      "long": "The 138-test suite takes 21 seconds, and effectively all of it is in the two files that touch real git: live-diff.test.ts at 21.4s and engine.test.ts at 5.3s standalone. The three pure files finish in under a second together. Each test builds its own temp repository with git init plus commits, so it pays several process spawns before it asserts anything. Testing against real git was a deliberate choice and it caught the index-corruption bug, so the fix is NOT to mock git: it is to build a small number of shared read-only fixture repositories once per file and let tests that only READ from them share one, keeping a private repo only for tests that write. Care needed - the engine writes trees via a temp GIT_INDEX_FILE, so a shared fixture must be proven not to mutate.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.test.ts",
+        "pi/extensions/live-diff/engine.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T00:12:28-0400"
+    },
+    {
+      "id": "AGNT-0049",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "live-diff: emoji presentation selectors are measured one column short",
+      "long": "Found by the second static review of AGNT-0015. overlay.ts derives display width from East Asian Width, which is a PER-CODEPOINT property, and that is structurally blind to presentation selectors. U+FE0F (variation selector 16) has General_Category Mn, so ZERO_WIDTH matches it and charWidth returns 0, and sanitize does not strip it because DISPLAY_UNSAFE covers Cc, Cf, Zl and Zp only. So a text-presentation base that goes wide ONLY under VS16 measures 1 while the terminal draws 2: heart U+2764, sun U+2600, airplane U+2708, warning U+26A0, ballot U+2611, copyright U+00A9, trade mark U+2122, and every keycap such as 1 U+0031 U+FE0F U+20E3. That is an UNDER-count, which is exactly the row-bleeds-past-the-panel-edge defect the generated table was meant to end, on characters that appear routinely in README and markdown hunk lines. Fix means measuring GRAPHEME CLUSTERS rather than codepoints: Intl.Segmenter with granularity grapheme is in Node and would give the cluster boundaries, and a cluster containing U+FE0F measures 2 while the same base with U+FE0E measures 1. Zero width joiner sequences work by accident today - U+200D is Cf so sanitize deletes it and the sequence degrades into separate wide emoji that measure and draw the same - but a grapheme-based measure would handle them properly rather than by luck. Note also that the module's own chrome is East Asian Width Ambiguous and counted 1: the rails, the rounded corners, the horizontal rule, the selected-row gutter U+258C, the fold markers, the middle dot, the arrows and the minus sign U+2212. One column in a western terminal, two in a CJK-configured one. Counting them 1 is the right default but it is currently implicit, and the ticket should make it a stated decision with a test.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff/overlay.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0050",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: settle whether nvim accepts a bracketed paste on the command line",
+      "long": "The comment at nvim.ts around the send-keys loop states that herdr's send-text and pane run deliver through bracketed paste and that nvim inserts a bracketed paste into the BUFFER whatever mode it is in, and concludes that the command line must therefore be TYPED with send-keys. The static reviewer noticed the premise defeats the conclusion: if it were true whatever the mode, the send-text that follows would put the PATH in the buffer too and the whole sequence could not work. The code demonstrably does work, so the real rule is narrower - most likely that nvim routes a bracketed paste to the cmdline while cmdline mode is active, which is the negation of the stated premise. One of the comment and the code is wrong and a maintainer reading it will fix the wrong one. Settle it by experiment against a real nvim: open a pane, enter cmdline mode with send-keys, send-text a path, and observe where the text lands; then repeat in normal mode and in insert mode. Rewrite the comment to state the rule that actually holds. This matters beyond tidiness because the current shape was adopted after a paste corrupted a real source file, so the next person to touch it needs the true rule, not a plausible one.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/nvim.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0051",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "live-diff: the nvim filename escaping added by the fix pass is untested",
+      "long": "The AGNT-0015 fix pass widened openInNvim's escape class to vim's fnameescape territory and replaced the LF/CR/TAB refusal with a full control-character class, closing a hole where a backtick in a repository filename would run a shell command through vim's backtick expansion. The static reviewer confirmed the new class is correct by reading it, and then found that nvim.test.ts still exercises only space, percent, hash and pipe - the four characters the OLD class already handled. Every character the fix ADDED is unverified by the suite: backtick, asterisk, question mark, dollar, brace, bracket, tilde, angle brackets, ampersand, semicolon, quote characters, and the control-byte refusal including ESC. Add cases for each, asserting on the exact string handed to send-text, plus a refusal case per control byte class (C0, DEL, C1) asserting that openInNvim returns false AND that nothing was sent. Note the reviewer also found the leading plus-or-minus escape is dead code, because the argument is always an absolute path from containedAbsolutePath and so always starts with a slash: either delete it or state why it stays.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/nvim.test.ts",
+        "pi/extensions/live-diff/nvim.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0052",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "low",
+      "short": "live-diff: BodyLine should encode filler rows in its type, not a nullable field",
+      "long": "The AGNT-0047 comment prune deleted the docstring on BodyLine.modelRowIndex and renamed the field selectableRowIndex. The reviewer's judgement is that the rename carries what the field IS but not what NULL means, and no rename can carry a nullable field's null case: a reader still has to go to buildBody to learn that null marks a hunk line or a truncation line rather than a selectable row. The restructure the deleted docstring was really asking for is a discriminated union - a row line carrying its index and a filler line carrying none - which makes the null case unrepresentable and needs no comment at all. Small, purely internal, and it removes the last place in the module where a comment was doing a type's job.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0053",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "snapshot engine for non-git directories and gitignored files",
+      "long": "Two of the owner's asks share one subsystem, so they ship as one ticket. First, a directory that is not a git repository must still show what changed during the session's uptime, background changes included. Second, gitignored files must appear at the bottom of the diff list, greyed out but still accessible, and their changes must be noticed. Git can answer neither: an ignored file has no baseline in any tree, and a non-repo has no tree at all. Needs a path-to-hash or mtime snapshot taken at session start, a comparison later, and an honest cost story for large trees. CENTRAL RISK, not an afterthought: making ignored changes visible deliberately reverses the watcher's ignore rule in pi/extensions/live-diff/watch.ts, and that rule exists because node_modules churn would otherwise turn the badge into a git treadmill. The ticket must show the treadmill does not return. (Filed as AGNT-0030 on the AGNT-0015 branch and renumbered to AGNT-0053 when that branch merged: a concurrent session on main had already published a different AGNT-0030. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/",
+        "pi/extensions/live-diff.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0054",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "drill into a branch's commits from the diff view",
+      "long": "The owner's second git scenario: from the diff basket, drill down into the individual commits behind the committed rows. A commit list for the current branch with an expandable diff per commit, reachable from the existing read-only viewer. Overlaps AGNT-0017 (restore a Herdr worktree as a replayable cockpit), which also wants browsable per-request history, so the two should be designed together rather than solving the same navigation twice. (Filed as AGNT-0031 on the AGNT-0015 branch and renumbered to AGNT-0054 when that branch merged: a concurrent session on main had already published a different AGNT-0031. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/",
+        "pi/extensions/live-diff.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0055",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "enforce a subagent's dispatch scope mechanically",
+      "long": "AGNT-0015 deviation D-12: a builder appended a joke comment to .gitignore, a file outside the list its dispatch named, and the orchestrator caught it only because it happened to read git status before committing. Nothing enforced the scope the dispatch stated. Add a mechanical check comparing the files a child actually touched against the file list it was given, and fail or report the difference. Cheap, and it removes a whole class of silent damage. (Filed as AGNT-0032 on the AGNT-0015 branch and renumbered to AGNT-0055 when that branch merged: a concurrent session on main had already published a different AGNT-0032. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
+      "deps": [],
+      "files": [
+        "agents/",
+        "skills/engineer/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0056",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "phase 23 should land through /git-sync instead of reimplementing it",
+      "long": "Two skills own landing and they have already drifted. skills/engineer/phases/23-close.md step 7 carries its own route choice, its own push, and its own PR call, while skills/git-sync/SKILL.md owns exactly that job for the whole machine. When the gate E standard changed on 2026-08-20 - a project WITH a remote lands through a PR, a project without lands by local squash merge - the change was propagated by hand into SKILL.md, phase 01 and phase 23, and git-sync was missed. It still carries the old local-squash default. That is the duplication reporting itself.\n\nFix has two halves. First, update git-sync to the current standard so the skill that owns landing states it correctly. Second, make phase 23 step 7 DELEGATE: it should hand the branch to /git-sync and record what came back, keeping only what is genuinely engineer's - the gate E presentation, the status flips in roadmap.json and tasks.json, and the usage log line. The route choice, the push, the PR body and the branch cleanup all belong to git-sync.\n\nTwo constraints learned on the AGNT-0015 run. A squash merge is invisible to git branch --merged, because the squashed commit is new and the branch tip never becomes an ancestor, so whichever skill owns the close-out sweep needs the tree-parity fallback that phase 01 already documents. And create-pr does not gate on its own - it stops only on an empty diff or a rejected push - so the human gate has to stay on engineer's side of the handoff, before the call, never inside it.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/23-close.md",
+        "skills/engineer/SKILL.md",
+        "skills/git-sync/SKILL.md",
+        "skills/git-sync/TUNING.md"
+      ],
+      "blame_phase": 23,
+      "created": "2026-08-21T01:49:35-0400"
     }
   ]
 }

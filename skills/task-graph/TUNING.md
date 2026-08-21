@@ -29,3 +29,14 @@ tune this skill, and not when you build a graph.
   follows the existing partial order, so it can no longer manufacture a cycle. The skill states
   NN overflow, the empty-roadmap counter, `blame_phase`, `kind:ticket`, and the override
   destination now.
+
+## 2026-08-20 — priority field (owner ask, gate A of AGNT-0015 run)
+
+Mutation: schema gains optional `priority ∈ urgent|high|med|low` (missing/unknown = med).
+next-ticket.sh ranks priority before unlock count before NNNN and prints `[priority]` per row.
+Priority ranks selection only; it never adds an edge. Path used: feature-fix path, not a
+harness win — no existing case measures selection order under priority. Evidence: full
+evals/run.sh green after the change (smoke + cases t1–t7, scores 9–10), plus a live
+reproduction on .map/roadmap.json where an urgent 0-unlock ticket outranked a med 1-unlock
+ticket. Coverage debt: a fenced case author was dispatched this pass to add the missing
+selection-order case; the author received the requirement only, never this diff.

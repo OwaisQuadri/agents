@@ -95,3 +95,19 @@ commands = []
 herdr_plugin = "herdr/worktree-layout"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "live-diff"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/live-diff.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "live-diff-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/live-diff"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
