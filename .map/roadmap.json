@@ -464,7 +464,7 @@
     },
     {
       "id": "AGNT-0028",
-      "status": "resolved",
+      "status": "done",
       "short": "statusline extension crashes on stale ctx after session replacement",
       "long": "pi/extensions/statusline.ts render() uses a captured extension ctx after session replacement; ExtensionRunner.assertActive throws (runner.js:360 hasUI -> statusline.ts:212 render, :238 refresh). During AGNT-0014 this killed every pi-subagents workflow wrapper and dumped raw Node stack traces into the Pi TUI (owner screenshots, 2026-08-19). Fix per the runner guidance: never use a captured ctx after newSession/fork/switchSession/reload; move post-replacement work into withSession or re-resolve the ctx per render. Verify by running a workflowScript with two parallel children and confirming the wrapper survives and no trace lands in the TUI.",
       "deps": [],
@@ -1055,7 +1055,7 @@
     {
       "id": "AGNT-0066",
       "kind": "ticket",
-      "status": "todo",
+      "status": "in progress",
       "short": "Give Pi read access to Herdr state: workspaces, nvim viewports, terminal logs",
       "long": "Owner ask (2026-08-21): Pi currently has no visibility into the live Herdr(the workspace/pane manager this repo integrates with) session state around it -- which workspaces/worktrees are open, what's showing in nvim viewports, what terminal windows exist and their scrollback/logs. Give Pi read access to that state so an agent session can answer questions about or act on what the owner is actually looking at across his panes, not just its own transcript. Related existing ticket AGNT-0017 (replayable cockpit -- restore Herdr tabs/state on cold start) is about persistence/restore, not live read access from within a running Pi session; this ticket is the live-query surface, likely a new Herdr-side API/extension Pi calls into. Scope needs definition at phase 03/04: which Herdr surfaces expose queryable state today (panes, tabs, active commands), what a live nvim-viewport read requires (nvim RPC?), and whether terminal log access needs each pane's scrollback captured to a file Pi can read or a live RPC channel.",
       "deps": [],
