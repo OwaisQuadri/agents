@@ -77,15 +77,20 @@ agent keeps the thinking its author tuned, and only its model follows the tier.
 
 How the assignment reaches each harness:
 
-- Pi: the `pi/agents/` frontmatter carries NO model. Subagents receive a tier's WHOLE
-  ordered `fallbacks` list. The session map takes the first entry only, because the
-  session walks one hop per limit and re-enters on the new model. The installer compiles
-  the tier file into `subagents.agentOverrides` (model, fallbacks, thinking) plus
-  `subagents.defaultModel` and `subagents.defaultThinking` in `~/.pi/agent/settings.json`.
-  Frontmatter without a model falls through to those overrides.
-- Claude Code: no override layer exists, so `agents/*/` frontmatter must carry the tier's
-  floating alias, named by the tier file's `claude` field. That line belongs to the
-  installer, which rewrites it when it drifts from the tier file. Never edit it by hand.
+ONE definition per role lives in `agents/<name>/<name>.md`. The installer derives
+everything else from it.
+
+- Pi: the installer GENERATES `~/.pi/agent/agents/<name>.md` from that definition. Same body, tool
+  names mapped to pi's registry (`Glob` to `find`, `WebSearch` to `web_search`), and no
+  model line at all. Subagents receive a tier's whole ordered `fallbacks` list through
+  `subagents.agentOverrides`. The session map takes the first entry only, because the
+  session walks one hop per limit and re-enters on the new model. An unmapped tool aborts
+  the install rather than dropping a capability grant in silence.
+- Claude Code: no override layer exists, so the frontmatter must carry a model alias. The
+  installer DERIVES that alias rather than reading a declared one. It walks the tier's
+  chain for the first Anthropic model and takes the family word out of the id. A chain
+  holding none climbs to the next tier, which is how the free tier resolves to haiku
+  there. Never edit that line by hand.
 
 The anchor-verifier seat runs per builder wave and per break panel, the highest volume of
 any reviewer. It grades on executed evidence, not judgment, so it rides T3. The

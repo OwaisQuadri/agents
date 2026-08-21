@@ -100,28 +100,83 @@ link "$HOME_TARGET/.claude/rules" "$REPO_TARGET/rules"
 # 6. agents fleet: one directory symlink, definitions resolve from the repo
 link "$HOME_TARGET/.claude/agents" "$REPO_TARGET/agents"
 
-# 6b. pi agents fleet: same fleet, pi-subagents format. The definitions carry no model
-#     pins; config/model-tiers.json is the source of truth and 6c compiles it in.
-run mkdir -p "$HOME_TARGET/.pi/agent"
-link "$HOME_TARGET/.pi/agent/agents" "$REPO_TARGET/pi/agents"
-
-# 6c. model tiers -> pi settings: subagents.defaultModel from the orchestrator tier,
-#     subagents.agentOverrides per agent (model + cross-provider fallback), and the flat
-#     modelTierFallbacks map the usage-limit extension reads to degrade the SESSION model
-#     one tier sideways. Frontmatter without a model falls through to these, so the JSON
-#     file is the one place ids live.
+# 6b/6c. ONE agent definition per role, in agents/<name>/<name>.md. Everything else is
+#     derived. config/model-tiers.json assigns a tier; this block resolves that tier to a
+#     model per harness, rewrites the Claude Code alias line, generates the pi definition,
+#     and compiles the tier map into pi settings. Never hand-edit a generated file.
 TIERS="$REPO_TARGET/config/model-tiers.json"
+PI_AGENTS="$HOME_TARGET/.pi/agent/agents"
 PI_SETTINGS_TIERS="$HOME_TARGET/.pi/agent/settings.json"
+run mkdir -p "$HOME_TARGET/.pi/agent" "$PI_AGENTS"
+
 if ! command -v jq >/dev/null 2>&1; then
-  echo "warn: jq not found, skipping the model-tier sync" >&2
+  echo "warn: jq not found, skipping agent generation and the model-tier sync" >&2
 elif [[ ! -f "$TIERS" ]]; then
-  echo "warn: $TIERS not found, skipping the model-tier sync" >&2
+  echo "warn: $TIERS not found, skipping agent generation and the model-tier sync" >&2
 else
+  # Claude Code reaches Anthropic only, so a tier resolves there by walking its own chain
+  # for the first Anthropic model, then climbing tiers when its chain has none (T1 is free
+  # and openai-backed, so it climbs to T2). The alias is the family word out of the model
+  # id, which is what Claude Code frontmatter accepts.
+  CLAUDE_ALIAS_JQ='def anthropic_in(t): [t.pi] + t.fallbacks | map(select(startswith("anthropic/"))) | first;
+    . as $r
+    | ($r.tiers | keys | sort) as $order
+    | .agents | to_entries[]
+    | .key as $name | .value as $tier
+    | ($order | index($tier)) as $at
+    | [ $order[$at:][] | $r.tiers[.] | anthropic_in(.) | select(. != null) ] | first
+    | select(. != null)
+    | sub("^anthropic/claude-";"") | sub("-.*$";"") as $alias
+    | [$name, $alias] | @tsv'
+
+  while IFS=$'\t' read -r name alias; do
+    src="$REPO_TARGET/agents/$name/$name.md"
+    [[ -f "$src" ]] || continue
+    if grep -q "^model: $alias$" "$src"; then
+      plan "ok   $src model -> $alias"
+    else
+      plan "set  $src model -> $alias (derived from $TIERS)"
+      run sed -i '' "1,12 s/^model: .*$/model: $alias/" "$src"
+    fi
+  done < <(jq -r "$CLAUDE_ALIAS_JQ" "$TIERS" 2>/dev/null)
+
+  # The pi definition is generated: same body, quoted name, tool names mapped to pi's
+  # registry, and NO model line, because pi resolves the tier through agentOverrides.
+  # An unmapped tool aborts rather than silently dropping a capability grant.
+  for src in "$REPO_TARGET"/agents/*/*.md; do
+    name="$(basename "$src" .md)"
+    [[ "$(jq -r --arg n "$name" '.agents[$n] // empty' "$TIERS")" != "" ]] || continue
+    dest="$PI_AGENTS/$name.md"
+    gen="$(awk '
+      function map(t) {
+        if (t == "Read") return "read"; if (t == "Write") return "write";
+        if (t == "Edit") return "edit"; if (t == "Bash") return "bash";
+        if (t == "Grep") return "grep"; if (t == "Glob") return "find";
+        if (t == "WebSearch") return "web_search"; if (t == "WebFetch") return "fetch_content";
+        print "UNMAPPED_TOOL:" t > "/dev/stderr"; exit 3
+      }
+      NR == 1 && $0 == "---" { print; infm = 1; next }
+      infm && /^---$/ { print "tools:"; for (i = 1; i <= n; i++) print "  - " tools[i]; print; infm = 0; next }
+      infm && /^name:/ { sub(/^name: */, ""); printf "name: \"%s\"\n", $0; next }
+      infm && /^description:/ { sub(/^description: */, ""); printf "description: \"%s\"\n", $0; next }
+      infm && /^model:/ { next }
+      infm && /^tools:/ { sub(/^tools: */, ""); n = split($0, a, /, */); for (i = 1; i <= n; i++) tools[i] = map(a[i]); next }
+      infm { next }
+      { print }
+    ' "$src")" || { echo "FATAL: unmapped tool in $src" >&2; exit 1; }
+    if [[ -f "$dest" ]] && [[ "$gen" == "$(cat "$dest")" ]]; then
+      plan "ok   $dest generated from $src"
+    else
+      plan "gen  $dest from $src"
+      (( IS_DRY )) || printf '%s\n' "$gen" > "$dest"
+    fi
+  done
+
   [[ -f "$PI_SETTINGS_TIERS" ]] || { plan "init $PI_SETTINGS_TIERS"; run bash -c "echo '{}' > '$PI_SETTINGS_TIERS'"; }
   # agentOverrides.thinking OVERWRITES an agent's own frontmatter (agents.ts applyOverride),
   # so the tier's thinking is emitted only for agents this repo owns. A package agent that
   # tuned its own thinking keeps it, and only its model follows the tier.
-  OWNED="$(cd "$REPO_TARGET/pi/agents" 2>/dev/null && ls *.md 2>/dev/null | sed 's/\.md$//' | jq -R . | jq -sc .)"
+  OWNED="$(cd "$REPO_TARGET/agents" 2>/dev/null && ls -d */ 2>/dev/null | tr -d / | jq -R . | jq -sc .)"
   OWNED="${OWNED:-[]}"
   # modelTierFallbacks takes each tier's FIRST backup: the session extension walks one hop
   # per usage limit and re-enters on the new model, so the rest of the chain is reached by
@@ -144,19 +199,6 @@ else
     run bash -c "jq --argjson t \"\$(cat '$TIERS')\" --argjson owned '$OWNED' '$TIER_JQ' '$PI_SETTINGS_TIERS' \
       > '$PI_SETTINGS_TIERS.tmp' && mv '$PI_SETTINGS_TIERS.tmp' '$PI_SETTINGS_TIERS'"
   fi
-  # Claude Code has no override layer, so its frontmatter must carry the tier's floating
-  # alias. The alias line is compiled output: on drift this rewrites it from the tier file.
-  while IFS=$'\t' read -r name alias; do
-    f="$REPO_TARGET/agents/$name/$name.md"
-    [[ -f "$f" ]] || continue
-    if grep -q "^model: $alias$" "$f"; then
-      plan "ok   $f model -> $alias"
-    else
-      plan "set  $f model -> $alias (from $TIERS)"
-      run sed -i '' "1,12 s/^model: .*$/model: $alias/" "$f"
-    fi
-  done < <(jq -r '. as $r | .agents | to_entries[]
-    | select($r.tiers[.value].claude) | [.key, $r.tiers[.value].claude] | @tsv' "$TIERS")
 fi
 
 # 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;

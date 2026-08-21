@@ -5,16 +5,14 @@
       "fallbacks": [
         "openai-codex/gpt-5.6-luna"
       ],
-      "thinking": "low",
-      "claude": "haiku"
+      "thinking": "low"
     },
     "T2": {
       "pi": "openai-codex/gpt-5.6-luna",
       "fallbacks": [
         "anthropic/claude-haiku-4-5"
       ],
-      "thinking": "low",
-      "claude": "haiku"
+      "thinking": "low"
     },
     "T3": {
       "pi": "openai-codex/gpt-5.3-codex-spark",
@@ -22,24 +20,21 @@
         "anthropic/claude-sonnet-5",
         "openai-codex/gpt-5.6-terra"
       ],
-      "thinking": "medium",
-      "claude": "sonnet"
+      "thinking": "medium"
     },
     "T4": {
       "pi": "anthropic/claude-opus-5",
       "fallbacks": [
         "openai-codex/gpt-5.6-sol"
       ],
-      "thinking": "high",
-      "claude": "opus"
+      "thinking": "high"
     },
     "T5": {
       "pi": "anthropic/claude-fable-5",
       "fallbacks": [
         "anthropic/claude-opus-5"
       ],
-      "thinking": "medium",
-      "claude": "fable"
+      "thinking": "medium"
     }
   },
   "orchestrator": "T3",
