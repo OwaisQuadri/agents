@@ -23,7 +23,8 @@ argument.
 
 Each tier's `fallbacks` list crosses provider families on purpose. A provider outage or a
 usage-limit stop then degrades one tier sideways instead of failing the run. The list is
-ordered, so T3 tries terra and then codex-spark before the tier gives up.
+ordered, so T3 leads with codex-spark for bounded engineering work, then sonnet, then
+terra.
 
 ## the four rules
 
