@@ -38,6 +38,10 @@ const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const FIVE_HOUR_SECONDS = 5 * 3600;
 const SEVEN_DAY_SECONDS = 7 * 86400;
 
+function isCtxActive(ctx: ExtensionContext): boolean {
+	throw new Error("unimplemented");
+}
+
 function clampPercent(value: number): number {
 	if (!Number.isFinite(value) || value < 0) return 0;
 	return value > 100 ? 100 : value;
