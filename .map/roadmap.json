@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 65,
+  "next_nnnn": 66,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1037,6 +1037,20 @@
       "blame_phase": null,
       "created": "2026-08-21T14:17:58-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0065",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "install.sh hook run writes stray files into cwd when triggered from a non-canonical worktree",
+      "long": "Discovered live during an engineer-map run (2026-08-21): `git commit --amend` inside a worktree at /Users/owaisquadri/.herdr/worktrees/agents/worktree-quiet-cloud-ca8d fired the linked `post-rewrite` hook (install.sh:213 links `.git/hooks/post-rewrite` to install.sh, per the file's own comment: 'git runs this through .git/hooks/post-merge, a symlink'). Most of install.sh's steps completed correctly against the real $HOME (symlinks, tool renders, hook links all reported `ok` against the canonical checkout at /Users/owaisquadri/Documents/agents). But two stray directories, `.../` and `.pi/`, each containing `.pi/agent/auth.json` and `.pi/agent/models-store.json` (both 2-byte `{}` stubs, no real credential content -- confirmed, not a leak), appeared in the WORKTREE's cwd rather than at $HOME. The real ~/.pi/agent/auth.json and ~/.pi/agent/models-store.json were confirmed untouched (correct size, pre-incident timestamp). Root cause hypothesis, unconfirmed: some step resolves a path relative to the invoking shell's cwd instead of $HOME_TARGET or $REPO_TARGET when the hook fires from a non-canonical worktree rather than the canonical checkout git hooks normally run from. The run also hit a separate tool-sync manifest error -- 'foreign checkout /Users/owaisquadri/.cache/tool-sync/rag: expected origin https://github.com/OwaisQuadri/rag.git, observed https://github.com/OwaisQuadri/agents.git' -- but a direct `git remote -v` check on that checkout immediately after showed the correct rag.git origin, so the error message may be reading stale or wrong state at hook-invocation time; worth its own root-cause pass. Repro: from any worktree under .herdr/worktrees/ that has install.sh's post-rewrite hook linked (any worktree cut from this repo does, since the hook link is per-checkout), run `git commit --amend` and check for stray .pi/ or .../ directories left in that worktree's cwd afterward.",
+      "deps": [],
+      "files": [
+        "install.sh"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:23:47-0400",
+      "priority": "high"
     }
   ]
 }
