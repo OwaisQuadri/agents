@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 62,
+  "next_nnnn": 63,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -998,6 +998,18 @@
       "blame_phase": null,
       "created": "2026-08-21T14:03:05-0400",
       "priority": "low"
+    },
+    {
+      "id": "AGNT-0062",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "web_search tool returns fabricated/unreliable results for niche technical queries",
+      "long": "Owner report (2026-08-21): asked whether Pi has a Claude-Code-style 'hop into a live subagent session' capability. web_search (3 queries, current default provider) returned citations that do not check out on inspection -- unaffiliated/likely-nonexistent GitHub repos with plausible-sounding names ('pi-interactive-subagents', 'pi-codex-subagents', a dozen personal forks), a Reddit-flavored source list that reads as generated rather than real, and totally unrelated PDFs mixed into the citation list (a surveillance-NVR manual, an Oracle telecom doc, a Perforce IPLM doc, an arxiv paper on 'ipi-code' that doesn't appear to exist). The real answer came from reading this repo's actually-installed skill docs directly (skills/pi-subagents/references/*.md), not from the web search. Owner's framing: this generalizes past the current pi-subagents package -- other real Pi subagent UX/attach experiences likely exist and a working search tool should be able to find them. Investigate: (1) which provider is configured as default and whether it's prone to fabrication/low-quality synthesis for niche technical queries, (2) whether a different provider (per web_search's provider list: brave, exa, tavily, kagi, perplexity, etc.) or workflow mode (search1api, serper, firecrawl) performs better on this exact repro query, (3) whether get_search_content / source_check would have caught the fabrication if used as a follow-up verification step, and whether that verification should be automatic rather than manual. This ticket lives in this repo only if search-provider config is owned here; if it's owned by the Pi/tool layer outside this repo, retarget or refile there once confirmed.",
+      "deps": [],
+      "files": [],
+      "blame_phase": null,
+      "created": "2026-08-21T14:12:10-0400",
+      "priority": "med"
     }
   ]
 }
