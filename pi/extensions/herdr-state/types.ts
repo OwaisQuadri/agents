@@ -114,9 +114,14 @@ export interface HerdrRawSnapshot {
 	agents: HerdrRawAgent[];
 }
 
+export interface HerdrSnapshotResult {
+	type: "session_snapshot";
+	snapshot: HerdrRawSnapshot;
+}
+
 export interface HerdrSnapshotResponse {
 	id: string;
-	result: HerdrRawSnapshot;
+	result: HerdrSnapshotResult;
 }
 
 export type HerdrRawEvent =
