@@ -38,7 +38,7 @@ const OVERLAY_PADDING_X = 1;
 const OVERLAY_PADDING_Y = 1;
 // pi-tui's Component#render(width) receives no live terminal height and TUI exposes
 // no getter for one, but the extension runs in Pi's own process, so the terminal
-// row count is on process.stdout. overlayOptions.maxHeight carries the same 80%
+// row count is on process.stdout. overlayOptions.maxHeight carries the same ratio
 // so the frame and the content agree on the budget.
 const OVERLAY_HEIGHT_RATIO = 0.8;
 const OVERLAY_MAX_HEIGHT = "80%";
@@ -181,8 +181,6 @@ function styleRow(theme: ThemeLike, row: RenderRow, padding: string): string {
  * @returns the mapped key, or null when the input is unbound
  */
 export function mapKey(data: string): OverlayKey | null {
-	// Full sequences are matched before the bare-Esc case below, so the shared
-	// \x1b prefix of \x1b[A / \x1b[B never falls through to "close".
 	switch (data) {
 		case "\x1b[A":
 		case "k":
@@ -529,10 +527,6 @@ export default function liveDiff(pi: ExtensionAPI): void {
 								1,
 								width - OVERLAY_PADDING_X * 2 - SELECTED_GUTTER.length,
 							);
-							// The frame adds OVERLAY_PADDING_Y blank lines above and below
-							// the body, so the body's own budget is the requested maximum
-							// MINUS that padding. Getting this wrong by the padding amount
-							// is exactly how the earlier edge-bleed bug happened.
 							const rows = renderRows(
 								model,
 								contentWidth,

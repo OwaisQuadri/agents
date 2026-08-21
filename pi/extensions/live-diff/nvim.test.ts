@@ -54,11 +54,6 @@ function makeExec(): {
 	return { exec, calls };
 }
 
-// The command line is TYPED with send-keys (colon, e, space) and only the path
-// itself is pasted with send-text. herdr's send-text/run deliver via bracketed
-// paste, which nvim inserts into the BUFFER whatever mode it is in - that bug
-// corrupted a real source file before this shape replaced it. Reconstructing the
-// command here proves the whole sequence, not just its last call.
 function sentCommand(calls: RecordedCall[]): string | null {
 	const keys = calls
 		.filter((call) => call.args[0] === "pane" && call.args[1] === "send-keys")

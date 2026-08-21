@@ -154,6 +154,9 @@ export async function openInNvim(
 		const escapedPath = absolutePath
 			.replace(/[\\ *?[\]{}`$%#'"|!<>()&;~]/g, (char) => "\\" + char)
 			.replace(/^([+-])/, "\\$1");
+		// herdr's send-text and pane run both deliver through bracketed paste, and
+		// nvim inserts a bracketed paste into the BUFFER whatever mode it is in. So
+		// the command line is TYPED with send-keys and only the path is sent as text.
 		for (const key of ["esc", "colon", "e", "space"]) {
 			const keyOut = await runHerdr(exec, bin, [
 				"pane",

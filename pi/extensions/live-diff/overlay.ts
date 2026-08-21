@@ -14,8 +14,44 @@ import type {
 	ViewerState,
 } from "./types.ts";
 
-/** Lines scrolled by page-up and page-down when the reducer has no display height. */
-const VIEWER_PAGE_SIZE = 20;
+function isColumnScopedKey(key: OverlayKey): key is "close" | "mode-left" | "mode-right" {
+	return key === "close" || key === "mode-left" || key === "mode-right";
+}
+
+function reduceColumnScoped(
+	model: OverlayModel,
+	key: "close" | "mode-left" | "mode-right",
+): OverlayStep {
+	if (key === "close") {
+		return { model, effect: { kind: "close" } };
+	}
+	const mode: DiffMode = key === "mode-left" ? "request" : "overall";
+	if (model.mode === mode) {
+		return { model, effect: null };
+	}
+	return { model: { ...model, mode }, effect: null };
+}
+
+function hintGapBeside(
+	label: string,
+	hint: string,
+	width: number,
+): number | null {
+	const gap = width - displayWidth(label) - displayWidth(hint);
+	return gap < 1 ? null : gap;
+}
+
+function padToBodyHeight(
+	rows: RenderRow[],
+	bodyHeight: number,
+	width: number,
+): RenderRow[] {
+	const body = [...rows];
+	while (body.length < bodyHeight) {
+		body.push(railed(fit([], width, false), width));
+	}
+	return body;
+}
 
 function rowsForMode(
 	mode: DiffMode,
@@ -97,13 +133,6 @@ export function rebuildRows(
 	return { ...model, rows, cursor };
 }
 
-/**
- * Total display lines a loaded diff occupies: one header plus one line per
- * hunk line, across every hunk. Used to clamp the viewer's scroll offset.
- *
- * @param hunks parsed hunks, or null while the patch is still loading
- * @returns total scrollable lines; 0 while loading
- */
 function viewerLineCount(hunks: Hunk[] | null): number {
 	if (hunks === null) {
 		return 0;
@@ -122,14 +151,6 @@ function clampViewerOffset(
 	return Math.min(Math.max(offset, 0), maxOffset);
 }
 
-/**
- * Pure keyboard transition while the read-only viewer has focus. The list
- * underneath is untouched: mode, cursor and rows all pass through as-is.
- *
- * @param model current model; model.viewer is non-null
- * @param key mapped key
- * @returns next model plus at most one effect
- */
 function reduceViewer(
 	model: OverlayModel,
 	key: OverlayKey,
@@ -248,24 +269,8 @@ export function reduce(
 	if (model.viewer !== null) {
 		return reduceViewer(model, key, viewportHeight);
 	}
-	// Column-scoped keys act on model.mode rather than model.rows[model.cursor],
-	// so they must stay live even when the current column has zero rows —
-	// otherwise a user who lands on an empty column is trapped there with only
-	// close left to press.
-	if (key === "close") {
-		return { model, effect: { kind: "close" } };
-	}
-	if (key === "mode-left") {
-		if (model.mode === "request") {
-			return { model, effect: null };
-		}
-		return { model: { ...model, mode: "request" }, effect: null };
-	}
-	if (key === "mode-right") {
-		if (model.mode === "overall") {
-			return { model, effect: null };
-		}
-		return { model: { ...model, mode: "overall" }, effect: null };
+	if (isColumnScopedKey(key)) {
+		return reduceColumnScoped(model, key);
 	}
 	if (model.rows.length === 0) {
 		return { model, effect: null };
@@ -353,12 +358,8 @@ function headerRow(
 	if (scrollHint === null) {
 		return fit([{ text: label, tone: "header" }], width, false);
 	}
-	// The scroll hint is right-aligned after the label, with at least one
-	// space of separation. When the two cannot both fit, the hint is dropped
-	// WHOLE rather than clipped: a half-visible "↑ 4" is worse than nothing,
-	// and the column names must stay legible over the hint every time.
-	const gap = width - displayWidth(label) - displayWidth(scrollHint);
-	if (gap < 1) {
+	const gap = hintGapBeside(label, scrollHint, width);
+	if (gap === null) {
 		return fit([{ text: label, tone: "header" }], width, false);
 	}
 	return fit(
@@ -379,8 +380,7 @@ function hintRow(width: number): RenderRow {
 
 interface BodyLine {
 	row: RenderRow;
-	/** Index into model.rows for a per-row line; null for a hunk or truncation line. */
-	modelRowIndex: number | null;
+	selectableRowIndex: number | null;
 }
 
 function emptyStateText(mode: DiffMode): string {
@@ -400,7 +400,7 @@ function buildBody(
 					width,
 					false,
 				),
-				modelRowIndex: null,
+				selectableRowIndex: null,
 			},
 		];
 	}
@@ -431,7 +431,7 @@ function buildBody(
 				tone: "removed",
 			});
 		}
-		lines.push({ row: fit(spans, width, isSelected), modelRowIndex: index });
+		lines.push({ row: fit(spans, width, isSelected), selectableRowIndex: index });
 		if (!isUnfolded || row.hunks === null) {
 			return;
 		}
@@ -442,7 +442,7 @@ function buildBody(
 					width,
 					false,
 				),
-				modelRowIndex: null,
+				selectableRowIndex: null,
 			});
 			for (const hunkLine of hunk.lines) {
 				lines.push({
@@ -456,7 +456,7 @@ function buildBody(
 						width,
 						false,
 					),
-					modelRowIndex: null,
+					selectableRowIndex: null,
 				});
 			}
 		}
@@ -468,22 +468,12 @@ function buildBody(
 				width,
 				false,
 			),
-			modelRowIndex: null,
+			selectableRowIndex: null,
 		});
 	}
 	return lines;
 }
 
-/**
- * Window the body so the cursor line stays visible without recentring on
- * every move: the offset only advances or retreats the minimum amount
- * needed to keep the cursor's line inside [offset, offset + height).
- *
- * @param lines full body, in display order
- * @param height number of body lines to keep
- * @param cursorLineIndex index within `lines` that must stay visible
- * @returns the visible slice plus how many lines are hidden above and below
- */
 function windowBody(
 	lines: BodyLine[],
 	height: number,
@@ -510,15 +500,6 @@ function windowBody(
 
 const VIEWER_RAIL = "│";
 
-/**
- * Wrap a body row in the viewer's left and right rails, so every interior
- * line reads as inside the bordered rectangle rather than a bare line
- * floating between an unattached top border and hint.
- *
- * @param inner spans already fitted to `width - 2` (the rail width)
- * @param width panel width in display columns; must be >= 2
- * @returns a row whose spans concatenate to exactly `width` columns
- */
 function railed(inner: RenderRow, width: number): RenderRow {
 	const interiorWidth = Math.max(width - 2, 0);
 	const reflowed = fit(inner.spans, interiorWidth, false);
@@ -532,16 +513,6 @@ function railed(inner: RenderRow, width: number): RenderRow {
 	};
 }
 
-/**
- * Border row for the viewer: rounded corners filled to exactly `width` with
- * horizontal rule, so the rectangle the rails draw actually closes rather
- * than a title floating in front of trailing padding. The top border
- * carries the file path plus "read-only", stated explicitly so the surface
- * is never mistaken for an editable nvim buffer, and an optional scroll
- * indicator. The bottom border carries the key hint. Either extra piece is
- * dropped WHOLE when it cannot fit beside the required text — a half
- * legend or a half "↑ 4" is worse than none, matching the list header's rule.
- */
 function viewerBorderRow(
 	side: "top" | "bottom",
 	width: number,
@@ -558,9 +529,6 @@ function viewerBorderRow(
 		width - displayWidth(headText) - fixedTailWidth,
 		0,
 	);
-	// Bottom border: the key hint degrades by dropping trailing ·-separated
-	// items whole, never mid-word. Top border: the scroll hint has no item
-	// boundaries to trim, so it is dropped whole when it does not fit.
 	const fittedExtra =
 		extra === null
 			? null
@@ -589,15 +557,6 @@ function viewerBorderRow(
 const VIEWER_HINT_TEXT = "j k scroll · d u page · g G ends · ] [ file · ⏎ edit · esc back";
 const VIEWER_HINT_ITEM_SEP = " · ";
 
-/**
- * The largest whole-item prefix of a " · "-separated hint that fits within
- * `maxWidth` display columns, dropping trailing items rather than clipping
- * mid-word. Returns null when even the first item does not fit.
- *
- * @param hint the full " · "-joined hint text
- * @param maxWidth budget in display columns
- * @returns the fitted hint, or null when nothing fits
- */
 function fitHintItems(hint: string, maxWidth: number): string | null {
 	const items = hint.split(VIEWER_HINT_ITEM_SEP);
 	for (let count = items.length; count > 0; count -= 1) {
@@ -674,15 +633,6 @@ function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 	return lines;
 }
 
-/**
- * Render the read-only viewer: a rounded, titled, explicitly-read-only
- * border around a scrollable slice of one file's diff.
- *
- * @param viewer the open viewer state
- * @param width panel width in display columns
- * @param visibleHeight rows available including both border lines
- * @returns rows padded or clipped to exactly `width`; no row is selected
- */
 function renderViewer(
 	viewer: ViewerState,
 	width: number,
@@ -692,15 +642,12 @@ function renderViewer(
 		(Number.isFinite(visibleHeight) ? visibleHeight : 24) - 2,
 		1,
 	);
-	// Every path below emits exactly bodyHeight content rows so the box
-	// always occupies visibleHeight rows total — a short message (loading,
-	// binary, unavailable) is padded with blank framed rows exactly like a
-	// short diff is, so the bottom border never drifts off a fixed height.
 	const framed = (message: string): RenderRow[] => {
-		const body = [railed(fit([{ text: message, tone: "hint" }], width, false), width)];
-		while (body.length < bodyHeight) {
-			body.push(railed(fit([], width, false), width));
-		}
+		const body = padToBodyHeight(
+			[railed(fit([{ text: message, tone: "hint" }], width, false), width)],
+			bodyHeight,
+			width,
+		);
 		return [
 			viewerBorderRow("top", width, viewer.path, null),
 			...body,
@@ -774,7 +721,7 @@ export function renderRows(
 	const body = buildBody(model, width, isTruncated);
 	const bodyHeight = Math.max(visibleHeight - 2, 0);
 	const cursorLineIndex = Math.max(
-		body.findIndex((line) => line.modelRowIndex === model.cursor),
+		body.findIndex((line) => line.selectableRowIndex === model.cursor),
 		0,
 	);
 	const { visible, hiddenAbove, hiddenBelow } = windowBody(
@@ -885,10 +832,10 @@ function displayCount(value: number): number {
 	return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-// Generated from the Unicode character database (unicodedata 16.0.0):
-// every codepoint whose East Asian Width is W or F, as 122 ranges. A
-// hand-written table missed whole emoji blocks and each miss bled a row
-// past the panel edge, so this one is derived rather than curated.
+// Generated from the Unicode character database (unicodedata 16.0.0): every
+// codepoint whose East Asian Width is W or F, as 122 ranges. Derived, not
+// curated by hand, because a display width that is wrong by one column
+// silently breaks every row-width guarantee in this module.
 const WIDE = /^[\u{1100}-\u{115F}\u{231A}-\u{231B}\u{2329}-\u{232A}\u{23E9}-\u{23EC}\u{23F0}\u{23F3}\u{25FD}-\u{25FE}\u{2614}-\u{2615}\u{2630}-\u{2637}\u{2648}-\u{2653}\u{267F}\u{268A}-\u{268F}\u{2693}\u{26A1}\u{26AA}-\u{26AB}\u{26BD}-\u{26BE}\u{26C4}-\u{26C5}\u{26CE}\u{26D4}\u{26EA}\u{26F2}-\u{26F3}\u{26F5}\u{26FA}\u{26FD}\u{2705}\u{270A}-\u{270B}\u{2728}\u{274C}\u{274E}\u{2753}-\u{2755}\u{2757}\u{2795}-\u{2797}\u{27B0}\u{27BF}\u{2B1B}-\u{2B1C}\u{2B50}\u{2B55}\u{2E80}-\u{2E99}\u{2E9B}-\u{2EF3}\u{2F00}-\u{2FD5}\u{2FF0}-\u{303E}\u{3041}-\u{3096}\u{3099}-\u{30FF}\u{3105}-\u{312F}\u{3131}-\u{318E}\u{3190}-\u{31E5}\u{31EF}-\u{321E}\u{3220}-\u{3247}\u{3250}-\u{A48C}\u{A490}-\u{A4C6}\u{A960}-\u{A97C}\u{AC00}-\u{D7A3}\u{F900}-\u{FAFF}\u{FE10}-\u{FE19}\u{FE30}-\u{FE52}\u{FE54}-\u{FE66}\u{FE68}-\u{FE6B}\u{FF01}-\u{FF60}\u{FFE0}-\u{FFE6}\u{16FE0}-\u{16FE4}\u{16FF0}-\u{16FF1}\u{17000}-\u{187F7}\u{18800}-\u{18CD5}\u{18CFF}-\u{18D08}\u{1AFF0}-\u{1AFF3}\u{1AFF5}-\u{1AFFB}\u{1AFFD}-\u{1AFFE}\u{1B000}-\u{1B122}\u{1B132}\u{1B150}-\u{1B152}\u{1B155}\u{1B164}-\u{1B167}\u{1B170}-\u{1B2FB}\u{1D300}-\u{1D356}\u{1D360}-\u{1D376}\u{1F004}\u{1F0CF}\u{1F18E}\u{1F191}-\u{1F19A}\u{1F200}-\u{1F202}\u{1F210}-\u{1F23B}\u{1F240}-\u{1F248}\u{1F250}-\u{1F251}\u{1F260}-\u{1F265}\u{1F300}-\u{1F320}\u{1F32D}-\u{1F335}\u{1F337}-\u{1F37C}\u{1F37E}-\u{1F393}\u{1F3A0}-\u{1F3CA}\u{1F3CF}-\u{1F3D3}\u{1F3E0}-\u{1F3F0}\u{1F3F4}\u{1F3F8}-\u{1F43E}\u{1F440}\u{1F442}-\u{1F4FC}\u{1F4FF}-\u{1F53D}\u{1F54B}-\u{1F54E}\u{1F550}-\u{1F567}\u{1F57A}\u{1F595}-\u{1F596}\u{1F5A4}\u{1F5FB}-\u{1F64F}\u{1F680}-\u{1F6C5}\u{1F6CC}\u{1F6D0}-\u{1F6D2}\u{1F6D5}-\u{1F6D7}\u{1F6DC}-\u{1F6DF}\u{1F6EB}-\u{1F6EC}\u{1F6F4}-\u{1F6FC}\u{1F7E0}-\u{1F7EB}\u{1F7F0}\u{1F90C}-\u{1F93A}\u{1F93C}-\u{1F945}\u{1F947}-\u{1F9FF}\u{1FA70}-\u{1FA7C}\u{1FA80}-\u{1FA89}\u{1FA8F}-\u{1FAC6}\u{1FACE}-\u{1FADC}\u{1FADF}-\u{1FAE9}\u{1FAF0}-\u{1FAF8}\u{20000}-\u{2FFFD}\u{30000}-\u{3FFFD}]$/u;
 const ZERO_WIDTH = /^[\p{Mn}\p{Me}]$/u;
 

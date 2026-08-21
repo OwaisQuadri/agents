@@ -88,8 +88,7 @@ function createFakeCtx(recorder: Recorder, cwd: string): ExtensionContext {
 
 function createFakePi() {
 	// Pi's real API APPENDS handlers (loader.js: list.push(handler)), so an
-	// extension may register several for one event and all of them run. A fake
-	// that kept only the last one hid a live defect once already.
+	// extension may register several for one event and all of them run.
 	const handlers = new Map<string, Handler[]>();
 	const commands = new Map<string, CommandHandler>();
 	const api = {
@@ -611,8 +610,6 @@ test("W9 mapKey binds the viewer motions: d/u, g/G, ]/[", () => {
 });
 
 test("W9 bare Esc still closes and is never confused with an arrow sequence", () => {
-	// The arrow sequences (\x1b[A, \x1b[B) share the \x1b prefix with bare Esc.
-	// mapKey must match the full sequence, never fall through to close on a prefix.
 	assert.equal(mapKey("\x1b[A"), "up");
 	assert.equal(mapKey("\x1b[B"), "down");
 	assert.equal(mapKey("\x1b"), "close");
@@ -643,10 +640,8 @@ async function openOverlay(
 		options: OverlayProbe["options"];
 	};
 	const themes = createThemeRecorder();
-	// A key can trigger an ASYNC effect (load-patch, open-in-nvim), which the
-	// real TUI learns about via requestRender() once the promise settles.
-	// Waiting on that same signal here, rather than a fixed sleep, is what
-	// lets this helper stay honest about async work instead of racing it.
+	// The real TUI learns an async effect has settled via requestRender(), so
+	// this waits on that same signal rather than on a fixed sleep.
 	let onNextRender = (): void => {};
 	const tui = {
 		requestRender() {
@@ -774,11 +769,6 @@ test("F-17 the overlay never exceeds its height budget, however many files chang
 		`render() must never emit more lines than the requested maxHeight, saw ${probe.lines.length}`,
 	);
 
-	// At a wide enough panel the scroll indicator has room to spell "more"
-	// rather than being clipped to its leading glyph — the row-count
-	// guarantee holds at any width (checked above), but the indicator's
-	// readability is a width concern, checked on a fresh harness so the
-	// two /diff opens do not collide with openOverlay's own one-call check.
 	const wide = createHarness(t);
 	for (let index = 0; index < 60; index += 1) {
 		fs.writeFileSync(path.join(wide.repo.root, `many-${index}.txt`), `content ${index}\n`);
@@ -849,20 +839,14 @@ test("W8 badge keeps the all label when no branch point resolves", async (t) => 
 
 test("W9 h and l rebuild rows for both columns, not just flip the mode flag", async (t) => {
 	const { pi, recorder, ctx, repo } = createHarness(t);
-	// branch-only.txt is committed BEFORE the request snapshot, so it is part
-	// of the snapshot tree and never shows up as a request-side change; it
-	// still differs from the branch point and so appears on the overall side.
+	// Committed BEFORE the request snapshot, so it is inside the snapshot tree:
+	// absent from the request side, present against the branch point.
 	addBranchCommit(repo, "feature", "branch-only.txt");
 	await pi.fire("agent_start", {}, ctx);
 	fs.appendFileSync(path.join(repo.root, "alpha.txt"), "request edit\n");
 	pi.fire("tool_execution_end", { toolName: "edit" }, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
 
-	// Open once and drive it through several render checkpoints, mirroring
-	// openOverlay's own factory-extraction pattern: this overlay's contract
-	// is that the SAME session re-renders differently as keys land, which a
-	// fresh open-per-key-sequence cannot exercise (a fresh /diff always
-	// re-refreshes and starts in whichever mode has content).
 	await pi.command("diff")("", ctx);
 	assert.equal(recorder.customCalls.length, 1);
 	const call = recorder.customCalls[0] as {
@@ -988,9 +972,6 @@ test("W9 ctrl-d, ctrl-u, g and G move the viewer's scroll offset", async (t) => 
 test("W9 a rejected patch fetch leaves the viewer unavailable without throwing", async (t) => {
 	const { pi, recorder, ctx, repo } = createHarness(t);
 	fs.writeFileSync(path.join(repo.root, "conflict-dir"), "placeholder\n");
-	// A path that cannot be diffed (a plain file standing in for a directory
-	// git will refuse) drives filePatch's own error path without touching the
-	// engine module: the shell's catch around filePatch must still hold.
 	addUnstagedEdit(repo);
 	pi.fire("session_start", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);

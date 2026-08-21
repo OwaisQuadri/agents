@@ -92,7 +92,6 @@ test("W9 open-diff on the cursor row opens the viewer loading and emits load-pat
 	assert.equal(first.model.viewer.hunks, null);
 	assert.equal(first.model.viewer.isLoading, true);
 	assert.equal(first.model.viewer.offset, 0);
-	// The list underneath is untouched: same rows, same cursor, same mode.
 	assert.equal(first.model.rows, model.rows);
 	assert.equal(first.model.cursor, model.cursor);
 
@@ -104,7 +103,6 @@ test("W9 open-diff on the cursor row opens the viewer loading and emits load-pat
 	const closed = reduce(loaded, "close");
 	assert.equal(closed.effect, null);
 	assert.equal(closed.model.viewer, null);
-	// Closing the viewer returns to the list exactly where it was left.
 	assert.equal(closed.model.rows, model.rows);
 	assert.equal(closed.model.cursor, model.cursor);
 });
@@ -224,8 +222,6 @@ test("TC-09 empty stats give zero rows; row-scoped keys are inert, close still w
 });
 
 test("F-16 mode keys always work from an empty column, in both directions", () => {
-	// A user who lands on an empty column must be able to leave it: the
-	// column-scoped keys are never trapped by the row-scoped empty guard.
 	const model = initialModel(null, stats([]));
 	assert.equal(model.rows.length, 0);
 	assert.equal(model.mode, "overall");
@@ -243,15 +239,11 @@ test("F-16 mode keys always work from an empty column, in both directions", () =
 	assert.equal(backToOverall.effect, null);
 	assert.equal(backToOverall.model.mode, "overall");
 
-	// Idempotent: pressing the same direction twice from an empty column
-	// changes nothing on the second press — the second call returns the exact
-	// model it was given, not merely a structurally-equal copy.
 	const onceLeft = reduce(model, "mode-left").model;
 	const pressedTwice = reduce(onceLeft, "mode-left");
 	assert.equal(pressedTwice.effect, null);
 	assert.equal(pressedTwice.model, onceLeft);
 
-	// Row-scoped keys stay inert throughout, on both empty columns.
 	for (const m of [model, toRequest.model]) {
 		for (const key of ["up", "down", "open-diff", "open"] as OverlayKey[]) {
 			const step = reduce(m, key);
@@ -276,8 +268,6 @@ test("F-16 an empty column renders an explicit empty-state row, per column", () 
 	const requestText = requestRows.map(rowText).join("\n");
 	assert.match(requestText, /no changes in this request yet/);
 
-	// The empty-state row obeys the same width contract as every other row,
-	// and the header/hint stay present around it.
 	for (const rows of [overallRows, requestRows]) {
 		for (const row of rows) {
 			assert.equal(testDisplayWidth(rowText(row)), 60);
@@ -865,8 +855,6 @@ test("F-17 moving down past the bottom of the window scrolls by one, not a jump"
 			.map((row) => rowText(row).match(/file-\d+\.ts/)?.[0] ?? "");
 	}
 
-	// Fill the window from the top: rows 0..bodyHeight-1 are visible without
-	// scrolling, and the cursor moving within that range must not scroll.
 	for (let step = 0; step < bodyHeight - 1; step += 1) {
 		model = reduce(model, "down").model;
 	}
@@ -882,8 +870,6 @@ test("F-17 moving down past the bottom of the window scrolls by one, not a jump"
 		"file-7.ts",
 	]);
 
-	// One more step pushes the cursor past the bottom of the window: the
-	// window must scroll by exactly one line, not recentre or jump.
 	model = reduce(model, "down").model;
 	const afterScroll = visiblePaths(model);
 	assert.deepEqual(afterScroll, [
@@ -1241,17 +1227,13 @@ test("W9 viewer: scrolling clamps at both ends", () => {
 		initialModel(threeFileRequest(), null),
 		"open-diff",
 	).model;
-	// The diff must be longer than a window for scrolling to mean anything:
-	// content shorter than the viewport correctly never scrolls at all.
 	model = applyPatch(model, "request", "a.ts", bigHunks(120));
 	assert.ok(model.viewer);
 	assert.equal(model.viewer.offset, 0);
 
-	// Scrolling up from the top stays at 0.
 	model = reduce(model, "up").model;
 	assert.equal(model.viewer?.offset, 0);
 
-	// Scroll down one line at a time to the bottom, then confirm it clamps.
 	for (let step = 0; step < 400; step += 1) {
 		model = reduce(model, "down").model;
 	}
@@ -1292,7 +1274,6 @@ test("W9 viewer: page-up and page-down move by the page size and respect the cla
 	model = reduce(model, "page-up").model;
 	assert.equal(model.viewer?.offset, 0, "page-up back to the top returns to 0");
 
-	// Paging past the bottom clamps rather than overshooting.
 	for (let step = 0; step < 20; step += 1) {
 		model = reduce(model, "page-down").model;
 	}
@@ -1340,8 +1321,6 @@ test("W9 viewer: next-file and prev-file move within the current column, reset o
 	assert.deepEqual(toC.effect, { kind: "load-patch", path: "c.ts", mode: "request" });
 	assert.equal(toC.model.viewer?.path, "c.ts");
 
-	// next-file past the last row WRAPS to the first, and prev-file from the
-	// first wraps to the last.
 	const wrapped = reduce(toC.model, "next-file");
 	assert.deepEqual(wrapped.effect, { kind: "load-patch", path: "a.ts", mode: "request" });
 	assert.equal(wrapped.model.viewer?.path, "a.ts");
@@ -1357,7 +1336,6 @@ test("W9 viewer: next-file and prev-file move within the current column, reset o
 	const backToA = reduce(backToB.model, "prev-file");
 	assert.equal(backToA.model.viewer?.path, "a.ts");
 
-	// prev-file from the first row WRAPS to the last.
 	const beforeStart = reduce(backToA.model, "prev-file");
 	assert.deepEqual(beforeStart.effect, { kind: "load-patch", path: "c.ts", mode: "request" });
 	assert.equal(beforeStart.model.viewer?.path, "c.ts");
@@ -1382,7 +1360,6 @@ test("W9 viewer: close returns to the list with cursor and column preserved", ()
 	assert.equal(afterFirstClose.model.cursor, beforeOpen.cursor);
 	assert.equal(afterFirstClose.model.rows, beforeOpen.rows);
 
-	// A second close, with the viewer already shut, closes the overlay.
 	const secondClose = reduce(afterFirstClose.model, "close");
 	assert.deepEqual(secondClose.effect, { kind: "close" });
 });
@@ -1394,18 +1371,14 @@ test("W9 viewer: a stale patch (wrong path, wrong mode, or viewer since closed) 
 	).model;
 	assert.equal(model.viewer?.path, "a.ts");
 
-	// Wrong path: the viewer moved on (e.g. via next-file) before this fetch resolved.
 	const movedOn = reduce(model, "next-file").model;
 	assert.equal(movedOn.viewer?.path, "b.ts");
 	const staleForA = applyPatch(movedOn, "request", "a.ts", hunks);
 	assert.equal(staleForA, movedOn, "a patch for a path the viewer left must be dropped");
 
-	// Wrong mode: the column flipped before the fetch resolved.
 	const staleMode = applyPatch(model, "overall", "a.ts", hunks);
 	assert.equal(staleMode, model);
 
-	// Viewer closed entirely before the fetch resolved: falls back to the
-	// list path, which is itself a no-op here because no row is folded open.
 	const closed = reduce(model, "close").model;
 	assert.equal(closed.viewer, null);
 	const afterClose = applyPatch(closed, "request", "a.ts", hunks);
@@ -1677,8 +1650,6 @@ test("W9 viewer: the key hint appears in the bottom border and degrades by dropp
 	// from a broken all-or-nothing fallback — assert partiality directly.
 	assert.match(narrowBottom, /scroll/, "the first hint item must survive at width 40");
 	assert.doesNotMatch(narrowBottom, /back/, "the last hint item must NOT survive at width 40, proving item-level (not all-or-nothing) degradation");
-	// No hint item may be cut mid-word: every ·-joined item present in the
-	// narrow row must appear in full, byte for byte, inside the wide row.
 	const narrowItems = narrowBottom
 		.replace(/^╰[─\s]*/, "")
 		.replace(/[─\s]*╯$/, "")
