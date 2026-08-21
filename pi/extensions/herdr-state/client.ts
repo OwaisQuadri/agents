@@ -1,3 +1,4 @@
+// TODO(AGNT-0066.T01): Implement only read-only snapshot, event, and pane-output access.
 import type {
 	HerdrPaneOutput,
 	HerdrSnapshotResponse,

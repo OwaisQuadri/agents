@@ -1,3 +1,4 @@
+// TODO(AGNT-0066.T03): Register the read-only global state command and its detail arguments.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**

@@ -85,6 +85,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | --- | --- |
 | `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
 
+<!-- TODO(AGNT-0066.T06): Document the Herdr state command with global scope and bounded output. -->
 ## Pi stack
 
 The managed upstream stack pins these immutable revisions:

@@ -1,3 +1,4 @@
+// TODO(AGNT-0066.T02): Replace stubs with immutable snapshot and event normalization.
 import type {
 	HerdrAgentLocation,
 	HerdrRawEvent,
