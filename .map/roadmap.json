@@ -464,7 +464,7 @@
     },
     {
       "id": "AGNT-0028",
-      "status": "todo",
+      "status": "in progress",
       "short": "statusline extension crashes on stale ctx after session replacement",
       "long": "pi/extensions/statusline.ts render() uses a captured extension ctx after session replacement; ExtensionRunner.assertActive throws (runner.js:360 hasUI -> statusline.ts:212 render, :238 refresh). During AGNT-0014 this killed every pi-subagents workflow wrapper and dumped raw Node stack traces into the Pi TUI (owner screenshots, 2026-08-19). Fix per the runner guidance: never use a captured ctx after newSession/fork/switchSession/reload; move post-replacement work into withSession or re-resolve the ctx per render. Verify by running a workflowScript with two parallel children and confirming the wrapper survives and no trace lands in the TUI.",
       "deps": [],
