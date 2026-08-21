@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 69,
+  "next_nnnn": 70,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1089,6 +1089,18 @@
       "blame_phase": null,
       "created": "2026-08-21T14:26:45-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0069",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Decide default for the pi-subagents async widget (active/failed status bar)",
+      "long": "Owner asked (2026-08-21) what the active/failed status bar at the bottom of the terminal is and whether he can remove it. Identified: it's pi-subagents' async widget, rendered just above the input box, showing active/background/failed subagent-run counts. It's configurable, not fixed: set `asyncWidget: false` in `~/.pi/agent/extensions/subagent/config.json` (that file does not exist yet on this machine, so the widget currently runs at its default, on). The fleet inspector (`/subagents-fleet`) stays available regardless of this setting, per pi-subagents' own docs. This ticket is the decision + action: does the owner want it off by default (write the config file with asyncWidget:false), on, or does its bottom-of-screen positioning need adjusting instead of a flat on/off (distinct from AGNT-0068's custom terminal UI direction, which this may eventually fold into once that broader design space is scoped).",
+      "deps": [],
+      "files": [],
+      "blame_phase": null,
+      "created": "2026-08-21T14:35:57-0400",
+      "priority": "low"
     }
   ]
 }
