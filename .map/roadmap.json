@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 64,
+  "next_nnnn": 65,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1022,6 +1022,20 @@
       "blame_phase": null,
       "created": "2026-08-21T14:14:03-0400",
       "priority": "low"
+    },
+    {
+      "id": "AGNT-0064",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "install.sh --test is slow \u2014 drop the blocking pi launch for incremental runs",
+      "long": "Owner ask (2026-08-21). install.sh --test pins HOME_TARGET to .install-test-home (a sandbox home inside the worktree) and, per its final step (install.sh:573-581), execs  at the end -- an interactive pi session that blocks the script from returning until the user exits it. That makes every --test run pay for launching and using an interactive pi session even when the goal is just verifying the install steps ran correctly (symlinks, config writes, hook registration, etc.), which slows down incremental install.sh development where the loop is edit-run-check-repeat many times per session. Fix direction per the owner: make --test finish in the background without starting the interactive pi session by default -- keep the sandbox-home construction and all prior steps (1-17) exactly as they are, but make step 18's  opt-in (a separate flag, e.g. --test --interactive, or a second explicit step run only when asked) rather than the automatic default tail of --test. The auth-symlink borrowing logic (real credential linked, never copied) stays as-is regardless of whether the interactive drop happens.",
+      "deps": [],
+      "files": [
+        "install.sh"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:17:58-0400",
+      "priority": "med"
     }
   ]
 }
