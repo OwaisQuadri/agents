@@ -431,18 +431,18 @@ test("badgeText and row stats render 0 for non-finite and negative counts", () =
 		additions: Number.NaN,
 		deletions: -5,
 	});
-	assert.equal(badgeText(broken, null), "req +0 ~1 −0");
+	assert.equal(badgeText(broken, null), "turn +0 ~1 −0");
 	assert.equal(
 		badgeText(stats([change("a.ts")], { additions: 10, deletions: Infinity }), null),
-		"req +10 ~1 −0",
+		"turn +10 ~1 −0",
 	);
 	assert.equal(
 		badgeText(stats([change("a.ts")], { additions: -100, deletions: 5 }), null),
-		"req +0 ~1 −5",
+		"turn +0 ~1 −5",
 	);
 	assert.equal(
 		badgeText(stats([change("a.ts")], { additions: -Infinity, deletions: 5 }), null),
-		"req +0 ~1 −5",
+		"turn +0 ~1 −5",
 	);
 
 	const model = initialModel(
@@ -630,13 +630,13 @@ test("badgeText shapes: both sides, one side null, present-but-empty side", () =
 	]);
 	assert.equal(
 		badgeText(requestStats, overallStats),
-		"req +101 ~2 −8 · all +214 ~1 −31",
+		"turn +101 ~2 −8 · all +214 ~1 −31",
 	);
-	assert.equal(badgeText(requestStats, null), "req +101 ~2 −8");
+	assert.equal(badgeText(requestStats, null), "turn +101 ~2 −8");
 	assert.equal(badgeText(null, overallStats), "all +214 ~1 −31");
 	assert.equal(
 		badgeText(stats([]), overallStats),
-		"req +0 ~0 −0 · all +214 ~1 −31",
+		"turn +0 ~0 −0 · all +214 ~1 −31",
 	);
 });
 
@@ -1012,14 +1012,14 @@ test("F-17 a width too narrow for the indicator keeps the column names and drops
 	for (let step = 0; step < 50; step += 1) {
 		model = reduce(model, "down").model;
 	}
-	// label "[request] overall" is 18 display columns (this fixture starts in
+	// label "[turn] overall" is 18 display columns (this fixture starts in
 	// request mode); the indicator needs a gap of >=1 plus its own width to
 	// appear at all, so the true boundary is measured directly rather than
 	// assumed from a different mode's label length.
 	const narrow = renderRows(model, 20, false, 8);
 	const header = rowText(narrow[0]);
 	assert.ok(
-		header.includes("request") && header.includes("overall"),
+		header.includes("turn") && header.includes("overall"),
 		"the column names must survive even when the indicator does not fit",
 	);
 	assert.ok(
@@ -1028,21 +1028,31 @@ test("F-17 a width too narrow for the indicator keeps the column names and drops
 	);
 	assert.equal(testDisplayWidth(header), 20, "the header row still fills the width exactly");
 
-	const justWide = renderRows(model, 28, false, 8);
-	const justWideHeader = rowText(justWide[0]);
+	// Derive the boundary rather than hardcoding it: the header label's length is
+	// a product decision that has already changed once (request became turn), and
+	// a hardcoded width turns that rename into a false test failure.
+	let boundary = 0;
+	for (let candidate = 16; candidate <= 80; candidate += 1) {
+		if (/[↑↓]/.test(rowText(renderRows(model, candidate, false, 8)[0]))) {
+			boundary = candidate;
+			break;
+		}
+	}
+	assert.ok(boundary > 0, "the indicator must appear at some width");
+
+	const justWideHeader = rowText(renderRows(model, boundary, false, 8)[0]);
 	assert.ok(
 		/[↑↓]/.test(justWideHeader),
 		"at the boundary width, the indicator must appear",
 	);
-	assert.equal(testDisplayWidth(justWideHeader), 28);
+	assert.equal(testDisplayWidth(justWideHeader), boundary);
 
-	const justNarrow = renderRows(model, 27, false, 8);
-	const justNarrowHeader = rowText(justNarrow[0]);
+	const justNarrowHeader = rowText(renderRows(model, boundary - 1, false, 8)[0]);
 	assert.ok(
 		!/[↑↓]/.test(justNarrowHeader),
 		"one column narrower than the boundary, the indicator must be dropped whole",
 	);
-	assert.equal(testDisplayWidth(justNarrowHeader), 27);
+	assert.equal(testDisplayWidth(justNarrowHeader), boundary - 1);
 });
 
 test("F-17 every row still measures exactly the requested width across every scroll-indicator case", () => {
@@ -1201,15 +1211,15 @@ test("W8 badgeText labels the second side branch or all", () => {
 	]);
 	assert.equal(
 		badgeText(requestStats, overallStats, "branch"),
-		"req +5 ~1 −1 · branch +9 ~1 −2",
+		"turn +5 ~1 −1 · branch +9 ~1 −2",
 	);
 	assert.equal(
 		badgeText(requestStats, overallStats, "all"),
-		"req +5 ~1 −1 · all +9 ~1 −2",
+		"turn +5 ~1 −1 · all +9 ~1 −2",
 	);
 	assert.equal(
 		badgeText(requestStats, overallStats),
-		"req +5 ~1 −1 · all +9 ~1 −2",
+		"turn +5 ~1 −1 · all +9 ~1 −2",
 		"omitting the label keeps the existing default",
 	);
 });

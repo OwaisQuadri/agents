@@ -192,6 +192,11 @@ function reduceViewer(
 				},
 				effect: null,
 			};
+		case "open":
+			return {
+				model,
+				effect: { kind: "open-in-nvim", path: viewer.path },
+			};
 		case "next-file":
 		case "prev-file": {
 			const index = model.rows.findIndex((r) => r.change.path === viewer.path);
@@ -332,7 +337,7 @@ function headerRow(
 	scrollHint: string | null,
 ): RenderRow {
 	const label =
-		model.mode === "request" ? "[request] overall" : " request [overall]";
+		model.mode === "request" ? "[turn] overall" : " turn [overall]";
 	if (scrollHint === null) {
 		return fit([{ text: label, tone: "header" }], width, false);
 	}
@@ -566,7 +571,7 @@ function viewerBorderRow(
 	);
 }
 
-const VIEWER_HINT_TEXT = "j k scroll · ^d ^u page · g G ends · ] [ file · q back";
+const VIEWER_HINT_TEXT = "j k scroll · d u page · g G ends · ] [ file · ⏎ edit · esc back";
 const VIEWER_HINT_ITEM_SEP = " · ";
 
 /**
@@ -589,9 +594,33 @@ function fitHintItems(hint: string, maxWidth: number): string | null {
 	return null;
 }
 
+function hunkStartLines(header: string): { oldLine: number; newLine: number } {
+	const match = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(header);
+	if (match === null) {
+		return { oldLine: 1, newLine: 1 };
+	}
+	return { oldLine: Number(match[1]), newLine: Number(match[2]) };
+}
+
+function gutter(lineNumber: number | null, gutterWidth: number): string {
+	const text = lineNumber === null ? "" : String(lineNumber);
+	return text.padStart(gutterWidth, " ") + " ";
+}
+
 function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 	const lines: RenderRow[] = [];
+	let highestLine = 1;
 	for (const hunk of hunks) {
+		const start = hunkStartLines(hunk.header);
+		highestLine = Math.max(
+			highestLine,
+			start.oldLine + hunk.lines.length,
+			start.newLine + hunk.lines.length,
+		);
+	}
+	const gutterWidth = String(highestLine).length;
+	for (const hunk of hunks) {
+		const counters = hunkStartLines(hunk.header);
 		lines.push(
 			railed(
 				fit([{ text: sanitize(hunk.header), tone: "hunkHeader" }], width, false),
@@ -599,10 +628,21 @@ function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 			),
 		);
 		for (const hunkLine of hunk.lines) {
+			const shown =
+				hunkLine.origin === "-" ? counters.oldLine : counters.newLine;
+			if (hunkLine.origin === "-") {
+				counters.oldLine += 1;
+			} else if (hunkLine.origin === "+") {
+				counters.newLine += 1;
+			} else {
+				counters.oldLine += 1;
+				counters.newLine += 1;
+			}
 			lines.push(
 				railed(
 					fit(
 						[
+							{ text: gutter(shown, gutterWidth), tone: "truncation" },
 							{
 								text: sanitize(hunkLine.origin + hunkLine.text),
 								tone: hunkTone(hunkLine.origin),
@@ -870,7 +910,7 @@ function clip(line: string, width: number): string {
  * @param overallStats overall worktree diff or null before the first refresh
  * @param overallLabel label for the second side: "branch" when a branch
  *   point was resolved, "all" when it fell back to the HEAD tree
- * @returns one-line badge such as "req +101 ~3 −8 · branch +214 ~9 −31", or
+ * @returns one-line badge such as "turn +101 ~3 −8 · branch +214 ~9 −31", or
  *   "diff clean" when both are empty
  */
 export function badgeText(
@@ -891,7 +931,7 @@ export function badgeText(
 	};
 	const parts: string[] = [];
 	if (requestStats !== null) {
-		parts.push(side("req", requestStats));
+		parts.push(side("turn", requestStats));
 	}
 	if (overallStats !== null) {
 		parts.push(side(overallLabel, overallStats));

@@ -26,8 +26,16 @@ interface Recorder {
 	setStatusCalls: { key: string; text: string }[];
 	customCalls: unknown[];
 	notifyCalls: unknown[];
+	inputHandlers: ((data: string) => unknown)[];
 	isShutdown: boolean;
 	postShutdownUiCalls: string[];
+}
+
+// The badge is themed now, so its text carries ANSI. Assertions compare the
+// PLAIN text: colour is proven separately by the theme recorder, and matching
+// escape bytes here would pin the tests to Pi's palette.
+function plain(text: string | undefined): string {
+	return (text ?? "").replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 function createRecorder(): Recorder {
@@ -35,6 +43,7 @@ function createRecorder(): Recorder {
 		setStatusCalls: [],
 		customCalls: [],
 		notifyCalls: [],
+		inputHandlers: [],
 		isShutdown: false,
 		postShutdownUiCalls: [],
 	};
@@ -61,6 +70,14 @@ function createFakeCtx(recorder: Recorder, cwd: string): ExtensionContext {
 				guard("custom");
 				return undefined;
 			},
+			onTerminalInput(handler: (data: string) => unknown) {
+				recorder.inputHandlers.push(handler);
+				return () => {
+					recorder.inputHandlers = recorder.inputHandlers.filter(
+						(entry) => entry !== handler,
+					);
+				};
+			},
 			notify(...args: unknown[]) {
 				recorder.notifyCalls.push(args);
 				guard("notify");
@@ -70,11 +87,16 @@ function createFakeCtx(recorder: Recorder, cwd: string): ExtensionContext {
 }
 
 function createFakePi() {
-	const handlers = new Map<string, Handler>();
+	// Pi's real API APPENDS handlers (loader.js: list.push(handler)), so an
+	// extension may register several for one event and all of them run. A fake
+	// that kept only the last one hid a live defect once already.
+	const handlers = new Map<string, Handler[]>();
 	const commands = new Map<string, CommandHandler>();
 	const api = {
 		on(event: string, handler: Handler) {
-			handlers.set(event, handler);
+			const list = handlers.get(event) ?? [];
+			list.push(handler);
+			handlers.set(event, list);
 		},
 		registerCommand(name: string, options: { handler: CommandHandler }) {
 			commands.set(name, options.handler);
@@ -83,9 +105,13 @@ function createFakePi() {
 	return {
 		api,
 		fire(event: string, payload: unknown, ctx: ExtensionContext): unknown {
-			const handler = handlers.get(event);
-			assert.ok(handler, `missing handler for ${event}`);
-			return handler(payload, ctx);
+			const list = handlers.get(event);
+			assert.ok(list && list.length > 0, `missing handler for ${event}`);
+			let last: unknown;
+			for (const handler of list) {
+				last = handler(payload, ctx);
+			}
+			return last;
 		},
 		command(name: string): CommandHandler {
 			const handler = commands.get(name);
@@ -195,13 +221,13 @@ test("TC-21 an edit outside the agent moves the badge", async (t) => {
 	assert.equal(watcher.isStarted, true);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
 	const cleanCount = recorder.setStatusCalls.length;
-	assert.equal(recorder.setStatusCalls[cleanCount - 1].text, "diff clean");
+	assert.equal(plain(recorder.setStatusCalls[cleanCount - 1].text), "diff clean");
 
 	fs.writeFileSync(path.join(repo.root, "outside.txt"), "edited in nvim\n");
 	watcher.emit("outside.txt");
 
 	await waitFor(() => recorder.setStatusCalls.length > cleanCount);
-	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const badge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 	assert.match(badge, /all \+1/);
 	assert.notEqual(badge, "diff clean");
 });
@@ -341,7 +367,7 @@ test("TC-25 an unavailable watcher degrades instead of breaking", async (t) => {
 	pi.fire("agent_settled", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length > afterStart);
 	assert.match(
-		recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text,
+		plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text),
 		/all \+1/,
 	);
 });
@@ -361,7 +387,7 @@ test("TC-25 a throwing watcher factory degrades instead of breaking", async (t) 
 	pi.fire("agent_settled", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length > afterStart);
 	assert.match(
-		recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text,
+		plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text),
 		/all \+1/,
 	);
 });
@@ -381,7 +407,7 @@ test("TC-04 badge after write tool, none for read tool, one more on settle", asy
 	const afterWrite = recorder.setStatusCalls.length;
 	const lastWrite = recorder.setStatusCalls[afterWrite - 1];
 	assert.equal(lastWrite.key, "live-diff");
-	assert.match(lastWrite.text, /^req |^all |^diff/);
+	assert.match(lastWrite.text, /^turn |^all |^branch |^diff/);
 
 	pi.fire("tool_execution_end", { toolName: "read" }, ctx);
 	await sleep(400);
@@ -400,16 +426,16 @@ test("TC-12 external edit shows up in the settle badge", async (t) => {
 	await pi.fire("agent_start", {}, ctx);
 	pi.fire("agent_settled", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
-	const cleanBadge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const cleanBadge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 	assert.equal(cleanBadge, "diff clean");
 
 	fs.writeFileSync(path.join(repo.root, "external.txt"), "external edit\n");
 	const before = recorder.setStatusCalls.length;
 	pi.fire("agent_settled", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length > before);
-	const externalBadge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const externalBadge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 	assert.notEqual(externalBadge, cleanBadge);
-	assert.match(externalBadge, /req/);
+	assert.match(externalBadge, /turn/);
 	assert.match(externalBadge, /all/);
 });
 
@@ -466,7 +492,7 @@ test("TC-20 pre-session uncommitted work counts as overall", async (t) => {
 	pi.fire("session_start", {}, ctx);
 	pi.fire("agent_settled", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
-	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const badge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 
 	const overallStats = await currentOverallStats(ctx, repo);
 	assert.deepEqual(
@@ -474,7 +500,7 @@ test("TC-20 pre-session uncommitted work counts as overall", async (t) => {
 		["alpha.txt"],
 	);
 	assert.match(badge, /all \+1/);
-	assert.doesNotMatch(badge, /req/);
+	assert.doesNotMatch(badge, /turn/);
 });
 
 test("TC-20 zero-commit repo still reports a sane badge", async (t) => {
@@ -492,7 +518,7 @@ test("TC-20 zero-commit repo still reports a sane badge", async (t) => {
 	pi.fire("session_start", {}, ctx);
 	pi.fire("agent_settled", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
-	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const badge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 
 	assert.notEqual(badge, "diff ?");
 	assert.match(badge, /all \+1/);
@@ -800,7 +826,7 @@ test("W8 badge labels the second side branch when a branch point resolves", asyn
 
 	pi.fire("session_start", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
-	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const badge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 	assert.match(badge, /\bbranch\b/);
 	assert.ok(!badge.includes("all "), `expected no "all" side once a branch point resolves: ${badge}`);
 });
@@ -810,13 +836,13 @@ test("W8 badge keeps the all label when no branch point resolves", async (t) => 
 
 	pi.fire("session_start", {}, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 1);
-	const badge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const badge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 	assert.equal(badge, "diff clean");
 
 	fs.writeFileSync(path.join(repo.root, "plain-edit.txt"), "no branch here\n");
 	pi.fire("tool_execution_end", { toolName: "edit" }, ctx);
 	await waitFor(() => recorder.setStatusCalls.length >= 2);
-	const secondBadge = recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text;
+	const secondBadge = plain(recorder.setStatusCalls[recorder.setStatusCalls.length - 1].text);
 	assert.match(secondBadge, /\ball\b/);
 	assert.ok(!secondBadge.includes("branch "), `expected no "branch" side without a resolvable branch point: ${secondBadge}`);
 });
@@ -989,7 +1015,7 @@ test("W8 the overlay shows origin labels for committed and uncommitted rows on t
 	const joined = probe.lines.join("\n");
 	assert.match(
 		joined,
-		/ request \[overall\]/,
+		/ turn \[overall\]/,
 		"overall mode should already be active: no agent_start fired, so requestStats stays null",
 	);
 	assert.match(joined, /committed-on-branch\.txt/);

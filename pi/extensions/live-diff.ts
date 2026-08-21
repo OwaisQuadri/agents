@@ -242,16 +242,34 @@ export default function liveDiff(pi: ExtensionAPI): void {
 	let isDirtyPending = false;
 	let lastRefreshAt = 0;
 	let isSessionGone = false;
+	let isOverlayOpen = false;
+	let unsubscribeInput: (() => void) | null = null;
 	let pendingWatchPaths = new Set<string>();
 	let branchPointTree: string | null = null;
 	let isBranchPointResolved = false;
+
+	function colourBadge(ctx: ExtensionContext, text: string): string {
+		const theme = ctx.ui.theme;
+		if (theme === undefined) {
+			return text;
+		}
+		try {
+			return text
+				.replace(/\+\d+/g, (part) => theme.fg("toolDiffAdded", part))
+				.replace(/−\d+/g, (part) => theme.fg("toolDiffRemoved", part))
+				.replace(/~\d+/g, (part) => theme.fg("warning", part))
+				.replace(/\b(turn|branch|all)\b/g, (part) => theme.fg("muted", part));
+		} catch {
+			return text;
+		}
+	}
 
 	function setBadge(ctx: ExtensionContext, text: string): void {
 		if (isSessionGone) {
 			return;
 		}
 		try {
-			ctx.ui.setStatus("live-diff", text);
+			ctx.ui.setStatus("live-diff", colourBadge(ctx, text));
 		} catch {}
 	}
 
@@ -422,6 +440,10 @@ export default function liveDiff(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		isSessionGone = true;
+		if (unsubscribeInput !== null) {
+			unsubscribeInput();
+			unsubscribeInput = null;
+		}
 		if (state.refreshTimer !== null) {
 			clearTimeout(state.refreshTimer);
 			state.refreshTimer = null;
@@ -447,12 +469,37 @@ export default function liveDiff(pi: ExtensionAPI): void {
 		isBranchPointResolved = false;
 	});
 
-	pi.registerCommand("diff", {
-		description: "Show live request/overall diff overlay",
-		handler: async (_args, ctx) => {
+	// ^D reaches the extension through the raw-input hook, so the diff opens
+	// without abandoning a half-typed prompt. consume:true stops the byte before
+	// the editor sees it. The subscription is dropped at shutdown, so the handler
+	// can never run against a replaced ctx.
+	pi.on("session_start", (_event, ctx) => {
+		if (!ctx.hasUI || ctx.mode !== "tui") {
+			return;
+		}
+		if (unsubscribeInput !== null) {
+			unsubscribeInput();
+			unsubscribeInput = null;
+		}
+		if (typeof ctx.ui.onTerminalInput !== "function") {
+			return;
+		}
+		unsubscribeInput = ctx.ui.onTerminalInput((data) => {
+			if (data !== "\x04" || isSessionGone || isOverlayOpen) {
+				return undefined;
+			}
+			void openDiffOverlay(ctx);
+			return { consume: true };
+		});
+	});
+
+	async function openDiffOverlay(ctx: ExtensionContext): Promise<void> {
+		{
 			if (!ctx.hasUI || ctx.mode !== "tui") {
 				return;
 			}
+			isOverlayOpen = true;
+			try {
 			await refresh(ctx);
 			if (isSessionGone) {
 				return;
@@ -550,6 +597,16 @@ export default function liveDiff(pi: ExtensionAPI): void {
 					},
 				},
 			);
+			} finally {
+				isOverlayOpen = false;
+			}
+		}
+	}
+
+	pi.registerCommand("diff", {
+		description: "Show live turn/branch diff overlay",
+		handler: async (_args, ctx) => {
+			await openDiffOverlay(ctx);
 		},
 	});
 }
