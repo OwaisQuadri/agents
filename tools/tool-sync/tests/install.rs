@@ -1,3 +1,4 @@
+// TODO(AGNT-0063.T04): Add an isolated-home replacement installation and failure fixture.
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;

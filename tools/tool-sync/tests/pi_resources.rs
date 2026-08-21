@@ -1,3 +1,4 @@
+// TODO(AGNT-0063.T02): Verify the candidate package layout and managed Pi links.
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;

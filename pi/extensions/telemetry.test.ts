@@ -1,3 +1,4 @@
+// TODO(AGNT-0063.T03): Cover the proven replacement lifecycle events and malformed payloads.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

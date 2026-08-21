@@ -123,6 +123,7 @@ type ShutdownEvent = {
 
 const TELEMETRY_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const TELEMETRY_PACKAGE_VERSION = "0.84.2";
+// TODO(AGNT-0063.T03): Adapt telemetry identity after the replacement event contract is proven.
 const PinnedSubagentPackageName = "pi-subagents";
 const PinnedSubagentPackageVersion = "0.50.0";
 

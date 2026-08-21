@@ -1,3 +1,4 @@
+// TODO(AGNT-0063.T03): Cover replacement lifecycle payload rejection without schema escape.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

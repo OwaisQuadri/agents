@@ -7,6 +7,7 @@ pi_extension = "pi/extensions/rag.ts"
 source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "e3fa88d5de24332cf0cc44812b8ac7c7eab0fc0f" }
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
 
+# TODO(AGNT-0063.T02): Replace this package with the reviewed tintinweb source and layout.
 [[tools]]
 name = "pi-subagents"
 platforms = ["macos", "linux"]
