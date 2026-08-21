@@ -2,6 +2,7 @@
 name: git-sync
 description: Use when pending work must reach main and the remote, or when merged branches need cleanup. Put all work through a PR(Pull Request), then prune only branches that main contains. Covers "commit, merge to main, and push", "get it all on main", and "clean up stale branches". Skip when the ask is only to open a PR, which create-pr owns.
 metadata:
+  minimum-tier: T3
   short-description: Put pending work through a PR and prune merged branches
 ---
 

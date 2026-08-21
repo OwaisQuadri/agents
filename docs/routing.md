@@ -119,8 +119,25 @@ code-reviewer seat gives the final coherence verdict and stays T4.
 
 A skill runs on the session model, and it cannot change that. So a skill whose work needs
 capability declares `metadata.minimum-tier`, and AGENTS.md tells the runner to flag a
-session sitting below it. The four authoring skills carry T4, because authoring is
-judgment work. The engineer map carries T3.
+session sitting below it.
+
+A floor goes on only where a cheaper model fails in a way the user cannot cheaply catch.
+That test, not seniority, decides:
+
+- T4 for judgment, taste, and ambiguity, where a wrong answer is expensive and no command
+  proves it wrong. The four authoring skills, `agent-config-reset`, `byline`, `ladder`.
+- T3 for bounded work carrying real blast radius or structure a small model loses.
+  `engineer`, `git-sync`, `hq`, `task-graph`, `footprint`, `vocabulary`.
+- No floor where the work is mechanical, or where a checker already grades the output.
+  `create-pr`, `rust-style`, `session-stats`, `volley`.
+
+The register skills carry no floor ON PURPOSE. `mouthpiece`, `bro`, and `computah-voice`
+run on nearly every reply. A floor on any of them would floor the whole session, rather
+than one task. `ste-check` already grades their output, which is the cheap catch
+that makes the floor unnecessary.
+
+Every floor is a hypothesis. They rest on judgment today, and the bottom-up sweep in
+AGNT-0018 is what can prove one wrong.
 
 ## what T1 cost, measured
 

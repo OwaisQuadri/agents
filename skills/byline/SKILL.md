@@ -2,6 +2,7 @@
 name: byline
 description: Use when prose is about to ship under the user's name where a stranger reads it. a commit message, PR(Pull Request) body, ticket short or long, README, changelog, release note, or doc. Strips the AI tells (throat-clearing openers, hedges, adverb padding, metronomic rhythm, vague declaratives, meta-commentary) and leaves the facts untouched. Skip for the message the user himself reads, which /mouthpiece owns, and for code comments, which docs/comment-style.md owns.
 metadata:
+  minimum-tier: T4
   short-description: De-slop the prose that ships under his name
 ---
 
