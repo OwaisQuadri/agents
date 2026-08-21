@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 61,
+  "next_nnnn": 62,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -984,6 +984,20 @@
       "blame_phase": null,
       "created": "2026-08-21T14:02:42-0400",
       "priority": "high"
+    },
+    {
+      "id": "AGNT-0061",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "statusline usage cache does not bust on same-provider account switch",
+      "long": "Found by AGNT-0028's phase-19 break-panel auth-permissions angle (2026-08-21). pi/extensions/statusline.ts's usageByProvider Map is keyed by provider name only ('anthropic'/'openai-codex'), not by account/token identity. Switching accounts within the same provider (logout/login, or a different token under the same provider string) does not invalidate the cached usage bar -- the old account's percentage keeps rendering until the next successful fetch clears the MIN_FETCH_INTERVAL_MS throttle (up to 60s later). Same pattern applies when a fetch fails due to a malformed/expired token or an auth-backend error: the prior bar is deliberately kept (existing documented behavior, 'a fetch failure keeps the previous bar; the next poll retries'), which also means a wrong-account bar can persist through an auth failure. This is pre-existing design, unchanged by AGNT-0028's stale-ctx fix, and was called out but ruled out of scope in AGNT-0028's research.md/test-cases.md. Open question for triage: is showing briefly-stale same-provider usage acceptable (current behavior, low severity, self-corrects within 60s), or does it warrant keying the cache by an account identifier too. Repro: .map/AGNT-0028/scratch/security/pi/extensions/statusline.test.ts (cases A-01, A-04, A-05).",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:03:05-0400",
+      "priority": "low"
     }
   ]
 }
