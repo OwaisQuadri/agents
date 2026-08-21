@@ -624,33 +624,19 @@ function resolveCompletionRunId(event: CompletionEvent): string {
 	return runId;
 }
 
+function requireOptionalBoolean(value: unknown, fieldName: string): void {
+	if (value !== undefined && typeof value !== "boolean") {
+		throw new Error(`${fieldName} must be a boolean`);
+	}
+}
+
 function resolveCompletionStatus(event: CompletionEvent): TelemetryStatus {
 	if (event.source !== undefined && event.source !== "async" && event.source !== "foreground") {
 		throw new Error("completion source must be async or foreground");
 	}
 
-	if (event.success !== undefined && typeof event.success !== "boolean") {
-		throw new Error("success must be a boolean");
-	}
-
-	if (event.cancelled !== undefined && typeof event.cancelled !== "boolean") {
-		throw new Error("cancelled must be a boolean");
-	}
-
-	if (event.interrupted !== undefined && typeof event.interrupted !== "boolean") {
-		throw new Error("interrupted must be a boolean");
-	}
-
-	if (event.stopped !== undefined && typeof event.stopped !== "boolean") {
-		throw new Error("stopped must be a boolean");
-	}
-
-	if (event.timedOut !== undefined && typeof event.timedOut !== "boolean") {
-		throw new Error("timedOut must be a boolean");
-	}
-
-	if (event.turnBudgetExceeded !== undefined && typeof event.turnBudgetExceeded !== "boolean") {
-		throw new Error("turnBudgetExceeded must be a boolean");
+	for (const field of ["success", "cancelled", "interrupted", "stopped", "timedOut", "turnBudgetExceeded"] as const) {
+		requireOptionalBoolean(event[field], field);
 	}
 
 	if (event.state !== undefined && !["complete", "completed", "failed", "paused", "stopped", "cancelled"].includes(String(event.state))) {
@@ -684,6 +670,16 @@ function resolveCompletionSettledAt(event: CompletionEvent, active: ActiveRunSta
 	return new Date().toISOString();
 }
 
+function normalizeNullableMetric(value: unknown, fieldName: string): number | null {
+	if (value === undefined || value === null) {
+		return null;
+	}
+	if (!isFiniteNonNegativeNumber(value)) {
+		throw new Error(`${fieldName} must be a finite non-negative number or null`);
+	}
+	return value;
+}
+
 function normalizeMetrics(value: CompletionEvent): NormalizedMetrics {
 	const metricsSource = value.totalCost === undefined || value.totalCost === null ? value : value.totalCost;
 
@@ -705,22 +701,12 @@ function normalizeMetrics(value: CompletionEvent): NormalizedMetrics {
 
 	return {
 		tokens: {
-			input: inputTokens === undefined || inputTokens === null ? null : isFiniteNonNegativeNumber(inputTokens) ? inputTokens : (() => {
-				throw new Error("inputTokens must be a finite non-negative number or null");
-			})(),
-			output: outputTokens === undefined || outputTokens === null ? null : isFiniteNonNegativeNumber(outputTokens) ? outputTokens : (() => {
-				throw new Error("outputTokens must be a finite non-negative number or null");
-			})(),
-			cacheRead: value.cacheRead === undefined || value.cacheRead === null ? null : isFiniteNonNegativeNumber(value.cacheRead) ? value.cacheRead : (() => {
-				throw new Error("cacheRead must be a finite non-negative number or null");
-			})(),
-			cacheWrite: value.cacheWrite === undefined || value.cacheWrite === null ? null : isFiniteNonNegativeNumber(value.cacheWrite) ? value.cacheWrite : (() => {
-				throw new Error("cacheWrite must be a finite non-negative number or null");
-			})(),
+			input: normalizeNullableMetric(inputTokens, "inputTokens"),
+			output: normalizeNullableMetric(outputTokens, "outputTokens"),
+			cacheRead: normalizeNullableMetric(value.cacheRead, "cacheRead"),
+			cacheWrite: normalizeNullableMetric(value.cacheWrite, "cacheWrite"),
 		},
-		costUsd: costUsd === undefined || costUsd === null ? null : isFiniteNonNegativeNumber(costUsd) ? costUsd : (() => {
-			throw new Error("costUsd must be a finite non-negative number or null");
-		})(),
+		costUsd: normalizeNullableMetric(costUsd, "costUsd"),
 	};
 }
 
@@ -830,20 +816,6 @@ async function appendSettledRun(runtime: TelemetryRuntime, record: RunRecord): P
 	}
 }
 
-function settleActiveRun(
-	runtime: TelemetryRuntime,
-	runId: string,
-	parentRunId: string | null,
-	packageVersion: string,
-	status: TelemetryStatus,
-	tokens: TokenUsage,
-	costUsd: number | null,
-	settledAt: string,
-): Promise<RunRecord> {
-	const { record } = prepareSettledRun(runtime, runId, parentRunId, packageVersion, status, tokens, costUsd, settledAt);
-	return appendSettledRun(runtime, record);
-}
-
 /**
  * Starts an in-memory telemetry run.
  *
@@ -938,7 +910,7 @@ function settleRunFromCompletion(runtime: TelemetryRuntime, event: CompletionEve
 	const status = resolveCompletionStatus(event);
 	const settledAt = resolveCompletionSettledAt(event, active);
 	const metrics = normalizeMetrics(event);
-	return settleActiveRun(
+	return settleRun(
 		runtime,
 		runId,
 		active.parentRunId,
@@ -987,7 +959,7 @@ function settleParentRun(runtime: TelemetryRuntime, status: TelemetryStatus): Pr
 	}
 
 	const active = ensureActiveRun(runtime, runId);
-	return settleActiveRun(
+	return settleRun(
 		runtime,
 		runId,
 		active.parentRunId,
@@ -1012,7 +984,7 @@ async function settleAllActiveRuns(runtime: TelemetryRuntime, status: TelemetryS
 		}
 
 		try {
-			const record = await settleActiveRun(
+			const record = await settleRun(
 				runtime,
 				runId,
 				active.parentRunId,

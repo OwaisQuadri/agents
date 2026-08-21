@@ -514,8 +514,6 @@ test("reduce never mutates a frozen model", () => {
 	assert.equal(model.rows[0].change.path, "a.ts");
 });
 
-const measureColumns = displayWidth;
-
 test("F-15 displayWidth matches known East Asian Width answers", () => {
 	// Verified against Python's unicodedata 16.0.0 (east_asian_width in W/F
 	// means two columns). Every width assertion in this file now measures with
@@ -576,8 +574,8 @@ test("F-15 no rendered line exceeds the requested width in display columns", () 
 	for (const width of [10, 20, 40, 41, 80]) {
 		for (const line of renderLines(loaded, width, true)) {
 			assert.ok(
-				measureColumns(line) <= width,
-				`width ${width}: line measured ${measureColumns(line)} columns: ${JSON.stringify(line)}`,
+				displayWidth(line) <= width,
+				`width ${width}: line measured ${displayWidth(line)} columns: ${JSON.stringify(line)}`,
 			);
 		}
 	}
@@ -640,8 +638,6 @@ test("badgeText shapes: both sides, one side null, present-but-empty side", () =
 		"turn +0 ~0 −0 · all +214 ~1 −31",
 	);
 });
-
-const testCharWidth = displayWidth;
 
 const testDisplayWidth = displayWidth;
 

@@ -6,7 +6,7 @@ type SearchMemoryInput = {
 	source_filter?: string;
 };
 
-type CommandResult = {
+export type CommandResult = {
 	stdout: string;
 	stderr: string;
 	code: number;
