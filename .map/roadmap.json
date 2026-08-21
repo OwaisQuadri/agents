@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 57,
+  "next_nnnn": 58,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -927,6 +927,20 @@
       ],
       "blame_phase": 23,
       "created": "2026-08-21T01:49:35-0400"
+    },
+    {
+      "id": "AGNT-0057",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "/ to filter the /diff view",
+      "long": "The /diff view has no way to filter down a large changeset. Owner feedback (2026-08-21): took too long to find the change wanted on one step, scanning a long diff manually. Add a '/' keybinding in the /diff view (live-diff overlay) that opens a filter/search input over the visible files or hunks, narrowing the view to matches as the user types.",
+      "deps": [],
+      "files": [
+        "pi/extensions/live-diff/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T02:58:56-0400",
+      "priority": "med"
     }
   ]
 }
