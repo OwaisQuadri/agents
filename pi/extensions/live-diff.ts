@@ -243,7 +243,6 @@ export default function liveDiff(pi: ExtensionAPI): void {
 	let lastRefreshAt = 0;
 	let isSessionGone = false;
 	let isOverlayOpen = false;
-	let unsubscribeInput: (() => void) | null = null;
 	let pendingWatchPaths = new Set<string>();
 	let branchPointTree: string | null = null;
 	let isBranchPointResolved = false;
@@ -440,10 +439,6 @@ export default function liveDiff(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", () => {
 		isSessionGone = true;
-		if (unsubscribeInput !== null) {
-			unsubscribeInput();
-			unsubscribeInput = null;
-		}
 		if (state.refreshTimer !== null) {
 			clearTimeout(state.refreshTimer);
 			state.refreshTimer = null;
@@ -467,30 +462,6 @@ export default function liveDiff(pi: ExtensionAPI): void {
 		state.isRefreshing = false;
 		branchPointTree = null;
 		isBranchPointResolved = false;
-	});
-
-	// ^D reaches the extension through the raw-input hook, so the diff opens
-	// without abandoning a half-typed prompt. consume:true stops the byte before
-	// the editor sees it. The subscription is dropped at shutdown, so the handler
-	// can never run against a replaced ctx.
-	pi.on("session_start", (_event, ctx) => {
-		if (!ctx.hasUI || ctx.mode !== "tui") {
-			return;
-		}
-		if (unsubscribeInput !== null) {
-			unsubscribeInput();
-			unsubscribeInput = null;
-		}
-		if (typeof ctx.ui.onTerminalInput !== "function") {
-			return;
-		}
-		unsubscribeInput = ctx.ui.onTerminalInput((data) => {
-			if (data !== "\x04" || isSessionGone || isOverlayOpen) {
-				return undefined;
-			}
-			void openDiffOverlay(ctx);
-			return { consume: true };
-		});
 	});
 
 	async function openDiffOverlay(ctx: ExtensionContext): Promise<void> {

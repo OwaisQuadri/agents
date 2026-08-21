@@ -239,7 +239,7 @@ The statusline badge carries two counters, coloured by the theme. `turn` counts 
 
 The badge refreshes after each write-capable tool call, when the agent settles, and when a filesystem watcher sees a change made outside the agent — an edit in another editor moves it while the agent is idle. The watcher ignores `.git` and anything git ignores, and coalesces bursts into one refresh.
 
-`ctrl-d` opens the overlay from anywhere, including mid-prompt; `/diff` opens it too. Its keys:
+The `/diff` command opens the overlay. Its keys:
 
 ```text
 j k         move the selection
