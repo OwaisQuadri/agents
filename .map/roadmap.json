@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 58,
+  "next_nnnn": 59,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -940,6 +940,20 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T02:58:56-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0058",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Show gitignored files in the /diff view when they were edited",
+      "long": "The /diff view (live-diff) only shows tracked-file changes. A gitignored file that gets edited during a session (e.g. a generated config, a local override, an untracked scratch file the agent wrote to) never shows up, so the owner can't review it there even though it changed. Owner feedback (2026-08-21): 'i want to see the ignored files in the diff menu if they were edited too.' Add ignored-but-edited files to the /diff view's file list, distinguishable from tracked changes (e.g. an [ignored] tag), sourced by diffing against the file's state at session start rather than against git (git ignores them entirely).",
+      "deps": [],
+      "files": [
+        "pi/extensions/live-diff/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T12:11:31-0400",
       "priority": "med"
     }
   ]
