@@ -12,7 +12,6 @@ pub mod cli;
 pub mod manifest;
 /// Discovers and renders project agent definitions for Pi.
 /// It takes source and destination paths, returns discovered or rendered paths, and reports invalid frontmatter or filesystem failures as `SyncError`.
-pub mod pi_agent;
 /// Exposes ordered installation action data.
 /// It takes no module-level inputs, exports plan values, and cannot fail.
 pub mod plan;

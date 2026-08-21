@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::manifest::{Platform, ToolManifest, ToolSource};
-use crate::pi_agent;
 use crate::plan::{Action, Plan};
 use crate::SyncError;
 
@@ -175,24 +174,8 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
         }
     }
 
-    let agent_sources = discover_project_agents(&context.repository_root)?;
-    let _builtin_overlap_evidence = pi_agent::builtin_overlaps(&agent_sources)?;
-    if !agent_sources.is_empty() {
-        let agent_directory = context.home_root.join(".pi/agent/agents");
-        add_directory(&agent_directory, &mut planned_paths, &mut actions)?;
-
-        for source in agent_sources {
-            let agent = pi_agent::parse(&source)?;
-            let destination = agent_directory.join(format!("{}.md", agent.name));
-            reject_agent_destination(&source, &destination)?;
-            reserve_destination(&destination, &mut planned_paths, "Pi agent")?;
-            actions.push(Action::RenderPiAgent {
-                source,
-                destination,
-            });
-        }
-    }
-
+    // install.sh owns ~/.pi/agent/agents: it renders each agent without a model line so the
+    // tier map in config/model-tiers.json routes it. A second renderer here fought that one.
     Ok(Plan { actions })
 }
 
@@ -281,33 +264,6 @@ fn reject_non_symlink(destination: &Path, field: &str) -> Result<(), SyncError> 
     }
 }
 
-fn reject_agent_destination(source: &Path, destination: &Path) -> Result<(), SyncError> {
-    match fs::symlink_metadata(destination) {
-        Ok(metadata) if metadata.is_file() => {
-            let observed = fs::read(destination)
-                .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
-            if observed == pi_agent::rendered_bytes(source)? {
-                Ok(())
-            } else {
-                Err(planning_error(format!(
-                    "Pi agent destination {} collides with a non-symlink",
-                    destination.display()
-                )))
-            }
-        }
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(planning_error(format!(
-            "Pi agent destination {} collides with a symlink",
-            destination.display()
-        ))),
-        Ok(_) => Err(planning_error(format!(
-            "Pi agent destination {} collides with a non-symlink",
-            destination.display()
-        ))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
-    }
-}
-
 fn reserve_destination(
     destination: &Path,
     planned: &mut HashSet<PathBuf>,
@@ -320,15 +276,6 @@ fn reserve_destination(
         )));
     }
     Ok(())
-}
-
-fn discover_project_agents(repository_root: &Path) -> Result<Vec<PathBuf>, SyncError> {
-    let agent_root = repository_root.join("agents");
-    match fs::symlink_metadata(&agent_root) {
-        Ok(_) => pi_agent::discover(&agent_root),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(SyncError::Io(agent_root, error)),
-    }
 }
 
 fn add_directory(
@@ -359,7 +306,6 @@ fn planning_error(detail: String) -> SyncError {
 mod tests {
     use super::*;
     use crate::manifest::{InstallerSpec, ToolSpec};
-    use crate::pi_agent;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
@@ -416,28 +362,6 @@ mod tests {
 
     fn manifest(tool: ToolSpec) -> ToolManifest {
         ToolManifest { tools: vec![tool] }
-    }
-
-    fn repo_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .canonicalize()
-            .expect("repo root")
-    }
-
-    fn repository_agent_source(name: &str) -> PathBuf {
-        repo_root().join(format!("agents/{0}/{0}.md", name))
-    }
-
-    fn repository_agent_names() -> [&'static str; 6] {
-        [
-            "anchor-verifier",
-            "code-reviewer",
-            "debugger",
-            "maestro-tester",
-            "spec-tester",
-            "web-research-summarizer",
-        ]
     }
 
     fn run_git(directory: &Path, args: &[&str]) {
@@ -901,112 +825,6 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[test]
-    fn plans_repository_agents_in_sorted_source_order() {
-        let fixture = Fixture::new();
-        let context = Context {
-            repository_root: repo_root(),
-            home_root: fixture.root.join("home"),
-            cache_root: fixture.root.join("cache"),
-            platform: Platform::Linux,
-        };
-
-        let plan = build(&ToolManifest { tools: Vec::new() }, &context).expect("plan");
-        let agent_directory = context.home_root.join(".pi/agent/agents");
-
-        assert_eq!(plan.actions.len(), 7);
-        assert_eq!(
-            plan.actions[0],
-            Action::CreateDirectory {
-                path: agent_directory.clone(),
-            }
-        );
-        assert!(pi_agent::builtin_overlaps(
-            &repository_agent_names()
-                .into_iter()
-                .map(repository_agent_source)
-                .collect::<Vec<_>>()
-        )
-        .expect("builtin overlap report")
-        .is_empty());
-
-        for (index, name) in repository_agent_names().into_iter().enumerate() {
-            let source = repository_agent_source(name);
-            assert_eq!(
-                plan.actions[index + 1],
-                Action::RenderPiAgent {
-                    source: source.clone(),
-                    destination: agent_directory.join(format!("{name}.md")),
-                },
-                "{name}"
-            );
-        }
-    }
-
-    #[test]
-    fn accepts_only_an_exact_existing_repository_agent_file() {
-        let fixture = Fixture::new();
-        let source_root = fixture.root.join("agents/fixture-agent");
-        fs::create_dir_all(&source_root).expect("agent source directory");
-        let source = source_root.join("fixture-agent.md");
-        fs::write(
-            &source,
-            "---\nname: fixture-agent\ndescription: Fixture agent\ntools: Read\nmodel: sonnet\n---\nKeep this prompt exact.\n",
-        )
-        .expect("agent source");
-        let context = fixture.context(Platform::Linux);
-        let destination = context.home_root.join(".pi/agent/agents/fixture-agent.md");
-        pi_agent::render(&source, &destination).expect("seed exact render");
-
-        let plan = build(&ToolManifest { tools: Vec::new() }, &context)
-            .expect("exact existing agent accepted");
-
-        assert_eq!(
-            plan.actions,
-            [Action::RenderPiAgent {
-                source: source.clone(),
-                destination: destination.clone(),
-            }]
-        );
-
-        fs::write(&destination, "arbitrary file\n").expect("replace exact render");
-        let error = build(&ToolManifest { tools: Vec::new() }, &context)
-            .expect_err("changed agent destination rejected");
-        assert!(error.to_string().contains("collides with a non-symlink"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rejects_an_existing_repository_agent_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let fixture = Fixture::new();
-        let source_root = fixture.root.join("agents/fixture-agent");
-        fs::create_dir_all(&source_root).expect("agent source directory");
-        let source = source_root.join("fixture-agent.md");
-        fs::write(
-            &source,
-            "---\nname: fixture-agent\ndescription: Fixture agent\ntools: Read\nmodel: sonnet\n---\nKeep this prompt exact.\n",
-        )
-        .expect("agent source");
-        let context = fixture.context(Platform::Linux);
-        let destination_root = context.home_root.join(".pi/agent/agents");
-        fs::create_dir_all(&destination_root).expect("agent destination directory");
-        let target = fixture.root.join("matching-agent.md");
-        fs::write(
-            &target,
-            pi_agent::rendered_bytes(&source).expect("render bytes"),
-        )
-        .expect("matching target");
-        let destination = destination_root.join("fixture-agent.md");
-        symlink(&target, &destination).expect("agent destination symlink");
-
-        let error = build(&ToolManifest { tools: Vec::new() }, &context)
-            .expect_err("agent symlink rejected");
-
-        assert!(error.to_string().contains("collides with a symlink"));
-    }
-
     #[test]
     fn refuses_adapter_symlink_outside_repository() {
         use std::os::unix::fs::symlink;

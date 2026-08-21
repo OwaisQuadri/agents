@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 53,
+  "next_nnnn": 56,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -308,21 +308,23 @@
       "id": "AGNT-0018",
       "kind": "ticket",
       "status": "todo",
-      "short": "Design harness-independent model routing by task value.",
-      "long": "Design the routing system and its evaluation plan. Do not implement the router. Define a harness-neutral architecture that chooses a model and access path for each task class. Admit newly released models through discovered capability, availability, quota, and price data instead of a hard-coded model list.\n\nSeparate the model, provider, account, and harness so the design can use a model through any allowed route. Cover the Claude Code and Codex memberships and the user's free OpenRouter account. Study an OpenRouter route from the Claude harness as one example. Do not assume that a membership pays for Application Programming Interface (API) use or that each harness exposes each provider.\n\nDefine a repeatable evaluation and benchmark system for the tasks this repository delegates. Include representative task classes, fixed inputs, blind grading, repeated trials, uncertainty, model and harness version capture, and content-free result summaries. Compare completion quality, success probability, latency, marginal price, membership quota impact, and fallback behavior. Define the utility rule that trades task success against price paid. Include a cold-start policy for new models and an exploration limit that cannot spend beyond an approved budget.\n\nProduce the architecture, adapter contracts, data shapes, benchmark protocol, privacy rules, routing decision record, and an implementation ticket breakdown. Show how existing telemetry supplies outcomes without storing prompts or outputs. Name which benchmark artifacts require reviewed content. Include one worked comparison across membership-backed Claude Code, membership-backed Codex, and OpenRouter routes. End with a testable design acceptance checklist and no runtime code.",
+      "short": "Evaluate the shipped model router, and settle discovery against the static tier file",
+      "long": "RESCOPED 2026-08-20, after a session shipped the thing this ticket said not to build. The original text asked for design only, no runtime code, and model admission through discovered capability, availability, quota, and price rather than a hard-coded list. What landed instead is a working static router: config/model-tiers.json as the one place model ids live, install.sh compiling it into subagents.defaultModel, subagents.agentOverrides and a flat modelTierFallbacks map, tier assignments for 11 agents, a session-level fallback in pi/extensions/usage-limit-continue.ts that walks the tier chain on a usage limit and then resumes on whichever abandoned model returns first, and docs/routing.md as the policy. Treat that as v1 and do not redesign it from scratch.\n\nWhat remains, in priority order.\n\n1. The evaluation system, which is the half of the original scope nothing has touched. Representative task classes drawn from real dispatches in this repository, fixed inputs, blind grading, repeated trials, uncertainty, model and harness version capture, and content-free result summaries. Two router arms to compare: cheap-first with escalation on a failed check, against predictive tier choice up front.\n\n2. Three findings from the 2026-08-20 session constrain that benchmark, and skipping them repeats the session's mistakes. First, the accept signal cannot be a pass-or-fail gate alone: a free-model run returned the correct answer and still burned 92 seconds, 10 tool calls and 53k tokens, five of them rewriting one file, so a gate-only score keeps it. Count turns and wall-clock beside correctness. Second, the predictive arm must read repository state, not task text: arXiv:2607.00053 reports an information-theoretic error floor for routing agentic work from the task description alone, because a typo and a multi-module refactor read the same. Third, free-tier models failed to terminate cleanly on both observed tool-loop runs, so tool grant shape is a routing variable, not a detail.\n\n3. Do not write the harness from scratch. ulab-uiuc/LLMRouter ships ten router baselines including the cheap-first cascade, lm-sys/RouteLLM scores routers, and FrugalGPT (arXiv:2305.05176) and AutoMix (arXiv:2310.12963) are the published form of the cheap-first arm. Their corpora are one-shot quiz prompts (RouterBench, MMLU, GSM8K, MBPP, MT-Bench) and do not transfer, because the accept signal here is whether a gate passed in this repository. Borrow the method and the metric definitions; write the cases locally.\n\n4. Settle discovery against the static list, on evidence rather than preference. The static file is correct today and the owner's instinct on 2026-08-20 was right that it is hard-coded. The failure it will eventually hit is staleness when a provider ships a model or moves a price, and the cheapest answer is probably a refresh that reconciles config/model-tiers.json against the live registry in ~/.pi/agent/models-store.json, not a capability-discovery engine. Decide with a case where the list actually went stale.\n\n5. Still open from the original scope, and still unbuilt: separating model, provider, account and harness so one model is reachable by any allowed route; covering Codex alongside Claude Code and pi; the quota shadow price that makes a subscription-backed call cost something; a cold-start policy for new models; and an exploration budget that cannot overspend. Each needs a worked example before it earns code.\n\nAcceptance: a benchmark that runs both arms over the local corpus and reports cost per accepted artifact with turns and latency, a decision record naming which arm won and on which task classes, and either a registry-refresh path or a written reason the static file stays hand-edited.\n\nOwner's addition, 2026-08-20: the benchmark should also sweep PER ARTIFACT, not only per router. Run an artifact's own eval cases once on each enabled model and report score beside cost and latency, so the tier assignment for each skill and agent comes from measurement instead of judgment. In his words: \"its worth to add a run in each model when running evals for our agent artifacts (ai-author) to see which models are acceptable, which tiers are more efficient for each skill/agent/etc\". Build it opt-in, as a --sweep flag on the existing harnesses rather than the default run, because every case times nine enabled models is expensive enough that a default would stop anyone running evals at all. The log-summarizer tiering on 2026-08-20 is the worked example: four runs moved it off T1, and a sweep would have answered that in one command.\n\nOwner's refinement, same day: do not run all nine. Walk UP from the cheapest tier and stop at the first one whose output is acceptable, then record that as the artifact's minimum. In his words: \"run it from the bottom up and when output is acceptable then we mark that as the minimum\". Two guards, both earned on 2026-08-20. First, one run is a sample of one: the free tier passed a log-summary task and failed the identical task on the next run, so a tier is only accepted after repeat trials clear the threshold, never on a single pass. Second, record the FAILING tier directly below the accepted one, because the boundary is the reusable fact, and it is what makes a re-test cheap when a model or a price moves. Watch for non-monotonicity while doing it: a larger model can fail a format-strict case a smaller one passes, so first-pass-going-up equals the true minimum only once the repeats confirm it. Starting rung is a judgment call, and T2 is the sane default, since T1 failed three of four runs and its failures cost 92 and 150 seconds of latency rather than money. This also turns every metadata.minimum-tier floor into a hypothesis: the four authoring skills carry T4 on judgment alone, and this sweep is what can falsify that.",
       "deps": [
         "AGNT-0012",
         "AGNT-0013"
       ],
       "files": [
-        "docs/",
+        "docs/routing.md",
+        "config/model-tiers.json",
         "evals/",
-        "agents/",
-        "pi/"
+        "pi/extensions/",
+        "install.sh"
       ],
       "blame_phase": null,
       "created": "2026-08-17T20:27:34-0400",
-      "priority": "med"
+      "priority": "med",
+      "rescoped": "2026-08-20T20:29:21-0400"
     },
     {
       "id": "AGNT-0019",
@@ -494,50 +496,44 @@
       "id": "AGNT-0030",
       "kind": "ticket",
       "status": "todo",
-      "priority": "med",
-      "short": "snapshot engine for non-git directories and gitignored files",
-      "long": "Two of the owner's asks share one subsystem, so they ship as one ticket. First, a directory that is not a git repository must still show what changed during the session's uptime, background changes included. Second, gitignored files must appear at the bottom of the diff list, greyed out but still accessible, and their changes must be noticed. Git can answer neither: an ignored file has no baseline in any tree, and a non-repo has no tree at all. Needs a path-to-hash or mtime snapshot taken at session start, a comparison later, and an honest cost story for large trees. CENTRAL RISK, not an afterthought: making ignored changes visible deliberately reverses the watcher's ignore rule in pi/extensions/live-diff/watch.ts, and that rule exists because node_modules churn would otherwise turn the badge into a git treadmill. The ticket must show the treadmill does not return.",
-      "deps": [
-        "AGNT-0015"
-      ],
+      "short": "ai-author proposes artifacts from mined session evidence",
+      "long": "ai-author decides whether to author only once an authoring job arrives: its own opening section routes what arrived, and the tree answers should-this-exist, never should-anyone-have-noticed. Nothing in the system watches accumulated evidence and proposes a capability unprompted. Mine the evidence that already exists: per-artifact logs/usage.jsonl, run-history.jsonl, and the session transcripts indexed in the personal RAG(Retrieval Augmented Generation) store. Look for a task shape repeated across sessions that the runner currently does inline. Propose a skill by default; propose an agent only on the three grounds that justify one, a different model, a tool grant the runner should not hold, or isolation from a job that spews noise. Guards, both required: the standing answer is zero, per docs/agents-fleet-research.md line 94 (handful, real-writeup ceiling ~5, null hypothesis zero), and every proposal carries the cost it measured rather than a plausible improvement idea, or the section becomes a monthly list that bills a day each and saves nothing. Run it on an interval through the pi-subagents scheduler. Owner asked for this on 2026-08-20, in his words: \"it would also be in charge of checking my sessions to find recurring tasks or inneficiencies that could be skills, or subagents if they need a specific agent\". Ships as a section inside skills/ai-author/SKILL.md plus eval cases, never as a new sibling artifact, because ai-author rule 1 bans authoring a sibling for a capability an existing artifact owns.",
+      "deps": [],
       "files": [
-        "pi/extensions/live-diff/",
-        "pi/extensions/live-diff.ts"
+        "skills/ai-author/"
       ],
       "blame_phase": null,
-      "created": "2026-08-20T20:19:42-0400"
+      "created": "2026-08-20T20:18:51-0400"
     },
     {
       "id": "AGNT-0031",
       "kind": "ticket",
       "status": "todo",
-      "priority": "med",
-      "short": "drill into a branch's commits from the diff view",
-      "long": "The owner's second git scenario: from the diff basket, drill down into the individual commits behind the committed rows. A commit list for the current branch with an expandable diff per commit, reachable from the existing read-only viewer. Overlaps AGNT-0017 (restore a Herdr worktree as a replayable cockpit), which also wants browsable per-request history, so the two should be designed together rather than solving the same navigation twice.",
-      "deps": [
-        "AGNT-0015"
-      ],
+      "short": "subagent runs drop context.md into the repo root",
+      "long": "Every pi-subagents dispatch that leaves the output default alone writes its result to context.md in the repository root and reports it as savedOutputPath. Seen four times in one session on 2026-08-20 (runs 5137e1ca, 8a33cc0c, ef5a3b5b, 721e8478), each leaving an untracked file in a working tree. That is the exact shape the engineer map already bans a phase commit from sweeping up, since widening a commit to git add -A is what put ticket artifacts into a product repo history before. One free-model run rewrote the same context.md five times inside a single dispatch, so the file also churns. Fix at the config layer so the artifact never lands in a project repo: set the subagent output default to false, or point it under the run directory. Gitignoring it is the fallback, not the preference, because it hides the litter instead of stopping it.",
+      "deps": [],
       "files": [
-        "pi/extensions/live-diff/",
-        "pi/extensions/live-diff.ts"
+        "config/",
+        ".gitignore"
       ],
       "blame_phase": null,
-      "created": "2026-08-20T20:19:42-0400"
+      "created": "2026-08-20T20:18:51-0400"
     },
     {
       "id": "AGNT-0032",
       "kind": "ticket",
       "status": "todo",
-      "priority": "high",
-      "short": "enforce a subagent's dispatch scope mechanically",
-      "long": "AGNT-0015 deviation D-12: a builder appended a joke comment to .gitignore, a file outside the list its dispatch named, and the orchestrator caught it only because it happened to read git status before committing. Nothing enforced the scope the dispatch stated. Add a mechanical check comparing the files a child actually touched against the file list it was given, and fail or report the difference. Cheap, and it removes a whole class of silent damage.",
+      "short": "audit every skill against current research, and measure its cheapest passing tier",
+      "long": "Two halves, one ticket, because neither half is decidable alone: what a skill SAYS and which model is cheap enough to run it are the same question asked twice.\n\nHALF ONE, the tier staircase. docs/routing.md calls every skill floor a hypothesis, and it is right. metadata.minimum-tier sits on 13 skills today and rests on judgment, never on measurement. Run each skill's eval cases at T1, T2, T3 and T4 and report, per skill, the CHEAPEST tier whose score stays inside noise of the best tier. That number replaces the judgment floor.\n\nA blocker comes first, and skipping it makes every staircase number meaningless. The harness in skills/*/evals/run.sh does NOT execute the skill. It sends the SKILL TEXT plus the case plus the rubric to a judge and asks whether an agent following that text WOULD meet EXPECT. That grades prose, not capability, so the same score comes back on every tier. The staircase needs a second arm that RUNS the skill on the candidate tier model against the case input, and then grades the artifact the run produced. Build that arm first. The judge is also hardcoded as `claude -p` in 15 copies of run.sh; the judge model belongs in config/model-tiers.json, and it must sit at a fixed tier ABOVE the arm under test so no model grades itself.\n\nScore each (skill, tier) cell on more than pass-or-fail. AGNT-0018 recorded a free model that answered correctly and still burned 92 seconds, 10 tool calls and 53k tokens, five calls rewriting one file. A gate-only score keeps that model. Count turns, wall clock, tokens and cost beside correctness, repeat each cell, and report the spread. AGNT-0018 needs the same execution arm for its router arms; whichever ticket starts first builds it, and neither blocks the other.\n\nHALF TWO, the content audit. Sweep the current literature on skill and prompt authoring, and re-read every skill against what survives the sweep. ai-author is audited by the same pass and gets no exemption, together with skill-author, agent-author and workflow-author, because a defect in an authoring skill is copied into every artifact it writes. GEPA(Genetic-Pareto prompt evolution) is the loop ai-author already runs; find what has superseded or corrected it since. A finding lands only through the GEPA loop's own accept rule: a change ships when the holdout score moves outside noise, never on taste, and a defect fix ships on a reproduction plus a case authored in the same pass.\n\nTHE POLICY GAP the owner named on 2026-08-20, and the reason he asked for this ticket. minimum-tier is a FLOOR and nothing else. No mechanism routes a mechanical skill DOWN. create-pr is the example he raised: it carries no floor, so it runs on whatever the session runs, though its whole job is commit, push, gh pr create, plus two grep verifies for attribution lines. Decide the downward path and ship it: either a declared target tier that dispatches the skill body into a cheap child, or a written rule that the runner delegates it. Whatever ships keeps every human gate and both attribution verifies with the parent, because a cheap child must never hold the gate.\n\nFIVE SKILLS SHIP NO CASES: agent-author, agent-config-reset, skill-author, workflow-author and pr-review-filter have no evals/cases.jsonl. They cannot enter the staircase, and the authoring contract already requires the directory, so this pass closes that gap. Four of the five are authoring skills, which is the worst place for the gap to sit.\n\nOwner's ask, in his words on 2026-08-20: \"audit all the skills with ai-author and ai-author itself based on newest best practices in academia and research and also run the evals against the tier staircase to find the most usage-efficient method of doing the skills\".",
       "deps": [],
       "files": [
-        "agents/",
-        "skills/engineer/"
+        "skills/",
+        "docs/routing.md",
+        "config/model-tiers.json",
+        "tools/"
       ],
       "blame_phase": null,
-      "created": "2026-08-20T20:19:42-0400"
+      "created": "2026-08-20T23:03:07-0400"
     },
     {
       "id": "AGNT-0033",
@@ -865,6 +861,55 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0053",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "snapshot engine for non-git directories and gitignored files",
+      "long": "Two of the owner's asks share one subsystem, so they ship as one ticket. First, a directory that is not a git repository must still show what changed during the session's uptime, background changes included. Second, gitignored files must appear at the bottom of the diff list, greyed out but still accessible, and their changes must be noticed. Git can answer neither: an ignored file has no baseline in any tree, and a non-repo has no tree at all. Needs a path-to-hash or mtime snapshot taken at session start, a comparison later, and an honest cost story for large trees. CENTRAL RISK, not an afterthought: making ignored changes visible deliberately reverses the watcher's ignore rule in pi/extensions/live-diff/watch.ts, and that rule exists because node_modules churn would otherwise turn the badge into a git treadmill. The ticket must show the treadmill does not return. (Filed as AGNT-0030 on the AGNT-0015 branch and renumbered to AGNT-0053 when that branch merged: a concurrent session on main had already published a different AGNT-0030. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/",
+        "pi/extensions/live-diff.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0054",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "drill into a branch's commits from the diff view",
+      "long": "The owner's second git scenario: from the diff basket, drill down into the individual commits behind the committed rows. A commit list for the current branch with an expandable diff per commit, reachable from the existing read-only viewer. Overlaps AGNT-0017 (restore a Herdr worktree as a replayable cockpit), which also wants browsable per-request history, so the two should be designed together rather than solving the same navigation twice. (Filed as AGNT-0031 on the AGNT-0015 branch and renumbered to AGNT-0054 when that branch merged: a concurrent session on main had already published a different AGNT-0031. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/",
+        "pi/extensions/live-diff.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0055",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "enforce a subagent's dispatch scope mechanically",
+      "long": "AGNT-0015 deviation D-12: a builder appended a joke comment to .gitignore, a file outside the list its dispatch named, and the orchestrator caught it only because it happened to read git status before committing. Nothing enforced the scope the dispatch stated. Add a mechanical check comparing the files a child actually touched against the file list it was given, and fail or report the difference. Cheap, and it removes a whole class of silent damage. (Filed as AGNT-0032 on the AGNT-0015 branch and renumbered to AGNT-0055 when that branch merged: a concurrent session on main had already published a different AGNT-0032. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
+      "deps": [],
+      "files": [
+        "agents/",
+        "skills/engineer/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
     }
   ]
 }

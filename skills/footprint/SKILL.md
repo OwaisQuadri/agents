@@ -2,6 +2,7 @@
 name: footprint
 description: Use when one type has many live instances in memory — tokens, entities, rows, tree nodes, events, particles, anything counted in thousands or more — and that code is being written, reviewed, or optimized; when a profile shows a memory-bound hot path (cache misses, allocation storms, resident-set growth); or when asked to shrink a struct or cut memory footprint. Covers Rust, Swift, Python, TypeScript/JavaScript, Zig, C/C++, Go. Skip when the instance count is small or bounded — config objects, one-off DTOs(data transfer objects), request-scoped structs — or the path is I/O(input/output)-bound; shrinking those buys nothing and costs clarity.
 metadata:
+  minimum-tier: T3
   short-description: Shrink and guard the memory footprint of hot data structures
 ---
 

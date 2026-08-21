@@ -56,10 +56,6 @@ pub enum Action {
         tool: String,
         source: PathBuf,
     },
-    RenderPiAgent {
-        source: PathBuf,
-        destination: PathBuf,
-    },
     SkipPlatform {
         tool: String,
         platform: Platform,

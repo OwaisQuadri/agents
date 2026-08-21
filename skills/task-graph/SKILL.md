@@ -2,6 +2,7 @@
 name: task-graph
 description: Use when turning work items with dependencies into a validated graph — the task DAG(directed acyclic graph) for one ticket's implementation plan, or ABCD-NNNN tickets filed into a project's roadmap — with statuses, a cycle check, and disjoint-files parallelism. Skip for multi-agent run topologies (workflow-author owns the GRAPH SPEC) and for reading or executing an existing graph (the caller walks it).
 metadata:
+  minimum-tier: T3
   short-description: Work items + deps → statused DAG or ABCD-NNNN tickets
 ---
 

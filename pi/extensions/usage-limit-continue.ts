@@ -10,9 +10,14 @@ import { join } from "node:path";
 // (it re-exports Model only structurally). This mirrors the fields this file reads.
 type ModelLike = {
 	provider: string;
+	id?: string;
 	baseUrl?: string;
 	cost: { input: number; output: number; cacheRead: number };
 };
+
+// install.sh compiles config/model-tiers.json into this flat map in pi settings, so the
+// tier file stays the one place model ids live and this file needs no repo path.
+type FallbackMap = Record<string, string>;
 
 // AgentMessage has no exported type name from @earendil-works/pi-coding-agent either;
 // this mirrors the fields this file reads off an assistant message.
@@ -47,6 +52,10 @@ function stateFile(): string {
 
 function logFile(): string {
 	return join(stateDir(), "resume.log");
+}
+
+function settingsFile(): string {
+	return join(homedir(), ".pi", "agent", "settings.json");
 }
 
 const RESUME_PROMPT = "continue";
@@ -212,6 +221,41 @@ export function computeResetPlan(input: {
 	return { isDetected: true, resetAtMs, matchedText: input.text };
 }
 
+/**
+ * Finds the tier fallback for a model, so a usage limit degrades one tier sideways.
+ * @param fallbacks Compiled tier fallback map, keyed by `provider/id`.
+ * @param provider Provider id of the model that hit the limit.
+ * @param modelId Model id of the model that hit the limit.
+ * @returns The fallback model id as `provider/id`, or null when the model has no tier.
+ */
+export function findTierFallback(fallbacks: FallbackMap, provider: string, modelId: string): string | null {
+	return fallbacks[`${provider}/${modelId}`] ?? null;
+}
+
+/**
+ * Picks the abandoned model that comes back first, so a resume waits the shortest time.
+ * @param resets Abandoned models this session, keyed by `provider/id`, valued by reset epoch ms.
+ * @returns The soonest-returning model and its reset, or null when nothing was abandoned.
+ */
+export function earliestAvailable(resets: Record<string, number>): { model: string; resetAtMs: number } | null {
+	let soonest: { model: string; resetAtMs: number } | null = null;
+	for (const [model, resetAtMs] of Object.entries(resets)) {
+		if (!soonest || resetAtMs < soonest.resetAtMs) {
+			soonest = { model, resetAtMs };
+		}
+	}
+	return soonest;
+}
+
+async function loadFallbacks(): Promise<FallbackMap> {
+	try {
+		const settings = JSON.parse(await readFile(settingsFile(), "utf8")) as { modelTierFallbacks?: FallbackMap };
+		return settings.modelTierFallbacks ?? {};
+	} catch {
+		return {};
+	}
+}
+
 function extractErrorText(message: AssistantMessageLike): string {
 	if (message.role !== "assistant") {
 		return "";
@@ -293,7 +337,25 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
 	return job;
 }
 
-async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext): Promise<void> {
+async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, qualified: string): Promise<boolean> {
+	const separator = qualified.indexOf("/");
+	const candidate = ctx.modelRegistry.find(qualified.slice(0, separator), qualified.slice(separator + 1));
+	return candidate ? await pi.setModel(candidate) : false;
+}
+
+async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string | null> {
+	const active = ctx.model as ModelLike | undefined;
+	if (!active?.id) {
+		return null;
+	}
+	const qualified = findTierFallback(await loadFallbacks(), active.provider, active.id);
+	if (!qualified) {
+		return null;
+	}
+	return (await switchTo(pi, ctx, qualified)) ? qualified : null;
+}
+
+async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
 	const errorText = extractErrorText(message);
 	if (!errorText) {
 		return;
@@ -312,7 +374,22 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 		return;
 	}
 
-	if (plan.resetAtMs === null) {
+	const active = ctx.model as ModelLike | undefined;
+	const abandoned = abandonedByContext.get(ctx) ?? {};
+	if (active?.id && plan.resetAtMs !== null) {
+		abandoned[`${active.provider}/${active.id}`] = plan.resetAtMs;
+		abandonedByContext.set(ctx, abandoned);
+	}
+
+	const fallbackModel = await applyTierFallback(pi, ctx);
+	if (fallbackModel) {
+		ctx.ui.notify(`Usage limit hit. Switched to the tier fallback ${fallbackModel}; the session continues.`, "warning");
+		return;
+	}
+
+	const returning = earliestAvailable(abandoned);
+	const resumeAtMs = returning?.resetAtMs ?? plan.resetAtMs;
+	if (resumeAtMs === null) {
 		ctx.ui.notify("Usage limit hit, but the reset time could not be parsed. Not scheduling an automatic continue.", "warning");
 		return;
 	}
@@ -322,14 +399,20 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 		ctx.ui.notify("Usage limit hit, but this session has no file to resume (--no-session). Not scheduling an automatic continue.", "warning");
 		return;
 	}
-	const job = await scheduleResume(sessionFile, plan.resetAtMs, Date.now());
+	const job = await scheduleResume(sessionFile, resumeAtMs, Date.now());
 	if (job === null) {
 		return;
 	}
-	ctx.ui.notify(`Usage limit hit. Will continue this session in ${formatWait(plan.resetAtMs - Date.now())}.`, "warning");
+	const climbedBack = returning ? await switchTo(pi, ctx, returning.model) : false;
+	const destination = climbedBack ? ` on ${returning?.model}` : "";
+	ctx.ui.notify(`Usage limit hit. Will continue this session${destination} in ${formatWait(resumeAtMs - Date.now())}.`, "warning");
 }
 
 const lastProviderResponseByContext = new WeakMap<ExtensionContext, { status: number; headers: Record<string, string> }>();
+
+// Values are reset instants. A resume waits on whichever model returns first rather than
+// on whichever failed last, so the walk has to remember every model it gave up on.
+const abandonedByContext = new WeakMap<ExtensionContext, Record<string, number>>();
 
 async function handleStatusCommand(_args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const store = await loadPendingStore();
@@ -351,7 +434,7 @@ export default async function usageLimitContinueExtension(pi: ExtensionAPI): Pro
 	});
 
 	pi.on("message_end", async (event, ctx) => {
-		await handleMessageEnd(event.message, ctx);
+		await handleMessageEnd(event.message, ctx, pi);
 	});
 
 	pi.registerCommand("usage-limit-status", {

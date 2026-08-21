@@ -11,6 +11,7 @@ description: >-
   (research-sweep owns those) and authoring skills, agents, or workflows (ai-author owns
   those).
 metadata:
+  minimum-tier: T3
   short-description: The exact 23-phase map for agent coding work
 ---
 
@@ -30,6 +31,17 @@ OUT: the change landed as an open PR when the project has a remote, or a verifie
 ## scale
 
 Task scale sets the pace, never the route. A one-line fix walks all 23 phases in minutes — a phase may complete trivially (a two-line research note, a one-task DAG, a one-tester wave), but no phase is skipped and no gate is waved through. Deciding a phase "doesn't apply" happens inside that phase, on the record, never by not entering it.
+
+## routing
+
+Task scale never changes the route; model routing (docs/routing.md in the agents repo) never changes the map. Four rules bind every run:
+
+- The orchestrator that walks this map is STICKY on the T3 tier (the agents repo's `config/model-tiers.json` names the model) for the whole run. A session that enters on a T5 model (fable) hears about it at GATE A, with the switch recommended. A 23-phase transcript on the deep tier is the single largest avoidable cost in this skill.
+- Dispatched roles carry their own pinned tiers in the fleet frontmatter — research summarization T2, building/testing/debugging/verification T3, final review T4. Never override a pin upward without a recorded reason.
+- Escalation is evidence-only and rides the walk-back machinery. A task that burns 2 cycles of its `loop_counts` counter may re-dispatch one tier up, on the other provider family. The failure lines ride along as input. A disliked answer escalates to a human gate, not to a bigger model.
+- T5 (the deep tier) takes only decisions with project-level branching cost, and T4 is its automatic fallback. That means a phase 06/07 structural call on a large migration, or a plan synthesis at 11 after competing plans. Everything else in this map is at most T4.
+
+Every dispatch carries compiled context only: the phase's contract, the run-dir artifacts that phase names, and the task. Never the transcript, never another phase's raw tool output.
 
 ## the phase index
 

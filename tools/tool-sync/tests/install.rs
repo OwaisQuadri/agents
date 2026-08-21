@@ -6,20 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tool_sync::pi_agent;
-
 static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
-
-#[derive(Clone, Copy)]
-struct AgentCase {
-    name: &'static str,
-    description: &'static str,
-    source_tools: &'static [&'static str],
-    rendered_tools: &'static [&'static str],
-    source_model: &'static str,
-    rendered_model: &'static str,
-    prompt: &'static str,
-}
 
 struct Fixture {
     root: PathBuf,
@@ -146,73 +133,10 @@ impl Drop for Fixture {
     }
 }
 
-fn agent_cases() -> [AgentCase; 6] {
-    [
-        AgentCase {
-            name: "anchor-verifier",
-            description: "Verify one worker with anchors.",
-            source_tools: &["Read", "Grep", "Glob", "Bash"],
-            rendered_tools: &["read", "grep", "find", "bash"],
-            source_model: "opus",
-            rendered_model: "claude-opus-4-7",
-            prompt: "Anchor the evidence.\nUse the exact command output.\n",
-        },
-        AgentCase {
-            name: "code-reviewer",
-            description: "Review a diff from fresh context.",
-            source_tools: &["Read", "Grep", "Glob", "Bash"],
-            rendered_tools: &["read", "grep", "find", "bash"],
-            source_model: "opus",
-            rendered_model: "claude-opus-4-7",
-            prompt: "Read the diff first.\nInspect the surrounding code.\n",
-        },
-        AgentCase {
-            name: "debugger",
-            description: "Fix one failing repro.",
-            source_tools: &["Read", "Edit", "Bash", "Grep", "Glob"],
-            rendered_tools: &["read", "edit", "bash", "grep", "find"],
-            source_model: "sonnet",
-            rendered_model: "claude-sonnet-4-5",
-            prompt: "Reproduce the failure.\nApply the smallest fix.\n",
-        },
-        AgentCase {
-            name: "maestro-tester",
-            description: "Drive one mobile flow.",
-            source_tools: &["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-            rendered_tools: &["read", "write", "edit", "bash", "find", "grep"],
-            source_model: "sonnet",
-            rendered_model: "claude-sonnet-4-5",
-            prompt: "Write one flow.\nRun it once.\n",
-        },
-        AgentCase {
-            name: "spec-tester",
-            description: "Execute one natural-language test case.",
-            source_tools: &["Read", "Write", "Bash", "Grep", "Glob"],
-            rendered_tools: &["read", "write", "bash", "grep", "find"],
-            source_model: "sonnet",
-            rendered_model: "claude-sonnet-4-5",
-            prompt: "Run the case through the drive harness.\nReport the real output.\n",
-        },
-        AgentCase {
-            name: "web-research-summarizer",
-            description: "Research sources and cite the findings.",
-            source_tools: &["WebSearch", "WebFetch", "Read"],
-            rendered_tools: &["web_search", "fetch_content", "read"],
-            source_model: "sonnet",
-            rendered_model: "claude-sonnet-4-5",
-            prompt: "Fetch the sources.\nCondense the result.\n",
-        },
-    ]
-}
-
 fn seed_repository_root_tree(root: &Path) {
     copy_tree(
         &fixture_file("install/repository-root/pi"),
         &root.join("pi"),
-    );
-    copy_tree(
-        &fixture_file("install/repository-root/agents"),
-        &root.join("agents"),
     );
 }
 
@@ -356,11 +280,6 @@ fn symlink_identity(path: &Path) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 
-fn file_identity(path: &Path) -> (u64, u64) {
-    let metadata = fs::metadata(path).expect("file metadata");
-    (metadata.dev(), metadata.ino())
-}
-
 fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Vec<u8>>) {
         let mut children = fs::read_dir(path)
@@ -398,65 +317,6 @@ fn tree_snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     entries
 }
 
-fn assert_rendered_agents(fixture: &Fixture, home: &Path) {
-    let repository_root = fixture.repository_root();
-    let agent_root = repository_root.join("agents");
-    for case in agent_cases() {
-        let source = agent_root.join(format!("{0}/{0}.md", case.name));
-        let destination = home
-            .join(".pi/agent/agents")
-            .join(format!("{0}.md", case.name));
-        let source_agent = pi_agent::parse(&source).expect("parse source agent");
-        assert_eq!(source_agent.name, case.name, "{name}", name = case.name);
-        assert_eq!(
-            source_agent.description,
-            case.description,
-            "{name}",
-            name = case.name
-        );
-        assert_eq!(
-            source_agent.tools,
-            case.source_tools,
-            "{name}",
-            name = case.name
-        );
-        assert_eq!(
-            source_agent.model,
-            case.source_model,
-            "{name}",
-            name = case.name
-        );
-        assert_eq!(source_agent.prompt, case.prompt, "{name}", name = case.name);
-
-        let rendered_agent = pi_agent::parse(&destination).expect("parse rendered agent");
-        assert_eq!(rendered_agent.name, case.name, "{name}", name = case.name);
-        assert_eq!(
-            rendered_agent.description,
-            case.description,
-            "{name}",
-            name = case.name
-        );
-        assert_eq!(
-            rendered_agent.tools,
-            case.rendered_tools,
-            "{name}",
-            name = case.name
-        );
-        assert_eq!(
-            rendered_agent.model,
-            case.rendered_model,
-            "{name}",
-            name = case.name
-        );
-        assert_eq!(
-            rendered_agent.prompt,
-            case.prompt,
-            "{name}",
-            name = case.name
-        );
-    }
-}
-
 #[test]
 fn previews_a_pinned_checkout_with_package_skills_and_agents_without_writing_home() {
     let fixture = Fixture::new();
@@ -473,7 +333,7 @@ fn previews_a_pinned_checkout_with_package_skills_and_agents_without_writing_hom
     let report = normalize_private_prefix(&output_text(&output));
     let checkout = fixture.checkout(&home);
     let repository = fixture.repository_root();
-    let mut expected = vec![
+    let expected = vec![
         format!(
             "create directory {}",
             normalize_private_path_text(&home.join(".cache/tool-sync"))
@@ -529,22 +389,7 @@ fn previews_a_pinned_checkout_with_package_skills_and_agents_without_writing_hom
             normalize_private_path_text(&checkout.join("skills/grilling")),
             normalize_private_path_text(&home.join(".agents/skills/grilling"))
         ),
-        format!(
-            "create directory {}",
-            normalize_private_path_text(&home.join(".pi/agent/agents"))
-        ),
     ];
-    expected.extend(agent_cases().into_iter().map(|case| {
-        format!(
-            "render Pi agent {} -> {}",
-            normalize_private_path_text(&repository.join(format!("agents/{0}/{0}.md", case.name))),
-            normalize_private_path_text(
-                &home
-                    .join(".pi/agent/agents")
-                    .join(format!("{0}.md", case.name))
-            )
-        )
-    }));
     assert_lines_in_order(&report, &expected);
     assert!(!fixture.record().exists());
     assert_eq!(tree_snapshot(&home), before);
@@ -588,18 +433,6 @@ fn applies_a_pinned_checkout_and_repeats_without_duplicate_directories_or_checko
     assert_same_link_target(&package, &checkout.join("."));
     assert_same_link_target(&show_me, &checkout.join("skills/show-me"));
     assert_same_link_target(&grilling, &checkout.join("skills/grilling"));
-    assert_rendered_agents(&fixture, &home);
-    let agent_directory = home.join(".pi/agent/agents");
-    let agent_contents = tree_snapshot(&agent_directory);
-    let agent_identities = agent_cases()
-        .into_iter()
-        .map(|case| {
-            (
-                case.name,
-                file_identity(&agent_directory.join(format!("{}.md", case.name))),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
     assert_eq!(
         fs::read_to_string(home.join("notes.txt")).expect("notes after apply"),
         "keep this home content\n"
@@ -639,15 +472,6 @@ fn applies_a_pinned_checkout_and_repeats_without_duplicate_directories_or_checko
     assert_same_link_target(&package, &checkout.join("."));
     assert_same_link_target(&show_me, &checkout.join("skills/show-me"));
     assert_same_link_target(&grilling, &checkout.join("skills/grilling"));
-    assert_rendered_agents(&fixture, &home);
-    assert_eq!(tree_snapshot(&agent_directory), agent_contents);
-    for (name, identity) in agent_identities {
-        assert_eq!(
-            file_identity(&agent_directory.join(format!("{name}.md"))),
-            identity,
-            "{name} must not be replaced during an unchanged repeat"
-        );
-    }
     assert_eq!(
         fs::read_to_string(home.join("notes.txt")).expect("notes after repeated apply"),
         "keep this home content\n"

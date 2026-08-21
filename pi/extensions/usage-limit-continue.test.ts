@@ -6,12 +6,22 @@ import { test } from "node:test";
 import {
 	computeResetPlan,
 	detectUsageLimitSignal,
+	earliestAvailable,
 	fallbackWindowResetMs,
+	findTierFallback,
 	isLocalModel,
 	parseResetFromHeaders,
 	parseResetFromText,
 	scheduleResume,
 } from "./usage-limit-continue.ts";
+
+// The real map is compiled from config/model-tiers.json into pi settings; the last test
+// in this file checks that file rather than restating it here.
+const SYNTHETIC_FALLBACKS = {
+	"provider-a/small": "provider-b/small",
+	"provider-a/medium": "provider-b/medium",
+	"provider-a/large": "provider-a/medium",
+};
 
 const NOW = new Date("2026-08-19T12:00:00.000-04:00").getTime();
 
@@ -154,6 +164,35 @@ test("computeResetPlan: detected but unparseable time reports isDetected with a 
 	assert.deepEqual(plan, { isDetected: true, resetAtMs: null, matchedText: "usage limit reached" });
 });
 
+test("findTierFallback: fable falls back to opus, and every other tier resolves its own backup", () => {
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "large"), "provider-a/medium");
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "medium"), "provider-b/medium");
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "small"), "provider-b/small");
+});
+
+test("findTierFallback: a model outside the tier file has no fallback, so the resume path still owns it", () => {
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-b", "medium"), null);
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "ollama", "llama-4"), null);
+	assert.equal(findTierFallback({}, "provider-a", "large"), null);
+});
+
+test("earliestAvailable: the resume waits on the model that returns first, not the one that failed last", () => {
+	const soonest = earliestAvailable({
+		"anthropic/claude-fable-5": NOW + 20 * 60_000,
+		"anthropic/claude-opus-5": NOW + 2 * 3_600_000,
+		"openai-codex/gpt-5.6-sol": NOW + 4 * 3_600_000,
+	});
+	assert.deepEqual(soonest, { model: "anthropic/claude-fable-5", resetAtMs: NOW + 20 * 60_000 });
+});
+
+test("earliestAvailable: nothing abandoned yields null, so the old single-reset path still owns it", () => {
+	assert.equal(earliestAvailable({}), null);
+	assert.deepEqual(earliestAvailable({ "anthropic/claude-opus-5": NOW }), {
+		model: "anthropic/claude-opus-5",
+		resetAtMs: NOW,
+	});
+});
+
 test("scheduleResume: writes a pending-job record and refuses a duplicate schedule for the same session", async () => {
 	// A resetAt an hour out so the detached `sleep && pi --session ...` job this spawns
 	// never fires while this test (or its tmp dir cleanup) is running.
@@ -175,5 +214,42 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
+	}
+});
+
+test("the real tier file compiles into a chain every hop of which resolves", async () => {
+	const tiersPath = join(import.meta.dirname, "..", "..", "config", "model-tiers.json");
+	const tiers = JSON.parse(await readFile(tiersPath, "utf8")) as {
+		tiers: Record<string, { pi: string; fallbacks: string[] }>;
+		orchestrator: string;
+		agents: Record<string, string>;
+	};
+
+	// What install.sh compiles into settings.modelTierFallbacks: each tier's first backup.
+	const compiled: Record<string, string> = {};
+	for (const tier of Object.values(tiers.tiers)) {
+		compiled[tier.pi] = tier.fallbacks[0];
+	}
+
+	for (const [name, tier] of Object.entries(tiers.tiers)) {
+		assert.ok(tier.fallbacks.length >= 1, `${name} has no fallback`);
+		assert.ok(!tier.fallbacks.includes(tier.pi), `${name} falls back to itself`);
+	}
+
+	for (const [agent, tier] of Object.entries(tiers.agents)) {
+		assert.ok(tiers.tiers[tier], `${agent} names tier ${tier}, which does not exist`);
+	}
+	assert.ok(tiers.tiers[tiers.orchestrator], "orchestrator names a tier that does not exist");
+
+	// A cycle here would strand the session in the fallback walk instead of letting it
+	// reach the scheduled resume.
+	for (const start of Object.keys(compiled)) {
+		const seen = new Set<string>();
+		let at: string | undefined = start;
+		while (at && compiled[at]) {
+			assert.ok(!seen.has(at), `fallback chain cycles at ${at}`);
+			seen.add(at);
+			at = compiled[at];
+		}
 	}
 });
