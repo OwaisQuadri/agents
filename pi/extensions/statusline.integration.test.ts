@@ -45,11 +45,11 @@ function createFakePi() {
 }
 
 function createMockContext() {
-	let active = true;
+	let isActive = true;
 	const setStatusCalls: Array<{ key: string; text: string | undefined }> = [];
 	const ctx = {
 		assertActive() {
-			if (!active) throw new Error("This extension ctx is stale");
+			if (!isActive) throw new Error("This extension ctx is stale");
 		},
 		get hasUI() {
 			return true;
@@ -78,7 +78,7 @@ function createMockContext() {
 		ctx,
 		setStatusCalls,
 		markStale() {
-			active = false;
+			isActive = false;
 		},
 	};
 }

@@ -61,13 +61,13 @@ function makeInactiveContextError(): Error {
 	return error;
 }
 
-function createMockContext(initial: { provider?: Provider | null; active?: boolean; hasUI?: boolean } = {}): MockContext {
+function createMockContext(initial: { provider?: Provider | null; isActive?: boolean; hasUI?: boolean } = {}): MockContext {
 	const providerAuth: Partial<Record<Provider, string | null>> = {
 		anthropic: null,
 		"openai-codex": null,
 	};
 	let provider: Provider | null = initial.provider ?? "anthropic";
-	let isActive = initial.active ?? true;
+	let isActive = initial.isActive ?? true;
 	let hasUIValue = initial.hasUI ?? true;
 	let hasUIReads = 0;
 	let modelReads = 0;
@@ -286,7 +286,7 @@ function extractPercent(line: string): number {
 
 test("TC-01 render() no-ops silently on stale ctx", async () => {
 	const api = createFakeExtensionAPI();
-	const context = createMockContext({ provider: "anthropic", active: false });
+	const context = createMockContext({ provider: "anthropic", isActive: false });
 	let fetchCalls = 0;
 	const restoreFetch = installMockFetch(async () => {
 		fetchCalls += 1;
@@ -313,7 +313,7 @@ test("TC-01 render() no-ops silently on stale ctx", async () => {
 
 test("TC-02 refresh() no-ops before touching stale ctx's model", async () => {
 	const api = createFakeExtensionAPI();
-	const context = createMockContext({ provider: "anthropic", active: false });
+	const context = createMockContext({ provider: "anthropic", isActive: false });
 	let fetchCalls = 0;
 	const restoreFetch = installMockFetch(async () => {
 		fetchCalls += 1;
@@ -378,7 +378,7 @@ test("TC-03 refresh() no-ops when ctx goes stale mid-fetch", async () => {
 
 test("TC-04 setInterval poll tick no-ops after context invalidation", async () => {
 	const api = createFakeExtensionAPI();
-	const context = createMockContext({ provider: "openai-codex", active: true, hasUI: true });
+	const context = createMockContext({ provider: "openai-codex", isActive: true, hasUI: true });
 	let fetchCalls = 0;
 	const restoreFetch = installMockFetch(async (input: RequestInfo | URL) => {
 		fetchCalls += 1;
