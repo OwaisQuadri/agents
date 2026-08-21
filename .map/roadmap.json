@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 68,
+  "next_nnnn": 69,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1076,6 +1076,18 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T14:25:02-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0068",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Terminal redesign: folder-name-only tabs, highlight the command entry line, timestamps",
+      "long": "Owner ask (2026-08-21), reconstructed after the original ticket could not be found in this repo's roadmap (may have lived in Herdr's own repo before the 2026-08-18 roadmap split, or was never filed): a terminal-window redesign covering three asks. (1) Show only the folder name in the terminal window/tab label, not a full path or other clutter. (2) Highlight the command entry line (the live prompt/input line) so it stands out visually from scrollback output. (3) Add timestamps to terminal windows -- folded in from the same conversation (2026-08-21): each terminal pane/window should show when things happened, paired with AGNT-0067's ask to timestamp Pi's own tool-call and message events, so both halves of a session (terminal activity and Pi activity) carry timestamps a human can correlate. Scope, ownership, and exact surface (Herdr pane chrome vs. a shell prompt/PS1 change vs. something else) need definition at phase 03/04 -- this is the owner's first-pass description, not a locked spec.",
+      "deps": [],
+      "files": [],
+      "blame_phase": null,
+      "created": "2026-08-21T14:26:45-0400",
       "priority": "med"
     }
   ]
