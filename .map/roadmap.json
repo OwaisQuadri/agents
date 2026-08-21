@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 49,
+  "next_nnnn": 53,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -798,6 +798,72 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T00:12:28-0400"
+    },
+    {
+      "id": "AGNT-0049",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "live-diff: emoji presentation selectors are measured one column short",
+      "long": "Found by the second static review of AGNT-0015. overlay.ts derives display width from East Asian Width, which is a PER-CODEPOINT property, and that is structurally blind to presentation selectors. U+FE0F (variation selector 16) has General_Category Mn, so ZERO_WIDTH matches it and charWidth returns 0, and sanitize does not strip it because DISPLAY_UNSAFE covers Cc, Cf, Zl and Zp only. So a text-presentation base that goes wide ONLY under VS16 measures 1 while the terminal draws 2: heart U+2764, sun U+2600, airplane U+2708, warning U+26A0, ballot U+2611, copyright U+00A9, trade mark U+2122, and every keycap such as 1 U+0031 U+FE0F U+20E3. That is an UNDER-count, which is exactly the row-bleeds-past-the-panel-edge defect the generated table was meant to end, on characters that appear routinely in README and markdown hunk lines. Fix means measuring GRAPHEME CLUSTERS rather than codepoints: Intl.Segmenter with granularity grapheme is in Node and would give the cluster boundaries, and a cluster containing U+FE0F measures 2 while the same base with U+FE0E measures 1. Zero width joiner sequences work by accident today - U+200D is Cf so sanitize deletes it and the sequence degrades into separate wide emoji that measure and draw the same - but a grapheme-based measure would handle them properly rather than by luck. Note also that the module's own chrome is East Asian Width Ambiguous and counted 1: the rails, the rounded corners, the horizontal rule, the selected-row gutter U+258C, the fold markers, the middle dot, the arrows and the minus sign U+2212. One column in a western terminal, two in a CJK-configured one. Counting them 1 is the right default but it is currently implicit, and the ticket should make it a stated decision with a test.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff/overlay.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0050",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: settle whether nvim accepts a bracketed paste on the command line",
+      "long": "The comment at nvim.ts around the send-keys loop states that herdr's send-text and pane run deliver through bracketed paste and that nvim inserts a bracketed paste into the BUFFER whatever mode it is in, and concludes that the command line must therefore be TYPED with send-keys. The static reviewer noticed the premise defeats the conclusion: if it were true whatever the mode, the send-text that follows would put the PATH in the buffer too and the whole sequence could not work. The code demonstrably does work, so the real rule is narrower - most likely that nvim routes a bracketed paste to the cmdline while cmdline mode is active, which is the negation of the stated premise. One of the comment and the code is wrong and a maintainer reading it will fix the wrong one. Settle it by experiment against a real nvim: open a pane, enter cmdline mode with send-keys, send-text a path, and observe where the text lands; then repeat in normal mode and in insert mode. Rewrite the comment to state the rule that actually holds. This matters beyond tidiness because the current shape was adopted after a paste corrupted a real source file, so the next person to touch it needs the true rule, not a plausible one.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/nvim.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0051",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "live-diff: the nvim filename escaping added by the fix pass is untested",
+      "long": "The AGNT-0015 fix pass widened openInNvim's escape class to vim's fnameescape territory and replaced the LF/CR/TAB refusal with a full control-character class, closing a hole where a backtick in a repository filename would run a shell command through vim's backtick expansion. The static reviewer confirmed the new class is correct by reading it, and then found that nvim.test.ts still exercises only space, percent, hash and pipe - the four characters the OLD class already handled. Every character the fix ADDED is unverified by the suite: backtick, asterisk, question mark, dollar, brace, bracket, tilde, angle brackets, ampersand, semicolon, quote characters, and the control-byte refusal including ESC. Add cases for each, asserting on the exact string handed to send-text, plus a refusal case per control byte class (C0, DEL, C1) asserting that openInNvim returns false AND that nothing was sent. Note the reviewer also found the leading plus-or-minus escape is dead code, because the argument is always an absolute path from containedAbsolutePath and so always starts with a slash: either delete it or state why it stays.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/nvim.test.ts",
+        "pi/extensions/live-diff/nvim.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
+    },
+    {
+      "id": "AGNT-0052",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "low",
+      "short": "live-diff: BodyLine should encode filler rows in its type, not a nullable field",
+      "long": "The AGNT-0047 comment prune deleted the docstring on BodyLine.modelRowIndex and renamed the field selectableRowIndex. The reviewer's judgement is that the rename carries what the field IS but not what NULL means, and no rename can carry a nullable field's null case: a reader still has to go to buildBody to learn that null marks a hunk line or a truncation line rather than a selectable row. The restructure the deleted docstring was really asking for is a discriminated union - a row line carrying its index and a filler line carrying none - which makes the null case unrepresentable and needs no comment at all. Small, purely internal, and it removes the last place in the module where a comment was doing a type's job.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T01:30:10-0400"
     }
   ]
 }
