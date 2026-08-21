@@ -246,7 +246,7 @@
     {
       "id": "AGNT-0015",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Show live request and overall diffs in Pi.",
       "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.\n\nAmendment (owner, 2026-08-19, AGNT-0014 gate D): selecting a file in the diff view focuses the herdr editor tab and opens that file in nvim (compose with the AGNT-0014 layout: herdr tab focus + pane send/nvim remote).",
       "deps": [
@@ -645,7 +645,7 @@
     {
       "id": "AGNT-0040",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "priority": "med",
       "short": "gate E lands through a PR when the project has a remote",
       "long": "The engineer skill's phase 23 records the owner's default from 2026-08-07 as a local squash merge into main. He revised it on 2026-08-20: \"gate e will run through PR as is the new standard for git projects with a remote\". Update skills/engineer/phases/23-close.md so the PR route is the default whenever a remote exists, and the local squash merge remains the route only for a repo with no remote - including the consequence phase 01 already documents, that a squash merge is invisible to its merged-branch sweep and so the ticket must be flipped to done at close, whereas the PR route leaves that flip to the next run's phase 01 after the merge. RESOLVED on the AGNT-0015 branch: the owner asked for the change to be propagated during that run rather than deferred, so SKILL.md, phase 01 and phase 23 all carry the remote-decides-the-route rule and TUNING.md records the reversal.",
@@ -763,7 +763,7 @@
     {
       "id": "AGNT-0047",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "priority": "med",
       "short": "live-diff: prune comments to the whitelist and drop private-function docstrings",
       "long": "The static review audited the AGNT-0015 diff against docs/comment-style.md and found comments matching none of the five whitelisted shapes. Seven full docstrings sit on MODULE-PRIVATE functions in overlay.ts (viewerLineCount, reduceViewer, windowBody, railed, viewerBorderRow, fitHintItems, renderViewer), and the whitelist admits a docstring only on a declaration used from outside its module; two of those also explain the body. Several comments narrate the line below them and should become an extracted, named helper instead - isColumnScopedKey for the empty-column guard, hintFitsBeside for the header gap branch, padToBodyHeight for the frame filler. Three are war stories that belong in the commit trail, including one about a corrupted source file. One genuine cross-component contract about herdr's bracketed-paste behaviour sits in nvim.test.ts and belongs beside the send-keys loop in nvim.ts, where a reader of that file will actually see it. Test files carry roughly thirty comments that restate the assertion below them; those fold into the test name or the assertion message. RESOLVED on the AGNT-0015 branch rather than deferred, on the owner's instruction: the prune was meant as a task in this run, not a follow-up. Seven private-function docstrings deleted, the unused VIEWER_PAGE_SIZE constant and its docstring deleted, four narration comments replaced by named code (isColumnScopedKey/reduceColumnScoped, hintGapBeside, padToBodyHeight) which also removed three now-unreachable branches, three war stories deleted, the herdr bracketed-paste contract moved from nvim.test.ts to nvim.ts beside the send-keys loop, BodyLine.modelRowIndex renamed selectableRowIndex so the field needs no docstring, and roughly forty assertion-restating comments removed from the two test files. Every remaining docstring in the diff sits on an exported declaration; the four surviving line comments are all contracts with something outside their file.",
