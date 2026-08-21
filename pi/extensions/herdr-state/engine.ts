@@ -1,5 +1,6 @@
 import type {
 	HerdrAgentLocation,
+	HerdrRawEvent,
 	HerdrSessionSnapshot,
 	HerdrSnapshotResponse,
 	HerdrStateEvent,
@@ -16,6 +17,19 @@ import type {
 export function normalizeSnapshot(
 	_response: HerdrSnapshotResponse,
 ): HerdrSessionSnapshot {
+	throw new Error("unimplemented");
+}
+
+/**
+ * Normalizes one Herdr subscription event for the read-only state model.
+ *
+ * @param event The raw Herdr event to normalize.
+ * @returns A state event, or null when a full snapshot is required.
+ * @throws Error when a recognized event is malformed.
+ */
+export function normalizeEvent(
+	_event: HerdrRawEvent,
+): HerdrStateEvent | null {
 	throw new Error("unimplemented");
 }
 
