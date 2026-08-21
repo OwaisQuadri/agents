@@ -36,9 +36,8 @@ const OVERLAY_WIDTH = "80%";
 const OVERLAY_MIN_WIDTH = 48;
 const OVERLAY_PADDING_X = 1;
 const OVERLAY_PADDING_Y = 1;
-// pi-tui's Component#render(width) receives no live terminal height, and
-// The owner asked for a peek window at 80% of the terminal height. TUI exposes
-// no height getter, but the extension runs in Pi's own process, so the terminal
+// pi-tui's Component#render(width) receives no live terminal height and TUI exposes
+// no getter for one, but the extension runs in Pi's own process, so the terminal
 // row count is on process.stdout. overlayOptions.maxHeight carries the same 80%
 // so the frame and the content agree on the budget.
 const OVERLAY_HEIGHT_RATIO = 0.8;
@@ -375,6 +374,9 @@ export default function liveDiff(pi: ExtensionAPI): void {
 		root: string,
 		batch: string[],
 	): Promise<void> {
+		if (isSessionGone) {
+			return;
+		}
 		let ignored: Set<string>;
 		try {
 			ignored = await selectIgnoredPaths(root, batch);
@@ -478,6 +480,18 @@ export default function liveDiff(pi: ExtensionAPI): void {
 			let model = initialModel(state.requestStats, state.overallStats);
 			await ctx.ui.custom<undefined>(
 				(tui, theme, _keybindings, done) => {
+					// Any render after an await may land once the session is gone: the
+					// overlay outlives its own async work. The latch is the guard, and
+					// requestRender must never throw into Pi.
+					function safeRequestRender(): void {
+						if (isSessionGone) {
+							return;
+						}
+						try {
+							tui.requestRender();
+						} catch {}
+					}
+
 					async function runEffect(effect: OverlayEffect): Promise<void> {
 						if (effect.kind === "close") {
 							done(undefined);
@@ -498,7 +512,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 								hunks = [{ header: "patch unavailable", lines: [] }];
 							}
 							model = applyPatch(model, effect.mode, effect.path, hunks);
-							tui.requestRender();
+							safeRequestRender();
 							return;
 						}
 						const isOpened = await openInNvim(exec, ctx.cwd, effect.path);

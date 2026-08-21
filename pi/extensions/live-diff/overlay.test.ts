@@ -1421,13 +1421,36 @@ test("W9 viewer: loading, binary and failed states each render their own line", 
 	const loadingText = renderRows(loadingModel, width).map(rowText).join("\n");
 	assert.match(loadingText, /opening/i);
 
-	const binaryModel = applyPatch(loadingModel, "request", "a.ts", []);
-	const binaryText = renderRows(binaryModel, width).map(rowText).join("\n");
+	// An empty hunk list means "binary" only when the ROW said the file is
+	// binary. The engine also returns an empty list for text files with no
+	// textual change, and calling those binary is a lie the user can see.
+	const emptyTextModel = applyPatch(loadingModel, "request", "a.ts", []);
+	const emptyTextText = renderRows(emptyTextModel, width).map(rowText).join("\n");
+	assert.match(emptyTextText, /no textual changes/i);
+	assert.doesNotMatch(emptyTextText, /binary/i);
+
+	const binarySource: OverlayModel = {
+		...loadingModel,
+		viewer: {
+			path: "a.ts",
+			isBinaryPath: true,
+			hunks: [],
+			offset: 0,
+			isLoading: false,
+		},
+	};
+	const binaryText = renderRows(binarySource, width).map(rowText).join("\n");
 	assert.match(binaryText, /binary/i);
 
 	const failedModel: OverlayModel = {
 		...loadingModel,
-		viewer: { path: "a.ts", hunks: null, offset: 0, isLoading: false },
+		viewer: {
+			path: "a.ts",
+			isBinaryPath: false,
+			hunks: null,
+			offset: 0,
+			isLoading: false,
+		},
 	};
 	const failedText = renderRows(failedModel, width).map(rowText).join("\n");
 	assert.match(failedText, /unavailable/i);

@@ -73,6 +73,7 @@ export type OverlayKey =
 
 export interface ViewerState {
 	path: string;
+	isBinaryPath: boolean;
 	hunks: Hunk[] | null;
 	offset: number;
 	isLoading: boolean;

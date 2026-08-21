@@ -150,11 +150,10 @@ export async function openInNvim(
 
 		const absolutePath = containedAbsolutePath(cwd, path);
 		if (absolutePath === null) return false;
-		if (/[\n\r\t]/.test(absolutePath)) return false;
-		const escapedPath = absolutePath.replace(
-			/[\\ |%#]/g,
-			(char) => "\\" + char,
-		);
+		if (/[\u0000-\u001f\u007f-\u009f]/.test(absolutePath)) return false;
+		const escapedPath = absolutePath
+			.replace(/[\\ *?[\]{}`$%#'"|!<>()&;~]/g, (char) => "\\" + char)
+			.replace(/^([+-])/, "\\$1");
 		for (const key of ["esc", "colon", "e", "space"]) {
 			const keyOut = await runHerdr(exec, bin, [
 				"pane",
