@@ -246,7 +246,7 @@
     {
       "id": "AGNT-0015",
       "kind": "ticket",
-      "status": "in progress",
+      "status": "resolved",
       "short": "Show live request and overall diffs in Pi.",
       "long": "Add one repository-owned Pi extension that captures an immutable Git tree when a user request starts. Refresh the request diff and the overall worktree diff after write-capable tool calls and when the agent settles. Include staged, unstaged, untracked, renamed, and binary files without changing the worktree or its real index. Show compact live status and provide commands for the full request and overall views. Test external edits, empty changes, truncation, binary files, and repositories with an existing dirty worktree.\n\nAmendment (owner, 2026-08-19, AGNT-0014 gate D): selecting a file in the diff view focuses the herdr editor tab and opens that file in nvim (compose with the AGNT-0014 layout: herdr tab focus + pane send/nvim remote).",
       "deps": [
@@ -260,7 +260,8 @@
       ],
       "blame_phase": null,
       "created": "2026-08-17T01:57:33-0400",
-      "priority": "med"
+      "priority": "med",
+      "pr": "https://github.com/OwaisQuadri/agents/pull/41"
     },
     {
       "id": "AGNT-0016",
