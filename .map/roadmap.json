@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 43,
+  "next_nnnn": 48,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -694,6 +694,93 @@
       ],
       "blame_phase": null,
       "created": "2026-08-20T22:36:46-0400"
+    },
+    {
+      "id": "AGNT-0043",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: a dropped refresh is never re-run, so the badge can stay stale",
+      "long": "Static review of the AGNT-0015 branch, live-diff.ts around the isRefreshing latch and the settle handler: a refresh that arrives while another is in flight sets a dirty flag and returns, but nothing re-runs it when the in-flight one finishes. The next EVENT consumes the flag, so on a turn whose last write collides with the settle refresh the badge can hold a stale count until the user does something else. Fix: when a refresh finishes and the dirty flag is set, run one more pass, guarded so it cannot loop.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.ts",
+        "pi/extensions/live-diff.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0044",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: the origin merge takes the wrong kind for a file changed on both sides",
+      "long": "Static review, engine.ts in the branchStats merge: when a path appears on both the committed and the uncommitted side, the merged row takes the UNCOMMITTED side's kind. A file ADDED on the branch and then edited in the worktree therefore reports 'modified' against a branch point where it does not exist, and a committed rename that is edited afterwards stops rendering as a rename. Fix: the kind must describe the whole span from the branch point to the worktree - added wins over modified, and a rename on either side survives - and the row should keep renamedFrom from whichever side carries it.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/engine.ts",
+        "pi/extensions/live-diff/engine.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0045",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: overlay height is sampled once and can exceed the frame",
+      "long": "Two related findings from the static review of live-diff.ts. First, OVERLAY_MIN_HEIGHT can raise the content budget above the frame's own maxHeight, so on a short terminal the component emits more rows than the frame will hold. Second, the viewer's height budget is read once when the overlay opens, so resizing the terminal while it is open leaves the rendered row count and overlayOptions.maxHeight disagreeing until it is reopened. Fix: clamp the budget to the frame's maximum, and re-read the terminal size per render rather than at open.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.ts",
+        "pi/extensions/live-diff.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0046",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: the temp sweep scans a shared tmpdir on every tree write",
+      "long": "Static review, engine.ts sweepStaleTempDirs: the sweep runs on every worktree tree write, which is two to three times per refresh, and each run reads the whole shared temp directory and removes any live-diff-index-* directory older than the cutoff regardless of which process owns it. On a busy machine that is a directory scan per refresh, and two agents sharing a tmpdir can in principle remove each other's directories once one is older than the age guard. Fix: sweep at most once per session or on a timer rather than per write, and scope removal to this process's own prefix.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/engine.ts",
+        "pi/extensions/live-diff/engine.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0047",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "live-diff: prune comments to the whitelist and drop private-function docstrings",
+      "long": "The static review audited the AGNT-0015 diff against docs/comment-style.md and found comments matching none of the five whitelisted shapes. Seven full docstrings sit on MODULE-PRIVATE functions in overlay.ts (viewerLineCount, reduceViewer, windowBody, railed, viewerBorderRow, fitHintItems, renderViewer), and the whitelist admits a docstring only on a declaration used from outside its module; two of those also explain the body. Several comments narrate the line below them and should become an extracted, named helper instead - isColumnScopedKey for the empty-column guard, hintFitsBeside for the header gap branch, padToBodyHeight for the frame filler. Three are war stories that belong in the commit trail, including one about a corrupted source file. One genuine cross-component contract about herdr's bracketed-paste behaviour sits in nvim.test.ts and belongs beside the send-keys loop in nvim.ts, where a reader of that file will actually see it. Test files carry roughly thirty comments that restate the assertion below them; those fold into the test name or the assertion message.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/overlay.ts",
+        "pi/extensions/live-diff/nvim.ts",
+        "pi/extensions/live-diff.test.ts",
+        "pi/extensions/live-diff/overlay.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T23:02:49-0400"
     }
   ]
 }
