@@ -1,4 +1,3 @@
-// TODO(AGNT-0066.T02): Adjust declarations only when implementation exposes a proven schema gap.
 export interface HerdrWorktree {
 	path: string;
 	branch: string | null;
