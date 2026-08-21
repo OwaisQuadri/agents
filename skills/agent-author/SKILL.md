@@ -2,6 +2,7 @@
 name: agent-author
 description: Use when authoring, rewriting, or overhauling an AGENT — a subagent definition (.md with frontmatter) for a distinct role with its own tool set and judgment. Owns the definition anatomy, the embedded contract, the eval harness, and the failure modes agents die from. Skip when the capability is a recipe a single agent follows (that is a skill, see skill-author) or a topology over several agents (that is a workflow, see workflow-author).
 metadata:
+  minimum-tier: T4
   short-description: Author agent definitions with contracts + evals
 ---
 

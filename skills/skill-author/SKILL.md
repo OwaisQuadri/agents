@@ -2,6 +2,7 @@
 name: skill-author
 description: Use when authoring a new skill or rewriting an existing one — its trigger description, body recipe, disclosure files, evals, or logging. Skip for agents (agent-author) and workflows (workflow-author) — different anatomy — and for merely running a skill.
 metadata:
+  minimum-tier: T4
   short-description: The deep craft of authoring skills
 ---
 

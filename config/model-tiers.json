@@ -1,6 +1,6 @@
 {
   "tiers": {
-    "T1": { "pi": "openrouter/openrouter/free", "fallback": "openai-codex/gpt-5.6-luna", "thinking": "low" },
+    "T1": { "pi": "openrouter/openrouter/free", "fallback": "openai-codex/gpt-5.6-luna", "thinking": "low", "claude": "haiku" },
     "T2": { "pi": "openai-codex/gpt-5.6-luna", "fallback": "anthropic/claude-haiku-4-5", "thinking": "low", "claude": "haiku" },
     "T3": { "pi": "anthropic/claude-sonnet-5", "fallback": "openai-codex/gpt-5.6-terra", "thinking": "medium", "claude": "sonnet" },
     "T4": { "pi": "anthropic/claude-opus-5", "fallback": "openai-codex/gpt-5.6-sol", "thinking": "high", "claude": "opus" },
@@ -8,6 +8,7 @@
   },
   "orchestrator": "T3",
   "agents": {
+    "log-summarizer": "T2",
     "web-research-summarizer": "T2",
     "researcher": "T2",
     "scout": "T2",

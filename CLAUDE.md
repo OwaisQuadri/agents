@@ -87,6 +87,17 @@ Cross-project asks — status across agents, workspaces, or this machine's autom
 dispatching work into another project; digging into a project agent — route through the
 /hq skill.
 
+## model tiers
+
+Work routes by TIER, never by model name. `config/model-tiers.json` maps each tier to a
+model, and `docs/routing.md` carries the policy. Never hand-pick a model id in prose, in a
+skill, or in an agent definition.
+
+A skill may declare `metadata.minimum-tier`. Reaching one whose floor sits above the
+session model, say so in the first reply and recommend the switch. The user decides, and
+the work continues either way. A skill cannot change the model by itself. That line is the
+only thing standing between judgment work and a model too small for it.
+
 ## code style
 
 Before writing code, read ~/Documents/agents/docs/code-style.md: the user's manual style

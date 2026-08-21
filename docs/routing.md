@@ -52,6 +52,7 @@ assigns each fleet role its tier:
 
 | agent | tier | owner |
 |-------|------|-------|
+| log-summarizer | T2 | repo |
 | web-research-summarizer | T2 | repo |
 | researcher | T2 | package |
 | scout | T2 | package |
@@ -104,6 +105,28 @@ code-reviewer seat gives the final coherence verdict and stays T4.
   outside the tier file keeps the old behavior, a scheduled resume at its own reset.
 - `pi/agents/` is the versioned fleet; the installer links `~/.pi/agent/agents` to it.
 - OpenRouter calls keep `data_collection: deny` + `zdr` when they carry repo content.
+
+## skill floors
+
+A skill runs on the session model, and it cannot change that. So a skill whose work needs
+capability declares `metadata.minimum-tier`, and AGENTS.md tells the runner to flag a
+session sitting below it. The four authoring skills carry T4, because authoring is
+judgment work. The engineer map carries T3.
+
+## what T1 cost, measured
+
+T1 has no agent assigned, and four runs on 2026-08-20 are why. The free model answered a
+file-count question correctly in 10 tool calls and 92 seconds, five of them rewriting one
+file. It broke its output shape on a one-word reply.
+
+A read-only grant and a three-call budget then cut it to one call on a log. It still
+numbered every quoted line from 1, instead of using the file's own numbers. On the next
+run it returned nothing at all. The T1 fallback carried that work to T2, which finished in
+one turn for a fifth of a cent.
+
+One clean run in four. So `log-summarizer` sits at T2, and T1 stays defined and unused
+until some task shape earns it. Read that as measurement, never as a verdict on free
+models. The fallback held every time, and trying cost latency rather than money.
 
 ## what this deliberately skips
 

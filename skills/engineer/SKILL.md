@@ -11,6 +11,7 @@ description: >-
   (research-sweep owns those) and authoring skills, agents, or workflows (ai-author owns
   those).
 metadata:
+  minimum-tier: T3
   short-description: The exact 23-phase map for agent coding work
 ---
 
