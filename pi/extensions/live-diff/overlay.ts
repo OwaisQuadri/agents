@@ -161,45 +161,25 @@ function reduceViewer(
 		return { model, effect: null };
 	}
 	const pageSize = Math.max(viewportHeight - 1, 1);
+	const moveOffset = (delta: number): OverlayStep => ({
+		model: {
+			...model,
+			viewer: {
+				...viewer,
+				offset: clampViewerOffset(viewer.offset + delta, viewer.hunks, viewportHeight),
+			},
+		},
+		effect: null,
+	});
 	switch (key) {
 		case "up":
-			return {
-				model: {
-					...model,
-					viewer: { ...viewer, offset: clampViewerOffset(viewer.offset - 1, viewer.hunks, viewportHeight) },
-				},
-				effect: null,
-			};
+			return moveOffset(-1);
 		case "down":
-			return {
-				model: {
-					...model,
-					viewer: { ...viewer, offset: clampViewerOffset(viewer.offset + 1, viewer.hunks, viewportHeight) },
-				},
-				effect: null,
-			};
+			return moveOffset(1);
 		case "page-up":
-			return {
-				model: {
-					...model,
-					viewer: {
-						...viewer,
-						offset: clampViewerOffset(viewer.offset - pageSize, viewer.hunks, viewportHeight),
-					},
-				},
-				effect: null,
-			};
+			return moveOffset(-pageSize);
 		case "page-down":
-			return {
-				model: {
-					...model,
-					viewer: {
-						...viewer,
-						offset: clampViewerOffset(viewer.offset + pageSize, viewer.hunks, viewportHeight),
-					},
-				},
-				effect: null,
-			};
+			return moveOffset(pageSize);
 		case "top":
 			return { model: { ...model, viewer: { ...viewer, offset: 0 } }, effect: null };
 		case "bottom":

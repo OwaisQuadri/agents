@@ -54,7 +54,7 @@ function makeExec(): {
 	return { exec, calls };
 }
 
-function sentCommand(calls: RecordedCall[]): string | null {
+function sentText(calls: RecordedCall[]): string | null {
 	const keys = calls
 		.filter((call) => call.args[0] === "pane" && call.args[1] === "send-keys")
 		.map((call) => call.args[3]);
@@ -75,10 +75,6 @@ function sentCommand(calls: RecordedCall[]): string | null {
 		"pane run pastes into the buffer and must never be used to drive nvim",
 	);
 	return ":e " + textCall.args[3];
-}
-
-function sentText(calls: RecordedCall[]): string | null {
-	return sentCommand(calls);
 }
 
 test("ordinary path opens and sends one escaped argv element", async () => {

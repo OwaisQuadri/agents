@@ -4,14 +4,7 @@ import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import ragExtension from "./rag.ts";
-
-type CommandResult = {
-	stdout: string;
-	stderr: string;
-	code: number;
-	isKilled: boolean;
-};
+import ragExtension, { type CommandResult } from "./rag.ts";
 
 type RegisteredTool = {
 	name: string;
@@ -40,6 +33,10 @@ function registerWith(exec: (command: string, args: string[], options?: { signal
 	ragExtension(pi as never);
 	assert.ok(tool);
 	return tool;
+}
+
+function fakeResult(overrides: Partial<CommandResult> = {}): CommandResult {
+	return { stdout: "", stderr: "", code: 0, isKilled: false, ...overrides };
 }
 
 function executeFile(command: string, args: string[], options?: { signal?: AbortSignal }): Promise<CommandResult> {
@@ -104,39 +101,24 @@ test("propagates command, output, and cancellation failures", async (context) =>
 	});
 
 	await context.test("nonzero exit", async () => {
-		const tool = registerWith(async () => ({
-			stdout: "",
-			stderr: "index unavailable",
-			code: 2,
-			isKilled: false,
-		}));
+		const tool = registerWith(async () => fakeResult({ stderr: "index unavailable", code: 2 }));
 		await assert.rejects(tool.execute("call-3", { query: "query" }), /index unavailable/);
 	});
 
 	await context.test("nonzero exit without stderr", async () => {
-		const tool = registerWith(async () => ({
-			stdout: "",
-			stderr: "",
-			code: 1,
-			isKilled: false,
-		}));
+		const tool = registerWith(async () => fakeResult({ code: 1 }));
 		await assert.rejects(tool.execute("call-3b", { query: "query" }), /failed with exit code 1/);
 	});
 
 	await context.test("invalid output", async () => {
-		const tool = registerWith(async () => ({
-			stdout: "not-json\n",
-			stderr: "",
-			code: 0,
-			isKilled: false,
-		}));
+		const tool = registerWith(async () => fakeResult({ stdout: "not-json\n" }));
 		await assert.rejects(tool.execute("call-4", { query: "query" }), /invalid JSON output/);
 	});
 
 	await context.test("cancellation", async () => {
 		const controller = new AbortController();
 		controller.abort();
-		const tool = registerWith(async () => ({ stdout: "", stderr: "", code: 0, isKilled: true }));
+		const tool = registerWith(async () => fakeResult({ isKilled: true }));
 		await assert.rejects(tool.execute("call-5", { query: "query" }, controller.signal), /cancelled/);
 	});
 });
