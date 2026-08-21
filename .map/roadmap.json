@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 39,
+  "next_nnnn": 40,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -625,6 +625,25 @@
       ],
       "blame_phase": null,
       "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0039",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "standalone diff TUI in its own herdr pane, harness-independent",
+      "long": "A standalone terminal UI for the live diff, run in its own herdr pane beside the agent - the owner's shape is a terminal at the bottom and the diff at the top - rather than an overlay inside one agent. WHY IT BEATS THE EXTENSION: this repo runs Claude Code, Codex and Pi, and a Pi extension can only ever serve Pi. A standalone process serves all three, and it sidesteps every constraint that cost this ticket time: no keybinding to steal (Pi already binds ctrl+ a b c d g l n o p r s t u v x z, and the rest are standard readline keys), no bracketed-paste behaviour to work around, no stale-context hazard of the AGNT-0028 class, no overlay taking focus, and no coupling to one harness's lifecycle. CENTRAL DESIGN QUESTION, to be answered before building: a standalone process does not know when an agent TURN starts, and the turn counter is what makes the current badge agent-aware. Three candidate answers, all with costs: the Pi extension (and later equivalents for Claude Code and Codex) writes turn markers to a file the TUI reads, which keeps turn-awareness but re-introduces per-harness coupling; the TUI infers turns from write quiescence, which needs no coupling but guesses; or it drops the turn column and shows only the branch basket, which is honest and simplest and loses a feature the owner has been using. SCOPE: Rust per this repo's tooling rule, which means re-implementing the engine that AGNT-0015 built in TypeScript - snapshot via a temp GIT_INDEX_FILE plus write-tree, branch-point baseline through merge-base, committed and uncommitted merged into one origin-tagged basket, per-file patch parsing - plus a ratatui front end for the list and the read-only viewer, and a filesystem watcher. AGNT-0015's contracts, test cases and break-panel findings are the specification: reuse them rather than rediscovering the bidi class rule, the display-width clipping, the nested .git ignore rule, the temp-dir sweep and the rest. RELATIONSHIP TO AGNT-0015: that ticket ships and stays. This one does not replace it until it is at least as good; if it proves out, retiring the extension is a later decision, not a precondition. Related: AGNT-0014 owns the two-tab herdr layout this pane joins, and AGNT-0029 the workspace palette.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "tools/",
+        "herdr/",
+        "config/tools.toml",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T22:17:14-0400"
     }
   ]
 }
