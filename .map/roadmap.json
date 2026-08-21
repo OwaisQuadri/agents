@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 56,
+  "next_nnnn": 57,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -910,6 +910,23 @@
       ],
       "blame_phase": null,
       "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0056",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "phase 23 should land through /git-sync instead of reimplementing it",
+      "long": "Two skills own landing and they have already drifted. skills/engineer/phases/23-close.md step 7 carries its own route choice, its own push, and its own PR call, while skills/git-sync/SKILL.md owns exactly that job for the whole machine. When the gate E standard changed on 2026-08-20 - a project WITH a remote lands through a PR, a project without lands by local squash merge - the change was propagated by hand into SKILL.md, phase 01 and phase 23, and git-sync was missed. It still carries the old local-squash default. That is the duplication reporting itself.\n\nFix has two halves. First, update git-sync to the current standard so the skill that owns landing states it correctly. Second, make phase 23 step 7 DELEGATE: it should hand the branch to /git-sync and record what came back, keeping only what is genuinely engineer's - the gate E presentation, the status flips in roadmap.json and tasks.json, and the usage log line. The route choice, the push, the PR body and the branch cleanup all belong to git-sync.\n\nTwo constraints learned on the AGNT-0015 run. A squash merge is invisible to git branch --merged, because the squashed commit is new and the branch tip never becomes an ancestor, so whichever skill owns the close-out sweep needs the tree-parity fallback that phase 01 already documents. And create-pr does not gate on its own - it stops only on an empty diff or a rejected push - so the human gate has to stay on engineer's side of the handoff, before the call, never inside it.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/23-close.md",
+        "skills/engineer/SKILL.md",
+        "skills/git-sync/SKILL.md",
+        "skills/git-sync/TUNING.md"
+      ],
+      "blame_phase": 23,
+      "created": "2026-08-21T01:49:35-0400"
     }
   ]
 }
