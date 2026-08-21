@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 70,
+  "next_nnnn": 73,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1101,6 +1101,54 @@
       "blame_phase": null,
       "created": "2026-08-21T14:35:57-0400",
       "priority": "low"
+    },
+    {
+      "id": "AGNT-0070",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Shared ctx-liveness guard helper for Pi extensions",
+      "long": "AGNT-0028 wrote isCtxActive(ctx) in pi/extensions/statusline.ts. It guards against a stale extension ctx after session replacement. Every extension that needs this protection reimplements it by hand today. At least one already shipped the bug it prevents; see AGNT-0060, telemetry.ts.\n\nExtract a shared helper, for example pi/extensions/lib/ctx-guard.ts, and import it from both extensions. This makes the fix reusable instead of copy-pasted per extension. This ticket depends on AGNT-0060 landing first. A second real caller proves the shared shape instead of a speculative design for one. From AGNT-0028's phase-21 roadmap exploration.",
+      "deps": [
+        "AGNT-0060"
+      ],
+      "files": [
+        "pi/extensions/lib/",
+        "pi/extensions/statusline.ts",
+        "pi/extensions/telemetry.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:57:00-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0071",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Replace statusline\u2019s 10-minute poll with event-driven refresh",
+      "long": "The constants POLL_INTERVAL_MS (10 minutes) and MIN_FETCH_INTERVAL_MS (60 seconds) live in pi/extensions/statusline.ts, from before AGNT-0028. That fix left them untouched.\n\nReplace the fixed poll with a refresh triggered by a provider or model-change event. Keep a longer background poll only as a backstop. This needs a testability pass first: confirm the event surface fires often enough to drop the poll frequency. This ticket stays speculative until that check runs. From AGNT-0028's phase-21 roadmap exploration.",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:57:00-0400",
+      "priority": "low"
+    },
+    {
+      "id": "AGNT-0072",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Move the roadmap from roadmap.json to GitHub Issues",
+      "long": "Owner ask (2026-08-21). This repo tracks tickets in .map/roadmap.json. The engineer skill and skills/task-graph read and write it. Move that tracking to GitHub Issues instead. Phase 01's bootstrap already checks gh issue list as one possible import source on first run. The repo has some precedent for treating GitHub Issues as a ticket source.\n\nThis migration needs its own phase-02 research. Map skills/task-graph/scripts/next-ticket.sh's readiness-count logic onto issue labels or a project board. Map dependency edges, which next-ticket.sh and dag-mermaid.sh both read from a deps array, onto GitHub's issue model. Decide whether the ticket id scheme (AGNT-NNNN) stays as a label or moves to the issue number. Decide what happens to the existing 71+ filed tickets in roadmap.json during the cutover.",
+      "deps": [],
+      "files": [
+        ".map/roadmap.json",
+        "skills/task-graph/",
+        "skills/engineer/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:58:37-0400",
+      "priority": "med"
     }
   ]
 }
