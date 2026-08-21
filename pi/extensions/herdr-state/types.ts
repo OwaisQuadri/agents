@@ -66,3 +66,54 @@ export interface HerdrStateFailure {
 	code: "unavailable" | "not-found" | "invalid-response";
 	message: string;
 }
+
+export interface HerdrRawWorktree {
+	checkout_path: string;
+	is_linked_worktree: boolean;
+	repo_name: string;
+}
+
+export interface HerdrRawWorkspace {
+	workspace_id: string;
+	label: string;
+	focused: boolean;
+	worktree?: HerdrRawWorktree;
+}
+
+export interface HerdrRawTab {
+	tab_id: string;
+	workspace_id: string;
+	label: string;
+	focused: boolean;
+}
+
+export interface HerdrRawPane {
+	pane_id: string;
+	workspace_id: string;
+	tab_id: string;
+	cwd?: string;
+	focused: boolean;
+}
+
+export interface HerdrRawAgent {
+	agent?: string;
+	cwd?: string;
+	pane_id: string;
+	tab_id: string;
+	workspace_id: string;
+}
+
+export interface HerdrRawSnapshot {
+	focused_workspace_id: string | null;
+	focused_tab_id: string | null;
+	focused_pane_id: string | null;
+	workspaces: HerdrRawWorkspace[];
+	tabs: HerdrRawTab[];
+	panes: HerdrRawPane[];
+	agents: HerdrRawAgent[];
+}
+
+export interface HerdrSnapshotResponse {
+	id: string;
+	result: HerdrRawSnapshot;
+}
