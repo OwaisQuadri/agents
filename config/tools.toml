@@ -105,7 +105,7 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
-name = "live-diff-module"
+name = "live-diff-lib"
 platforms = ["macos", "linux"]
 commands = []
 pi_extension = "pi/extensions/live-diff"
