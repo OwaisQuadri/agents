@@ -21,8 +21,9 @@ argument.
 | T4 | hard problems, planning, final review |
 | T5 | project-level synthesis, deep architecture (falls back to T4) |
 
-Each tier's `fallback` crosses provider families on purpose. A provider outage or a
-usage-limit stop then degrades one tier sideways instead of failing the run.
+Each tier's `fallbacks` list crosses provider families on purpose. A provider outage or a
+usage-limit stop then degrades one tier sideways instead of failing the run. The list is
+ordered, so T3 tries terra and then codex-spark before the tier gives up.
 
 ## the four rules
 
@@ -75,8 +76,10 @@ agent keeps the thinking its author tuned, and only its model follows the tier.
 
 How the assignment reaches each harness:
 
-- Pi: the `pi/agents/` frontmatter carries NO model. The installer compiles the tier file
-  into `subagents.agentOverrides` (model, cross-provider fallback, thinking) plus
+- Pi: the `pi/agents/` frontmatter carries NO model. Subagents receive a tier's WHOLE
+  ordered `fallbacks` list. The session map takes the first entry only, because the
+  session walks one hop per limit and re-enters on the new model. The installer compiles
+  the tier file into `subagents.agentOverrides` (model, fallbacks, thinking) plus
   `subagents.defaultModel` and `subagents.defaultThinking` in `~/.pi/agent/settings.json`.
   Frontmatter without a model falls through to those overrides.
 - Claude Code: no override layer exists, so `agents/*/` frontmatter must carry the tier's

@@ -123,15 +123,18 @@ else
   # tuned its own thinking keeps it, and only its model follows the tier.
   OWNED="$(cd "$REPO_TARGET/pi/agents" 2>/dev/null && ls *.md 2>/dev/null | sed 's/\.md$//' | jq -R . | jq -sc .)"
   OWNED="${OWNED:-[]}"
+  # modelTierFallbacks takes each tier's FIRST backup: the session extension walks one hop
+  # per usage limit and re-enters on the new model, so the rest of the chain is reached by
+  # repetition rather than by a list. Subagents get the whole ordered list.
   TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
-      .value as $tier | { key: $tier.pi, value: $tier.fallback }))
+      .value as $tier | { key: $tier.pi, value: $tier.fallbacks[0] }))
     | .subagents = ((.subagents // {})
     | .defaultModel = $t.tiers[$t.orchestrator].pi
     | .defaultThinking = $t.tiers[$t.orchestrator].thinking
     | .agentOverrides = ((.agentOverrides // {}) + ($t.agents | with_entries(
         .key as $name | .value as $tier
         | .value = { model: $t.tiers[$tier].pi,
-                     fallbackModels: [$t.tiers[$tier].fallback] }
+                     fallbackModels: $t.tiers[$tier].fallbacks }
                    + (if ($owned | index($name)) then { thinking: $t.tiers[$tier].thinking } else {} end)))))'
   if [[ -f "$PI_SETTINGS_TIERS" ]] && jq -e --argjson t "$(cat "$TIERS")" --argjson owned "$OWNED" \
       ". == ($TIER_JQ)" "$PI_SETTINGS_TIERS" >/dev/null 2>&1; then

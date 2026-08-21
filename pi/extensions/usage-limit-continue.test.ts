@@ -15,10 +15,14 @@ import {
 	scheduleResume,
 } from "./usage-limit-continue.ts";
 
-const FALLBACKS = {
-	"openai-codex/gpt-5.6-luna": "anthropic/claude-haiku-4-5",
-	"anthropic/claude-sonnet-5": "openai-codex/gpt-5.6-terra",
-	"anthropic/claude-fable-5": "anthropic/claude-opus-5",
+// SYNTHETIC FIXTURE, not configuration. These provider and model names are invented so a
+// reader never mistakes this block for the routing table. The real one is compiled from
+// config/model-tiers.json into pi settings, and the last test in this file checks that the
+// real file resolves rather than restating it here.
+const SYNTHETIC_FALLBACKS = {
+	"provider-a/small": "provider-b/small",
+	"provider-a/medium": "provider-b/medium",
+	"provider-a/large": "provider-a/medium",
 };
 
 const NOW = new Date("2026-08-19T12:00:00.000-04:00").getTime();
@@ -163,15 +167,15 @@ test("computeResetPlan: detected but unparseable time reports isDetected with a 
 });
 
 test("findTierFallback: fable falls back to opus, and every other tier resolves its own backup", () => {
-	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-fable-5"), "anthropic/claude-opus-5");
-	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-sonnet-5"), "openai-codex/gpt-5.6-terra");
-	assert.equal(findTierFallback(FALLBACKS, "openai-codex", "gpt-5.6-luna"), "anthropic/claude-haiku-4-5");
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "large"), "provider-a/medium");
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "medium"), "provider-b/medium");
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "small"), "provider-b/small");
 });
 
 test("findTierFallback: a model outside the tier file has no fallback, so the resume path still owns it", () => {
-	assert.equal(findTierFallback(FALLBACKS, "anthropic", "claude-opus-5"), null);
-	assert.equal(findTierFallback(FALLBACKS, "ollama", "llama-4"), null);
-	assert.equal(findTierFallback({}, "anthropic", "claude-fable-5"), null);
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-b", "medium"), null);
+	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "ollama", "llama-4"), null);
+	assert.equal(findTierFallback({}, "provider-a", "large"), null);
 });
 
 test("earliestAvailable: the resume waits on the model that returns first, not the one that failed last", () => {
@@ -212,5 +216,44 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
+	}
+});
+
+test("the real tier file compiles into a chain every hop of which resolves", async () => {
+	const tiersPath = join(import.meta.dirname, "..", "..", "config", "model-tiers.json");
+	const tiers = JSON.parse(await readFile(tiersPath, "utf8")) as {
+		tiers: Record<string, { pi: string; fallbacks: string[] }>;
+		orchestrator: string;
+		agents: Record<string, string>;
+	};
+
+	// What install.sh compiles into settings.modelTierFallbacks: each tier's first backup.
+	const compiled: Record<string, string> = {};
+	for (const tier of Object.values(tiers.tiers)) {
+		compiled[tier.pi] = tier.fallbacks[0];
+	}
+
+	// Every tier names at least one backup, and never itself.
+	for (const [name, tier] of Object.entries(tiers.tiers)) {
+		assert.ok(tier.fallbacks.length >= 1, `${name} has no fallback`);
+		assert.ok(!tier.fallbacks.includes(tier.pi), `${name} falls back to itself`);
+	}
+
+	// Every agent's tier exists, so no assignment routes into a hole.
+	for (const [agent, tier] of Object.entries(tiers.agents)) {
+		assert.ok(tiers.tiers[tier], `${agent} names tier ${tier}, which does not exist`);
+	}
+	assert.ok(tiers.tiers[tiers.orchestrator], "orchestrator names a tier that does not exist");
+
+	// The chain terminates: walking first-backups from any tier primary must stop rather
+	// than cycle, which is what lets the session fall through to a scheduled resume.
+	for (const start of Object.keys(compiled)) {
+		const seen = new Set<string>();
+		let at: string | undefined = start;
+		while (at && compiled[at]) {
+			assert.ok(!seen.has(at), `fallback chain cycles at ${at}`);
+			seen.add(at);
+			at = compiled[at];
+		}
 	}
 });
