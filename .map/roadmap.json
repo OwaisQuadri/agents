@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 48,
+  "next_nnnn": 49,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -766,10 +766,10 @@
     {
       "id": "AGNT-0047",
       "kind": "ticket",
-      "status": "todo",
+      "status": "resolved",
       "priority": "med",
       "short": "live-diff: prune comments to the whitelist and drop private-function docstrings",
-      "long": "The static review audited the AGNT-0015 diff against docs/comment-style.md and found comments matching none of the five whitelisted shapes. Seven full docstrings sit on MODULE-PRIVATE functions in overlay.ts (viewerLineCount, reduceViewer, windowBody, railed, viewerBorderRow, fitHintItems, renderViewer), and the whitelist admits a docstring only on a declaration used from outside its module; two of those also explain the body. Several comments narrate the line below them and should become an extracted, named helper instead - isColumnScopedKey for the empty-column guard, hintFitsBeside for the header gap branch, padToBodyHeight for the frame filler. Three are war stories that belong in the commit trail, including one about a corrupted source file. One genuine cross-component contract about herdr's bracketed-paste behaviour sits in nvim.test.ts and belongs beside the send-keys loop in nvim.ts, where a reader of that file will actually see it. Test files carry roughly thirty comments that restate the assertion below them; those fold into the test name or the assertion message.",
+      "long": "The static review audited the AGNT-0015 diff against docs/comment-style.md and found comments matching none of the five whitelisted shapes. Seven full docstrings sit on MODULE-PRIVATE functions in overlay.ts (viewerLineCount, reduceViewer, windowBody, railed, viewerBorderRow, fitHintItems, renderViewer), and the whitelist admits a docstring only on a declaration used from outside its module; two of those also explain the body. Several comments narrate the line below them and should become an extracted, named helper instead - isColumnScopedKey for the empty-column guard, hintFitsBeside for the header gap branch, padToBodyHeight for the frame filler. Three are war stories that belong in the commit trail, including one about a corrupted source file. One genuine cross-component contract about herdr's bracketed-paste behaviour sits in nvim.test.ts and belongs beside the send-keys loop in nvim.ts, where a reader of that file will actually see it. Test files carry roughly thirty comments that restate the assertion below them; those fold into the test name or the assertion message. RESOLVED on the AGNT-0015 branch rather than deferred, on the owner's instruction: the prune was meant as a task in this run, not a follow-up. Seven private-function docstrings deleted, the unused VIEWER_PAGE_SIZE constant and its docstring deleted, four narration comments replaced by named code (isColumnScopedKey/reduceColumnScoped, hintGapBeside, padToBodyHeight) which also removed three now-unreachable branches, three war stories deleted, the herdr bracketed-paste contract moved from nvim.test.ts to nvim.ts beside the send-keys loop, BodyLine.modelRowIndex renamed selectableRowIndex so the field needs no docstring, and roughly forty assertion-restating comments removed from the two test files. Every remaining docstring in the diff sits on an exported declaration; the four surviving line comments are all contracts with something outside their file.",
       "deps": [
         "AGNT-0015"
       ],
@@ -781,6 +781,23 @@
       ],
       "blame_phase": null,
       "created": "2026-08-20T23:02:49-0400"
+    },
+    {
+      "id": "AGNT-0048",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "low",
+      "short": "live-diff tests: share one git fixture instead of a repo per test",
+      "long": "The 138-test suite takes 21 seconds, and effectively all of it is in the two files that touch real git: live-diff.test.ts at 21.4s and engine.test.ts at 5.3s standalone. The three pure files finish in under a second together. Each test builds its own temp repository with git init plus commits, so it pays several process spawns before it asserts anything. Testing against real git was a deliberate choice and it caught the index-corruption bug, so the fix is NOT to mock git: it is to build a small number of shared read-only fixture repositories once per file and let tests that only READ from them share one, keeping a private repo only for tests that write. Care needed - the engine writes trees via a temp GIT_INDEX_FILE, so a shared fixture must be proven not to mutate.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff.test.ts",
+        "pi/extensions/live-diff/engine.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T00:12:28-0400"
     }
   ]
 }
