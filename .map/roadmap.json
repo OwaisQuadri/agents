@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 73,
+  "next_nnnn": 74,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1148,6 +1148,20 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T14:58:37-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0073",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "No usage bar ever renders for the openai-codex provider",
+      "long": "Owner report (2026-08-21), surfaced during AGNT-0028's gate C re-check: the statusline usage bar never appears when the active model provider is openai-codex (GPT/Codex). Owner suspects, and this is confirmed, pre-existing and unrelated to AGNT-0028 -- that ticket's diff touches zero Codex-specific code (fetchCodexUsage untouched). Root cause undiagnosed: pi/extensions/statusline.ts's fetchCodexUsage has three silent-failure paths, any of which could explain a permanently absent bar with zero trace: (1) getProviderToken's try/catch swallows any auth-resolution error and returns null; (2) codexAccountIdFromToken returns null on any JWT decode failure or a missing chatgpt_account_id claim, with no logging; (3) `if (!response.ok) return null;` discards the HTTP status code on a failed CODEX_USAGE_URL request. Needs live diagnosis (which of the three is actually failing) before a fix -- add temporary logging or a debug flag to distinguish them, reproduce against a real openai-codex session, then fix the actual failure point.",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T16:06:53-0400",
       "priority": "med"
     }
   ]
