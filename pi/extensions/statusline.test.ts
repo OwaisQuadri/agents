@@ -98,6 +98,12 @@ function createMockContext(initial: { provider?: Provider | null; isActive?: boo
 				return token === null ? null : { auth: { apiKey: token } };
 			},
 		},
+		// TODO(AGNT-0028.T04): walk W3/D-02 -- the real ExtensionContext has
+		// no assertActive() method. Remove this mock method and the
+		// assertActiveCalls tracking entirely; hasUI above already throws
+		// correctly when stale, matching the real per-getter guard shape.
+		// Fix the three assertions at lines ~305, ~331, ~375 that check
+		// assertActiveCalls to check hasUIReads instead.
 		assertActive() {
 			assertActiveCalls += 1;
 			if (!isActive) {
