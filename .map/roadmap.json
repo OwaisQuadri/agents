@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 66,
+  "next_nnnn": 68,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1051,6 +1051,32 @@
       "blame_phase": null,
       "created": "2026-08-21T14:23:47-0400",
       "priority": "high"
+    },
+    {
+      "id": "AGNT-0066",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Give Pi read access to Herdr state: workspaces, nvim viewports, terminal logs",
+      "long": "Owner ask (2026-08-21): Pi currently has no visibility into the live Herdr(the workspace/pane manager this repo integrates with) session state around it -- which workspaces/worktrees are open, what's showing in nvim viewports, what terminal windows exist and their scrollback/logs. Give Pi read access to that state so an agent session can answer questions about or act on what the owner is actually looking at across his panes, not just its own transcript. Related existing ticket AGNT-0017 (replayable cockpit -- restore Herdr tabs/state on cold start) is about persistence/restore, not live read access from within a running Pi session; this ticket is the live-query surface, likely a new Herdr-side API/extension Pi calls into. Scope needs definition at phase 03/04: which Herdr surfaces expose queryable state today (panes, tabs, active commands), what a live nvim-viewport read requires (nvim RPC?), and whether terminal log access needs each pane's scrollback captured to a file Pi can read or a live RPC channel.",
+      "deps": [],
+      "files": [],
+      "blame_phase": null,
+      "created": "2026-08-21T14:25:02-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0067",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Timestamp Pi events: tool calls and messages",
+      "long": "Owner ask (2026-08-21): add timestamps to Pi session events -- tool calls and messages -- so the transcript/log shows when each thing happened, not just its content and order. Likely lands in whatever Pi extension or hook already observes the event stream (this repo's telemetry.ts extension is the closest existing surface, per AGNT-0060's read of its lifecycle handlers); scope needs a phase 02 read of what event data Pi's extension API already exposes (does the event payload already carry a timestamp Pi just isn't surfacing, or does none exist at all).",
+      "deps": [],
+      "files": [
+        "pi/extensions/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:25:02-0400",
+      "priority": "med"
     }
   ]
 }
