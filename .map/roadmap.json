@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 60,
+  "next_nnnn": 61,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -969,6 +969,20 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T14:02:26-0400",
+      "priority": "high"
+    },
+    {
+      "id": "AGNT-0060",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "telemetry.ts crashes on the same stale-ctx pattern AGNT-0028 fixed in statusline.ts",
+      "long": "Found by AGNT-0028's phase-19 break-panel regression-sweep (2026-08-21), reproduced live: pi/extensions/telemetry.ts's registerLifecycle (lines ~1263-1321) captures ctx.ui into a module-closure statusTarget at session_start/agent_start/agent_settled/session_shutdown, then reuses it unguarded inside pi.events.on('subagent:async-started'|'subagent:async-complete'|'subagent:foreground-complete') handlers, which receive no ctx at all. When the captured ctx.ui goes stale (session replacement, same root cause as AGNT-0028), syncTelemetryStatus (telemetry.ts:1065) throws uncaught -- the exact crash-into-TUI failure mode AGNT-0028 just fixed in statusline.ts, now confirmed present in a sibling extension. Repro: a throwaway bun script driving telemetry.ts's session_start handler with a ctx whose ui getter throws after invalidation; reproduces every time. Fix per the same pattern as AGNT-0028: an isCtxActive-style guard (or reuse a shared helper) before any use of the captured statusTarget. Also worth a light look: live-diff.ts's setBadge() swallows ALL ctx.ui errors via a blanket try/catch (not staleness-specific), which happens to avoid this exact crash but silently masks other legitimate errors too -- lower priority, flagged for awareness only, not confirmed as a live bug.",
+      "deps": [],
+      "files": [
+        "pi/extensions/telemetry.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T14:02:42-0400",
       "priority": "high"
     }
   ]
