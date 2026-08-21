@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 74,
+  "next_nnnn": 76,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1162,6 +1162,36 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T16:06:53-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0074",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "A non-staleness setStatus error still crashes the TUI",
+      "long": "Found by AGNT-0028's phase-23 fresh code-reviewer dispatch (2026-08-21), proven with a live repro, not self-reported: a genuine error thrown from ctx.ui.setStatus inside pi/extensions/statusline.ts's render() still escapes as an unhandled rejection carrying a raw stack trace -- the exact TUI-crash shape AGNT-0028 set out to close, reachable through a different trigger. Root cause: session_start/model_select/agent_settled call `void refresh(ctx)` fire-and-forget, which detaches the returned promise from the runner's own try/catch around event emission. AGNT-0028's isCtxActive guard only catches staleness; any OTHER error inside the render/refresh call chain (a genuine UI fault, not session replacement) still propagates uncaught. Pre-existing, not introduced by AGNT-0028's diff -- the fire-and-forget pattern predates that ticket. Fix direction: wrap the body of refresh() (or its call sites) in a top-level try/catch that logs and swallows any non-staleness error too, matching the same absence-UX goal AGNT-0028 established (nothing crashes into the TUI, regardless of cause).",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T16:19:17-0400",
+      "priority": "high"
+    },
+    {
+      "id": "AGNT-0075",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "statusline test suite has coverage gaps: unguarded mocks, a tautological case, redundant guards",
+      "long": "Found by AGNT-0028's phase-23 fresh code-reviewer dispatch (2026-08-21), each proven with a mutation test, not self-reported. (1) Both pi/extensions/statusline.test.ts and statusline.integration.test.ts expose ctx.ui as a plain non-throwing property, while the real ExtensionContext.ui is an assertActive-guarded getter -- neither test file can detect a stale-ctx crash reached through ctx.ui, one of the two crash sites the ticket names. (2) statusline.test.ts's installFakeSetInterval/installMockFetch restores are not wrapped in try/finally (unlike the integration test, which does this correctly) -- an assertion failure between patch and restore leaves globalThis.setInterval and globalThis.fetch permanently replaced for the rest of the test process. (3) render()'s guard (line ~221) and refresh()'s post-fetch guard (line ~249) are mutually redundant and only jointly load-bearing -- deleting either one alone leaves all 7 tests green, so a future cleanup that removes one is unopposed by the suite. (4) TC-07 ('provider switch does not render stale session A usage') is tautological: it drives two distinct providers with two distinct fetch payloads, and usageByProvider is keyed by provider, so the assertion passes regardless of any staleness handling -- deleting the staleness transition the test is named for does not make it fail. (5) isCtxActive's bare catch reclassifies every error from ctx.hasUI as staleness, including a genuine fault inside the runner itself, silently disabling the usage bar with no diagnostic trace.",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.test.ts",
+        "pi/extensions/statusline.integration.test.ts",
+        "pi/extensions/statusline.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-21T16:19:17-0400",
       "priority": "med"
     }
   ]
