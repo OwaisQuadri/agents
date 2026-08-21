@@ -117,3 +117,16 @@ export interface HerdrSnapshotResponse {
 	id: string;
 	result: HerdrRawSnapshot;
 }
+
+export type HerdrRawEvent =
+	| { type: "workspace_created" | "workspace_updated"; workspace: HerdrRawWorkspace }
+	| { type: "workspace_closed"; workspace_id: string }
+	| { type: "workspace_focused"; workspace_id: string }
+	| { type: "tab_created"; tab: HerdrRawTab }
+	| { type: "tab_closed"; tab_id: string; workspace_id: string }
+	| { type: "tab_focused"; tab_id: string; workspace_id: string }
+	| { type: "pane_created" | "pane_updated"; pane: HerdrRawPane }
+	| { type: "pane_closed"; pane_id: string; workspace_id: string }
+	| { type: "pane_focused"; pane_id: string; workspace_id: string }
+	| { type: "pane_output_changed"; pane_id: string; workspace_id: string }
+	| { type: string };
