@@ -648,10 +648,10 @@
     {
       "id": "AGNT-0040",
       "kind": "ticket",
-      "status": "todo",
+      "status": "resolved",
       "priority": "med",
       "short": "gate E lands through a PR when the project has a remote",
-      "long": "The engineer skill's phase 23 records the owner's default from 2026-08-07 as a local squash merge into main. He revised it on 2026-08-20: \"gate e will run through PR as is the new standard for git projects with a remote\". Update skills/engineer/phases/23-close.md so the PR route is the default whenever a remote exists, and the local squash merge remains the route only for a repo with no remote - including the consequence phase 01 already documents, that a squash merge is invisible to its merged-branch sweep and so the ticket must be flipped to done at close, whereas the PR route leaves that flip to the next run's phase 01 after the merge.",
+      "long": "The engineer skill's phase 23 records the owner's default from 2026-08-07 as a local squash merge into main. He revised it on 2026-08-20: \"gate e will run through PR as is the new standard for git projects with a remote\". Update skills/engineer/phases/23-close.md so the PR route is the default whenever a remote exists, and the local squash merge remains the route only for a repo with no remote - including the consequence phase 01 already documents, that a squash merge is invisible to its merged-branch sweep and so the ticket must be flipped to done at close, whereas the PR route leaves that flip to the next run's phase 01 after the merge. RESOLVED on the AGNT-0015 branch: the owner asked for the change to be propagated during that run rather than deferred, so SKILL.md, phase 01 and phase 23 all carry the remote-decides-the-route rule and TUNING.md records the reversal.",
       "deps": [],
       "files": [
         "skills/engineer/phases/23-close.md",
