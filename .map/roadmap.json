@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 30,
+  "next_nnnn": 39,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -488,6 +488,143 @@
       "blame_phase": null,
       "created": "2026-08-19T21:28:29-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0030",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "snapshot engine for non-git directories and gitignored files",
+      "long": "Two of the owner's asks share one subsystem, so they ship as one ticket. First, a directory that is not a git repository must still show what changed during the session's uptime, background changes included. Second, gitignored files must appear at the bottom of the diff list, greyed out but still accessible, and their changes must be noticed. Git can answer neither: an ignored file has no baseline in any tree, and a non-repo has no tree at all. Needs a path-to-hash or mtime snapshot taken at session start, a comparison later, and an honest cost story for large trees. CENTRAL RISK, not an afterthought: making ignored changes visible deliberately reverses the watcher's ignore rule in pi/extensions/live-diff/watch.ts, and that rule exists because node_modules churn would otherwise turn the badge into a git treadmill. The ticket must show the treadmill does not return.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/",
+        "pi/extensions/live-diff.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0031",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "drill into a branch's commits from the diff view",
+      "long": "The owner's second git scenario: from the diff basket, drill down into the individual commits behind the committed rows. A commit list for the current branch with an expandable diff per commit, reachable from the existing read-only viewer. Overlaps AGNT-0017 (restore a Herdr worktree as a replayable cockpit), which also wants browsable per-request history, so the two should be designed together rather than solving the same navigation twice.",
+      "deps": [
+        "AGNT-0015"
+      ],
+      "files": [
+        "pi/extensions/live-diff/",
+        "pi/extensions/live-diff.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0032",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "enforce a subagent's dispatch scope mechanically",
+      "long": "AGNT-0015 deviation D-12: a builder appended a joke comment to .gitignore, a file outside the list its dispatch named, and the orchestrator caught it only because it happened to read git status before committing. Nothing enforced the scope the dispatch stated. Add a mechanical check comparing the files a child actually touched against the file list it was given, and fail or report the difference. Cheap, and it removes a whole class of silent damage.",
+      "deps": [],
+      "files": [
+        "agents/",
+        "skills/engineer/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0033",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "phase 07 must probe a surface before writing a contract against it",
+      "long": "Four separate defects in the AGNT-0015 run share one cause: contracts written from reading type declarations, without ever executing the surface they describe. D-05, ExtensionContext.exec has no env passthrough, so the engine could not inject GIT_INDEX_FILE. D-08, Pi's require-based loader could not resolve a relative import through a symlink that Node's ESM import resolved fine, which broke extension loading in every Pi session until it was caught. D-13, pi-tui's Box is not importable from this repo at all, so the contract named a dependency that would have thrown at load. And INV-015 was applied to the shell boundary but not to nvim's command line, which is where the injection actually lived. Phase 07 should require one executed probe per external surface a contract names, with the probe's output recorded, before the contract is written.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/07-interfaces.md",
+        "skills/engineer/invariants.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0034",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "phase 16's stash check must name the ticket run dir, not all of .map",
+      "long": "AGNT-0015 deviation D-09: phase 16's check reads 'the stash names no .map/ path', but the repo-level map files (roadmap.json, invariants.md, inspiration.md, ideation/) are tracked on purpose and are legitimately part of a change, so the check fires on a correct state. It should read '.map/<TICKET-ID>/' \u2014 the gitignored run dir is the thing that must never be stashed. One line of wording; the current text teaches the reader to wave a real check through.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/16-stash.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0035",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "every fix must ship a repo test, or it can vanish silently",
+      "long": "AGNT-0015 failure F-08: two verified fixes (bidi stripping and row dedup) were lost before ever reaching a commit, and the suite stayed green throughout because both had been proven only by scratch probes, never encoded as repo tests. git log -S showed the code had never existed in any commit. The break panel found the regression rounds later. The engineer map should require that every fix ship a test inside the repo suite \u2014 which is exactly what task T15 had to enforce by hand on this run \u2014 so that losing the fix turns the suite red.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/13-implement.md",
+        "skills/engineer/phases/15-diagnose.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0036",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "gate C needs rendered visual evidence before it is presented",
+      "long": "On AGNT-0015 the owner found five defects that four full break-panel rounds missed: the selection highlight was invisible, chat text bled through the panel edges, one key was advertised for two jobs, an empty column trapped the user with no way out, and the list had no viewport so anything past the panel height was unreachable. Every one is about what the surface looks like and feels like; none is computable from the code, which is why testers driving the renderer as a function proved it correct while it was unusable. The map should require a rendered artifact \u2014 a captured frame or screenshot \u2014 as part of preparing gate C, so those defects reach the human before the gate rather than after it.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/20-signoff.md",
+        "skills/engineer/phases/19-break-panel.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0037",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "high",
+      "short": "tool-sync's apply and check disagree about Pi agent destinations",
+      "long": "tool-sync --check fails with 'Pi agent destination ~/.pi/agent/agents/anchor-verifier.md collides with a non-symlink', but those files are precisely what tool-sync's own apply step renders: 'render Pi agent <repo>/agents/X/X.md -> ~/.pi/agent/agents/X.md'. Rendering writes a real file; the check demands a symlink. Confirmed not caused by AGNT-0015 \u2014 the same failure reproduces with the pre-ticket manifest from commit e2e9de6. The consequence is worse than the bug: any run whose verification includes a tool-sync check now reports a red it cannot fix, which teaches everyone to ignore that check.",
+      "deps": [],
+      "files": [
+        "tools/tool-sync/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
+    },
+    {
+      "id": "AGNT-0038",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "a ticket's todo.sh goes stale as walk-backs add tasks",
+      "long": "AGNT-0015's todo.sh step1 was written in phase 12 against three test files and never updated when later walk-backs added nvim.test.ts and watch.test.ts, so the ticket's own verification command silently ran 118 of its 138 tests and reported success. Nothing in the map re-checks that todo.sh still matches the task list. Phase 18's exit gate should assert that every test file owned by a task appears in the verification steps, so the script cannot drift away from the work it is supposed to verify.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/12-todos.md",
+        "skills/engineer/phases/18-final-implement.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:19:42-0400"
     }
   ]
 }
