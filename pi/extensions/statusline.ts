@@ -39,11 +39,8 @@ const FIVE_HOUR_SECONDS = 5 * 3600;
 const SEVEN_DAY_SECONDS = 7 * 86400;
 
 function isCtxActive(ctx: ExtensionContext): boolean {
-	// TODO(AGNT-0028.T01): walk W3/D-02 -- ctx.assertActive() does not
-	// exist on the real ExtensionContext. Probe a real guarded getter
-	// (ctx.hasUI) inside the try instead.
 	try {
-		ctx.assertActive();
+		void ctx.hasUI;
 		return true;
 	} catch {
 		return false;

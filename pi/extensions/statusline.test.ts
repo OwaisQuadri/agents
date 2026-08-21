@@ -32,7 +32,6 @@ type MockContext = {
 	hasUIReads: number;
 	modelReads: number;
 	providerAuthReads: number;
-	assertActiveCalls: number;
 };
 
 function createStatusCapture(): RecordingUi {
@@ -72,7 +71,6 @@ function createMockContext(initial: { provider?: Provider | null; isActive?: boo
 	let hasUIReads = 0;
 	let modelReads = 0;
 	let providerAuthReads = 0;
-	let assertActiveCalls = 0;
 	const recording = createStatusCapture();
 
 	const ctx = {
@@ -97,18 +95,6 @@ function createMockContext(initial: { provider?: Provider | null; isActive?: boo
 				const token = providerAuth[providerName as Provider] ?? null;
 				return token === null ? null : { auth: { apiKey: token } };
 			},
-		},
-		// TODO(AGNT-0028.T04): walk W3/D-02 -- the real ExtensionContext has
-		// no assertActive() method. Remove this mock method and the
-		// assertActiveCalls tracking entirely; hasUI above already throws
-		// correctly when stale, matching the real per-getter guard shape.
-		// Fix the three assertions at lines ~305, ~331, ~375 that check
-		// assertActiveCalls to check hasUIReads instead.
-		assertActive() {
-			assertActiveCalls += 1;
-			if (!isActive) {
-				throw makeInactiveContextError();
-			}
 		},
 		mode: "tui",
 		cwd: "/tmp",
@@ -162,9 +148,6 @@ function createMockContext(initial: { provider?: Provider | null; isActive?: boo
 		},
 		get providerAuthReads() {
 			return providerAuthReads;
-		},
-		get assertActiveCalls() {
-			return assertActiveCalls;
 		},
 	};
 }
@@ -308,9 +291,8 @@ test("TC-01 render() no-ops silently on stale ctx", async () => {
 
 	restoreFetch();
 
-	assert.equal(context.assertActiveCalls, 1);
+	assert.equal(context.hasUIReads, 1);
 	assert.equal(context.modelReads, 0);
-	assert.equal(context.hasUIReads, 0);
 	assert.equal(context.providerAuthReads, 0);
 	assert.equal(fetchCalls, 0);
 	assert.deepEqual(context.recording.statuses, []);
@@ -334,7 +316,7 @@ test("TC-02 refresh() no-ops before touching stale ctx's model", async () => {
 
 	restoreFetch();
 
-	assert.equal(context.assertActiveCalls, 1);
+	assert.equal(context.hasUIReads, 1);
 	assert.equal(context.modelReads, 0);
 	assert.equal(context.providerAuthReads, 0);
 	assert.equal(fetchCalls, 0);
@@ -378,7 +360,7 @@ test("TC-03 refresh() no-ops when ctx goes stale mid-fetch", async () => {
 
 	assert.equal(fetchCalls, 2);
 	assert.equal(context.recording.statuses.length, baselineStatusCount);
-	assert.ok(context.assertActiveCalls >= 1);
+	assert.ok(context.hasUIReads >= 1);
 	assert.equal(rejections.length, 0);
 });
 

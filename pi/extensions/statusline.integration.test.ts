@@ -47,15 +47,9 @@ function createFakePi() {
 function createMockContext() {
 	let isActive = true;
 	const setStatusCalls: Array<{ key: string; text: string | undefined }> = [];
-	// TODO(AGNT-0028.T05): walk W3/D-02 -- the real ExtensionContext has
-	// no assertActive() method. Remove this mock method. Make hasUI
-	// below throw when !isActive instead (matching the real per-getter
-	// guard shape) rather than always returning true unconditionally.
 	const ctx = {
-		assertActive() {
-			if (!isActive) throw new Error("This extension ctx is stale");
-		},
 		get hasUI() {
+			if (!isActive) throw new Error("This extension ctx is stale");
 			return true;
 		},
 		ui: {
