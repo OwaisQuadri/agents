@@ -10,7 +10,15 @@
 set -euo pipefail
 shopt -s nullglob
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# git runs this through .git/hooks/post-merge, a symlink, so the link is resolved first;
+# without that the repo root reads as .git/hooks and every path below misses.
+SCRIPT_SELF="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SELF" ]]; do
+  SCRIPT_LINK="$(readlink "$SCRIPT_SELF")"
+  [[ "$SCRIPT_LINK" == /* ]] || SCRIPT_LINK="$(dirname "$SCRIPT_SELF")/$SCRIPT_LINK"
+  SCRIPT_SELF="$SCRIPT_LINK"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SELF")" && pwd)"
 REPO_TARGET="${REPO_TARGET:-$SCRIPT_DIR}"
 HOME_TARGET="${HOME_TARGET:-$HOME}"
 IS_DRY=0
