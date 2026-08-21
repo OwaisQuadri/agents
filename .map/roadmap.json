@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 63,
+  "next_nnnn": 64,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1010,6 +1010,18 @@
       "blame_phase": null,
       "created": "2026-08-21T14:12:10-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0063",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Pi lacks Claude-Code-style live takeover of a running subagent session",
+      "long": "Owner ask (2026-08-21): can he hop into a subagent session in Pi the intimate way he can in Claude Code, rather than just watching it. Confirmed capability, straight from the actually-installed skills/pi-subagents/references/*.md docs (not vendor claims, not web search -- an earlier web_search attempt on this same question returned fabricated results, see AGNT-0062): today's real surface is read-only transcript viewing (/subagents-fleet live fleet inspector, subagent status view:'transcript') plus steer (queue an acknowledged nudge message the child sees at its next safe point). The docs are explicit that even the optional Herdr raw inspector dashboard 'mirrors artifacts rather than attaching to the headless child.' No mode lets the parent actually drive a child's turn interactively -- type into its context, redirect it mid-tool-call the way Claude Code's subagent view allows. Investigate whether this is a pi-subagents package limitation (worth a feature request upstream) or a Pi core constraint (headless child processes may not expose an interactive stdin path at all). If upstream, file/track there; if core, this ticket names the gap for whoever owns closing it.",
+      "deps": [],
+      "files": [],
+      "blame_phase": null,
+      "created": "2026-08-21T14:14:03-0400",
+      "priority": "low"
     }
   ]
 }
