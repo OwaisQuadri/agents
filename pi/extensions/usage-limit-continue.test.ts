@@ -15,10 +15,8 @@ import {
 	scheduleResume,
 } from "./usage-limit-continue.ts";
 
-// SYNTHETIC FIXTURE, not configuration. These provider and model names are invented so a
-// reader never mistakes this block for the routing table. The real one is compiled from
-// config/model-tiers.json into pi settings, and the last test in this file checks that the
-// real file resolves rather than restating it here.
+// The real map is compiled from config/model-tiers.json into pi settings; the last test
+// in this file checks that file rather than restating it here.
 const SYNTHETIC_FALLBACKS = {
 	"provider-a/small": "provider-b/small",
 	"provider-a/medium": "provider-b/medium",
@@ -233,20 +231,18 @@ test("the real tier file compiles into a chain every hop of which resolves", asy
 		compiled[tier.pi] = tier.fallbacks[0];
 	}
 
-	// Every tier names at least one backup, and never itself.
 	for (const [name, tier] of Object.entries(tiers.tiers)) {
 		assert.ok(tier.fallbacks.length >= 1, `${name} has no fallback`);
 		assert.ok(!tier.fallbacks.includes(tier.pi), `${name} falls back to itself`);
 	}
 
-	// Every agent's tier exists, so no assignment routes into a hole.
 	for (const [agent, tier] of Object.entries(tiers.agents)) {
 		assert.ok(tiers.tiers[tier], `${agent} names tier ${tier}, which does not exist`);
 	}
 	assert.ok(tiers.tiers[tiers.orchestrator], "orchestrator names a tier that does not exist");
 
-	// The chain terminates: walking first-backups from any tier primary must stop rather
-	// than cycle, which is what lets the session fall through to a scheduled resume.
+	// A cycle here would strand the session in the fallback walk instead of letting it
+	// reach the scheduled resume.
 	for (const start of Object.keys(compiled)) {
 		const seen = new Set<string>();
 		let at: string | undefined = start;

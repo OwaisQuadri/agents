@@ -337,12 +337,6 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
 	return job;
 }
 
-/**
- * Switches the session to the current model's tier fallback.
- * @param pi Extension API used to set the model.
- * @param ctx Live extension context carrying the active model and registry.
- * @returns The fallback model id on success, or null when no fallback applied.
- */
 async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, qualified: string): Promise<boolean> {
 	const separator = qualified.indexOf("/");
 	const candidate = ctx.modelRegistry.find(qualified.slice(0, separator), qualified.slice(separator + 1));
@@ -416,9 +410,8 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 
 const lastProviderResponseByContext = new WeakMap<ExtensionContext, { status: number; headers: Record<string, string> }>();
 
-// Models this session gave up on, and when each returns. The chain walks tier fallbacks
-// until one has no fallback left, and then the resume waits on whichever returns first
-// rather than on whichever failed last.
+// Values are reset instants. A resume waits on whichever model returns first rather than
+// on whichever failed last, so the walk has to remember every model it gave up on.
 const abandonedByContext = new WeakMap<ExtensionContext, Record<string, number>>();
 
 async function handleStatusCommand(_args: string, ctx: ExtensionCommandContext): Promise<void> {

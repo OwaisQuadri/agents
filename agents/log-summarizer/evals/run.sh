@@ -97,7 +97,6 @@ while IFS= read -r line; do
   # tokens ~= words * 4/3 (English prose averages ~0.75 words per token)
   tokens=$((words * 4 / 3))
 
-  # Every quoted signal line must appear verbatim in the fixture it names.
   bad_quote=0
   if [ -n "$block" ]; then
     while IFS= read -r sig; do

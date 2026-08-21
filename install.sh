@@ -100,10 +100,9 @@ link "$HOME_TARGET/.claude/rules" "$REPO_TARGET/rules"
 # 6. agents fleet: one directory symlink, definitions resolve from the repo
 link "$HOME_TARGET/.claude/agents" "$REPO_TARGET/agents"
 
-# 6b/6c. ONE agent definition per role, in agents/<name>/<name>.md. Everything else is
-#     derived. config/model-tiers.json assigns a tier; this block resolves that tier to a
-#     model per harness, rewrites the Claude Code alias line, generates the pi definition,
-#     and compiles the tier map into pi settings. Never hand-edit a generated file.
+# 6b/6c. ONE agent definition per role, in agents/<name>/<name>.md; config/model-tiers.json
+#     assigns it a tier. Everything below is derived from those two, so a generated file
+#     is never hand-edited.
 TIERS="$REPO_TARGET/config/model-tiers.json"
 PI_AGENTS="$HOME_TARGET/.pi/agent/agents"
 PI_SETTINGS_TIERS="$HOME_TARGET/.pi/agent/settings.json"
@@ -114,10 +113,8 @@ if ! command -v jq >/dev/null 2>&1; then
 elif [[ ! -f "$TIERS" ]]; then
   echo "warn: $TIERS not found, skipping agent generation and the model-tier sync" >&2
 else
-  # Claude Code reaches Anthropic only, so a tier resolves there by walking its own chain
-  # for the first Anthropic model, then climbing tiers when its chain has none (T1 is free
-  # and openai-backed, so it climbs to T2). The alias is the family word out of the model
-  # id, which is what Claude Code frontmatter accepts.
+  # Claude Code reaches Anthropic only, so a tier resolves there by walking its chain for
+  # the first Anthropic model, and climbing tiers when a chain holds none.
   CLAUDE_ALIAS_JQ='def anthropic_in(t): [t.pi] + t.fallbacks | map(select(startswith("anthropic/"))) | first;
     . as $r
     | ($r.tiers | keys | sort) as $order
@@ -140,9 +137,8 @@ else
     fi
   done < <(jq -r "$CLAUDE_ALIAS_JQ" "$TIERS" 2>/dev/null)
 
-  # The pi definition is generated: same body, quoted name, tool names mapped to pi's
-  # registry, and NO model line, because pi resolves the tier through agentOverrides.
-  # An unmapped tool aborts rather than silently dropping a capability grant.
+  # No model line: pi resolves the tier through agentOverrides. An unmapped tool aborts
+  # rather than silently dropping a capability grant.
   for src in "$REPO_TARGET"/agents/*/*.md; do
     name="$(basename "$src" .md)"
     [[ "$(jq -r --arg n "$name" '.agents[$n] // empty' "$TIERS")" != "" ]] || continue
