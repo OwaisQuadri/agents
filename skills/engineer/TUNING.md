@@ -5,6 +5,24 @@ tune the map, and not when you walk a ticket.
 
 ## accepted mutations
 
+- 2026-08-20, the spine gained a `## routing` section. Owner's ask, with his routing research
+  in hand (research/pi-harness-routing-research-fable-opus.md): integrate optimized model routing, and
+  optimize this skill first because it eats the most context. The map's semantics did not
+  move — same phases, same gates, same walk-back. The section binds four routing rules: a
+  sticky T3 orchestrator with a GATE A warning when the session enters on fable, fleet
+  frontmatter as the tier authority for dispatches, evidence-only escalation riding the
+  existing `loop_counts` counters, and a T5 gate with opus as automatic fallback. The
+  dispatch-context rule (compiled context only, never the transcript) moved from folklore to
+  the spine. Fleet pins changed in the same pass: anchor-verifier opus→sonnet (highest-volume
+  reviewer seat, grades on executed evidence), web-research-summarizer sonnet→haiku (Claude
+  Code) / gpt-5.6-luna (pi). Non-holdout mean 9.00 over 15 cases; holdout 9.80 over 5. The
+  one low case, g11 at 3 (gate-showme-skipped), scores 3 on the pre-mutation baseline too —
+  pre-existing, not introduced. Same day, owner's follow-up: no hardcoded model ids. The
+  section now names tiers only, and `config/model-tiers.json` in the agents repo is the one
+  file that maps tier to model — the installer compiles it into pi settings, and Claude Code
+  aliases get a drift warning. Re-run after the wording change: mean 9.00 over 15, g11
+  unchanged.
+
 - 2026-08-11, phase 12 gained gate F. Owner, mid-run on RAG-0001: "when in the engineer skill
   do i get to read the todos? that should be in the implementation human gate". He never did.
   Phase 12 placed the markers, wrote `todo.sh`, committed the stash anchor, and fell straight

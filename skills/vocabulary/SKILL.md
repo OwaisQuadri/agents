@@ -2,6 +2,7 @@
 name: vocabulary
 description: Use when reaching for the exact word for a design or UI concept ("what's the term for the space between two specific letters?"), when someone rambles about making an interface look or feel better without the word for it ("make it pop", "feels cramped", "something's off"), when choosing between confusable near-synonyms (badge vs tag, tooltip vs popover, kerning vs tracking, opacity vs visibility), or when reviewing copy, specs, or commits for vague language where an exact term exists. Covers typography, color, iconography, layout, interaction, motion, accessibility, information architecture, copywriting, tools, analysis, and components. Skip when the feel-words are about prose or code rather than an interface, or when the ask is already precise and only the change remains.
 metadata:
+  minimum-tier: T3
   short-description: Precise design and UI terminology
 ---
 

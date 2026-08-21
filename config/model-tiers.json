@@ -1,0 +1,59 @@
+{
+  "tiers": {
+    "T1": {
+      "pi": "openrouter/openrouter/free",
+      "fallbacks": [
+        "openai-codex/gpt-5.6-luna"
+      ],
+      "thinking": "low"
+    },
+    "T2": {
+      "pi": "openai-codex/gpt-5.6-luna",
+      "fallbacks": [
+        "anthropic/claude-haiku-4-5"
+      ],
+      "thinking": "low"
+    },
+    "T3": {
+      "pi": "openai-codex/gpt-5.3-codex-spark",
+      "fallbacks": [
+        "anthropic/claude-sonnet-5",
+        "openai-codex/gpt-5.6-terra"
+      ],
+      "thinking": "medium"
+    },
+    "T4": {
+      "pi": "anthropic/claude-opus-5",
+      "fallbacks": [
+        "openai-codex/gpt-5.6-sol"
+      ],
+      "thinking": "high"
+    },
+    "T5": {
+      "pi": "anthropic/claude-fable-5",
+      "fallbacks": [
+        "anthropic/claude-opus-5"
+      ],
+      "thinking": "medium"
+    }
+  },
+  "orchestrator": "T3",
+  "agents": {
+    "log-summarizer": "T2",
+    "web-research-summarizer": "T2",
+    "researcher": "T2",
+    "scout": "T2",
+    "debugger": "T3",
+    "spec-tester": "T3",
+    "maestro-tester": "T3",
+    "anchor-verifier": "T3",
+    "worker": "T3",
+    "reviewer": "T3",
+    "code-reviewer": "T4",
+    "oracle": "T4"
+  },
+  "untiered": {
+    "delegate": "inherits the parent model by design; a pin would defeat the role",
+    "gpt-pro": "runs through the external-job bridge, so this router does not pick its model"
+  }
+}

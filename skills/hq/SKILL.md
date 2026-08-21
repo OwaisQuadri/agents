@@ -2,6 +2,7 @@
 name: hq
 description: Use when the user invokes /hq, asks what is happening across his agents, Conductor workspaces, or Mac automations, wants work dispatched into another project, or wants to drill into a named project agent. Presents pending human gates first, then activity since last talk, then acts. Skip for work inside the current repo naming no other project, and for authoring artifacts (ai-author).
 metadata:
+  minimum-tier: T3
   short-description: "Front door over every project: gates-first digest, isolated dispatch, drill-down"
 ---
 

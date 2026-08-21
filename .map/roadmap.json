@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-    "next_nnnn": 30,
+  "next_nnnn": 30,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -147,7 +147,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Prove tool sync on real Linux.",
-      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository\u2019s continuous integration output.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
       "deps": [
         "AGNT-0008"
       ],
@@ -296,20 +296,22 @@
       "id": "AGNT-0018",
       "kind": "ticket",
       "status": "todo",
-      "short": "Design harness-independent model routing by task value.",
-      "long": "Design the routing system and its evaluation plan. Do not implement the router. Define a harness-neutral architecture that chooses a model and access path for each task class. Admit newly released models through discovered capability, availability, quota, and price data instead of a hard-coded model list.\n\nSeparate the model, provider, account, and harness so the design can use a model through any allowed route. Cover the Claude Code and Codex memberships and the user's free OpenRouter account. Study an OpenRouter route from the Claude harness as one example. Do not assume that a membership pays for Application Programming Interface (API) use or that each harness exposes each provider.\n\nDefine a repeatable evaluation and benchmark system for the tasks this repository delegates. Include representative task classes, fixed inputs, blind grading, repeated trials, uncertainty, model and harness version capture, and content-free result summaries. Compare completion quality, success probability, latency, marginal price, membership quota impact, and fallback behavior. Define the utility rule that trades task success against price paid. Include a cold-start policy for new models and an exploration limit that cannot spend beyond an approved budget.\n\nProduce the architecture, adapter contracts, data shapes, benchmark protocol, privacy rules, routing decision record, and an implementation ticket breakdown. Show how existing telemetry supplies outcomes without storing prompts or outputs. Name which benchmark artifacts require reviewed content. Include one worked comparison across membership-backed Claude Code, membership-backed Codex, and OpenRouter routes. End with a testable design acceptance checklist and no runtime code.",
+      "short": "Evaluate the shipped model router, and settle discovery against the static tier file",
+      "long": "RESCOPED 2026-08-20, after a session shipped the thing this ticket said not to build. The original text asked for design only, no runtime code, and model admission through discovered capability, availability, quota, and price rather than a hard-coded list. What landed instead is a working static router: config/model-tiers.json as the one place model ids live, install.sh compiling it into subagents.defaultModel, subagents.agentOverrides and a flat modelTierFallbacks map, tier assignments for 11 agents, a session-level fallback in pi/extensions/usage-limit-continue.ts that walks the tier chain on a usage limit and then resumes on whichever abandoned model returns first, and docs/routing.md as the policy. Treat that as v1 and do not redesign it from scratch.\n\nWhat remains, in priority order.\n\n1. The evaluation system, which is the half of the original scope nothing has touched. Representative task classes drawn from real dispatches in this repository, fixed inputs, blind grading, repeated trials, uncertainty, model and harness version capture, and content-free result summaries. Two router arms to compare: cheap-first with escalation on a failed check, against predictive tier choice up front.\n\n2. Three findings from the 2026-08-20 session constrain that benchmark, and skipping them repeats the session's mistakes. First, the accept signal cannot be a pass-or-fail gate alone: a free-model run returned the correct answer and still burned 92 seconds, 10 tool calls and 53k tokens, five of them rewriting one file, so a gate-only score keeps it. Count turns and wall-clock beside correctness. Second, the predictive arm must read repository state, not task text: arXiv:2607.00053 reports an information-theoretic error floor for routing agentic work from the task description alone, because a typo and a multi-module refactor read the same. Third, free-tier models failed to terminate cleanly on both observed tool-loop runs, so tool grant shape is a routing variable, not a detail.\n\n3. Do not write the harness from scratch. ulab-uiuc/LLMRouter ships ten router baselines including the cheap-first cascade, lm-sys/RouteLLM scores routers, and FrugalGPT (arXiv:2305.05176) and AutoMix (arXiv:2310.12963) are the published form of the cheap-first arm. Their corpora are one-shot quiz prompts (RouterBench, MMLU, GSM8K, MBPP, MT-Bench) and do not transfer, because the accept signal here is whether a gate passed in this repository. Borrow the method and the metric definitions; write the cases locally.\n\n4. Settle discovery against the static list, on evidence rather than preference. The static file is correct today and the owner's instinct on 2026-08-20 was right that it is hard-coded. The failure it will eventually hit is staleness when a provider ships a model or moves a price, and the cheapest answer is probably a refresh that reconciles config/model-tiers.json against the live registry in ~/.pi/agent/models-store.json, not a capability-discovery engine. Decide with a case where the list actually went stale.\n\n5. Still open from the original scope, and still unbuilt: separating model, provider, account and harness so one model is reachable by any allowed route; covering Codex alongside Claude Code and pi; the quota shadow price that makes a subscription-backed call cost something; a cold-start policy for new models; and an exploration budget that cannot overspend. Each needs a worked example before it earns code.\n\nAcceptance: a benchmark that runs both arms over the local corpus and reports cost per accepted artifact with turns and latency, a decision record naming which arm won and on which task classes, and either a registry-refresh path or a written reason the static file stays hand-edited.\n\nOwner's addition, 2026-08-20: the benchmark should also sweep PER ARTIFACT, not only per router. Run an artifact's own eval cases once on each enabled model and report score beside cost and latency, so the tier assignment for each skill and agent comes from measurement instead of judgment. In his words: \"its worth to add a run in each model when running evals for our agent artifacts (ai-author) to see which models are acceptable, which tiers are more efficient for each skill/agent/etc\". Build it opt-in, as a --sweep flag on the existing harnesses rather than the default run, because every case times nine enabled models is expensive enough that a default would stop anyone running evals at all. The log-summarizer tiering on 2026-08-20 is the worked example: four runs moved it off T1, and a sweep would have answered that in one command.\n\nOwner's refinement, same day: do not run all nine. Walk UP from the cheapest tier and stop at the first one whose output is acceptable, then record that as the artifact's minimum. In his words: \"run it from the bottom up and when output is acceptable then we mark that as the minimum\". Two guards, both earned on 2026-08-20. First, one run is a sample of one: the free tier passed a log-summary task and failed the identical task on the next run, so a tier is only accepted after repeat trials clear the threshold, never on a single pass. Second, record the FAILING tier directly below the accepted one, because the boundary is the reusable fact, and it is what makes a re-test cheap when a model or a price moves. Watch for non-monotonicity while doing it: a larger model can fail a format-strict case a smaller one passes, so first-pass-going-up equals the true minimum only once the repeats confirm it. Starting rung is a judgment call, and T2 is the sane default, since T1 failed three of four runs and its failures cost 92 and 150 seconds of latency rather than money. This also turns every metadata.minimum-tier floor into a hypothesis: the four authoring skills carry T4 on judgment alone, and this sweep is what can falsify that.",
       "deps": [
         "AGNT-0012",
         "AGNT-0013"
       ],
       "files": [
-        "docs/",
+        "docs/routing.md",
+        "config/model-tiers.json",
         "evals/",
-        "agents/",
-        "pi/"
+        "pi/extensions/",
+        "install.sh"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T20:27:34-0400"
+      "created": "2026-08-17T20:27:34-0400",
+      "rescoped": "2026-08-20T20:29:21-0400"
     },
     {
       "id": "AGNT-0019",
@@ -428,7 +430,7 @@
       "kind": "ticket",
       "status": "done",
       "short": "Auto-continue agents when a usage limit resets (5h/7d)",
-      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) \u2014 usage-limit-watch covers only redirected/logged output for those two tools.",
+      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) — usage-limit-watch covers only redirected/logged output for those two tools.",
       "deps": [],
       "files": [
         "pi/extensions/usage-limit-continue.ts",
@@ -467,6 +469,33 @@
       ],
       "blame_phase": null,
       "created": "2026-08-19T21:28:29-0400"
+    },
+    {
+      "id": "AGNT-0030",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "ai-author proposes artifacts from mined session evidence",
+      "long": "ai-author decides whether to author only once an authoring job arrives: its own opening section routes what arrived, and the tree answers should-this-exist, never should-anyone-have-noticed. Nothing in the system watches accumulated evidence and proposes a capability unprompted. Mine the evidence that already exists: per-artifact logs/usage.jsonl, run-history.jsonl, and the session transcripts indexed in the personal RAG(Retrieval Augmented Generation) store. Look for a task shape repeated across sessions that the runner currently does inline. Propose a skill by default; propose an agent only on the three grounds that justify one, a different model, a tool grant the runner should not hold, or isolation from a job that spews noise. Guards, both required: the standing answer is zero, per docs/agents-fleet-research.md line 94 (handful, real-writeup ceiling ~5, null hypothesis zero), and every proposal carries the cost it measured rather than a plausible improvement idea, or the section becomes a monthly list that bills a day each and saves nothing. Run it on an interval through the pi-subagents scheduler. Owner asked for this on 2026-08-20, in his words: \"it would also be in charge of checking my sessions to find recurring tasks or inneficiencies that could be skills, or subagents if they need a specific agent\". Ships as a section inside skills/ai-author/SKILL.md plus eval cases, never as a new sibling artifact, because ai-author rule 1 bans authoring a sibling for a capability an existing artifact owns.",
+      "deps": [],
+      "files": [
+        "skills/ai-author/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:18:51-0400"
+    },
+    {
+      "id": "AGNT-0031",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "subagent runs drop context.md into the repo root",
+      "long": "Every pi-subagents dispatch that leaves the output default alone writes its result to context.md in the repository root and reports it as savedOutputPath. Seen four times in one session on 2026-08-20 (runs 5137e1ca, 8a33cc0c, ef5a3b5b, 721e8478), each leaving an untracked file in a working tree. That is the exact shape the engineer map already bans a phase commit from sweeping up, since widening a commit to git add -A is what put ticket artifacts into a product repo history before. One free-model run rewrote the same context.md five times inside a single dispatch, so the file also churns. Fix at the config layer so the artifact never lands in a project repo: set the subagent output default to false, or point it under the run directory. Gitignoring it is the fallback, not the preference, because it hides the litter instead of stopping it.",
+      "deps": [],
+      "files": [
+        "config/",
+        ".gitignore"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-20T20:18:51-0400"
     }
   ]
 }

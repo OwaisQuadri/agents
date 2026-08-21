@@ -2,6 +2,7 @@
 name: workflow-author
 description: Use when authoring a WORKFLOW, a multi-agent graph — writing a new GRAPH SPEC, redrawing a linear chain into parallel jobs, or reviewing a spec for fake edges, self-verification, or missing guards. Output is a GRAPH SPEC block. Skip when the shape is a linear single-agent recipe (skill-author) or a standalone role (agent-author).
 metadata:
+  minimum-tier: T4
   short-description: Author multi-agent workflow graphs (GRAPH SPEC)
 ---
 

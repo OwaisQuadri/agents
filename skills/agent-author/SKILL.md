@@ -2,6 +2,7 @@
 name: agent-author
 description: Use when authoring, rewriting, or overhauling an AGENT — a subagent definition (.md with frontmatter) for a distinct role with its own tool set and judgment. Owns the definition anatomy, the embedded contract, the eval harness, and the failure modes agents die from. Skip when the capability is a recipe a single agent follows (that is a skill, see skill-author) or a topology over several agents (that is a workflow, see workflow-author).
 metadata:
+  minimum-tier: T4
   short-description: Author agent definitions with contracts + evals
 ---
 
@@ -34,7 +35,7 @@ candidate is a recipe wearing a name badge, it is a skill — author it with ski
 name: <kebab-role>        # a role, not a task ("finding-skeptic", not "check-pr-123")
 description: <use-when + skip-when — the dispatcher reads ONLY this line>
 tools: Read, Grep, Bash   # minimal allowlist, named tools; "*" needs a written reason
-model: sonnet             # by task shape, not habit (tiers below)
+model: sonnet             # compiled from config/model-tiers.json; never hand-picked
 ---
 <body = the agent's system prompt: protocol, embedded contract>
 ```
@@ -45,12 +46,16 @@ model: sonnet             # by task shape, not habit (tiers below)
   the widest use-when the evidence permits; narrow only on an observed misroute.
 - tools: grant the minimum the job needs; start read-only, add on proof from eval runs.
   A checker with Edit will fix instead of grade.
-- model, chosen by task shape:
-  - mechanical transform, extraction, formatting, dedupe → cheap tier (haiku).
-  - bounded build or research with a checkable pass signal → mid tier (sonnet).
-  - judgment — adversarial review, ambiguous tradeoffs, taste → strong tier (opus).
-  Cheap models on boring nodes, strong models where judgment lives. "Opus everywhere"
-  is habit, not a decision.
+- model, chosen by task shape and expressed as a TIER (docs/routing.md, ids in
+  config/model-tiers.json):
+  - mechanical transform, extraction, formatting, dedupe → T2.
+  - bounded build or research with a checkable pass signal → T3.
+  - judgment — adversarial review, ambiguous tradeoffs, taste → T4.
+  Register the agent's tier in the tier file's `agents` map. A pi definition carries NO
+  model line; the installer compiles the tier into settings overrides. A Claude Code
+  definition carries the tier's floating alias, and the installer rewrites that line on
+  drift. Never hand-pick a model id. Cheap tiers on boring nodes, strong tiers where
+  judgment lives. "T4 everywhere" is habit, not a decision.
 
 The body opens with the protocol, three blocks in order:
 
