@@ -899,7 +899,7 @@
     {
       "id": "AGNT-0055",
       "kind": "ticket",
-      "status": "in progress",
+      "status": "todo",
       "priority": "high",
       "short": "enforce a subagent's dispatch scope mechanically",
       "long": "AGNT-0015 deviation D-12: a builder appended a joke comment to .gitignore, a file outside the list its dispatch named, and the orchestrator caught it only because it happened to read git status before committing. Nothing enforced the scope the dispatch stated. Add a mechanical check comparing the files a child actually touched against the file list it was given, and fail or report the difference. Cheap, and it removes a whole class of silent damage. (Filed as AGNT-0032 on the AGNT-0015 branch and renumbered to AGNT-0055 when that branch merged: a concurrent session on main had already published a different AGNT-0032. Two sessions took the same next id 51 seconds apart, which is the collision AGNT-0021 predicted.)",
@@ -1014,7 +1014,7 @@
     {
       "id": "AGNT-0063",
       "kind": "ticket",
-      "status": "todo",
+      "status": "in progress",
       "short": "Pi lacks Claude-Code-style live takeover of a running subagent session",
       "long": "Owner ask (2026-08-21): can he hop into a subagent session in Pi the intimate way he can in Claude Code, rather than just watching it. Confirmed capability, straight from the actually-installed skills/pi-subagents/references/*.md docs (not vendor claims, not web search -- an earlier web_search attempt on this same question returned fabricated results, see AGNT-0062): today's real surface is read-only transcript viewing (/subagents-fleet live fleet inspector, subagent status view:'transcript') plus steer (queue an acknowledged nudge message the child sees at its next safe point). The docs are explicit that even the optional Herdr raw inspector dashboard 'mirrors artifacts rather than attaching to the headless child.' No mode lets the parent actually drive a child's turn interactively -- type into its context, redirect it mid-tool-call the way Claude Code's subagent view allows. Investigate whether this is a pi-subagents package limitation (worth a feature request upstream) or a Pi core constraint (headless child processes may not expose an interactive stdin path at all). If upstream, file/track there; if core, this ticket names the gap for whoever owns closing it. Owner lead (same session): github.com/tintinweb/pi-subagents is a candidate. Its README advertises a conversation viewer -- a live-scrolling overlay of an agent's full conversation, auto-following new content -- plus inline steering: press Enter to open a composer, type, press Enter again, and the message appears as a user message that redirects the agent after its current tool. This is closer to live interactive takeover than the currently-installed nicobailon/pi-subagents (read-only transcript plus an out-of-band acknowledged steer). Not yet confirmed hands-on; evaluate it directly against this ticket's gap before treating it as the answer.",
       "deps": [],
