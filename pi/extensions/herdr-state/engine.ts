@@ -25,7 +25,6 @@ function normalizeWorktree(raw: HerdrRawWorktree | undefined): HerdrWorktree | n
 	return { path: raw.checkout_path, branch: null };
 }
 
-// TODO(AGNT-0066.T02): Reject non-boolean focus fields without coercion.
 function normalizeWorkspace(raw: HerdrRawWorkspace): HerdrWorkspace {
 	if (typeof raw?.workspace_id !== "string" || raw.workspace_id === "") {
 		throw new Error("invalid Herdr workspace: missing workspace_id");
@@ -33,11 +32,14 @@ function normalizeWorkspace(raw: HerdrRawWorkspace): HerdrWorkspace {
 	if (typeof raw.label !== "string") {
 		throw new Error(`invalid Herdr workspace ${raw.workspace_id}: missing label`);
 	}
+	if (typeof raw.focused !== "boolean") {
+		throw new Error(`invalid Herdr workspace ${raw.workspace_id}: focused must be boolean`);
+	}
 	return {
 		id: raw.workspace_id,
 		label: raw.label,
 		worktree: normalizeWorktree(raw.worktree),
-		isFocused: Boolean(raw.focused),
+		isFocused: raw.focused,
 	};
 }
 
@@ -51,11 +53,14 @@ function normalizeTab(raw: HerdrRawTab): HerdrTab {
 	if (typeof raw.label !== "string") {
 		throw new Error(`invalid Herdr tab ${raw.tab_id}: missing label`);
 	}
+	if (typeof raw.focused !== "boolean") {
+		throw new Error(`invalid Herdr tab ${raw.tab_id}: focused must be boolean`);
+	}
 	return {
 		id: raw.tab_id,
 		workspaceId: raw.workspace_id,
 		label: raw.label,
-		isFocused: Boolean(raw.focused),
+		isFocused: raw.focused,
 	};
 }
 
@@ -69,13 +74,16 @@ function normalizePane(raw: HerdrRawPane): HerdrPane {
 	if (typeof raw.tab_id !== "string" || raw.tab_id === "") {
 		throw new Error(`invalid Herdr pane ${raw.pane_id}: missing tab_id`);
 	}
+	if (typeof raw.focused !== "boolean") {
+		throw new Error(`invalid Herdr pane ${raw.pane_id}: focused must be boolean`);
+	}
 	return {
 		id: raw.pane_id,
 		workspaceId: raw.workspace_id,
 		tabId: raw.tab_id,
 		label: raw.pane_id,
 		cwd: typeof raw.cwd === "string" ? raw.cwd : null,
-		isFocused: Boolean(raw.focused),
+		isFocused: raw.focused,
 	};
 }
 
@@ -165,7 +173,6 @@ export function normalizeEvent(
  * @returns The Pi location, or null when the session has no Herdr location.
  * @throws Error when the location data is invalid.
  */
-// TODO(AGNT-0066.T07): Make pane-id precedence and working-directory fallback unambiguous.
 export function findSelf(
 	snapshot: HerdrSessionSnapshot,
 	cwd: string,
@@ -175,10 +182,16 @@ export function findSelf(
 	if (typeof cwd !== "string" || cwd === "") {
 		throw new Error("invalid Pi working directory");
 	}
-	const byPaneId = paneId !== undefined
-		? snapshot.panes.find((pane) => pane.id === paneId)
-		: undefined;
-	const pane = byPaneId ?? snapshot.panes.find((candidate) => candidate.cwd === cwd);
+	let pane: HerdrPane | undefined;
+	if (paneId !== undefined) {
+		pane = snapshot.panes.find((candidate) => candidate.id === paneId);
+	} else {
+		const matches = snapshot.panes.filter((candidate) => candidate.cwd === cwd);
+		if (matches.length !== 1) {
+			return null;
+		}
+		[pane] = matches;
+	}
 	if (pane === undefined) {
 		return null;
 	}

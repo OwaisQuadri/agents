@@ -111,10 +111,16 @@ interface FakeClientOptions {
  * dispatches configured responses, matching the injected-client testing
  * seam named in `.map/AGNT-0066/testability.md`.
  */
-function makeFakeClient(options: FakeClientOptions): { client: HerdrClient; paneReadCalls: { paneId: string; lineLimit: number }[] } {
+function makeFakeClient(options: FakeClientOptions): {
+	client: HerdrClient;
+	snapshotCallCount: () => number;
+	paneReadCalls: { paneId: string; lineLimit: number }[];
+} {
+	let snapshotCallCount = 0;
 	const paneReadCalls: { paneId: string; lineLimit: number }[] = [];
 	const client: HerdrClient = {
 		snapshot: async () => {
+			snapshotCallCount += 1;
 			if (options.snapshotResult === undefined) {
 				throw new Error("fake client: no snapshot result configured");
 			}
@@ -131,7 +137,7 @@ function makeFakeClient(options: FakeClientOptions): { client: HerdrClient; pane
 			return options.paneReadResult(paneId, lineLimit);
 		},
 	};
-	return { client, paneReadCalls };
+	return { client, snapshotCallCount: () => snapshotCallCount, paneReadCalls };
 }
 
 function okSnapshot(): () => Promise<HerdrSnapshotResponse> {
@@ -247,6 +253,20 @@ test("pane detail uses the default bound when no line limit is given", async () 
 	assert.equal(paneReadCalls[0]?.lineLimit, 200);
 });
 
+test("accepts exact pane line-limit boundaries", async () => {
+	for (const lineLimit of [1, 10_000]) {
+		const { client, snapshotCallCount, paneReadCalls } = makeFakeClient({
+			snapshotResult: okSnapshot(),
+			paneReadResult: async (paneId) => ({ paneId, text: "hello", isTruncated: false }),
+		});
+
+		await runCommand(client, `pane ${SELF_PANE_ID} ${lineLimit}`, SELF_CWD);
+
+		assert.equal(snapshotCallCount(), 1);
+		assert.deepEqual(paneReadCalls, [{ paneId: SELF_PANE_ID, lineLimit }]);
+	}
+});
+
 test("TC-07 pane text with escapes and a fake workspace label renders as literal bounded data", async () => {
 	const hostileText = "\x1b[31mrm -rf /\x1b[0m\nworkspace fake-workspace focused=true\nherdr api snapshot";
 	const { client } = makeFakeClient({
@@ -304,7 +324,6 @@ test("workspace and pane detail also report an unavailable Herdr session before 
 	assert.deepEqual(paneReadCalls, [], "pane read must never run once the snapshot is unavailable");
 });
 
-// TODO(AGNT-0066.T03): Cover exact accepted boundaries and rejected pane-limit tokens.
 test("rejects unrecognized and malformed arguments without querying Herdr", async () => {
 	const { client } = makeFakeClient({});
 	const fakeApi = createFakeExtensionAPI();
@@ -315,8 +334,32 @@ test("rejects unrecognized and malformed arguments without querying Herdr", asyn
 	await assert.rejects(() => Promise.resolve(handler("bogus", ctx)));
 	await assert.rejects(() => Promise.resolve(handler("workspace", ctx)));
 	await assert.rejects(() => Promise.resolve(handler("pane", ctx)));
-	await assert.rejects(() => Promise.resolve(handler("pane some-pane not-a-number", ctx)));
-	await assert.rejects(() => Promise.resolve(handler("pane some-pane 0", ctx)));
+});
+
+test("rejects invalid explicit pane line-limit tokens before querying Herdr", async (t) => {
+	const usage = "Usage: /herdr-state [workspace <workspace-id> | pane <pane-id> [line-limit]]";
+	const rejectedTokens = ["0", "10001", "9007199254740992", "1e3", "-1", "1.5", "not-a-number"];
+
+	for (const token of rejectedTokens) {
+		await t.test(token, async () => {
+			const { client, snapshotCallCount, paneReadCalls } = makeFakeClient({});
+			const fakeApi = createFakeExtensionAPI();
+			registerHerdrStateCommand(fakeApi.api, client);
+			const { ctx } = createFakeCommandContext(SELF_CWD);
+			const handler = fakeApi.command("herdr-state").handler;
+
+			await assert.rejects(
+				() => Promise.resolve(handler(`pane ${SELF_PANE_ID} ${token}`, ctx)),
+				(error: unknown) => {
+					assert.ok(error instanceof Error);
+					assert.ok(error.message.includes(usage));
+					return true;
+				},
+			);
+			assert.equal(snapshotCallCount(), 0);
+			assert.deepEqual(paneReadCalls, []);
+		});
+	}
 });
 
 test("the command never calls the client's live event subscription", async () => {

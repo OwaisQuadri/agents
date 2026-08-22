@@ -69,6 +69,10 @@ function invalidResponse(message: string): HerdrStateFailure {
 	return { code: "invalid-response", message };
 }
 
+function invalidEventResponse(message: string): HerdrStateFailure {
+	return invalidResponse(`${message}; replace the snapshot`);
+}
+
 function isValidSnapshotEnvelope(value: unknown): value is HerdrSnapshotResponse {
 	if (value === null || typeof value !== "object") {
 		return false;
@@ -161,7 +165,6 @@ export class HerdrCommandClient implements HerdrClient {
 	 * @returns An asynchronous iterable of normalized events, or classified failures, until the connection ends.
 	 * @throws Never; failures are yielded, not thrown.
 	 */
-	// TODO(AGNT-0066.T01): Emit snapshot-replacement failures for unknown events.
 	// TODO(AGNT-0066.T09): Validate lifecycle envelopes and forward cancellation.
 	async *events(_signal?: AbortSignal): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
 		let lines: AsyncIterable<string>;
@@ -177,23 +180,27 @@ export class HerdrCommandClient implements HerdrClient {
 				try {
 					raw = JSON.parse(line);
 				} catch (error) {
-					yield invalidResponse(`Herdr event line is not valid JSON: ${errorMessage(error)}`);
+					yield invalidEventResponse(
+						`Herdr event line is not valid JSON: ${errorMessage(error)}`,
+					);
 					continue;
 				}
 				if (raw === null || typeof raw !== "object") {
-					yield invalidResponse("Herdr event line did not decode to an object");
+					yield invalidEventResponse("Herdr event line did not decode to an object");
 					continue;
 				}
 				let normalized: HerdrStateEvent | null;
 				try {
 					normalized = normalizeEvent(raw as HerdrRawEvent);
 				} catch (error) {
-					yield invalidResponse(`Herdr event is malformed: ${errorMessage(error)}`);
+					yield invalidEventResponse(`Herdr event is malformed: ${errorMessage(error)}`);
 					continue;
 				}
-				if (normalized !== null) {
-					yield normalized;
+				if (normalized === null) {
+					yield invalidEventResponse("Herdr event type is unknown");
+					continue;
 				}
+				yield normalized;
 			}
 		} catch (error) {
 			yield unavailable(`Herdr event subscription ended: ${errorMessage(error)}`);

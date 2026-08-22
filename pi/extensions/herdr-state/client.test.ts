@@ -237,12 +237,10 @@ test("readPane reports invalid-response for a malformed pane identifier or line 
 	assert.deepEqual(calls, [], "an invalid request must never reach the transport");
 });
 
-// TODO(AGNT-0066.T01): Prove unknown and malformed events request recovery and the stream continues.
-test("TC-05 events yields normalized events and skips an unknown event", async () => {
+test("TC-05 events requests snapshot replacement for an unknown event and continues", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () =>
 			linesFrom([
-				JSON.stringify(makeWorkspaceUpdatedEvent()),
 				JSON.stringify(makeUnknownEvent()),
 				JSON.stringify(makePaneUpdatedEvent()),
 			]),
@@ -251,11 +249,8 @@ test("TC-05 events yields normalized events and skips an unknown event", async (
 
 	const events = await collectEvents(client, 2);
 
-	assert.equal(events.length, 2);
-	assert.deepEqual(events[0], {
-		type: "workspace-changed",
-		workspace: { id: SELF_WORKSPACE_ID, label: "jerusalem (renamed)", worktree: { path: "/Users/pi/workspaces/jerusalem", branch: null }, isFocused: true },
-	});
+	assert.equal((events[0] as { code: string }).code, "invalid-response");
+	assert.match((events[0] as { message: string }).message, /replace the snapshot/);
 	assert.equal((events[1] as { type: string }).type, "pane-changed");
 });
 
@@ -268,10 +263,11 @@ test("events reports invalid-response for a line that is not JSON and continues"
 	const events = await collectEvents(client, 2);
 
 	assert.equal((events[0] as { code: string }).code, "invalid-response");
+	assert.match((events[0] as { message: string }).message, /replace the snapshot/);
 	assert.equal((events[1] as { type: string }).type, "workspace-changed");
 });
 
-test("events reports invalid-response for a line that does not decode to an object", async () => {
+test("events reports invalid-response for a line that does not decode to an object and continues", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () => linesFrom(["42", JSON.stringify(makeWorkspaceUpdatedEvent())]),
 	});
@@ -280,6 +276,7 @@ test("events reports invalid-response for a line that does not decode to an obje
 	const events = await collectEvents(client, 2);
 
 	assert.equal((events[0] as { code: string }).code, "invalid-response");
+	assert.match((events[0] as { message: string }).message, /replace the snapshot/);
 	assert.equal((events[1] as { type: string }).type, "workspace-changed");
 });
 
@@ -296,6 +293,7 @@ test("events reports invalid-response for a malformed recognized event and conti
 	const events = await collectEvents(client, 2);
 
 	assert.equal((events[0] as { code: string }).code, "invalid-response");
+	assert.match((events[0] as { message: string }).message, /replace the snapshot/);
 	assert.equal((events[1] as { type: string }).type, "pane-changed");
 });
 

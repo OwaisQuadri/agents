@@ -85,12 +85,11 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | --- | --- |
 | `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
 
-<!-- TODO(AGNT-0066.T06): Document the explicit pane line-limit range. -->
 ## Herdr state
 
 The `herdr-state` extension gives Pi a read-only view into the running Herdr session.
 
-`/herdr-state` lists every open Herdr workspace and marks Pi's own workspace, tab, and pane. `/herdr-state workspace <workspace-id>` scopes the result to that one workspace's tabs and panes. `/herdr-state pane <pane-id> [line-limit]` reads that pane's recent output, bounded to its last 200 lines by default and to the requested `line-limit` when given. The command only ever reads Herdr state; it never writes to it.
+`/herdr-state` lists every open Herdr workspace and marks Pi's own workspace, tab, and pane. `/herdr-state workspace <workspace-id>` scopes the result to that one workspace's tabs and panes. `/herdr-state pane <pane-id> [line-limit]` reads that pane's recent output, bounded to its last 200 lines by default and to the requested `line-limit` when given. An explicit `line-limit` must be an integer from 1 through 10,000. The command only ever reads Herdr state; it never writes to it.
 
 ## Pi stack
 

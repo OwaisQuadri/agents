@@ -23,7 +23,6 @@ export const OTHER_CWD = "/Users/pi/workspaces/edinburgh";
  * @param overrides Fields to override on the default fixture workspace.
  * @returns The raw workspace record.
  */
-// TODO(AGNT-0066.T02): Add malformed focus fixtures for workspaces, tabs, and panes.
 export function makeRawWorkspace(
 	overrides: Partial<HerdrRawWorkspace> = {},
 ): HerdrRawWorkspace {
@@ -80,7 +79,6 @@ export function makeRawPane(overrides: Partial<HerdrRawPane> = {}): HerdrRawPane
  * @param overrides Fields to override on the default fixture snapshot.
  * @returns The raw session snapshot.
  */
-// TODO(AGNT-0066.T07): Add unique, missing, stale, and ambiguous self-location fixtures.
 export function makeRawSnapshot(
 	overrides: Partial<HerdrRawSnapshot> = {},
 ): HerdrRawSnapshot {
@@ -140,6 +138,52 @@ export function makeSnapshotResponse(
 			snapshot: makeRawSnapshot(overrides),
 		},
 	};
+}
+
+/**
+ * Builds a snapshot response with two panes at Pi's working directory.
+ *
+ * @returns A snapshot response whose working-directory lookup is ambiguous.
+ */
+export function makeSnapshotResponseWithAmbiguousSelfCwd(): HerdrSnapshotResponse {
+	return makeSnapshotResponse({
+		panes: [
+			makeRawPane(),
+			makeRawPane({
+				pane_id: OTHER_PANE_ID,
+				workspace_id: OTHER_WORKSPACE_ID,
+				tab_id: OTHER_TAB_ID,
+				cwd: SELF_CWD,
+				focused: false,
+			}),
+		],
+	});
+}
+
+/**
+ * Builds a snapshot response with one malformed resource focus field.
+ *
+ * @param resourceType The resource record to modify.
+ * @param focused The malformed value, or undefined to remove the field.
+ * @returns The malformed snapshot response as untrusted input.
+ */
+export function makeSnapshotResponseWithMalformedFocused(
+	resourceType: "workspace" | "tab" | "pane",
+	focused: unknown,
+): unknown {
+	const response = makeSnapshotResponse();
+	const snapshot = response.result.snapshot;
+	const record = resourceType === "workspace"
+		? snapshot.workspaces[0]!
+		: resourceType === "tab"
+			? snapshot.tabs[0]!
+			: snapshot.panes[0]!;
+	if (focused === undefined) {
+		delete record.focused;
+	} else {
+		record.focused = focused;
+	}
+	return response;
 }
 
 /**

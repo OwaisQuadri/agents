@@ -83,7 +83,7 @@ export interface HerdrRawWorktree {
 export interface HerdrRawWorkspace {
 	workspace_id: string;
 	label: string;
-	focused: boolean;
+	focused?: unknown;
 	worktree?: HerdrRawWorktree;
 }
 
@@ -91,7 +91,7 @@ export interface HerdrRawTab {
 	tab_id: string;
 	workspace_id: string;
 	label: string;
-	focused: boolean;
+	focused?: unknown;
 }
 
 export interface HerdrRawPane {
@@ -99,7 +99,7 @@ export interface HerdrRawPane {
 	workspace_id: string;
 	tab_id: string;
 	cwd?: string;
-	focused: boolean;
+	focused?: unknown;
 }
 
 export interface HerdrRawAgent {

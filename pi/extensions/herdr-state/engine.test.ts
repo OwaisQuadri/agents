@@ -15,6 +15,8 @@ import {
 	makeSnapshotResponse,
 	makeSnapshotResponseMissingId,
 	makeSnapshotResponseMissingSnapshot,
+	makeSnapshotResponseWithAmbiguousSelfCwd,
+	makeSnapshotResponseWithMalformedFocused,
 	makeSnapshotResponseWrongType,
 	makeUnknownEvent,
 	makeWorkspaceUpdatedEvent,
@@ -28,7 +30,6 @@ import {
 	SELF_WORKSPACE_ID,
 } from "./fixtures.ts";
 
-// TODO(AGNT-0066.T02): Cover malformed focus fields for every resource type.
 test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
@@ -44,7 +45,26 @@ test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus"
 	assert.equal(snapshot.panes.length, 2);
 });
 
-// TODO(AGNT-0066.T07): Cover stale pane identifiers and unique or ambiguous directory matches.
+const malformedFocusedValues = [
+	{ name: "string", focused: "true" },
+	{ name: "number", focused: 1 },
+	{ name: "null", focused: null },
+	{ name: "missing", focused: undefined },
+] as const;
+
+for (const resourceType of ["workspace", "tab", "pane"] as const) {
+	for (const { name, focused } of malformedFocusedValues) {
+		test(`normalizeSnapshot rejects a ${name} ${resourceType} focused field`, () => {
+			const response = makeSnapshotResponseWithMalformedFocused(resourceType, focused);
+
+			assert.throws(
+				() => normalizeSnapshot(response as HerdrSnapshotResponse),
+				/focused must be boolean/,
+			);
+		});
+	}
+}
+
 test("TC-01 findSelf locates Pi by its injected pane identifier", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
@@ -58,7 +78,13 @@ test("TC-01 findSelf locates Pi by its injected pane identifier", () => {
 	});
 });
 
-test("findSelf falls back to matching the working directory when no pane identifier is injected", () => {
+test("findSelf returns null for a stale pane identifier despite one directory match", () => {
+	const snapshot = normalizeSnapshot(makeSnapshotResponse());
+
+	assert.equal(findSelf(snapshot, SELF_CWD, "stale-pane"), null);
+});
+
+test("findSelf returns the unique directory match with its exact identity", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
 	const self = findSelf(snapshot, OTHER_CWD, undefined);
@@ -71,13 +97,22 @@ test("findSelf falls back to matching the working directory when no pane identif
 	});
 });
 
-test("TC-04 findSelf and createModel handle an absent Pi location", () => {
+test("findSelf returns null for zero directory matches", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
-	const self = findSelf(snapshot, "/no/such/directory", "no-such-pane");
-	assert.equal(self, null);
+	assert.equal(findSelf(snapshot, "/no/such/directory", undefined), null);
+});
 
-	const model = createModel(snapshot, self);
+test("findSelf returns null for two directory matches", () => {
+	const snapshot = normalizeSnapshot(makeSnapshotResponseWithAmbiguousSelfCwd());
+
+	assert.equal(findSelf(snapshot, SELF_CWD, undefined), null);
+});
+
+test("TC-04 createModel handles an absent Pi location", () => {
+	const snapshot = normalizeSnapshot(makeSnapshotResponse());
+
+	const model = createModel(snapshot, null);
 	assert.equal(model.self, null);
 	assert.equal(model.snapshot.workspaces.length, 2);
 });

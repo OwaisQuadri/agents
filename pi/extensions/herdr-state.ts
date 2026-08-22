@@ -210,7 +210,6 @@ async function renderPaneDetail(
  * @returns The parsed request.
  * @throws Error when the arguments do not match a supported request shape.
  */
-// TODO(AGNT-0066.T03): Reject pane limits outside 1 through 10,000 before any Herdr read.
 function parseArguments(args: string): ParsedArguments {
 	const tokens = args.trim().split(/\s+/).filter((token) => token.length > 0);
 	if (tokens.length === 0) {
@@ -228,9 +227,10 @@ function parseArguments(args: string): ParsedArguments {
 		}
 		let lineLimit = DEFAULT_PANE_LINE_LIMIT;
 		if (tokens.length === 3) {
-			const parsedLimit = Number(tokens[2]);
-			if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
-				throw new Error(`Herdr state pane line limit must be a positive integer. ${USAGE}`);
+			const limitToken = tokens[2] as string;
+			const parsedLimit = Number(limitToken);
+			if (!/^[0-9]+$/.test(limitToken) || parsedLimit < 1 || parsedLimit > 10_000) {
+				throw new Error(`Herdr state pane line limit must be an integer from 1 through 10,000. ${USAGE}`);
 			}
 			lineLimit = parsedLimit;
 		}
