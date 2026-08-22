@@ -1,4 +1,3 @@
-// TODO(AGNT-0063.T03): Cover replacement lifecycle payload rejection without schema escape.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -461,7 +460,7 @@ test("telemetry rejects explicit and symlinked outside-root loadStore paths", as
 
 test("telemetry lifecycle append path failures preserve runtime state", async (t) => {
 	await withTelemetryRoot(async ({ container, root }) => {
-		const operations = ["parent settle", "async settle", "foreground completion"] as const;
+		const operations = ["parent settle", "completed settle", "failed settle"] as const;
 		const pathKinds = ["outside root", "symlink"] as const;
 
 		for (const operation of operations) {
@@ -488,15 +487,12 @@ test("telemetry lifecycle append path failures preserve runtime state", async (t
 					if (operation === "parent settle") {
 						await invoke(lifecycle.handler("on:agent_start"), undefined, context);
 						completion = () => invoke(lifecycle.handler("on:agent_settled"), undefined, context);
-					} else if (operation === "async settle") {
-						await invoke(lifecycle.handler("events:subagent:async-started"), { id: caseName, agent: "security-agent" });
-						completion = () => invoke(lifecycle.handler("events:subagent:async-complete"), { id: caseName, durationMs: 0 });
+					} else if (operation === "completed settle") {
+						await invoke(lifecycle.handler("events:subagents:started"), { id: caseName, type: "security-agent" });
+						completion = () => invoke(lifecycle.handler("events:subagents:completed"), { id: caseName, status: "completed", durationMs: 0 });
 					} else {
-						completion = () => invoke(lifecycle.handler("events:subagent:foreground-complete"), {
-							id: caseName,
-							agent: "security-agent",
-							timestamp: "2026-08-17T02:24:10.000Z",
-						});
+						await invoke(lifecycle.handler("events:subagents:started"), { id: caseName, type: "security-agent" });
+						completion = () => invoke(lifecycle.handler("events:subagents:failed"), { id: caseName, status: "error", durationMs: 0 });
 					}
 
 					const snapshot = await snapshotRuntimeState(runtime);

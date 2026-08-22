@@ -77,7 +77,6 @@ agent keeps the thinking its author tuned, and only its model follows the tier.
 
 How the assignment reaches each harness:
 
-<!-- TODO(AGNT-0063.T06): Update routing only after replacement agent behavior is verified. -->
 ONE definition per role lives in `agents/<name>/<name>.md`. The installer derives
 everything else from it.
 

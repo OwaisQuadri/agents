@@ -88,32 +88,27 @@ type NormalizedMetrics = {
 
 type TelemetryExtension = (pi: ExtensionAPI) => Promise<void>;
 
-type CompletionEvent = {
-	runId?: unknown;
+// The pi-subagents replacement's own lifecycle contract: `subagents:started`
+// carries only identity, and `subagents:completed` / `subagents:failed` share
+// one settled-run shape distinguished by `status`, proven against the reviewed
+// checkout at github.com/tintinweb/pi-subagents (revision
+// 3f9d35cd078d18a141eb5a6d8f4fc5010d756280, src/index.ts buildEventData).
+type SubagentsStartedEvent = {
 	id?: unknown;
-	source?: unknown;
-	agent?: unknown;
-	success?: unknown;
-	state?: unknown;
-	cancelled?: unknown;
-	interrupted?: unknown;
-	stopped?: unknown;
-	timedOut?: unknown;
-	turnBudgetExceeded?: unknown;
-	timestamp?: unknown;
-	durationMs?: unknown;
-	totalCost?: unknown;
-	inputTokens?: unknown;
-	outputTokens?: unknown;
-	costUsd?: unknown;
-	cacheRead?: unknown;
-	cacheWrite?: unknown;
+	type?: unknown;
+	description?: unknown;
 };
 
-type AsyncStartedEvent = {
+type SubagentsSettledEvent = {
 	id?: unknown;
-	agent?: unknown;
-	agents?: unknown;
+	type?: unknown;
+	description?: unknown;
+	result?: unknown;
+	error?: unknown;
+	status?: unknown;
+	toolUses?: unknown;
+	durationMs?: unknown;
+	usage?: unknown;
 };
 
 type ShutdownEvent = {
@@ -123,9 +118,8 @@ type ShutdownEvent = {
 
 const TELEMETRY_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const TELEMETRY_PACKAGE_VERSION = "0.84.2";
-// TODO(AGNT-0063.T03): Adapt telemetry identity after the replacement event contract is proven.
 const PinnedSubagentPackageName = "pi-subagents";
-const PinnedSubagentPackageVersion = "0.50.0";
+const PinnedSubagentPackageVersion = "0.18.0";
 
 const runRecordKeys = [
 	"recordType",
@@ -144,7 +138,6 @@ const runRecordKeys = [
 
 const tokenUsageKeys = ["input", "output", "cacheRead", "cacheWrite"] as const;
 const feedbackRecordKeys = ["recordType", "runId", "value", "createdAt"] as const;
-const totalCostKeys = ["inputTokens", "outputTokens", "costUsd"] as const;
 const telemetryFilterKeys = ["packageName", "packageVersion", "agentName", "status", "minimumDurationMs", "maximumCostUsd", "feedback"] as const;
 
 function telemetryRootPath(): string {
@@ -617,49 +610,38 @@ function ensureActiveRun(runtime: TelemetryRuntime, runId: string): ActiveRunSta
 	return active;
 }
 
-function resolveCompletionRunId(event: CompletionEvent): string {
-	const runId = event.runId ?? event.id;
+function resolveSubagentsRunId(event: SubagentsStartedEvent | SubagentsSettledEvent): string {
+	const runId = event.id;
 	if (!isNonEmptyString(runId)) {
 		throw new Error("runId must be a non-empty identifier");
 	}
 	return runId;
 }
 
-function requireOptionalBoolean(value: unknown, fieldName: string): void {
-	if (value !== undefined && typeof value !== "boolean") {
-		throw new Error(`${fieldName} must be a boolean`);
-	}
-}
+// pi-subagents' own terminal statuses (src/agent-manager.ts): "completed" and
+// "steered" reach the run's own subagents:completed event; "error", "stopped",
+// and "aborted" reach subagents:failed. Telemetry keeps its own three-state
+// TelemetryStatus regardless of which event delivered the payload, so both
+// handlers read this one mapping rather than trusting the event name alone.
+function resolveSubagentsStatus(event: SubagentsSettledEvent): TelemetryStatus {
+	const status = event.status;
 
-function resolveCompletionStatus(event: CompletionEvent): TelemetryStatus {
-	if (event.source !== undefined && event.source !== "async" && event.source !== "foreground") {
-		throw new Error("completion source must be async or foreground");
-	}
-
-	for (const field of ["success", "cancelled", "interrupted", "stopped", "timedOut", "turnBudgetExceeded"] as const) {
-		requireOptionalBoolean(event[field], field);
+	if (status === "completed" || status === "steered") {
+		return "succeeded";
 	}
 
-	if (event.state !== undefined && !["complete", "completed", "failed", "paused", "stopped", "cancelled"].includes(String(event.state))) {
-		throw new Error("state must be complete, completed, failed, paused, stopped, or cancelled");
-	}
-
-	if (event.cancelled === true || event.interrupted === true || event.stopped === true || event.timedOut === true || event.turnBudgetExceeded === true || event.state === "paused" || event.state === "stopped" || event.state === "cancelled") {
-		return "cancelled";
-	}
-
-	if (event.success === false || event.state === "failed") {
+	if (status === "error") {
 		return "failed";
 	}
 
-	return "succeeded";
-}
-
-function resolveCompletionSettledAt(event: CompletionEvent, active: ActiveRunState): string {
-	if (event.timestamp !== undefined) {
-		return normalizeEventTimestamp(event.timestamp, "timestamp");
+	if (status === "stopped" || status === "aborted") {
+		return "cancelled";
 	}
 
+	throw new Error("status must be completed, steered, error, stopped, or aborted");
+}
+
+function resolveSubagentsSettledAt(event: SubagentsSettledEvent, active: ActiveRunState): string {
 	if (event.durationMs !== undefined) {
 		if (!isFiniteNonNegativeNumber(event.durationMs)) {
 			throw new Error("durationMs must be a non-negative finite number");
@@ -681,33 +663,32 @@ function normalizeNullableMetric(value: unknown, fieldName: string): number | nu
 	return value;
 }
 
-function normalizeMetrics(value: CompletionEvent): NormalizedMetrics {
-	const metricsSource = value.totalCost === undefined || value.totalCost === null ? value : value.totalCost;
+// The candidate's `usage` is pi's own `Usage` shape (src/usage.ts toReportedUsage),
+// present only when something was spent; absent means "never ran" rather than zero.
+function normalizeSubagentsUsage(value: SubagentsSettledEvent): NormalizedMetrics {
+	const usage = value.usage;
 
-	if (metricsSource !== value) {
-		if (!isObject(metricsSource)) {
-			throw new Error("totalCost must contain only inputTokens, outputTokens, and costUsd");
-		}
-
-		for (const key of Object.keys(metricsSource)) {
-			if (!totalCostKeys.includes(key as (typeof totalCostKeys)[number])) {
-				throw new Error("totalCost must contain only inputTokens, outputTokens, and costUsd");
-			}
-		}
+	if (usage === undefined) {
+		return { tokens: emptyTokenUsage(), costUsd: null };
 	}
 
-	const inputTokens = metricsSource === value ? value.inputTokens : metricsSource.inputTokens;
-	const outputTokens = metricsSource === value ? value.outputTokens : metricsSource.outputTokens;
-	const costUsd = metricsSource === value ? value.costUsd : metricsSource.costUsd;
+	if (!isObject(usage)) {
+		throw new Error("usage must be an object");
+	}
+
+	const cost = usage.cost;
+	if (!isObject(cost)) {
+		throw new Error("usage.cost must be an object");
+	}
 
 	return {
 		tokens: {
-			input: normalizeNullableMetric(inputTokens, "inputTokens"),
-			output: normalizeNullableMetric(outputTokens, "outputTokens"),
-			cacheRead: normalizeNullableMetric(value.cacheRead, "cacheRead"),
-			cacheWrite: normalizeNullableMetric(value.cacheWrite, "cacheWrite"),
+			input: normalizeNullableMetric(usage.input, "usage.input"),
+			output: normalizeNullableMetric(usage.output, "usage.output"),
+			cacheRead: normalizeNullableMetric(usage.cacheRead, "usage.cacheRead"),
+			cacheWrite: normalizeNullableMetric(usage.cacheWrite, "usage.cacheWrite"),
 		},
-		costUsd: normalizeNullableMetric(costUsd, "costUsd"),
+		costUsd: normalizeNullableMetric(cost.total, "usage.cost.total"),
 	};
 }
 
@@ -874,43 +855,28 @@ export function settleRun(
 	return appendSettledRun(runtime, record);
 }
 
-function parseRunId(value: AsyncStartedEvent): string {
-	const runId = value.id;
-	if (!isNonEmptyString(runId)) {
-		throw new Error("runId must be a non-empty identifier");
-	}
-	return runId;
-}
-
-function parseAgentName(value: AsyncStartedEvent): string | null {
-	if (value.agent !== undefined) {
-		if (!isNonEmptyString(value.agent)) {
-			throw new Error("agent must be a non-empty identifier");
-		}
-		return value.agent;
-	}
-
-	if (!Array.isArray(value.agents)) {
+function parseSubagentsType(value: SubagentsStartedEvent): string | null {
+	if (value.type === undefined) {
 		return null;
 	}
 
-	if (value.agents.length === 0) {
-		return null;
+	if (!isNonEmptyString(value.type)) {
+		throw new Error("type must be a non-empty identifier");
 	}
 
-	if (!value.agents.every(isNonEmptyString)) {
-		throw new Error("agents must contain non-empty identifiers");
-	}
-
-	return value.agents[0] ?? null;
+	return value.type;
 }
 
-function settleRunFromCompletion(runtime: TelemetryRuntime, event: CompletionEvent): Promise<RunRecord> {
-	const runId = resolveCompletionRunId(event);
+// Both `subagents:completed` and `subagents:failed` carry the same settled-run
+// shape (src/index.ts buildEventData), foreground and background runs alike —
+// the candidate emits one lifecycle for both, unlike the prior package's
+// separate foreground-complete event.
+function settleRunFromSubagentsEvent(runtime: TelemetryRuntime, event: SubagentsSettledEvent): Promise<RunRecord> {
+	const runId = resolveSubagentsRunId(event);
 	const active = ensureActiveRun(runtime, runId);
-	const status = resolveCompletionStatus(event);
-	const settledAt = resolveCompletionSettledAt(event, active);
-	const metrics = normalizeMetrics(event);
+	const status = resolveSubagentsStatus(event);
+	const settledAt = resolveSubagentsSettledAt(event, active);
+	const metrics = normalizeSubagentsUsage(event);
 	return settleRun(
 		runtime,
 		runId,
@@ -921,36 +887,6 @@ function settleRunFromCompletion(runtime: TelemetryRuntime, event: CompletionEve
 		metrics.costUsd,
 		settledAt,
 	);
-}
-
-function recordForegroundCompletion(runtime: TelemetryRuntime, event: CompletionEvent): Promise<RunRecord> {
-	const runId = resolveCompletionRunId(event);
-	ensureAvailableRunId(runtime, runId);
-
-	if (!isNonEmptyString(event.agent)) {
-		throw new Error("agent must be a non-empty identifier");
-	}
-
-	const settledAt = normalizeEventTimestamp(event.timestamp, "timestamp");
-	const status = resolveCompletionStatus(event);
-	const metrics = normalizeMetrics(event);
-	const parentRunId = runtime.currentParentRunId;
-	const record: RunRecord = {
-		recordType: "run",
-		runId,
-		parentRunId,
-		packageName: PinnedSubagentPackageName,
-		packageVersion: PinnedSubagentPackageVersion,
-		agentName: event.agent,
-		startedAt: settledAt,
-		settledAt,
-		durationMs: 0,
-		status,
-		tokens: metrics.tokens,
-		costUsd: metrics.costUsd,
-	};
-
-	return appendRecord(runtime.store, record).then(() => record);
 }
 
 function settleParentRun(runtime: TelemetryRuntime, status: TelemetryStatus): Promise<RunRecord> {
@@ -1268,26 +1204,26 @@ export function registerLifecycle(pi: ExtensionAPI, runtime: TelemetryRuntime): 
 		}
 	});
 
-	pi.events.on("subagent:async-started", async (payload: AsyncStartedEvent) => {
+	pi.events.on("subagents:started", async (payload: SubagentsStartedEvent) => {
 		try {
-			const runId = parseRunId(payload);
-			const agentName = parseAgentName(payload);
+			const runId = resolveSubagentsRunId(payload);
+			const agentName = parseSubagentsType(payload);
 			startRun(runtime, runId, PinnedSubagentPackageName, agentName, new Date().toISOString());
 		} finally {
 			syncTelemetryStatus(statusTarget, runtime);
 		}
 	});
 
-	pi.events.on("subagent:async-complete", async (payload: CompletionEvent) => {
+	pi.events.on("subagents:completed", async (payload: SubagentsSettledEvent) => {
 		try {
-			await settleRunFromCompletion(runtime, { ...payload, source: "async" });
+			await settleRunFromSubagentsEvent(runtime, payload);
 		} finally {
 			syncTelemetryStatus(statusTarget, runtime);
 		}
 	});
-	pi.events.on("subagent:foreground-complete", async (payload: CompletionEvent) => {
+	pi.events.on("subagents:failed", async (payload: SubagentsSettledEvent) => {
 		try {
-			await recordForegroundCompletion(runtime, { ...payload, source: "foreground" });
+			await settleRunFromSubagentsEvent(runtime, payload);
 		} finally {
 			syncTelemetryStatus(statusTarget, runtime);
 		}
