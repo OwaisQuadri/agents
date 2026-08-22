@@ -1,7 +1,7 @@
 use crate::model::{
-    Decision, DecisionRecord, QualificationBoundary, QualificationPolicy, QualificationReport,
-    QualifyRequest, RunEvent, RunId, RunState, SkillEvalError, SkillName, SkillRoutingDecision,
-    TierEvidence, TrialRecord, TrialSelector,
+    Decision, DecisionRecord, PromptJudgeRequest, PromptJudgeResult, QualificationBoundary,
+    QualificationPolicy, QualificationReport, QualifyRequest, RunEvent, RunId, RunState,
+    SkillEvalError, SkillName, SkillRoutingDecision, TierEvidence, TrialRecord, TrialSelector,
 };
 use crate::ports::{Clock, ProgressSink, QualificationRuntime, RunStore};
 
@@ -50,6 +50,13 @@ pub(crate) fn routing_decision(
     report: &QualificationReport,
     skill: &SkillName,
 ) -> Result<Option<SkillRoutingDecision>, SkillEvalError> {
+    unimplemented!()
+}
+
+pub(crate) fn judge_prompt(
+    request: &PromptJudgeRequest,
+    runtime: &mut dyn QualificationRuntime,
+) -> Result<PromptJudgeResult, SkillEvalError> {
     unimplemented!()
 }
 

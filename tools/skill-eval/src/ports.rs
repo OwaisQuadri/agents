@@ -2,8 +2,8 @@ use std::path::Path;
 
 use crate::model::{
     CandidateArtifact, CaseDefinition, CheckResult, HarnessIdentity, JudgeInput, ModelIdentity,
-    RunEvent, RunId, SkillDefinition, SkillEvalError, Tier, Timestamp, TrialKey, TrialRecord,
-    TrialSelector, TrialVerdict,
+    PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillDefinition, SkillEvalError, Tier,
+    Timestamp, TrialKey, TrialRecord, TrialSelector, TrialVerdict,
 };
 
 pub(crate) trait SkillSource {
@@ -13,10 +13,12 @@ pub(crate) trait SkillSource {
 pub(crate) trait ModelResolver {
     fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError>;
 
+    fn configured_judge_tier(&self) -> Result<Tier, SkillEvalError>;
+
     fn judge(
         &self,
         judge_tier: Tier,
-        candidate: &ModelIdentity,
+        candidate: Option<&ModelIdentity>,
     ) -> Result<ModelIdentity, SkillEvalError>;
 }
 
@@ -45,6 +47,12 @@ pub(crate) trait Judge {
         model: &ModelIdentity,
         input: &JudgeInput,
     ) -> Result<TrialVerdict, SkillEvalError>;
+
+    fn grade_prompt(
+        &mut self,
+        model: &ModelIdentity,
+        request: &PromptJudgeRequest,
+    ) -> Result<PromptJudgeResult, SkillEvalError>;
 }
 
 pub(crate) trait RunStore {
