@@ -13,13 +13,37 @@ pub(crate) enum Tier {
     T5,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ArtifactKind {
+    Skill,
+    Agent,
+    Workflow,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum TierDestination {
+    SkillMinimum,
+    SkillTarget,
+    Agent,
+    WorkflowOrchestrator,
+    WorkflowNode { node: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct TierAssignment {
+    pub(crate) destination: TierDestination,
+    pub(crate) tier: Tier,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub(crate) struct RunId(pub(crate) String);
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
-pub(crate) struct SkillName(pub(crate) String);
+pub(crate) struct ArtifactName(pub(crate) String);
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -32,7 +56,8 @@ pub(crate) struct Timestamp(pub(crate) String);
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct RunConfiguration {
     pub(crate) run_id: RunId,
-    pub(crate) skills: Vec<SkillDefinition>,
+    pub(crate) artifacts: Vec<ArtifactDefinition>,
+    pub(crate) change: Option<ArtifactChange>,
     pub(crate) policy: QualificationPolicy,
     pub(crate) created_at: Timestamp,
 }
@@ -49,12 +74,21 @@ pub(crate) struct QualificationPolicy {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct SkillDefinition {
-    pub(crate) name: SkillName,
+pub(crate) struct ArtifactDefinition {
+    pub(crate) name: ArtifactName,
+    pub(crate) kind: ArtifactKind,
     pub(crate) root: PathBuf,
-    pub(crate) current_minimum_tier: Option<Tier>,
-    pub(crate) target_tier: Option<Tier>,
+    pub(crate) current_tiers: Vec<TierAssignment>,
     pub(crate) cases: Vec<CaseDefinition>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct ArtifactChange {
+    pub(crate) artifact: ArtifactName,
+    pub(crate) kind: ArtifactKind,
+    pub(crate) incumbent_revision: String,
+    pub(crate) candidate_revision: String,
+    pub(crate) own_eval_evidence: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -107,13 +141,13 @@ pub(crate) struct ModelIdentity {
 pub(crate) struct HarnessIdentity {
     pub(crate) runner_version: String,
     pub(crate) pi_version: String,
-    pub(crate) skill_revision: String,
+    pub(crate) artifact_revision: String,
     pub(crate) tool_policy_digest: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct TrialKey {
-    pub(crate) skill: SkillName,
+    pub(crate) artifact: ArtifactName,
     pub(crate) tier: Tier,
     pub(crate) case: CaseId,
     pub(crate) attempt: u16,
@@ -201,8 +235,8 @@ pub(crate) struct QualificationBoundary {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct SkillQualificationState {
-    pub(crate) status: SkillStatus,
+pub(crate) struct ArtifactQualificationState {
+    pub(crate) status: ArtifactStatus,
     pub(crate) tiers: Vec<TierEvidence>,
     pub(crate) boundary: Option<QualificationBoundary>,
     pub(crate) review_reason: Option<String>,
@@ -210,7 +244,7 @@ pub(crate) struct SkillQualificationState {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SkillStatus {
+pub(crate) enum ArtifactStatus {
     Pending,
     Running,
     AwaitingDecision,
@@ -224,9 +258,10 @@ pub(crate) enum SkillStatus {
 pub(crate) struct RunState {
     pub(crate) run_id: RunId,
     pub(crate) status: RunStatus,
-    pub(crate) skills: BTreeMap<SkillName, SkillQualificationState>,
+    pub(crate) artifacts: BTreeMap<ArtifactName, ArtifactQualificationState>,
     pub(crate) pause: Option<PauseReason>,
-    pub(crate) decisions: BTreeMap<SkillName, DecisionRecord>,
+    pub(crate) decisions: BTreeMap<ArtifactName, DecisionRecord>,
+    pub(crate) publication_gates: BTreeMap<ArtifactName, PublicationGate>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -253,10 +288,28 @@ pub(crate) enum PauseReason {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct DecisionRecord {
-    pub(crate) skill: SkillName,
+    pub(crate) artifact: ArtifactName,
     pub(crate) decision: Decision,
+    pub(crate) assignments: Vec<TierAssignment>,
     pub(crate) reason: Option<String>,
     pub(crate) decided_at: Timestamp,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PublicationStatus {
+    AwaitingQualification,
+    AwaitingDecision,
+    Ready,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PublicationGate {
+    pub(crate) change: ArtifactChange,
+    pub(crate) status: PublicationStatus,
+    pub(crate) assignments: Vec<TierAssignment>,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -297,7 +350,7 @@ pub(crate) enum CliCommand {
     },
     Decide {
         run_id: RunId,
-        skill: SkillName,
+        artifact: ArtifactName,
         decision: Decision,
         reason: Option<String>,
     },
@@ -308,7 +361,7 @@ pub(crate) enum CliCommand {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualifyRequest {
-    pub(crate) skill_roots: Vec<PathBuf>,
+    pub(crate) artifact_roots: Vec<PathBuf>,
     pub(crate) policy: QualificationPolicy,
 }
 
@@ -329,7 +382,7 @@ pub(crate) struct PromptJudgeResult {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct TrialSelector {
     pub(crate) run_id: RunId,
-    pub(crate) skill: SkillName,
+    pub(crate) artifact: ArtifactName,
     pub(crate) tier: Tier,
     pub(crate) case: CaseId,
     pub(crate) attempt: u16,
@@ -357,16 +410,18 @@ pub(crate) struct JudgeInput {
 pub(crate) struct QualificationReport {
     pub(crate) run_id: RunId,
     pub(crate) status: RunStatus,
-    pub(crate) skills: Vec<SkillReport>,
+    pub(crate) artifacts: Vec<ArtifactReport>,
     pub(crate) total_usage: TrialUsage,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct SkillReport {
-    pub(crate) skill: SkillName,
-    pub(crate) status: SkillStatus,
+pub(crate) struct ArtifactReport {
+    pub(crate) artifact: ArtifactName,
+    pub(crate) kind: ArtifactKind,
+    pub(crate) status: ArtifactStatus,
     pub(crate) boundary: Option<QualificationBoundary>,
     pub(crate) decision: Option<DecisionRecord>,
+    pub(crate) publication_gate: Option<PublicationGate>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -400,7 +455,7 @@ pub(crate) enum SkillEvalError {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SkillRoutingDecision {
-    pub(crate) skill: SkillName,
+    pub(crate) artifact: ArtifactName,
     pub(crate) target_tier: Tier,
     pub(crate) parent_responsibilities: Vec<ParentResponsibility>,
 }
@@ -432,17 +487,17 @@ pub(crate) enum RunEvent {
     },
     TierEvaluated {
         at: Timestamp,
-        skill: SkillName,
+        artifact: ArtifactName,
         evidence: TierEvidence,
     },
     BoundaryFound {
         at: Timestamp,
-        skill: SkillName,
+        artifact: ArtifactName,
         boundary: QualificationBoundary,
     },
     ReviewRequired {
         at: Timestamp,
-        skill: SkillName,
+        artifact: ArtifactName,
         reason: String,
     },
     RunPaused {
@@ -455,5 +510,9 @@ pub(crate) enum RunEvent {
     DecisionRecorded {
         at: Timestamp,
         decision: DecisionRecord,
+    },
+    PublicationGateEvaluated {
+        at: Timestamp,
+        gate: PublicationGate,
     },
 }
