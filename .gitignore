@@ -8,6 +8,9 @@ agents/*/logs/
 skills/*/votes/
 agents/*/votes/
 
+anchor-verifier/logs/
+anchor-verifier/votes/
+
 skills/mouthpiece/examples.md
 workflows/*/logs/
 workflows/*/votes/
