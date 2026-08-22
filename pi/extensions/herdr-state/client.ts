@@ -300,6 +300,7 @@ export class HerdrCommandClient implements HerdrClient {
 		if (typeof paneId !== "string" || paneId === "") {
 			return invalidResponse("Herdr pane read requires a non-empty pane identifier");
 		}
+		// TODO(AGNT-0066.T11): Enforce the direct client range from 1 through 10,000.
 		if (!Number.isSafeInteger(lineLimit + 1) || lineLimit <= 0) {
 			return invalidResponse("Herdr pane read requires a positive bounded line limit");
 		}

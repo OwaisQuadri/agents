@@ -248,6 +248,7 @@ test("readPane reports unavailable when the command fails to run", async () => {
 	assert.equal((result as { code: string }).code, "unavailable");
 });
 
+// TODO(AGNT-0066.T11): Cover direct-client boundaries and oversized integer rejection.
 test("readPane reports invalid-response for a malformed pane identifier or line limit", async () => {
 	const { transport, calls } = makeFakeTransport({});
 	const client = new HerdrCommandClient(transport);
