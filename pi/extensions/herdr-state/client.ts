@@ -8,7 +8,7 @@ import type {
 } from "./types.ts";
 
 export interface HerdrClient {
-	snapshot(): Promise<HerdrSnapshotResponse | HerdrStateFailure>;
+	snapshot(signal?: AbortSignal): Promise<HerdrSnapshotResponse | HerdrStateFailure>;
 	events(signal?: AbortSignal): AsyncIterable<HerdrStateEvent | HerdrStateFailure>;
 	readPane(
 		paneId: string,
@@ -31,7 +31,11 @@ export interface HerdrCommandResult {
  * @returns The command's exit code, standard output, and standard error.
  * @throws Error when the command cannot be started.
  */
-export type HerdrCommandRunner = (args: string[]) => Promise<HerdrCommandResult>;
+// TODO(AGNT-0066.T09): Forward cancellation into read-only Herdr commands.
+export type HerdrCommandRunner = (
+	args: string[],
+	signal?: AbortSignal,
+) => Promise<HerdrCommandResult>;
 
 /**
  * Opens the Herdr live event subscription (over its local socket or an
@@ -122,7 +126,8 @@ export class HerdrCommandClient implements HerdrClient {
 	 * @returns The `{ id, result: { type: "session_snapshot", snapshot } }` envelope, or a classified failure.
 	 * @throws Never; failures are returned, not thrown.
 	 */
-	async snapshot(): Promise<HerdrSnapshotResponse | HerdrStateFailure> {
+	// TODO(AGNT-0066.T09): Forward snapshot cancellation and classify intentional abort.
+	async snapshot(_signal?: AbortSignal): Promise<HerdrSnapshotResponse | HerdrStateFailure> {
 		let result: HerdrCommandResult;
 		try {
 			result = await this.transport.runCommand(["api", "snapshot"]);
