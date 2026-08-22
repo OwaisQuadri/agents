@@ -30,7 +30,7 @@ type CodexUsageResponse = {
 	};
 };
 
-const BAR_WIDTH = 18;
+const DEFAULT_VIEWPORT_WIDTH = 80;
 const POLL_INTERVAL_MS = 10 * 60 * 1000;
 const MIN_FETCH_INTERVAL_MS = 60 * 1000;
 const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -153,13 +153,11 @@ async function fetchCodexUsage(ctx: ExtensionContext): Promise<ProviderUsage | n
 	};
 }
 
-// The weekly window is the standing view. The session window replaces it only once it
-// is both near its cap and the worse of the two, so the line reports one number.
 function selectWindow(usage: ProviderUsage): { window: UsageWindow; label: string } | null {
 	const five = usage.fiveHour;
 	const week = usage.sevenDay;
 	if (!five && !week) return null;
-	if (!week) return five && five.usedPercent > 90 ? { window: five, label: "5h" } : null;
+	if (!week) return five ? { window: five, label: "5h" } : null;
 	if (!five) return { window: week, label: "7d" };
 	if (five.usedPercent > 90 && five.usedPercent > week.usedPercent) {
 		return { window: five, label: "5h" };
@@ -176,7 +174,16 @@ function formatReset(diffSeconds: number): string {
 	return `${Math.floor(diffSeconds / 60)}m`;
 }
 
-function renderBar(usage: ProviderUsage, theme: { fg: (color: string, text: string) => string }): string | null {
+function barWidthForViewport(viewportWidth: number | undefined): number {
+	const width = viewportWidth && viewportWidth > 0 ? viewportWidth : DEFAULT_VIEWPORT_WIDTH;
+	return Math.max(1, Math.floor(width / 2));
+}
+
+function renderBar(
+	usage: ProviderUsage,
+	theme: { fg: (color: string, text: string) => string },
+	viewportWidth: number | undefined,
+): string | null {
 	const selected = selectWindow(usage);
 	if (!selected) return null;
 	const { window, label } = selected;
@@ -187,11 +194,12 @@ function renderBar(usage: ProviderUsage, theme: { fg: (color: string, text: stri
 
 	// On-pace is the share of the window already spent, read from its own reset stamp.
 	const pace = clampPercent(((window.windowSeconds - diff) / window.windowSeconds) * 100);
-	const fill = Math.floor((percent * BAR_WIDTH) / 100);
-	const mark = Math.min(BAR_WIDTH - 1, Math.max(0, Math.floor((pace * BAR_WIDTH) / 100)));
+	const barWidth = barWidthForViewport(viewportWidth);
+	const fill = Math.floor((percent * barWidth) / 100);
+	const mark = Math.min(barWidth - 1, Math.max(0, Math.floor((pace * barWidth) / 100)));
 
 	let bar = "";
-	for (let i = 0; i < BAR_WIDTH; i++) {
+	for (let i = 0; i < barWidth; i++) {
 		if (i === mark) bar += theme.fg("warning", "│");
 		else if (i < fill) bar += "█";
 		else bar += theme.fg("dim", "░");
@@ -211,6 +219,7 @@ export default function statusline(pi: ExtensionAPI) {
 	const usageByProvider = new Map<string, ProviderUsage>();
 	const lastFetchAtByProvider = new Map<string, number>();
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
+	let activeContext: ExtensionContext | null = null;
 
 	function activeProvider(ctx: ExtensionContext): "anthropic" | "openai-codex" | null {
 		const provider = ctx.model?.provider;
@@ -222,9 +231,13 @@ export default function statusline(pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		const provider = activeProvider(ctx);
 		const usage = provider ? usageByProvider.get(provider) : undefined;
-		const line = usage ? renderBar(usage, ctx.ui.theme) : null;
+		const line = usage ? renderBar(usage, ctx.ui.theme, process.stdout.columns) : null;
 		ctx.ui.setStatus("statusline", line ?? undefined);
 	}
+
+	const onResize = () => {
+		if (activeContext) render(activeContext);
+	};
 
 	async function refresh(ctx: ExtensionContext, isForced = false) {
 		if (!isCtxActive(ctx)) return;
@@ -251,9 +264,12 @@ export default function statusline(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
+		activeContext = ctx;
 		void refresh(ctx);
 		if (pollInterval) clearInterval(pollInterval);
 		pollInterval = setInterval(() => void refresh(ctx, true), POLL_INTERVAL_MS);
+		process.stdout.off("resize", onResize);
+		if (ctx.mode === "tui") process.stdout.on("resize", onResize);
 	});
 
 	pi.on("model_select", async (_event, ctx) => {
@@ -269,5 +285,7 @@ export default function statusline(pi: ExtensionAPI) {
 			clearInterval(pollInterval);
 			pollInterval = null;
 		}
+		activeContext = null;
+		process.stdout.off("resize", onResize);
 	});
 }

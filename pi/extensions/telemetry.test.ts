@@ -342,7 +342,7 @@ test("telemetry status command notifies active and failed counts including zero"
 });
 
 
-test("telemetry status surface clears on session start and successful completion", async () => {
+test("telemetry lifecycle does not add a footer status", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "telemetry-status-surface-"));
 	await withTelemetryDirectory(directory, async () => {
 		const runtime = createTelemetryRuntime({ path: join(directory, "telemetry.jsonl"), records: [] });
@@ -350,16 +350,10 @@ test("telemetry status surface clears on session start and successful completion
 		registerLifecycle(api.api, runtime);
 
 		const recordingUi = createRecordingUi();
-		const ctx = createFakeLifecycleContext(recordingUi);
-		const sessionStartHandler = api.on("session_start");
-		const startedHandler = api.event("subagents:started");
-		const completedHandler = api.event("subagents:completed");
+		await invoke(api.event("subagents:started"), { id: "async-1", type: "subagent-a" });
+		await invoke(api.event("subagents:completed"), { id: "async-1", status: "completed" });
 
-		await invoke(sessionStartHandler, undefined, ctx);
-		await invoke(startedHandler, { id: "async-1", type: "subagent-a" });
-		await invoke(completedHandler, { id: "async-1", status: "completed" });
-
-		assert.deepEqual(recordingUi.statuses.map((status) => status.text), [undefined, "active: 1 failed: 0", undefined]);
+		assert.deepEqual(recordingUi.statuses, []);
 		assert.deepEqual(recordingUi.notifications, []);
 	});
 });
@@ -1080,7 +1074,7 @@ test("telemetry shutdown attempts every run and reports partial failure", async 
 		assert.equal(store.records.length, 1);
 		assert.equal((store.records[0] as RunRecord).runId, "valid-shutdown");
 		assert.equal((store.records[0] as RunRecord).status, "cancelled");
-		assert.deepEqual(recordingUi.statuses.at(-1), { key: "telemetry", text: "active: 1 failed: 0" });
+		assert.deepEqual(recordingUi.statuses, []);
 		assert.equal((await loadStore()).records.length, 1);
 	});
 });

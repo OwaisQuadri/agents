@@ -947,26 +947,6 @@ function parseShutdownEvent(event: ShutdownEvent): void {
 	}
 }
 
-type TelemetryStatusTarget = {
-	setStatus(key: string, text: string | undefined): void;
-};
-
-function telemetryStatusText(counts: TelemetryCounts): string | undefined {
-	if (counts.active === 0 && counts.failed === 0) {
-		return undefined;
-	}
-
-	return `active: ${counts.active} failed: ${counts.failed}`;
-}
-
-function syncTelemetryStatus(target: TelemetryStatusTarget | null, runtime: TelemetryRuntime): void {
-	if (target === null) {
-		return;
-	}
-
-	target.setStatus("telemetry", telemetryStatusText(telemetryCounts(runtime)));
-}
-
 function projectRunRecord(record: RunRecord): RunRecord {
 	return {
 		recordType: record.recordType,
@@ -1155,78 +1135,44 @@ export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): v
 /**
  * Registers private wide-event telemetry for Pi and pi-subagents runs.
  *
- * @param pi - The Pi extension interface that supplies lifecycle events, commands, and status output.
+ * @param pi - The Pi extension interface that supplies lifecycle events and commands.
  * @returns A promise that resolves after the local store loads and handlers register.
  * @throws An error when the telemetry store cannot be read or validated.
  */
 export function registerLifecycle(pi: ExtensionAPI, runtime: TelemetryRuntime): void {
-	let statusTarget: TelemetryStatusTarget | null = null;
-
-	pi.on("session_start", (_event, ctx) => {
-		statusTarget = ctx.ui;
-		syncTelemetryStatus(statusTarget, runtime);
+	pi.on("agent_start", async () => {
+		const runId = randomUUID();
+		startRun(runtime, runId, runtime.packageName, null, new Date().toISOString());
+		runtime.currentParentRunId = runId;
 	});
 
-	pi.on("agent_start", async (_event, ctx) => {
-		statusTarget = ctx.ui;
-		try {
-			const runId = randomUUID();
-			startRun(runtime, runId, runtime.packageName, null, new Date().toISOString());
-			runtime.currentParentRunId = runId;
-		} finally {
-			syncTelemetryStatus(statusTarget, runtime);
-		}
+	pi.on("agent_settled", async () => {
+		await settleParentRun(runtime, "succeeded");
 	});
 
-	pi.on("agent_settled", async (_event, ctx) => {
-		statusTarget = ctx.ui;
-		try {
-			await settleParentRun(runtime, "succeeded");
-		} finally {
-			syncTelemetryStatus(statusTarget, runtime);
-		}
-	});
-
-	pi.on("session_shutdown", async (event: ShutdownEvent, ctx) => {
-		statusTarget = ctx.ui;
-		try {
-			parseShutdownEvent(event);
-			await settleAllActiveRuns(runtime, "cancelled");
-		} finally {
-			syncTelemetryStatus(statusTarget, runtime);
-		}
+	pi.on("session_shutdown", async (event: ShutdownEvent) => {
+		parseShutdownEvent(event);
+		await settleAllActiveRuns(runtime, "cancelled");
 	});
 
 	pi.events.on("subagents:started", async (payload: SubagentsStartedEvent) => {
-		try {
-			const runId = resolveSubagentsRunId(payload);
-			const agentName = parseSubagentsType(payload);
-			startRun(runtime, runId, PinnedSubagentPackageName, agentName, new Date().toISOString());
-		} finally {
-			syncTelemetryStatus(statusTarget, runtime);
-		}
+		const runId = resolveSubagentsRunId(payload);
+		const agentName = parseSubagentsType(payload);
+		startRun(runtime, runId, PinnedSubagentPackageName, agentName, new Date().toISOString());
 	});
 
 	pi.events.on("subagents:completed", async (payload: SubagentsSettledEvent) => {
-		try {
-			await settleRunFromSubagentsEvent(runtime, payload);
-		} finally {
-			syncTelemetryStatus(statusTarget, runtime);
-		}
+		await settleRunFromSubagentsEvent(runtime, payload);
 	});
 	pi.events.on("subagents:failed", async (payload: SubagentsSettledEvent) => {
-		try {
-			await settleRunFromSubagentsEvent(runtime, payload);
-		} finally {
-			syncTelemetryStatus(statusTarget, runtime);
-		}
+		await settleRunFromSubagentsEvent(runtime, payload);
 	});
 }
 
 /**
  * Loads the telemetry store and registers lifecycle handlers.
  *
- * @param pi - The Pi extension interface that supplies lifecycle events, commands, and status output.
+ * @param pi - The Pi extension interface that supplies lifecycle events and commands.
  * @returns A promise that resolves after the local store loads and handlers register.
  * @throws An error when the telemetry store cannot be read or validated.
  */
