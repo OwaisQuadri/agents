@@ -320,6 +320,7 @@ function createTransport(pi: ExtensionAPI): HerdrTransport {
  * @returns Nothing.
  * @throws Never; Herdr access failures are reported through the command's rendered result.
  */
+// TODO(AGNT-0066.T10): Own controller startup and shutdown at the extension entrypoint.
 export default function herdrState(pi: ExtensionAPI): void {
 	registerHerdrStateCommand(pi, new HerdrCommandClient(createTransport(pi)));
 }
