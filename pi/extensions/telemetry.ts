@@ -88,11 +88,6 @@ type NormalizedMetrics = {
 
 type TelemetryExtension = (pi: ExtensionAPI) => Promise<void>;
 
-// The pi-subagents replacement's own lifecycle contract: `subagents:started`
-// carries only identity, and `subagents:completed` / `subagents:failed` share
-// one settled-run shape distinguished by `status`, proven against the reviewed
-// checkout at github.com/tintinweb/pi-subagents (revision
-// 3f9d35cd078d18a141eb5a6d8f4fc5010d756280, src/index.ts buildEventData).
 type SubagentsStartedEvent = {
 	id?: unknown;
 	type?: unknown;
@@ -663,8 +658,6 @@ function normalizeNullableMetric(value: unknown, fieldName: string): number | nu
 	return value;
 }
 
-// The candidate's `usage` is pi's own `Usage` shape (src/usage.ts toReportedUsage),
-// present only when something was spent; absent means "never ran" rather than zero.
 function normalizeSubagentsUsage(value: SubagentsSettledEvent): NormalizedMetrics {
 	const usage = value.usage;
 
