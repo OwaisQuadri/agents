@@ -85,6 +85,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | --- | --- |
 | `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
 
+<!-- TODO(AGNT-0066.T06): Document the explicit pane line-limit range. -->
 ## Herdr state
 
 The `herdr-state` extension gives Pi a read-only view into the running Herdr session.

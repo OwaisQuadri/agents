@@ -303,6 +303,7 @@ test("workspace and pane detail also report an unavailable Herdr session before 
 	assert.deepEqual(paneReadCalls, [], "pane read must never run once the snapshot is unavailable");
 });
 
+// TODO(AGNT-0066.T03): Cover exact accepted boundaries and rejected pane-limit tokens.
 test("rejects unrecognized and malformed arguments without querying Herdr", async () => {
 	const { client } = makeFakeClient({});
 	const fakeApi = createFakeExtensionAPI();

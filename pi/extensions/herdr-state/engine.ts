@@ -25,6 +25,7 @@ function normalizeWorktree(raw: HerdrRawWorktree | undefined): HerdrWorktree | n
 	return { path: raw.checkout_path, branch: null };
 }
 
+// TODO(AGNT-0066.T02): Reject non-boolean focus fields without coercion.
 function normalizeWorkspace(raw: HerdrRawWorkspace): HerdrWorkspace {
 	if (typeof raw?.workspace_id !== "string" || raw.workspace_id === "") {
 		throw new Error("invalid Herdr workspace: missing workspace_id");
@@ -164,6 +165,7 @@ export function normalizeEvent(
  * @returns The Pi location, or null when the session has no Herdr location.
  * @throws Error when the location data is invalid.
  */
+// TODO(AGNT-0066.T07): Make pane-id precedence and working-directory fallback unambiguous.
 export function findSelf(
 	snapshot: HerdrSessionSnapshot,
 	cwd: string,

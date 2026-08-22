@@ -23,6 +23,7 @@ export const OTHER_CWD = "/Users/pi/workspaces/edinburgh";
  * @param overrides Fields to override on the default fixture workspace.
  * @returns The raw workspace record.
  */
+// TODO(AGNT-0066.T02): Add malformed focus fixtures for workspaces, tabs, and panes.
 export function makeRawWorkspace(
 	overrides: Partial<HerdrRawWorkspace> = {},
 ): HerdrRawWorkspace {
@@ -79,6 +80,7 @@ export function makeRawPane(overrides: Partial<HerdrRawPane> = {}): HerdrRawPane
  * @param overrides Fields to override on the default fixture snapshot.
  * @returns The raw session snapshot.
  */
+// TODO(AGNT-0066.T07): Add unique, missing, stale, and ambiguous self-location fixtures.
 export function makeRawSnapshot(
 	overrides: Partial<HerdrRawSnapshot> = {},
 ): HerdrRawSnapshot {

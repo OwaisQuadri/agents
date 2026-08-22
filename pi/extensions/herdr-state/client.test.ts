@@ -237,6 +237,7 @@ test("readPane reports invalid-response for a malformed pane identifier or line 
 	assert.deepEqual(calls, [], "an invalid request must never reach the transport");
 });
 
+// TODO(AGNT-0066.T01): Prove unknown and malformed events request recovery and the stream continues.
 test("TC-05 events yields normalized events and skips an unknown event", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () =>

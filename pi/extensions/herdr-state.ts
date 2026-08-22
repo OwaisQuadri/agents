@@ -209,6 +209,7 @@ async function renderPaneDetail(
  * @returns The parsed request.
  * @throws Error when the arguments do not match a supported request shape.
  */
+// TODO(AGNT-0066.T03): Reject pane limits outside 1 through 10,000 before any Herdr read.
 function parseArguments(args: string): ParsedArguments {
 	const tokens = args.trim().split(/\s+/).filter((token) => token.length > 0);
 	if (tokens.length === 0) {

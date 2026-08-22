@@ -28,6 +28,7 @@ import {
 	SELF_WORKSPACE_ID,
 } from "./fixtures.ts";
 
+// TODO(AGNT-0066.T02): Cover malformed focus fields for every resource type.
 test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
@@ -43,6 +44,7 @@ test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus"
 	assert.equal(snapshot.panes.length, 2);
 });
 
+// TODO(AGNT-0066.T07): Cover stale pane identifiers and unique or ambiguous directory matches.
 test("TC-01 findSelf locates Pi by its injected pane identifier", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 

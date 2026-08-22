@@ -155,6 +155,7 @@ export class HerdrCommandClient implements HerdrClient {
 	 * @returns An asynchronous iterable of normalized events, or classified failures, until the connection ends.
 	 * @throws Never; failures are yielded, not thrown.
 	 */
+	// TODO(AGNT-0066.T01): Emit snapshot-replacement failures for unknown events.
 	async *events(): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
 		let lines: AsyncIterable<string>;
 		try {
