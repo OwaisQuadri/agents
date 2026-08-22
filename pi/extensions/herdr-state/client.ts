@@ -145,20 +145,24 @@ export class HerdrCommandClient implements HerdrClient {
 	 * Reads the live Herdr session snapshot envelope.
 	 *
 	 * @returns The `{ id, result: { type: "session_snapshot", snapshot } }` envelope, or a classified failure.
-	 * @throws The abort reason when the supplied signal is aborted; other failures are returned.
+	 * @throws Never; failures are returned, not thrown.
 	 */
 	async snapshot(signal?: AbortSignal): Promise<HerdrSnapshotResponse | HerdrStateFailure> {
-		signal?.throwIfAborted();
+		if (signal?.aborted) {
+			return unavailable(`Herdr snapshot command aborted: ${errorMessage(signal.reason)}`);
+		}
 		let result: HerdrCommandResult;
 		try {
 			result = await this.transport.runCommand(["api", "snapshot"], signal);
 		} catch (error) {
 			if (signal?.aborted) {
-				signal.throwIfAborted();
+				return unavailable(`Herdr snapshot command aborted: ${errorMessage(signal.reason)}`);
 			}
 			return unavailable(`Herdr snapshot command failed to run: ${errorMessage(error)}`);
 		}
-		signal?.throwIfAborted();
+		if (signal?.aborted) {
+			return unavailable(`Herdr snapshot command aborted: ${errorMessage(signal.reason)}`);
+		}
 		if (result.code !== 0) {
 			return unavailable(
 				`Herdr snapshot command exited with code ${result.code}: ${result.stderr.trim()}`,
@@ -268,8 +272,10 @@ export class HerdrCommandClient implements HerdrClient {
 				}
 				yield normalized;
 			}
-			if (!isAcknowledged && !signal?.aborted) {
-				yield invalidEventResponse("Herdr subscription ended before its acknowledgement");
+			if (!signal?.aborted) {
+				yield isAcknowledged
+					? unavailable("Herdr event subscription ended")
+					: invalidEventResponse("Herdr subscription ended before its acknowledgement");
 			}
 		} catch (error) {
 			if (signal?.aborted) {

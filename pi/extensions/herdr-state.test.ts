@@ -172,6 +172,42 @@ async function closeScratchSocket(server: Server, directory: string): Promise<vo
 	await rm(directory, { recursive: true, force: true });
 }
 
+const EXPECTED_EVENT_FILTERS = [
+	"workspace.created",
+	"workspace.updated",
+	"workspace.metadata_updated",
+	"workspace.renamed",
+	"workspace.moved",
+	"workspace.reordered",
+	"workspace.closed",
+	"workspace.focused",
+	"worktree.created",
+	"worktree.opened",
+	"worktree.removed",
+	"tab.created",
+	"tab.closed",
+	"tab.focused",
+	"tab.renamed",
+	"tab.moved",
+	"pane.created",
+	"pane.closed",
+	"pane.updated",
+	"pane.focused",
+	"pane.moved",
+	"pane.exited",
+	"pane.agent_detected",
+	"layout.updated",
+];
+const EXPECTED_SUBSCRIPTION_REQUEST = `${JSON.stringify({
+	id: "pi-herdr-state-events",
+	method: "events.subscribe",
+	params: { subscriptions: EXPECTED_EVENT_FILTERS.map((type) => ({ type })) },
+})}\n`;
+const SUBSCRIPTION_ACKNOWLEDGEMENT = `${JSON.stringify({
+	id: "pi-herdr-state-events",
+	result: { type: "subscription_started" },
+})}\n`;
+
 const NO_INJECTED_PANE_ID = Symbol("no injected Herdr pane identifier");
 
 async function runCommand(
@@ -419,7 +455,10 @@ test("TC-18 transport forwards snapshot cancellation to Pi exec", async () => {
 	const pending = client.snapshot(controller.signal);
 	controller.abort(reason);
 
-	await assert.rejects(pending, (error: unknown) => error === reason);
+	const result = await pending;
+
+	assert.equal((result as { code: string }).code, "unavailable");
+	assert.match((result as { message: string }).message, /stop snapshot/);
 	assert.equal(receivedSignal, controller.signal);
 	assert.equal(
 		(fakeApi.execCalls[0]?.options as { signal?: AbortSignal } | undefined)?.signal,
@@ -479,44 +518,53 @@ test("TC-20 socket transport sends one exact read-only subscription and reads an
 		}
 		await requestReceived.promise;
 
-		const expectedFilters = [
-			"workspace.created",
-			"workspace.updated",
-			"workspace.metadata_updated",
-			"workspace.renamed",
-			"workspace.moved",
-			"workspace.reordered",
-			"workspace.closed",
-			"workspace.focused",
-			"worktree.created",
-			"worktree.opened",
-			"worktree.removed",
-			"tab.created",
-			"tab.closed",
-			"tab.focused",
-			"tab.renamed",
-			"tab.moved",
-			"pane.created",
-			"pane.closed",
-			"pane.updated",
-			"pane.focused",
-			"pane.moved",
-			"pane.exited",
-			"pane.agent_detected",
-			"layout.updated",
-		];
-		assert.equal(
-			received,
-			`${JSON.stringify({
-				id: "pi-herdr-state-events",
-				method: "events.subscribe",
-				params: { subscriptions: expectedFilters.map((type) => ({ type })) },
-			})}\n`,
-		);
-		assert.equal(expectedFilters.length, 24);
+		assert.equal(received, EXPECTED_SUBSCRIPTION_REQUEST);
+		assert.equal(EXPECTED_EVENT_FILTERS.length, 24);
 		assert.equal(events.length, 1);
 		assert.equal((events[0] as { type: string }).type, "workspace-changed");
 		assert.deepEqual(fakeApi.execCalls, []);
+	} finally {
+		if (originalSocketPath === undefined) {
+			delete process.env.HERDR_SOCKET_PATH;
+		} else {
+			process.env.HERDR_SOCKET_PATH = originalSocketPath;
+		}
+		serverSocket?.destroy();
+		await closeScratchSocket(scratch.server, scratch.directory);
+	}
+});
+
+test("socket closure after acknowledgement yields one unavailable result", async () => {
+	let received = "";
+	let isRequestReceived = false;
+	let serverSocket: Socket | undefined;
+	const requestReceived = Promise.withResolvers<string>();
+	const scratch = await listenOnScratchSocket((socket) => {
+		serverSocket = socket;
+		socket.setEncoding("utf8");
+		socket.on("data", (chunk) => {
+			received += String(chunk);
+			if (isRequestReceived || !received.includes("\n")) {
+				return;
+			}
+			isRequestReceived = true;
+			requestReceived.resolve(received);
+			socket.end(SUBSCRIPTION_ACKNOWLEDGEMENT);
+		});
+	});
+	const originalSocketPath = process.env.HERDR_SOCKET_PATH;
+	process.env.HERDR_SOCKET_PATH = scratch.socketPath;
+	try {
+		const fakeApi = createFakeExtensionAPI();
+		const client = new HerdrCommandClient(createTransport(fakeApi.api));
+		const events: unknown[] = [];
+		for await (const event of client.events()) {
+			events.push(event);
+		}
+
+		assert.equal(await requestReceived.promise, EXPECTED_SUBSCRIPTION_REQUEST);
+		assert.equal(events.length, 1);
+		assert.equal((events[0] as { code: string }).code, "unavailable");
 	} finally {
 		if (originalSocketPath === undefined) {
 			delete process.env.HERDR_SOCKET_PATH;

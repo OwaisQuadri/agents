@@ -320,15 +320,17 @@ test("events reports invalid-response for a malformed recognized event and conti
 	assert.equal((events[1] as { type: string }).type, "pane-changed");
 });
 
-test("TC-18 snapshot forwards cancellation and rejects with the intentional abort reason", async () => {
+test("TC-18 snapshot forwards cancellation and resolves unavailable with the abort reason", async () => {
 	const controller = new AbortController();
-	const reason = new Error("snapshot stopped");
+	const reason = new Error("required abort reason");
 	let receivedSignal: AbortSignal | undefined;
 	const { transport, calls } = makeFakeTransport({
 		snapshotResult: async (signal) => {
 			receivedSignal = signal;
 			return new Promise<never>((_resolve, reject) => {
-				signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+				signal?.addEventListener("abort", () => reject(new Error("transport AbortError")), {
+					once: true,
+				});
 			});
 		},
 	});
@@ -337,7 +339,10 @@ test("TC-18 snapshot forwards cancellation and rejects with the intentional abor
 	const pending = client.snapshot(controller.signal);
 	controller.abort(reason);
 
-	await assert.rejects(pending, (error: unknown) => error === reason);
+	const result = await pending;
+
+	assert.equal((result as { code: string }).code, "unavailable");
+	assert.match((result as { message: string }).message, /required abort reason/);
 	assert.equal(receivedSignal, controller.signal);
 	assert.equal(calls[0]?.signal, controller.signal);
 });
