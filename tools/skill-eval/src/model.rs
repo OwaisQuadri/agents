@@ -352,7 +352,12 @@ pub(crate) enum CliCommand {
         run_id: RunId,
         artifact: ArtifactName,
         decision: Decision,
+        assignments: Vec<TierAssignment>,
         reason: Option<String>,
+    },
+    Apply {
+        run_id: RunId,
+        artifact: ArtifactName,
     },
     Judge {
         request: PromptJudgeRequest,
