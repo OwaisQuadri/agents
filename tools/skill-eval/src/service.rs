@@ -1,9 +1,10 @@
 use crate::model::{
-    Decision, DecisionRecord, PromptJudgeRequest, PromptJudgeResult, QualificationBoundary,
-    QualificationPolicy, QualificationReport, QualifyRequest, RunEvent, RunId, RunState,
-    SkillEvalError, SkillName, SkillRoutingDecision, TierEvidence, TrialRecord, TrialSelector,
+    ArtifactChange, ArtifactDefinition, ArtifactName, Decision, DecisionRecord, PromptJudgeRequest,
+    PromptJudgeResult, PublicationGate, QualificationBoundary, QualificationPolicy,
+    QualificationReport, QualifyRequest, RunEvent, RunId, RunState, SkillEvalError,
+    SkillRoutingDecision, TierAssignment, TierEvidence, TrialRecord, TrialSelector,
 };
-use crate::ports::{Clock, ProgressSink, QualificationRuntime, RunStore};
+use crate::ports::{Clock, ProgressSink, QualificationRuntime, RunStore, TierWriter};
 
 pub(crate) fn start_qualification(
     request: QualifyRequest,
@@ -37,8 +38,9 @@ pub(crate) fn inspect_trial(
 
 pub(crate) fn record_decision(
     run_id: &RunId,
-    skill: &SkillName,
+    artifact: &ArtifactName,
     decision: Decision,
+    assignments: Vec<TierAssignment>,
     reason: Option<String>,
     store: &mut dyn RunStore,
     clock: &dyn Clock,
@@ -48,8 +50,23 @@ pub(crate) fn record_decision(
 
 pub(crate) fn routing_decision(
     report: &QualificationReport,
-    skill: &SkillName,
+    artifact: &ArtifactName,
 ) -> Result<Option<SkillRoutingDecision>, SkillEvalError> {
+    unimplemented!()
+}
+
+pub(crate) fn evaluate_publication_gate(
+    change: &ArtifactChange,
+    report: &QualificationReport,
+) -> Result<PublicationGate, SkillEvalError> {
+    unimplemented!()
+}
+
+pub(crate) fn apply_tier_assignments(
+    gate: &PublicationGate,
+    artifact: &ArtifactDefinition,
+    writer: &mut dyn TierWriter,
+) -> Result<(), SkillEvalError> {
     unimplemented!()
 }
 

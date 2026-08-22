@@ -1,13 +1,14 @@
 use std::path::Path;
 
 use crate::model::{
-    CandidateArtifact, CaseDefinition, CheckResult, HarnessIdentity, JudgeInput, ModelIdentity,
-    PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillDefinition, SkillEvalError, Tier,
-    Timestamp, TrialKey, TrialRecord, TrialSelector, TrialVerdict,
+    ArtifactDefinition, CandidateArtifact, CaseDefinition, CheckResult, HarnessIdentity,
+    JudgeInput, ModelIdentity, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId,
+    SkillEvalError, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
+    TrialVerdict,
 };
 
-pub(crate) trait SkillSource {
-    fn load(&self, root: &Path) -> Result<SkillDefinition, SkillEvalError>;
+pub(crate) trait ArtifactSource {
+    fn load(&self, root: &Path) -> Result<ArtifactDefinition, SkillEvalError>;
 }
 
 pub(crate) trait ModelResolver {
@@ -26,7 +27,7 @@ pub(crate) trait CandidateRunner {
     fn execute(
         &mut self,
         key: &TrialKey,
-        skill: &SkillDefinition,
+        artifact: &ArtifactDefinition,
         case: &CaseDefinition,
         model: &ModelIdentity,
         harness: &HarnessIdentity,
@@ -75,7 +76,15 @@ pub(crate) trait ProgressSink {
     fn emit(&mut self, event: &RunEvent) -> Result<(), SkillEvalError>;
 }
 
+pub(crate) trait TierWriter {
+    fn write(
+        &mut self,
+        artifact: &ArtifactDefinition,
+        assignments: &[TierAssignment],
+    ) -> Result<(), SkillEvalError>;
+}
+
 pub(crate) trait QualificationRuntime:
-    SkillSource + ModelResolver + CandidateRunner + Verifier + Judge + RunStore + Clock
+    ArtifactSource + ModelResolver + CandidateRunner + Verifier + Judge + RunStore + Clock + TierWriter
 {
 }
