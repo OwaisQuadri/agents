@@ -142,3 +142,8 @@ export type HerdrRawEvent =
 	| { type: "pane_focused"; pane_id: string; workspace_id: string }
 	| { type: "pane_output_changed"; pane_id: string; workspace_id: string }
 	| { type: string };
+
+export interface HerdrSubscriptionEvent {
+	event: string;
+	data: HerdrRawEvent;
+}
