@@ -301,12 +301,29 @@ pub(crate) enum CliCommand {
         decision: Decision,
         reason: Option<String>,
     },
+    Judge {
+        request: PromptJudgeRequest,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualifyRequest {
     pub(crate) skill_roots: Vec<PathBuf>,
     pub(crate) policy: QualificationPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PromptJudgeRequest {
+    pub(crate) prompt: String,
+    pub(crate) candidate_model: Option<ModelIdentity>,
+    pub(crate) timeout_seconds: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PromptJudgeResult {
+    pub(crate) model: ModelIdentity,
+    pub(crate) response: String,
+    pub(crate) usage: TrialUsage,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
