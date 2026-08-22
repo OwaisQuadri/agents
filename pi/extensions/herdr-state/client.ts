@@ -9,7 +9,7 @@ import type {
 
 export interface HerdrClient {
 	snapshot(): Promise<HerdrSnapshotResponse | HerdrStateFailure>;
-	events(): AsyncIterable<HerdrStateEvent | HerdrStateFailure>;
+	events(signal?: AbortSignal): AsyncIterable<HerdrStateEvent | HerdrStateFailure>;
 	readPane(
 		paneId: string,
 		lineLimit: number,
@@ -41,7 +41,8 @@ export type HerdrCommandRunner = (args: string[]) => Promise<HerdrCommandResult>
  * @returns An asynchronous iterable of raw JSON event lines.
  * @throws Error when the subscription cannot be started or the connection fails.
  */
-export type HerdrEventSubscriber = () => AsyncIterable<string>;
+// TODO(AGNT-0066.T08): Thread controller cancellation through the event client.
+export type HerdrEventSubscriber = (signal?: AbortSignal) => AsyncIterable<string>;
 
 export interface HerdrTransport {
 	runCommand: HerdrCommandRunner;

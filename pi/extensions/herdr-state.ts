@@ -252,7 +252,7 @@ function parseArguments(args: string): ParsedArguments {
  * @returns Nothing.
  * @throws Never during registration; the registered handler reports Herdr failures through its rendered result instead of throwing them.
  */
-// TODO(AGNT-0066.T08): Read the controller cache and wire its lifecycle hooks.
+// TODO(AGNT-0066.T09): Read the controller cache and wire its lifecycle hooks.
 export function registerHerdrStateCommand(
 	pi: ExtensionAPI,
 	client: HerdrClient,
