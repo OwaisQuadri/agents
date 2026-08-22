@@ -114,13 +114,32 @@ link "$HOME_TARGET/.claude/agents" "$REPO_TARGET/agents"
 TIERS="$REPO_TARGET/config/model-tiers.json"
 PI_AGENTS="$HOME_TARGET/.pi/agent/agents"
 PI_SETTINGS_TIERS="$HOME_TARGET/.pi/agent/settings.json"
+PI_MODELS_CONFIG="$HOME_TARGET/.pi/agent/models.json"
+PI_MODELS_SOURCE="$REPO_TARGET/config/models.json"
 run mkdir -p "$HOME_TARGET/.pi/agent" "$PI_AGENTS"
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "warn: jq not found, skipping agent generation and the model-tier sync" >&2
+  echo "warn: jq not found, skipping agent generation, model overrides, and the model-tier sync" >&2
 elif [[ ! -f "$TIERS" ]]; then
   echo "warn: $TIERS not found, skipping agent generation and the model-tier sync" >&2
 else
+  if [[ ! -f "$PI_MODELS_SOURCE" ]]; then
+    echo "warn: $PI_MODELS_SOURCE not found, skipping managed model overrides" >&2
+  elif [[ -f "$PI_MODELS_CONFIG" ]] && jq -e --slurpfile managed "$PI_MODELS_SOURCE" \
+    'contains($managed[0])' "$PI_MODELS_CONFIG" >/dev/null 2>&1; then
+    plan "ok   $PI_MODELS_CONFIG managed context windows"
+  else
+    backup "$PI_MODELS_CONFIG"
+    plan "merge $PI_MODELS_SOURCE -> $PI_MODELS_CONFIG"
+    if (( IS_DRY == 0 )); then
+      CURRENT='{}'
+      [[ -f "$PI_MODELS_CONFIG" ]] && CURRENT="$(cat "$PI_MODELS_CONFIG")"
+      UPDATED="$(jq -s '.[0] * .[1]' <(printf '%s' "$CURRENT") "$PI_MODELS_SOURCE")" \
+        || { echo "FATAL: model configuration is not valid JSON" >&2; exit 1; }
+      printf '%s\n' "$UPDATED" > "$PI_MODELS_CONFIG"
+    fi
+  fi
+
   # Claude Code reaches Anthropic only, so a tier resolves there by walking its chain for
   # the first Anthropic model, and climbing tiers when a chain holds none.
   CLAUDE_ALIAS_JQ='def anthropic_in(t): [t.pi] + t.fallbacks | map(select(startswith("anthropic/"))) | first;

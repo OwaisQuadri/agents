@@ -79,6 +79,29 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
         manifest
     }
 
+    // A package with no `skills` field, matching AGNT-0063.T02's replacement
+    // manifest shape: a `pi_package` tool whose upstream ships no skills directory.
+    fn manifest_without_skills(&self, revision: &str, platforms: &str) -> PathBuf {
+        let manifest = self.root.join(format!("manifest-no-skills-{platforms}.toml"));
+        fs::write(
+            &manifest,
+            format!(
+                r#"[[tools]]
+name = "rag"
+platforms = [{platforms}]
+commands = []
+pi_package = "pi/packages/rag"
+source = {{ url = {:?}, revision = {:?} }}
+installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
+"#,
+                path_text(&self.remote),
+                revision
+            ),
+        )
+        .expect("manifest");
+        manifest
+    }
+
     fn run(&self, home: &Path, manifest: &Path, platform: &str, is_dry_run: bool) -> Output {
         let record = self.root.join("installer-invocations");
         let mut command = Command::new(env!("CARGO_BIN_EXE_tool-sync"));
@@ -507,6 +530,64 @@ fn installs_pi_package_and_skills_in_a_stable_order() {
                 "link skill {} -> {}",
                 grilling_source.display(),
                 home.join(".agents/skills/grilling").display()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn installs_pi_package_without_skills_and_skips_skill_links() {
+    let fixture = Fixture::new();
+    let home = fixture.home("resource-home-no-skills");
+    fs::create_dir_all(&home).expect("home directory");
+    let manifest = fixture.manifest_without_skills(&fixture.first_revision, "\"linux\"");
+    let checkout = fixture.checkout(&home);
+    let package_source = checkout.join("pi/packages/rag");
+
+    let apply = fixture.run(&home, &manifest, "linux", false);
+
+    assert!(apply.status.success(), "{}", error_text(&apply));
+    assert_eq!(
+        normalize_private_path_text(
+            &fs::read_link(home.join(".pi/agent/extensions/rag")).expect("package link")
+        ),
+        normalize_private_path_text(&package_source)
+    );
+    assert!(
+        !home.join(".agents/skills").exists(),
+        "a manifest with no skills field must create no skills directory"
+    );
+    assert_eq!(
+        normalize_private_prefix(&output_text(&apply))
+            .lines()
+            .collect::<Vec<_>>(),
+        vec![
+            format!(
+                "create directory {}",
+                home.join(".cache/tool-sync").display()
+            ),
+            format!(
+                "clone {} into {}",
+                fixture.remote.display(),
+                checkout.display()
+            ),
+            format!(
+                "checkout {} in {}",
+                fixture.first_revision,
+                checkout.display()
+            ),
+            format!(
+                "install rag in {}: ./install.sh [\"apply\"]",
+                checkout.display()
+            ),
+            format!(
+                "create directory {}",
+                home.join(".pi/agent/extensions").display()
+            ),
+            format!(
+                "link Pi package {} -> {}",
+                package_source.display(),
+                home.join(".pi/agent/extensions/rag").display()
             ),
         ]
     );

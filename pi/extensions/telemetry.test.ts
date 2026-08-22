@@ -342,7 +342,7 @@ test("telemetry status command notifies active and failed counts including zero"
 });
 
 
-test("telemetry status surface clears on session start and successful completion", async () => {
+test("telemetry lifecycle does not add a footer status", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "telemetry-status-surface-"));
 	await withTelemetryDirectory(directory, async () => {
 		const runtime = createTelemetryRuntime({ path: join(directory, "telemetry.jsonl"), records: [] });
@@ -350,16 +350,10 @@ test("telemetry status surface clears on session start and successful completion
 		registerLifecycle(api.api, runtime);
 
 		const recordingUi = createRecordingUi();
-		const ctx = createFakeLifecycleContext(recordingUi);
-		const sessionStartHandler = api.on("session_start");
-		const startedHandler = api.event("subagent:async-started");
-		const completedHandler = api.event("subagent:async-complete");
+		await invoke(api.event("subagents:started"), { id: "async-1", type: "subagent-a" });
+		await invoke(api.event("subagents:completed"), { id: "async-1", status: "completed" });
 
-		await invoke(sessionStartHandler, undefined, ctx);
-		await invoke(startedHandler, { id: "async-1", agent: "subagent-a" });
-		await invoke(completedHandler, { id: "async-1", success: true });
-
-		assert.deepEqual(recordingUi.statuses.map((status) => status.text), [undefined, "active: 1 failed: 0", undefined]);
+		assert.deepEqual(recordingUi.statuses, []);
 		assert.deepEqual(recordingUi.notifications, []);
 	});
 });
@@ -860,41 +854,42 @@ test("telemetry parent lifecycle records runtime package and null metrics", asyn
 	});
 });
 
-test("telemetry async lifecycle records pinned package and normalized metrics", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "telemetry-async-success-"));
+test("telemetry subagents lifecycle records pinned package and normalized usage", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "telemetry-subagents-success-"));
 	await withTelemetryDirectory(directory, async () => {
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
 		registerLifecycle(api.api, runtime);
 
-		const startedHandler = api.event("subagent:async-started");
-		const completedHandler = api.event("subagent:async-complete");
+		const startedHandler = api.event("subagents:started");
+		const completedHandler = api.event("subagents:completed");
 
-		await invoke(startedHandler, { id: "async-1", agent: "subagent-a" });
-		assert.equal(runtime.activeRuns.has("async-1"), true);
-		assert.deepEqual(runtime.activeRuns.get("async-1"), {
-			startedAt: runtime.activeRuns.get("async-1")?.startedAt,
+		await invoke(startedHandler, { id: "run-1", type: "subagent-a", description: "review the diff" });
+		assert.equal(runtime.activeRuns.has("run-1"), true);
+		assert.deepEqual(runtime.activeRuns.get("run-1"), {
+			startedAt: runtime.activeRuns.get("run-1")?.startedAt,
 			packageName: "pi-subagents",
 			parentRunId: null,
 			agentName: "subagent-a",
 		});
 
-		const startedAt = runtime.activeRuns.get("async-1")?.startedAt;
+		const startedAt = runtime.activeRuns.get("run-1")?.startedAt;
 		assert.ok(startedAt);
-		const settledAt = new Date(Date.parse(startedAt) + 10_000).toISOString();
 		await invoke(completedHandler, {
-			id: "async-1",
+			id: "run-1",
+			type: "subagent-a",
+			status: "completed",
 			durationMs: 10_000,
-			timestamp: settledAt,
-			totalCost: {
-				inputTokens: 12,
-				outputTokens: 34,
-				costUsd: 1.5,
+			toolUses: 3,
+			usage: {
+				input: 12,
+				output: 34,
+				cacheRead: 7,
+				cacheWrite: 11,
+				totalTokens: 64,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 1.5 },
 			},
-			cacheRead: 7,
-			cacheWrite: 11,
-			success: true,
 		});
 
 		assert.equal(runtime.activeRuns.size, 0);
@@ -903,10 +898,10 @@ test("telemetry async lifecycle records pinned package and normalized metrics", 
 		const record = store.records[0] as Record<string, unknown>;
 		assertRunRecord(record);
 		assert.equal(record.recordType, "run");
-		assert.equal(record.runId, "async-1");
+		assert.equal(record.runId, "run-1");
 		assert.equal(record.parentRunId, null);
 		assert.equal(record.packageName, "pi-subagents");
-		assert.equal(record.packageVersion, "0.50.0");
+		assert.equal(record.packageVersion, "0.18.0");
 		assert.equal(record.agentName, "subagent-a");
 		assert.equal(record.status, "succeeded");
 		assert.deepEqual(record.tokens, {
@@ -919,99 +914,58 @@ test("telemetry async lifecycle records pinned package and normalized metrics", 
 	});
 });
 
-test("telemetry async lifecycle maps failure and cancellation", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "telemetry-async-status-"));
+test("telemetry subagents lifecycle maps steered, failure, and cancellation", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "telemetry-subagents-status-"));
 	await withTelemetryDirectory(directory, async () => {
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
 		registerLifecycle(api.api, runtime);
 
-		const startedHandler = api.event("subagent:async-started");
-		const completedHandler = api.event("subagent:async-complete");
+		const startedHandler = api.event("subagents:started");
+		const completedHandler = api.event("subagents:completed");
+		const failedHandler = api.event("subagents:failed");
 
-		await invoke(startedHandler, { id: "async-failed", agent: "subagent-a" });
-		const failedStartedAt = runtime.activeRuns.get("async-failed")?.startedAt;
-		assert.ok(failedStartedAt);
-		await invoke(completedHandler, {
-			id: "async-failed",
-			durationMs: 1_000,
-			timestamp: new Date(Date.parse(failedStartedAt) + 1_000).toISOString(),
-			success: false,
-		});
+		await invoke(startedHandler, { id: "run-steered", type: "subagent-a" });
+		await invoke(completedHandler, { id: "run-steered", status: "steered", durationMs: 1_000 });
 
-		await invoke(startedHandler, { id: "async-cancelled", agent: "subagent-b" });
-		const cancelledStartedAt = runtime.activeRuns.get("async-cancelled")?.startedAt;
-		assert.ok(cancelledStartedAt);
-		await invoke(completedHandler, {
-			id: "async-cancelled",
-			durationMs: 1_000,
-			timestamp: new Date(Date.parse(cancelledStartedAt) + 1_000).toISOString(),
-			stopped: true,
-		});
+		await invoke(startedHandler, { id: "run-error", type: "subagent-a" });
+		await invoke(failedHandler, { id: "run-error", status: "error", durationMs: 1_000 });
+
+		await invoke(startedHandler, { id: "run-stopped", type: "subagent-b" });
+		await invoke(failedHandler, { id: "run-stopped", status: "stopped", durationMs: 1_000 });
+
+		await invoke(startedHandler, { id: "run-aborted", type: "subagent-b" });
+		await invoke(failedHandler, { id: "run-aborted", status: "aborted", durationMs: 1_000 });
 
 		assert.equal(runtime.activeRuns.size, 0);
-		assert.equal(store.records.length, 2);
+		assert.equal(store.records.length, 4);
 		assert.deepEqual(
 			store.records.map((record) => (record.recordType === "run" ? [record.runId, record.status] : null)),
-			[["async-failed", "failed"], ["async-cancelled", "cancelled"]],
+			[
+				["run-steered", "succeeded"],
+				["run-error", "failed"],
+				["run-stopped", "cancelled"],
+				["run-aborted", "cancelled"],
+			],
 		);
 
 		for (const record of store.records) {
 			if (record.recordType === "run") {
 				assertRunRecord(record as Record<string, unknown>);
+				assert.deepEqual((record as Record<string, unknown>).tokens, {
+					input: null,
+					output: null,
+					cacheRead: null,
+					cacheWrite: null,
+				});
+				assert.equal((record as Record<string, unknown>).costUsd, null);
 			}
 		}
 	});
 });
 
-test("telemetry foreground completion records zero duration and keeps parent association", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "telemetry-foreground-"));
-	await withTelemetryDirectory(directory, async () => {
-		const store = await loadStore();
-		const runtime = createTelemetryRuntime(store);
-		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
-
-		const startHandler = api.on("agent_start");
-		const foregroundHandler = api.event("subagent:foreground-complete");
-		const ctx = createFakeLifecycleContext();
-
-		await invoke(startHandler, undefined, ctx);
-		const parentRunId = [...runtime.activeRuns.keys()][0];
-		assert.ok(parentRunId);
-
-		await invoke(foregroundHandler, {
-			id: "foreground-1",
-			agent: "foreground-agent",
-			timestamp: "2026-08-17T02:24:10.000Z",
-			success: true,
-		});
-
-		assert.equal(store.records.length, 1);
-		const record = store.records[0] as Record<string, unknown>;
-		assertRunRecord(record);
-		assert.equal(record.runId, "foreground-1");
-		assert.equal(record.parentRunId, parentRunId);
-		assert.equal(record.packageName, "pi-subagents");
-		assert.equal(record.packageVersion, "0.50.0");
-		assert.equal(record.agentName, "foreground-agent");
-		assert.equal(record.startedAt, "2026-08-17T02:24:10.000Z");
-		assert.equal(record.settledAt, "2026-08-17T02:24:10.000Z");
-		assert.equal(record.durationMs, 0);
-		assert.equal(record.status, "succeeded");
-		assert.deepEqual(record.tokens, {
-			input: null,
-			output: null,
-			cacheRead: null,
-			cacheWrite: null,
-		});
-		assert.equal(record.costUsd, null);
-		assert.equal(runtime.currentParentRunId, parentRunId);
-	});
-});
-
-test("telemetry rejects malformed and duplicate lifecycle events", async () => {
+test("telemetry rejects malformed and re-settled lifecycle events", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "telemetry-malformed-"));
 	await withTelemetryDirectory(directory, async () => {
 		const store = await loadStore();
@@ -1019,49 +973,42 @@ test("telemetry rejects malformed and duplicate lifecycle events", async () => {
 		const api = createFakeExtensionAPI();
 		registerLifecycle(api.api, runtime);
 
-		const startedHandler = api.event("subagent:async-started");
-		const completedHandler = api.event("subagent:async-complete");
-		const foregroundHandler = api.event("subagent:foreground-complete");
+		const startedHandler = api.event("subagents:started");
+		const completedHandler = api.event("subagents:completed");
 
-		await assert.rejects(invoke(startedHandler, { id: "", agent: "subagent-a" }), /runId/);
+		await assert.rejects(invoke(startedHandler, { id: "", type: "subagent-a" }), /runId/);
 		assert.equal(runtime.activeRuns.size, 0);
 		assert.equal(store.records.length, 0);
 
-		await invoke(startedHandler, { id: "async-bad", agent: "subagent-a" });
+		await invoke(startedHandler, { id: "run-bad", type: "subagent-a" });
 		await assert.rejects(
 			invoke(completedHandler, {
-				id: "async-bad",
-				timestamp: "2026-08-17T02:24:10.000Z",
-				totalCost: {
-					inputTokens: "bad",
-					outputTokens: 2,
-					costUsd: 1,
+				id: "run-bad",
+				status: "completed",
+				usage: {
+					input: "bad",
+					output: 2,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 2,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
 				},
 			}),
-			/inputTokens/,
+			/usage.input/,
 		);
-		assert.equal(runtime.activeRuns.has("async-bad"), true);
+		assert.equal(runtime.activeRuns.has("run-bad"), true);
 		assert.equal(store.records.length, 0);
 
-		await invoke(foregroundHandler, {
-			id: "foreground-dup",
-			agent: "foreground-agent",
-			timestamp: "2026-08-17T02:24:10.000Z",
-			success: true,
-		});
+		await invoke(startedHandler, { id: "run-dup", type: "subagent-a" });
+		await invoke(completedHandler, { id: "run-dup", status: "completed", durationMs: 1_000 });
 		assert.equal(store.records.length, 1);
 
 		await assert.rejects(
-			invoke(foregroundHandler, {
-				id: "foreground-dup",
-				agent: "foreground-agent",
-				timestamp: "2026-08-17T02:24:10.000Z",
-				success: true,
-			}),
-			/already exists/,
+			invoke(completedHandler, { id: "run-dup", status: "completed", durationMs: 1_000 }),
+			/is missing/,
 		);
 		assert.equal(store.records.length, 1);
-		assert.equal((store.records[0] as RunRecord).runId, "foreground-dup");
+		assert.equal((store.records[0] as RunRecord).runId, "run-dup");
 	});
 });
 
@@ -1074,7 +1021,7 @@ test("telemetry shutdown cancels remaining active runs", async () => {
 		registerLifecycle(api.api, runtime);
 
 		const startHandler = api.on("agent_start");
-		const startedHandler = api.event("subagent:async-started");
+		const startedHandler = api.event("subagents:started");
 		const shutdownHandler = api.on("session_shutdown");
 		const ctx = createFakeLifecycleContext();
 
@@ -1082,7 +1029,7 @@ test("telemetry shutdown cancels remaining active runs", async () => {
 		const parentRunId = [...runtime.activeRuns.keys()][0];
 		assert.ok(parentRunId);
 
-		await invoke(startedHandler, { id: "async-shutdown", agent: "subagent-a" });
+		await invoke(startedHandler, { id: "run-shutdown", type: "subagent-a" });
 		assert.equal(runtime.activeRuns.size, 2);
 
 		await invoke(shutdownHandler, { type: "session_shutdown", reason: "quit" }, ctx);
@@ -1127,7 +1074,7 @@ test("telemetry shutdown attempts every run and reports partial failure", async 
 		assert.equal(store.records.length, 1);
 		assert.equal((store.records[0] as RunRecord).runId, "valid-shutdown");
 		assert.equal((store.records[0] as RunRecord).status, "cancelled");
-		assert.deepEqual(recordingUi.statuses.at(-1), { key: "telemetry", text: "active: 1 failed: 0" });
+		assert.deepEqual(recordingUi.statuses, []);
 		assert.equal((await loadStore()).records.length, 1);
 	});
 });

@@ -77,6 +77,35 @@ impl Fixture {
         canonical_path(&self.remote)
     }
 
+    // Mirrors the actual pi-subagents entry in config/tools.toml after AGNT-0063.T02:
+    // a root pi_package (".") with no skills field, matching the candidate's layout
+    // (github.com/tintinweb/pi-subagents has no skills/ directory).
+    fn candidate_manifest(&self, revision: &str, platforms: &str) -> PathBuf {
+        let manifest = self.root.join(format!("manifest-candidate-{platforms}.toml"));
+        let remote = self.remote_path();
+        fs::write(
+            &manifest,
+            format!(
+                r#"[[tools]]
+name = "pi-subagents"
+platforms = [{platforms}]
+commands = []
+pi_package = "."
+source = {{ url = {:?}, revision = {:?} }}
+installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
+"#,
+                path_text(&remote),
+                revision
+            ),
+        )
+        .expect("candidate manifest");
+        manifest
+    }
+
+    fn candidate_checkout(&self, home: &Path) -> PathBuf {
+        canonical_path(home).join(".cache/tool-sync/pi-subagents")
+    }
+
     fn manifest(&self, revision: &str, platforms: &str) -> PathBuf {
         let manifest = self.root.join(format!("manifest-{platforms}.toml"));
         let remote = self.remote_path();
@@ -676,6 +705,127 @@ installer = { command = "./install.sh", args = ["apply"], preview_args = ["previ
         fs::read_to_string(fixture.record()).expect("embedded installer invocation"),
         format!("{}|apply\n", resolved_embedded.display())
     );
+}
+
+// AGNT-0063.T04: proves the candidate replacement package (root pi_package, no
+// skills) previews cleanly against an isolated home with a local fixture remote
+// standing in for github.com/tintinweb/pi-subagents, without touching real $HOME
+// and without any network access.
+#[test]
+fn previews_the_candidate_subagent_package_without_mutating_home() {
+    let fixture = Fixture::new();
+    let home = fixture.home("candidate-preview-home");
+    fs::create_dir_all(&home).expect("candidate preview home");
+    fs::write(home.join("seed.txt"), b"unchanged home content\n").expect("home seed");
+    let home = canonical_path(&home);
+    let before = tree_snapshot(&home);
+    let manifest = fixture.candidate_manifest(&fixture.first_revision, "\"linux\"");
+
+    let output = fixture.run(&home, &manifest, "linux", true);
+
+    assert!(output.status.success(), "{}", error_text(&output));
+    let report = normalize_private_prefix(&output_text(&output));
+    let checkout = fixture.candidate_checkout(&home);
+    let expected = vec![
+        format!(
+            "create directory {}",
+            normalize_private_path_text(&home.join(".cache/tool-sync"))
+        ),
+        format!(
+            "clone {} into {}",
+            normalize_private_path_text(&fixture.remote_path()),
+            normalize_private_path_text(&checkout)
+        ),
+        format!(
+            "checkout {} in {}",
+            fixture.first_revision,
+            normalize_private_path_text(&checkout)
+        ),
+        format!(
+            "install pi-subagents in {}: ./install.sh [\"preview\"]",
+            normalize_private_path_text(&checkout)
+        ),
+        format!(
+            "create directory {}",
+            normalize_private_path_text(&home.join(".pi/agent/extensions"))
+        ),
+        format!(
+            "link Pi package {} -> {}",
+            normalize_private_path_text(&checkout.join(".")),
+            normalize_private_path_text(&home.join(".pi/agent/extensions/pi-subagents"))
+        ),
+    ];
+    assert_lines_in_order(&report, &expected);
+    assert!(
+        !report.contains("link skill "),
+        "the candidate ships no skills directory, so preview must not plan a skill link: {report}"
+    );
+    assert!(!fixture.record().exists());
+    assert_eq!(tree_snapshot(&home), before, "a dry-run preview must leave the home tree byte-identical");
+}
+
+// AGNT-0063.T04: proves the candidate package links and re-links deterministically,
+// with no skills directory created and no other home content disturbed, in an
+// isolated home distinct from the real $HOME.
+#[test]
+fn applies_and_repeats_the_candidate_subagent_package_link_without_skills() {
+    let fixture = Fixture::new();
+    let home = fixture.home("candidate-apply-home");
+    fs::create_dir_all(&home).expect("candidate apply home");
+    fs::write(home.join("notes.txt"), b"keep this home content\n").expect("home notes");
+    let home = canonical_path(&home);
+    let manifest = fixture.candidate_manifest(&fixture.first_revision, "\"linux\"");
+
+    let first = fixture.run(&home, &manifest, "linux", false);
+
+    assert!(first.status.success(), "{}", error_text(&first));
+    let checkout = fixture.candidate_checkout(&home);
+    assert_eq!(
+        git_text(&checkout, &["rev-parse", "HEAD"]),
+        fixture.first_revision
+    );
+    let package = home.join(".pi/agent/extensions/pi-subagents");
+    assert_same_link_target(&package, &checkout.join("."));
+    assert!(
+        !home.join(".agents/skills").exists(),
+        "a candidate manifest with no skills field must create no skills directory"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join("notes.txt")).expect("notes after apply"),
+        "keep this home content\n",
+        "unrelated home content must survive the candidate install untouched"
+    );
+    let checkout_metadata = fs::metadata(&checkout).expect("checkout metadata");
+    let package_identity = symlink_identity(&package);
+
+    let second = fixture.run(&home, &manifest, "linux", false);
+
+    assert!(second.status.success(), "{}", error_text(&second));
+    assert_eq!(
+        git_text(&checkout, &["rev-parse", "HEAD"]),
+        fixture.first_revision
+    );
+    assert_same_link_target(&package, &checkout.join("."));
+    assert!(!home.join(".agents/skills").exists());
+    assert_eq!(
+        fs::read_to_string(home.join("notes.txt")).expect("notes after repeated apply"),
+        "keep this home content\n"
+    );
+    let repeated_checkout_metadata = fs::metadata(&checkout).expect("repeated checkout metadata");
+    assert_eq!(
+        (repeated_checkout_metadata.dev(), repeated_checkout_metadata.ino()),
+        (checkout_metadata.dev(), checkout_metadata.ino()),
+        "the existing checkout directory must be reused, not re-cloned"
+    );
+    assert_eq!(
+        symlink_identity(&package),
+        package_identity,
+        "the existing package link must be reused, not recreated"
+    );
+    let report = normalize_private_prefix(&output_text(&second));
+    assert!(report.contains("fetch repository"), "{report}");
+    assert!(!report.contains("clone "), "{report}");
+    assert!(!report.contains("create directory"), "{report}");
 }
 
 #[test]
