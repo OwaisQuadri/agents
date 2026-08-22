@@ -6,6 +6,7 @@ import type {
 	HerdrAgentLocation,
 	HerdrPane,
 	HerdrSessionSnapshot,
+	HerdrStateController,
 	HerdrStateFailure,
 	HerdrTab,
 	HerdrWorkspace,
@@ -251,7 +252,12 @@ function parseArguments(args: string): ParsedArguments {
  * @returns Nothing.
  * @throws Never during registration; the registered handler reports Herdr failures through its rendered result instead of throwing them.
  */
-export function registerHerdrStateCommand(pi: ExtensionAPI, client: HerdrClient): void {
+// TODO(AGNT-0066.T08): Read the controller cache and wire its lifecycle hooks.
+export function registerHerdrStateCommand(
+	pi: ExtensionAPI,
+	client: HerdrClient,
+	controller?: HerdrStateController,
+): void {
 	pi.registerCommand(COMMAND_NAME, {
 		description: "List every open Herdr workspace, mark Pi's location, and show workspace or pane detail",
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
