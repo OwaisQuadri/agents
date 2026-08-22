@@ -67,7 +67,6 @@ export interface HerdrStateFailure {
 	message: string;
 }
 
-// TODO(AGNT-0066.T08): Implement the live state controller after stash restoration.
 export interface HerdrStateController {
 	start(cwd: string, paneId: string | undefined): Promise<void>;
 	current(): HerdrStateModel | null;
