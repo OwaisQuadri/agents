@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createConnection } from "node:net";
 
 import { HerdrCommandClient, type HerdrClient, type HerdrCommandResult, type HerdrTransport } from "./herdr-state/client.ts";
+import { HerdrStateController as LiveHerdrStateController } from "./herdr-state/controller.ts";
 import { createModel, findSelf, normalizeSnapshot } from "./herdr-state/engine.ts";
 import type {
 	HerdrAgentLocation,
@@ -280,10 +281,10 @@ function parseArguments(args: string): ParsedArguments {
  *
  * @param pi The Pi extension application programming interface.
  * @param client The read-only Herdr client to query for state and pane output.
+ * @param controller The live state controller whose cached model takes priority, when supplied.
  * @returns Nothing.
  * @throws Never during registration; the registered handler reports Herdr failures through its rendered result instead of throwing them.
  */
-// TODO(AGNT-0066.T10): Read the controller cache and wire its lifecycle hooks.
 export function registerHerdrStateCommand(
 	pi: ExtensionAPI,
 	client: HerdrClient,
@@ -294,7 +295,10 @@ export function registerHerdrStateCommand(
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const parsed = parseArguments(args);
 
-			const loaded = await loadState(client, ctx.cwd);
+			const current = controller?.current() ?? null;
+			const loaded = current === null
+				? await loadState(client, ctx.cwd)
+				: { snapshot: current.snapshot, self: current.self };
 			if (isFailure(loaded)) {
 				ctx.ui.notify(formatFailure(loaded));
 				return;
@@ -400,10 +404,21 @@ export function createTransport(pi: ExtensionAPI): HerdrTransport {
  * Registers Pi's read-only Herdr state command.
  *
  * @param pi The Pi extension application programming interface.
+ * @param client The read-only Herdr client, or the default command client.
+ * @param controller The state controller, or a controller owned by this extension.
  * @returns Nothing.
  * @throws Never; Herdr access failures are reported through the command's rendered result.
  */
-// TODO(AGNT-0066.T10): Own controller startup and shutdown at the extension entrypoint.
-export default function herdrState(pi: ExtensionAPI): void {
-	registerHerdrStateCommand(pi, new HerdrCommandClient(createTransport(pi)));
+export default function herdrState(
+	pi: ExtensionAPI,
+	client: HerdrClient = new HerdrCommandClient(createTransport(pi)),
+	controller: HerdrStateController = new LiveHerdrStateController(client),
+): void {
+	pi.on("session_start", (_event, ctx) => {
+		void controller.start(ctx.cwd, selfPaneIdFromEnvironment());
+	});
+	pi.on("session_shutdown", () => {
+		controller.stop();
+	});
+	registerHerdrStateCommand(pi, client, controller);
 }

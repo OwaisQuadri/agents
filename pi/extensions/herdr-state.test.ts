@@ -9,6 +9,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 
 import herdrState, { createTransport, registerHerdrStateCommand } from "./herdr-state.ts";
 import { HerdrCommandClient, type HerdrClient } from "./herdr-state/client.ts";
+import { createModel, findSelf, normalizeSnapshot } from "./herdr-state/engine.ts";
 import {
 	makeSnapshotResponse,
 	OTHER_CWD,
@@ -20,9 +21,17 @@ import {
 	SELF_TAB_ID,
 	SELF_WORKSPACE_ID,
 } from "./herdr-state/fixtures.ts";
-import type { HerdrPaneOutput, HerdrSnapshotResponse, HerdrStateEvent, HerdrStateFailure } from "./herdr-state/types.ts";
+import type {
+	HerdrPaneOutput,
+	HerdrSnapshotResponse,
+	HerdrStateController,
+	HerdrStateEvent,
+	HerdrStateFailure,
+	HerdrStateModel,
+} from "./herdr-state/types.ts";
 
 type CommandHandler = (args: string, ctx: ExtensionCommandContext) => Promise<void> | void;
+type LifecycleHandler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 interface RegisteredCommand {
 	description?: string;
@@ -36,8 +45,14 @@ interface RegisteredCommand {
  */
 function createFakeExtensionAPI(execImpl?: ExtensionAPI["exec"]) {
 	const commands = new Map<string, RegisteredCommand>();
+	const handlers = new Map<string, LifecycleHandler[]>();
 	const execCalls: { command: string; args: string[]; options?: unknown }[] = [];
 	const api = {
+		on(event: string, handler: LifecycleHandler) {
+			const registered = handlers.get(event) ?? [];
+			registered.push(handler);
+			handlers.set(event, registered);
+		},
 		registerCommand(name: string, options: RegisteredCommand) {
 			commands.set(name, options);
 		},
@@ -53,6 +68,15 @@ function createFakeExtensionAPI(execImpl?: ExtensionAPI["exec"]) {
 	return {
 		api,
 		execCalls,
+		fire(event: string, payload: unknown, ctx: ExtensionContext): unknown {
+			const registered = handlers.get(event);
+			assert.ok(registered, `missing handler for ${event}`);
+			let result: unknown;
+			for (const handler of registered) {
+				result = handler(payload, ctx);
+			}
+			return result;
+		},
 		commandNames(): string[] {
 			return [...commands.keys()];
 		},
@@ -238,7 +262,6 @@ async function runCommand(
 	return { notifications };
 }
 
-// TODO(AGNT-0066.T10): Prove lifecycle start, cached reads, recovery, and shutdown.
 test("registers exactly one read-only herdr-state command", () => {
 	const fakeApi = createFakeExtensionAPI();
 	const { client } = makeFakeClient({});
@@ -248,6 +271,89 @@ test("registers exactly one read-only herdr-state command", () => {
 	assert.deepEqual(fakeApi.commandNames(), ["herdr-state"]);
 	const registered = fakeApi.command("herdr-state");
 	assert.match(registered.description ?? "", /workspace/i);
+});
+
+test("TC-19 Pi lifecycle uses cached and recovered state, then stops", async () => {
+	const { client, snapshotCallCount } = makeFakeClient({ snapshotResult: okSnapshot() });
+	const fakeApi = createFakeExtensionAPI();
+	const starts: { cwd: string; paneId: string | undefined }[] = [];
+	const startPending = Promise.withResolvers<void>();
+	let current: HerdrStateModel | null = null;
+	let stopCallCount = 0;
+	const controller: HerdrStateController = {
+		start(cwd, paneId) {
+			starts.push({ cwd, paneId });
+			return startPending.promise;
+		},
+		current: () => current,
+		stop() {
+			stopCallCount += 1;
+		},
+	};
+	herdrState(fakeApi.api, client, controller);
+	const command = fakeApi.command("herdr-state").handler;
+
+	const originalPaneId = process.env.HERDR_PANE_ID;
+	process.env.HERDR_PANE_ID = SELF_PANE_ID;
+	try {
+		const beforeStart = createFakeCommandContext("/repo");
+		await command("", beforeStart.ctx);
+		assert.equal(snapshotCallCount(), 1);
+
+		assert.equal(fakeApi.fire("session_start", {}, beforeStart.ctx), undefined);
+		assert.deepEqual(starts, [{ cwd: "/repo", paneId: SELF_PANE_ID }]);
+
+		const standardSnapshot = normalizeSnapshot(makeSnapshotResponse());
+		current = createModel(
+			standardSnapshot,
+			findSelf(standardSnapshot, SELF_CWD, SELF_PANE_ID),
+		);
+		const cached = createFakeCommandContext("/repo");
+		await command("", cached.ctx);
+		assert.match(cached.notifications[0] ?? "", /jerusalem/);
+		assert.match(cached.notifications[0] ?? "", /edinburgh/);
+		assert.match(
+			cached.notifications[0] ?? "",
+			new RegExp(`Pi location: workspace ${SELF_WORKSPACE_ID}, tab ${SELF_TAB_ID}, pane ${SELF_PANE_ID}\\.`),
+		);
+		assert.equal(snapshotCallCount(), 1);
+
+		const recoveredSnapshot = {
+			workspaces: standardSnapshot.workspaces.filter(({ id }) => id === OTHER_WORKSPACE_ID),
+			tabs: standardSnapshot.tabs.filter(({ workspaceId }) => workspaceId === OTHER_WORKSPACE_ID),
+			panes: standardSnapshot.panes.filter(({ workspaceId }) => workspaceId === OTHER_WORKSPACE_ID),
+			focusedWorkspaceId: OTHER_WORKSPACE_ID,
+			focusedTabId: OTHER_TAB_ID,
+			focusedPaneId: OTHER_PANE_ID,
+		};
+		current = createModel(recoveredSnapshot, {
+			workspaceId: OTHER_WORKSPACE_ID,
+			tabId: OTHER_TAB_ID,
+			paneId: OTHER_PANE_ID,
+			isSelf: true,
+		});
+		const recovered = createFakeCommandContext("/repo");
+		await command("", recovered.ctx);
+		const recoveredOutput = recovered.notifications[0] ?? "";
+		assert.match(recoveredOutput, /edinburgh/);
+		assert.doesNotMatch(recoveredOutput, /jerusalem/);
+		assert.doesNotMatch(recoveredOutput, new RegExp(SELF_WORKSPACE_ID));
+		assert.match(
+			recoveredOutput,
+			new RegExp(`Pi location: workspace ${OTHER_WORKSPACE_ID}, tab ${OTHER_TAB_ID}, pane ${OTHER_PANE_ID}\\.`),
+		);
+		assert.equal(snapshotCallCount(), 1);
+
+		fakeApi.fire("session_shutdown", {}, recovered.ctx);
+		assert.equal(stopCallCount, 1);
+	} finally {
+		startPending.resolve();
+		if (originalPaneId === undefined) {
+			delete process.env.HERDR_PANE_ID;
+		} else {
+			process.env.HERDR_PANE_ID = originalPaneId;
+		}
+	}
 });
 
 test("TC-01 global state lists every workspace and marks Pi's workspace, tab, and pane", async () => {
