@@ -266,6 +266,121 @@ pub(crate) enum Decision {
     Rejected,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum OutputFormat {
+    Text,
+    JsonLines,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct CliRequest {
+    pub(crate) runs_root: PathBuf,
+    pub(crate) output_format: OutputFormat,
+    pub(crate) command: CliCommand,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+pub(crate) enum CliCommand {
+    Qualify {
+        request: QualifyRequest,
+    },
+    Report {
+        run_id: RunId,
+    },
+    Inspect {
+        selector: TrialSelector,
+    },
+    Resume {
+        run_id: RunId,
+    },
+    Decide {
+        run_id: RunId,
+        skill: SkillName,
+        decision: Decision,
+        reason: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct QualifyRequest {
+    pub(crate) skill_roots: Vec<PathBuf>,
+    pub(crate) policy: QualificationPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct TrialSelector {
+    pub(crate) run_id: RunId,
+    pub(crate) skill: SkillName,
+    pub(crate) tier: Tier,
+    pub(crate) case: CaseId,
+    pub(crate) attempt: u16,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CandidateArtifact {
+    pub(crate) key: TrialKey,
+    pub(crate) model: ModelIdentity,
+    pub(crate) harness: HarnessIdentity,
+    pub(crate) artifact_path: PathBuf,
+    pub(crate) transcript_path: PathBuf,
+    pub(crate) usage: TrialUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct JudgeInput {
+    pub(crate) candidate: CandidateArtifact,
+    pub(crate) expect: String,
+    pub(crate) rubric_path: PathBuf,
+    pub(crate) checks: Vec<CheckResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct QualificationReport {
+    pub(crate) run_id: RunId,
+    pub(crate) status: RunStatus,
+    pub(crate) skills: Vec<SkillReport>,
+    pub(crate) total_usage: TrialUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct SkillReport {
+    pub(crate) skill: SkillName,
+    pub(crate) status: SkillStatus,
+    pub(crate) boundary: Option<QualificationBoundary>,
+    pub(crate) decision: Option<DecisionRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SkillEvalError {
+    InvalidArguments(String),
+    InvalidConfiguration(String),
+    Io {
+        path: PathBuf,
+        message: String,
+    },
+    InvalidEvent {
+        line: u64,
+        message: String,
+    },
+    Process {
+        program: String,
+        exit_code: Option<i32>,
+        standard_error: String,
+    },
+    Quota {
+        model: ModelIdentity,
+        reset_at: Option<Timestamp>,
+    },
+    JudgeUnavailable {
+        candidate: ModelIdentity,
+        judge_tier: Tier,
+    },
+    Verification(String),
+    NotFound(String),
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct SkillRoutingDecision {
     pub(crate) skill: SkillName,
