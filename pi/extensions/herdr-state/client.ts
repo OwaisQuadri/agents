@@ -28,10 +28,10 @@ export interface HerdrCommandResult {
  * concern; `HerdrCommandClient` never selects a write or input subcommand.
  *
  * @param args The read-only Herdr command line arguments, without the `herdr` binary name.
+ * @param signal The optional cancellation signal for the command.
  * @returns The command's exit code, standard output, and standard error.
  * @throws Error when the command cannot be started.
  */
-// TODO(AGNT-0066.T09): Forward cancellation into read-only Herdr commands.
 export type HerdrCommandRunner = (
 	args: string[],
 	signal?: AbortSignal,
@@ -42,10 +42,10 @@ export type HerdrCommandRunner = (
  * equivalent long-running read-only command) and yields one raw JSON line
  * per received event, until the connection ends or fails.
  *
+ * @param signal The optional cancellation signal for the subscription.
  * @returns An asynchronous iterable of raw JSON event lines.
  * @throws Error when the subscription cannot be started or the connection fails.
  */
-// TODO(AGNT-0066.T09): Thread controller cancellation through the event client.
 export type HerdrEventSubscriber = (signal?: AbortSignal) => AsyncIterable<string>;
 
 export interface HerdrTransport {
@@ -71,6 +71,23 @@ function invalidResponse(message: string): HerdrStateFailure {
 
 function invalidEventResponse(message: string): HerdrStateFailure {
 	return invalidResponse(`${message}; replace the snapshot`);
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isSubscriptionAcknowledgement(value: unknown): boolean {
+	if (!isObject(value) || Object.keys(value).length !== 2) {
+		return false;
+	}
+	const result = value.result;
+	return (
+		value.id === "pi-herdr-state-events" &&
+		isObject(result) &&
+		Object.keys(result).length === 1 &&
+		result.type === "subscription_started"
+	);
 }
 
 function isValidSnapshotEnvelope(value: unknown): value is HerdrSnapshotResponse {
@@ -128,16 +145,20 @@ export class HerdrCommandClient implements HerdrClient {
 	 * Reads the live Herdr session snapshot envelope.
 	 *
 	 * @returns The `{ id, result: { type: "session_snapshot", snapshot } }` envelope, or a classified failure.
-	 * @throws Never; failures are returned, not thrown.
+	 * @throws The abort reason when the supplied signal is aborted; other failures are returned.
 	 */
-	// TODO(AGNT-0066.T09): Forward snapshot cancellation and classify intentional abort.
-	async snapshot(_signal?: AbortSignal): Promise<HerdrSnapshotResponse | HerdrStateFailure> {
+	async snapshot(signal?: AbortSignal): Promise<HerdrSnapshotResponse | HerdrStateFailure> {
+		signal?.throwIfAborted();
 		let result: HerdrCommandResult;
 		try {
-			result = await this.transport.runCommand(["api", "snapshot"]);
+			result = await this.transport.runCommand(["api", "snapshot"], signal);
 		} catch (error) {
+			if (signal?.aborted) {
+				signal.throwIfAborted();
+			}
 			return unavailable(`Herdr snapshot command failed to run: ${errorMessage(error)}`);
 		}
+		signal?.throwIfAborted();
 		if (result.code !== 0) {
 			return unavailable(
 				`Herdr snapshot command exited with code ${result.code}: ${result.stderr.trim()}`,
@@ -163,17 +184,23 @@ export class HerdrCommandClient implements HerdrClient {
 	 * Subscribes to normalized Herdr state events.
 	 *
 	 * @returns An asynchronous iterable of normalized events, or classified failures, until the connection ends.
-	 * @throws Never; failures are yielded, not thrown.
+	 * @throws Never; failures are yielded, and intentional abort ends the stream.
 	 */
-	// TODO(AGNT-0066.T09): Validate lifecycle envelopes and forward cancellation.
-	async *events(_signal?: AbortSignal): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
+	async *events(signal?: AbortSignal): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
+		if (signal?.aborted) {
+			return;
+		}
 		let lines: AsyncIterable<string>;
 		try {
-			lines = this.transport.subscribeEvents();
+			lines = this.transport.subscribeEvents(signal);
 		} catch (error) {
+			if (signal?.aborted) {
+				return;
+			}
 			yield unavailable(`Herdr event subscription failed to start: ${errorMessage(error)}`);
 			return;
 		}
+		let isAcknowledged = false;
 		try {
 			for await (const line of lines) {
 				let raw: unknown;
@@ -181,17 +208,56 @@ export class HerdrCommandClient implements HerdrClient {
 					raw = JSON.parse(line);
 				} catch (error) {
 					yield invalidEventResponse(
-						`Herdr event line is not valid JSON: ${errorMessage(error)}`,
+						isAcknowledged
+							? `Herdr event line is not valid JSON: ${errorMessage(error)}`
+							: `Herdr subscription acknowledgement is not valid JSON: ${errorMessage(error)}`,
 					);
+					if (!isAcknowledged) {
+						return;
+					}
 					continue;
 				}
-				if (raw === null || typeof raw !== "object") {
+				if (!isAcknowledged) {
+					if (!isSubscriptionAcknowledgement(raw)) {
+						yield invalidEventResponse(
+							"Herdr subscription acknowledgement does not match pi-herdr-state-events subscription_started",
+						);
+						return;
+					}
+					isAcknowledged = true;
+					continue;
+				}
+				if (!isObject(raw)) {
 					yield invalidEventResponse("Herdr event line did not decode to an object");
+					continue;
+				}
+				const event = raw.event;
+				if (
+					event === "pane.output_matched" ||
+					event === "pane.agent_status_changed" ||
+					event === "pane.scroll_changed"
+				) {
+					yield invalidEventResponse(`Herdr specialized event ${event} is not accepted`);
+					continue;
+				}
+				const data = raw.data;
+				if (typeof event !== "string" || event === "" || !isObject(data)) {
+					yield invalidEventResponse("Herdr event envelope is malformed");
+					continue;
+				}
+				if (typeof data.type !== "string" || data.type === "") {
+					yield invalidEventResponse("Herdr event data is malformed");
+					continue;
+				}
+				if (event !== data.type) {
+					yield invalidEventResponse(
+						`Herdr event envelope ${event} does not match data.type ${data.type}`,
+					);
 					continue;
 				}
 				let normalized: HerdrStateEvent | null;
 				try {
-					normalized = normalizeEvent(raw as HerdrRawEvent);
+					normalized = normalizeEvent(data as HerdrRawEvent);
 				} catch (error) {
 					yield invalidEventResponse(`Herdr event is malformed: ${errorMessage(error)}`);
 					continue;
@@ -202,7 +268,13 @@ export class HerdrCommandClient implements HerdrClient {
 				}
 				yield normalized;
 			}
+			if (!isAcknowledged && !signal?.aborted) {
+				yield invalidEventResponse("Herdr subscription ended before its acknowledgement");
+			}
 		} catch (error) {
+			if (signal?.aborted) {
+				return;
+			}
 			yield unavailable(`Herdr event subscription ended: ${errorMessage(error)}`);
 		}
 	}

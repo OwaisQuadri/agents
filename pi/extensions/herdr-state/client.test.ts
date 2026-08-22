@@ -17,6 +17,7 @@ import {
 
 interface RecordedCall {
 	args: string[];
+	signal?: AbortSignal;
 }
 
 /**
@@ -26,33 +27,33 @@ interface RecordedCall {
  * or socket connection would present to `HerdrCommandClient`.
  */
 function makeFakeTransport(options: {
-	snapshotResult?: () => Promise<HerdrCommandResult>;
-	paneReadResult?: () => Promise<HerdrCommandResult>;
-	eventLines?: () => AsyncIterable<string>;
+	snapshotResult?: (signal?: AbortSignal) => Promise<HerdrCommandResult>;
+	paneReadResult?: (signal?: AbortSignal) => Promise<HerdrCommandResult>;
+	eventLines?: (signal?: AbortSignal) => AsyncIterable<string>;
 }): { transport: HerdrTransport; calls: RecordedCall[] } {
 	const calls: RecordedCall[] = [];
 	const transport: HerdrTransport = {
-		runCommand: async (args: string[]) => {
-			calls.push({ args });
+		runCommand: async (args: string[], signal?: AbortSignal) => {
+			calls.push(signal === undefined ? { args } : { args, signal });
 			if (args[0] === "api" && args[1] === "snapshot") {
 				if (options.snapshotResult === undefined) {
 					throw new Error("fake transport: no snapshot result configured");
 				}
-				return options.snapshotResult();
+				return options.snapshotResult(signal);
 			}
 			if (args[0] === "pane" && args[1] === "read") {
 				if (options.paneReadResult === undefined) {
 					throw new Error("fake transport: no pane read result configured");
 				}
-				return options.paneReadResult();
+				return options.paneReadResult(signal);
 			}
 			throw new Error(`fake transport: unexpected command ${JSON.stringify(args)}`);
 		},
-		subscribeEvents: () => {
+		subscribeEvents: (signal?: AbortSignal) => {
 			if (options.eventLines === undefined) {
 				throw new Error("fake transport: no event lines configured");
 			}
-			return options.eventLines();
+			return options.eventLines(signal);
 		},
 	};
 	return { transport, calls };
@@ -61,9 +62,10 @@ function makeFakeTransport(options: {
 async function collectEvents(
 	client: HerdrCommandClient,
 	limit: number,
+	signal?: AbortSignal,
 ): Promise<unknown[]> {
 	const collected: unknown[] = [];
-	for await (const event of client.events()) {
+	for await (const event of client.events(signal)) {
 		collected.push(event);
 		if (collected.length >= limit) {
 			break;
@@ -76,6 +78,26 @@ async function* linesFrom(lines: string[]): AsyncIterable<string> {
 	for (const line of lines) {
 		yield line;
 	}
+}
+
+function acknowledgement(overrides: Record<string, unknown> = {}): string {
+	return JSON.stringify({
+		id: "pi-herdr-state-events",
+		result: { type: "subscription_started" },
+		...overrides,
+	});
+}
+
+function eventEnvelope(data: unknown, event?: string): string {
+	const dataType =
+		data !== null && typeof data === "object"
+			? (data as { type?: unknown }).type
+			: undefined;
+	return JSON.stringify({ event: event ?? dataType, data });
+}
+
+function subscriptionLines(...events: string[]): AsyncIterable<string> {
+	return linesFrom([acknowledgement(), ...events]);
 }
 
 test("TC-01 snapshot returns the raw envelope on success", async () => {
@@ -240,10 +262,10 @@ test("readPane reports invalid-response for a malformed pane identifier or line 
 test("TC-05 events requests snapshot replacement for an unknown event and continues", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () =>
-			linesFrom([
-				JSON.stringify(makeUnknownEvent()),
-				JSON.stringify(makePaneUpdatedEvent()),
-			]),
+			subscriptionLines(
+				eventEnvelope(makeUnknownEvent()),
+				eventEnvelope(makePaneUpdatedEvent()),
+			),
 	});
 	const client = new HerdrCommandClient(transport);
 
@@ -256,7 +278,8 @@ test("TC-05 events requests snapshot replacement for an unknown event and contin
 
 test("events reports invalid-response for a line that is not JSON and continues", async () => {
 	const { transport } = makeFakeTransport({
-		eventLines: () => linesFrom(["not json", JSON.stringify(makeWorkspaceUpdatedEvent())]),
+		eventLines: () =>
+			subscriptionLines("not json", eventEnvelope(makeWorkspaceUpdatedEvent())),
 	});
 	const client = new HerdrCommandClient(transport);
 
@@ -269,7 +292,7 @@ test("events reports invalid-response for a line that is not JSON and continues"
 
 test("events reports invalid-response for a line that does not decode to an object and continues", async () => {
 	const { transport } = makeFakeTransport({
-		eventLines: () => linesFrom(["42", JSON.stringify(makeWorkspaceUpdatedEvent())]),
+		eventLines: () => subscriptionLines("42", eventEnvelope(makeWorkspaceUpdatedEvent())),
 	});
 	const client = new HerdrCommandClient(transport);
 
@@ -283,10 +306,10 @@ test("events reports invalid-response for a line that does not decode to an obje
 test("events reports invalid-response for a malformed recognized event and continues", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () =>
-			linesFrom([
-				JSON.stringify(makeMalformedWorkspaceUpdatedEvent()),
-				JSON.stringify(makePaneUpdatedEvent()),
-			]),
+			subscriptionLines(
+				eventEnvelope(makeMalformedWorkspaceUpdatedEvent()),
+				eventEnvelope(makePaneUpdatedEvent()),
+			),
 	});
 	const client = new HerdrCommandClient(transport);
 
@@ -297,7 +320,114 @@ test("events reports invalid-response for a malformed recognized event and conti
 	assert.equal((events[1] as { type: string }).type, "pane-changed");
 });
 
-// TODO(AGNT-0066.T09): Prove abort-signal forwarding and intentional-abort completion.
+test("TC-18 snapshot forwards cancellation and rejects with the intentional abort reason", async () => {
+	const controller = new AbortController();
+	const reason = new Error("snapshot stopped");
+	let receivedSignal: AbortSignal | undefined;
+	const { transport, calls } = makeFakeTransport({
+		snapshotResult: async (signal) => {
+			receivedSignal = signal;
+			return new Promise<never>((_resolve, reject) => {
+				signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+			});
+		},
+	});
+	const client = new HerdrCommandClient(transport);
+
+	const pending = client.snapshot(controller.signal);
+	controller.abort(reason);
+
+	await assert.rejects(pending, (error: unknown) => error === reason);
+	assert.equal(receivedSignal, controller.signal);
+	assert.equal(calls[0]?.signal, controller.signal);
+});
+
+test("TC-20 events requires the exact acknowledgement and ends after recovery guidance", async (t) => {
+	const invalidAcknowledgements = [
+		"not json",
+		JSON.stringify({ id: "wrong-id", result: { type: "subscription_started" } }),
+		JSON.stringify({ id: "pi-herdr-state-events", result: { type: "wrong_type" } }),
+		JSON.stringify({
+			id: "pi-herdr-state-events",
+			result: { type: "subscription_started", extra: true },
+		}),
+	];
+
+	for (const invalidAcknowledgement of invalidAcknowledgements) {
+		await t.test(invalidAcknowledgement, async () => {
+			const { transport } = makeFakeTransport({
+				eventLines: () =>
+					linesFrom([
+						invalidAcknowledgement,
+						eventEnvelope(makeWorkspaceUpdatedEvent()),
+					]),
+			});
+			const client = new HerdrCommandClient(transport);
+
+			const events: unknown[] = [];
+			for await (const event of client.events()) {
+				events.push(event);
+			}
+
+			assert.equal(events.length, 1);
+			assert.equal((events[0] as { code: string }).code, "invalid-response");
+			assert.match((events[0] as { message: string }).message, /replace the snapshot/);
+		});
+	}
+});
+
+test("TC-20 events validates schema-complete envelopes and continues after invalid data", async () => {
+	const { transport } = makeFakeTransport({
+		eventLines: () =>
+			subscriptionLines(
+				eventEnvelope(makeWorkspaceUpdatedEvent(), "pane_updated"),
+				JSON.stringify({
+					event: "pane.output_matched",
+					data: { pane_id: SELF_PANE_ID, matched_line: "done", read: {} },
+				}),
+				JSON.stringify({ event: "workspace_updated", data: null }),
+				eventEnvelope(makeUnknownEvent()),
+				eventEnvelope(makeWorkspaceUpdatedEvent()),
+			),
+	});
+	const client = new HerdrCommandClient(transport);
+
+	const events = await collectEvents(client, 5);
+
+	for (const failure of events.slice(0, 4)) {
+		assert.equal((failure as { code: string }).code, "invalid-response");
+		assert.match((failure as { message: string }).message, /replace the snapshot/);
+	}
+	assert.equal((events[4] as { type: string }).type, "workspace-changed");
+});
+
+test("TC-21 event cancellation forwards the signal and ends without unavailable", async () => {
+	const controller = new AbortController();
+	let receivedSignal: AbortSignal | undefined;
+	async function* waitingLines(signal?: AbortSignal): AsyncIterable<string> {
+		receivedSignal = signal;
+		yield acknowledgement();
+		await new Promise<void>((resolve) => {
+			signal?.addEventListener("abort", () => resolve(), { once: true });
+		});
+	}
+	const { transport } = makeFakeTransport({ eventLines: waitingLines });
+	const client = new HerdrCommandClient(transport);
+
+	const events: unknown[] = [];
+	const collecting = (async () => {
+		for await (const event of client.events(controller.signal)) {
+			events.push(event);
+		}
+	})();
+	await new Promise<void>((resolve) => setImmediate(resolve));
+	controller.abort();
+	await collecting;
+
+	assert.equal(receivedSignal, controller.signal);
+	assert.deepEqual(events, []);
+});
+
 test("events reports unavailable when the subscription fails to start", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () => {
@@ -315,7 +445,8 @@ test("events reports unavailable when the subscription fails to start", async ()
 
 test("events reports unavailable and ends the stream when the connection drops mid-subscription", async () => {
 	async function* droppingLines(): AsyncIterable<string> {
-		yield JSON.stringify(makeWorkspaceUpdatedEvent());
+		yield acknowledgement();
+		yield eventEnvelope(makeWorkspaceUpdatedEvent());
 		throw new Error("connection reset");
 	}
 	const { transport } = makeFakeTransport({ eventLines: droppingLines });
@@ -339,7 +470,7 @@ test("TC-09 the client never issues a write or input command", async () => {
 	const { transport, calls } = makeFakeTransport({
 		snapshotResult: async () => ({ code: 0, stdout: JSON.stringify(response), stderr: "" }),
 		paneReadResult: async () => ({ code: 0, stdout: "hello\n", stderr: "" }),
-		eventLines: () => linesFrom([JSON.stringify(makePaneUpdatedEvent())]),
+		eventLines: () => subscriptionLines(eventEnvelope(makePaneUpdatedEvent())),
 	});
 	const client = new HerdrCommandClient(transport);
 

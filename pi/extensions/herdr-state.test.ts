@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import herdrState, { registerHerdrStateCommand } from "./herdr-state.ts";
-import type { HerdrClient } from "./herdr-state/client.ts";
+import herdrState, { createTransport, registerHerdrStateCommand } from "./herdr-state.ts";
+import { HerdrCommandClient, type HerdrClient } from "./herdr-state/client.ts";
 import {
 	makeSnapshotResponse,
 	OTHER_CWD,
@@ -32,13 +36,13 @@ interface RegisteredCommand {
  */
 function createFakeExtensionAPI(execImpl?: ExtensionAPI["exec"]) {
 	const commands = new Map<string, RegisteredCommand>();
-	const execCalls: { command: string; args: string[] }[] = [];
+	const execCalls: { command: string; args: string[]; options?: unknown }[] = [];
 	const api = {
 		registerCommand(name: string, options: RegisteredCommand) {
 			commands.set(name, options);
 		},
 		exec: async (command: string, args: string[], options?: unknown) => {
-			execCalls.push({ command, args });
+			execCalls.push(options === undefined ? { command, args } : { command, args, options });
 			if (execImpl === undefined) {
 				throw new Error("fake extension API: no exec implementation configured");
 			}
@@ -143,6 +147,29 @@ function makeFakeClient(options: FakeClientOptions): {
 function okSnapshot(): () => Promise<HerdrSnapshotResponse> {
 	const response = makeSnapshotResponse();
 	return async () => response;
+}
+
+async function listenOnScratchSocket(
+	onConnection: (socket: Socket) => void,
+): Promise<{ directory: string; socketPath: string; server: Server }> {
+	const directory = await mkdtemp(join(tmpdir(), "pi-herdr-state-"));
+	const socketPath = join(directory, "herdr.sock");
+	const server = createServer(onConnection);
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(socketPath, () => {
+			server.off("error", reject);
+			resolve();
+		});
+	});
+	return { directory, socketPath, server };
+}
+
+async function closeScratchSocket(server: Server, directory: string): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		server.close((error) => error === undefined ? resolve() : reject(error));
+	});
+	await rm(directory, { recursive: true, force: true });
 }
 
 const NO_INJECTED_PANE_ID = Symbol("no injected Herdr pane identifier");
@@ -375,7 +402,179 @@ test("the command never calls the client's live event subscription", async () =>
 	// point without an unhandled rejection is the assertion.
 });
 
-// TODO(AGNT-0066.T09): Prove the socket subscriber sends only events.subscribe and aborts cleanly.
+test("TC-18 transport forwards snapshot cancellation to Pi exec", async () => {
+	const controller = new AbortController();
+	const reason = new Error("stop snapshot");
+	let receivedSignal: AbortSignal | undefined;
+	const fakeApi = createFakeExtensionAPI(async (_command, _args, options) => {
+		receivedSignal = options?.signal;
+		return new Promise<never>((_resolve, reject) => {
+			options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+				once: true,
+			});
+		});
+	});
+	const client = new HerdrCommandClient(createTransport(fakeApi.api));
+
+	const pending = client.snapshot(controller.signal);
+	controller.abort(reason);
+
+	await assert.rejects(pending, (error: unknown) => error === reason);
+	assert.equal(receivedSignal, controller.signal);
+	assert.equal(
+		(fakeApi.execCalls[0]?.options as { signal?: AbortSignal } | undefined)?.signal,
+		controller.signal,
+	);
+});
+
+test("TC-20 socket transport sends one exact read-only subscription and reads an envelope", async () => {
+	let received = "";
+	let serverSocket: Socket | undefined;
+	const requestReceived = Promise.withResolvers<void>();
+	const scratch = await listenOnScratchSocket((socket) => {
+		serverSocket = socket;
+		socket.setEncoding("utf8");
+		socket.on("data", (chunk) => {
+			received += String(chunk);
+			if (!received.includes("\n")) {
+				return;
+			}
+			requestReceived.resolve();
+			socket.write(`${JSON.stringify({
+				id: "pi-herdr-state-events",
+				result: { type: "subscription_started" },
+			})}\n`);
+			const data = {
+				type: "workspace_updated",
+				workspace: {
+					workspace_id: SELF_WORKSPACE_ID,
+					number: 1,
+					label: "jerusalem (renamed)",
+					focused: true,
+					pane_count: 1,
+					tab_count: 1,
+					active_tab_id: SELF_TAB_ID,
+					agent_status: "idle",
+					worktree: {
+						repo_key: "agents",
+						repo_name: "agents",
+						repo_root: SELF_CWD,
+						checkout_path: SELF_CWD,
+						is_linked_worktree: true,
+					},
+				},
+			};
+			socket.write(`${JSON.stringify({ event: data.type, data })}\n`);
+		});
+	});
+	const originalSocketPath = process.env.HERDR_SOCKET_PATH;
+	process.env.HERDR_SOCKET_PATH = scratch.socketPath;
+	try {
+		const fakeApi = createFakeExtensionAPI();
+		const client = new HerdrCommandClient(createTransport(fakeApi.api));
+		const events: unknown[] = [];
+		for await (const event of client.events()) {
+			events.push(event);
+			break;
+		}
+		await requestReceived.promise;
+
+		const expectedFilters = [
+			"workspace.created",
+			"workspace.updated",
+			"workspace.metadata_updated",
+			"workspace.renamed",
+			"workspace.moved",
+			"workspace.reordered",
+			"workspace.closed",
+			"workspace.focused",
+			"worktree.created",
+			"worktree.opened",
+			"worktree.removed",
+			"tab.created",
+			"tab.closed",
+			"tab.focused",
+			"tab.renamed",
+			"tab.moved",
+			"pane.created",
+			"pane.closed",
+			"pane.updated",
+			"pane.focused",
+			"pane.moved",
+			"pane.exited",
+			"pane.agent_detected",
+			"layout.updated",
+		];
+		assert.equal(
+			received,
+			`${JSON.stringify({
+				id: "pi-herdr-state-events",
+				method: "events.subscribe",
+				params: { subscriptions: expectedFilters.map((type) => ({ type })) },
+			})}\n`,
+		);
+		assert.equal(expectedFilters.length, 24);
+		assert.equal(events.length, 1);
+		assert.equal((events[0] as { type: string }).type, "workspace-changed");
+		assert.deepEqual(fakeApi.execCalls, []);
+	} finally {
+		if (originalSocketPath === undefined) {
+			delete process.env.HERDR_SOCKET_PATH;
+		} else {
+			process.env.HERDR_SOCKET_PATH = originalSocketPath;
+		}
+		serverSocket?.destroy();
+		await closeScratchSocket(scratch.server, scratch.directory);
+	}
+});
+
+test("TC-21 socket abort closes the event stream without unavailable", async () => {
+	let serverSocket: Socket | undefined;
+	const requestReceived = Promise.withResolvers<void>();
+	const socketClosed = Promise.withResolvers<void>();
+	const scratch = await listenOnScratchSocket((socket) => {
+		serverSocket = socket;
+		socket.setEncoding("utf8");
+		socket.once("close", () => socketClosed.resolve());
+		socket.once("data", () => {
+			requestReceived.resolve();
+			socket.write(`${JSON.stringify({
+				id: "pi-herdr-state-events",
+				result: { type: "subscription_started" },
+			})}\n`);
+		});
+	});
+	const originalSocketPath = process.env.HERDR_SOCKET_PATH;
+	process.env.HERDR_SOCKET_PATH = scratch.socketPath;
+	try {
+		const controller = new AbortController();
+		const fakeApi = createFakeExtensionAPI();
+		const client = new HerdrCommandClient(createTransport(fakeApi.api));
+		const events: unknown[] = [];
+		const collecting = (async () => {
+			for await (const event of client.events(controller.signal)) {
+				events.push(event);
+			}
+		})();
+		await requestReceived.promise;
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		controller.abort();
+		await collecting;
+		await socketClosed.promise;
+
+		assert.deepEqual(events, []);
+		assert.deepEqual(fakeApi.execCalls, []);
+	} finally {
+		if (originalSocketPath === undefined) {
+			delete process.env.HERDR_SOCKET_PATH;
+		} else {
+			process.env.HERDR_SOCKET_PATH = originalSocketPath;
+		}
+		serverSocket?.destroy();
+		await closeScratchSocket(scratch.server, scratch.directory);
+	}
+});
+
 test("TC-09 the default export wires a transport that only issues read-only herdr commands", async () => {
 	const response = makeSnapshotResponse();
 	const fakeApi = createFakeExtensionAPI(async (command, args) => {

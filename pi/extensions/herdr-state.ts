@@ -1,4 +1,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { once } from "node:events";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createConnection } from "node:net";
 
 import { HerdrCommandClient, type HerdrClient, type HerdrCommandResult, type HerdrTransport } from "./herdr-state/client.ts";
 import { createModel, findSelf, normalizeSnapshot } from "./herdr-state/engine.ts";
@@ -14,6 +18,33 @@ import type {
 
 const COMMAND_NAME = "herdr-state";
 const HERDR_BINARY = "herdr";
+const EVENT_SUBSCRIPTION_ID = "pi-herdr-state-events";
+const GENERAL_EVENT_FILTERS = [
+	"workspace.created",
+	"workspace.updated",
+	"workspace.metadata_updated",
+	"workspace.renamed",
+	"workspace.moved",
+	"workspace.reordered",
+	"workspace.closed",
+	"workspace.focused",
+	"worktree.created",
+	"worktree.opened",
+	"worktree.removed",
+	"tab.created",
+	"tab.closed",
+	"tab.focused",
+	"tab.renamed",
+	"tab.moved",
+	"pane.created",
+	"pane.closed",
+	"pane.updated",
+	"pane.focused",
+	"pane.moved",
+	"pane.exited",
+	"pane.agent_detected",
+	"layout.updated",
+] as const;
 const DEFAULT_PANE_LINE_LIMIT = 200;
 const SELF_MARKER = " <- Pi is here";
 const USAGE = "Usage: /herdr-state [workspace <workspace-id> | pane <pane-id> [line-limit]]";
@@ -291,25 +322,77 @@ export function registerHerdrStateCommand(
 	});
 }
 
+function eventSubscriptionRequest(): string {
+	return `${JSON.stringify({
+		id: EVENT_SUBSCRIPTION_ID,
+		method: "events.subscribe",
+		params: {
+			subscriptions: GENERAL_EVENT_FILTERS.map((type) => ({ type })),
+		},
+	})}\n`;
+}
+
+async function* subscribeToHerdrEvents(signal?: AbortSignal): AsyncIterable<string> {
+	if (signal?.aborted) {
+		return;
+	}
+	const socketPath = process.env.HERDR_SOCKET_PATH ?? join(homedir(), ".config", "herdr", "herdr.sock");
+	const socket = createConnection(socketPath);
+	const closeForAbort = () => socket.destroy();
+	signal?.addEventListener("abort", closeForAbort, { once: true });
+	try {
+		await once(socket, "connect");
+		if (signal?.aborted) {
+			return;
+		}
+		socket.write(eventSubscriptionRequest());
+		socket.setEncoding("utf8");
+		let buffered = "";
+		for await (const chunk of socket) {
+			buffered += String(chunk);
+			let newlineIndex = buffered.indexOf("\n");
+			while (newlineIndex !== -1) {
+				yield buffered.slice(0, newlineIndex);
+				buffered = buffered.slice(newlineIndex + 1);
+				newlineIndex = buffered.indexOf("\n");
+			}
+		}
+		if (buffered !== "") {
+			yield buffered;
+		}
+	} catch (error) {
+		if (!signal?.aborted) {
+			throw error;
+		}
+	} finally {
+		signal?.removeEventListener("abort", closeForAbort);
+		socket.destroy();
+	}
+}
+
 /**
- * Builds the read-only Herdr transport backed by Pi's own command runner.
- * It only ever runs `herdr api snapshot` and `herdr pane read` and never
- * subscribes to live events, matching this command's single-shot, read-only
- * scope.
+ * Builds a cancellable read-only Herdr transport. It runs snapshot and pane
+ * reads through Pi and opens one filtered event subscription on the Herdr
+ * local socket.
  *
  * @param pi The Pi extension application programming interface.
- * @returns The Herdr transport.
+ * @returns The read-only Herdr transport.
+ * @throws Event iteration throws when the socket cannot connect or fails unexpectedly.
  */
-// TODO(AGNT-0066.T09): Add the cancellable read-only socket event subscriber.
-function createTransport(pi: ExtensionAPI): HerdrTransport {
+export function createTransport(pi: ExtensionAPI): HerdrTransport {
 	return {
-		runCommand: async (commandArguments: string[]): Promise<HerdrCommandResult> => {
-			const result = await pi.exec(HERDR_BINARY, commandArguments);
+		runCommand: async (
+			commandArguments: string[],
+			signal?: AbortSignal,
+		): Promise<HerdrCommandResult> => {
+			const result = await pi.exec(
+				HERDR_BINARY,
+				commandArguments,
+				signal === undefined ? undefined : { signal },
+			);
 			return { code: result.code, stdout: result.stdout, stderr: result.stderr };
 		},
-		subscribeEvents: () => {
-			throw new Error("the Herdr state command does not subscribe to live events");
-		},
+		subscribeEvents: subscribeToHerdrEvents,
 	};
 }
 
