@@ -1,8 +1,8 @@
 use crate::model::{
-    ArtifactChange, ArtifactDefinition, ArtifactName, Decision, DecisionRecord, PromptJudgeRequest,
-    PromptJudgeResult, PublicationGate, QualificationBoundary, QualificationPolicy,
-    QualificationReport, QualifyRequest, RunEvent, RunId, RunState, SkillEvalError,
-    SkillRoutingDecision, TierAssignment, TierEvidence, TrialRecord, TrialSelector,
+    ArtifactChange, ArtifactDefinition, ArtifactName, AuditBrief, AuditBriefRequest, Decision,
+    DecisionRecord, PromptJudgeRequest, PromptJudgeResult, PublicationGate, QualificationBoundary,
+    QualificationPolicy, QualificationReport, QualifyRequest, RunEvent, RunId, RunState,
+    SkillEvalError, SkillRoutingDecision, TierAssignment, TierEvidence, TrialRecord, TrialSelector,
 };
 use crate::ports::{Clock, ProgressSink, QualificationRuntime, RunStore, TierWriter};
 
@@ -67,6 +67,13 @@ pub(crate) fn apply_tier_assignments(
     artifact: &ArtifactDefinition,
     writer: &mut dyn TierWriter,
 ) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+pub(crate) fn prepare_audit_briefs(
+    request: &AuditBriefRequest,
+    runtime: &mut dyn QualificationRuntime,
+) -> Result<Vec<AuditBrief>, SkillEvalError> {
     unimplemented!()
 }
 
