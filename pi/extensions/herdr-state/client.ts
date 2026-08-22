@@ -157,7 +157,7 @@ export class HerdrCommandClient implements HerdrClient {
 	 * @throws Never; failures are yielded, not thrown.
 	 */
 	// TODO(AGNT-0066.T01): Emit snapshot-replacement failures for unknown events.
-	async *events(): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
+	async *events(_signal?: AbortSignal): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
 		let lines: AsyncIterable<string>;
 		try {
 			lines = this.transport.subscribeEvents();
