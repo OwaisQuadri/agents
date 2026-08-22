@@ -96,7 +96,22 @@ herdr_plugin = "herdr/worktree-layout"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
-# TODO(AGNT-0066.T05): Add the project-owned Herdr state Pi extension.
+[[tools]]
+name = "herdr-state"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/herdr-state.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "herdr-state-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/herdr-state"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
 [[tools]]
 name = "live-diff"
 platforms = ["macos", "linux"]
