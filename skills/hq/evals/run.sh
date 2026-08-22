@@ -1,4 +1,5 @@
 #!/bin/bash
+# TODO(AGNT-0032.T30): make the hq exam execute real artifact behavior
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
 #   ./run.sh [candidate-file]            grade every non-holdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice

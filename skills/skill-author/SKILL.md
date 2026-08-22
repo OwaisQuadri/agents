@@ -5,6 +5,7 @@ metadata:
   minimum-tier: T4
   short-description: The deep craft of authoring skills
 ---
+<!-- TODO(AGNT-0032.T69): store qualified skill tiers in owned metadata -->
 
 # skill-author
 

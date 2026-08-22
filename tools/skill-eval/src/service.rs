@@ -1,3 +1,7 @@
+// TODO(AGNT-0032.T12): record owner decisions and derive safe skill routes
+// TODO(AGNT-0032.T11): resume paused runs without duplicate trial keys
+// TODO(AGNT-0032.T10): start the adaptive qualification staircase
+// TODO(AGNT-0032.T05): reduce ordered events into the boundary-first report
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBrief, AuditBriefRequest, Decision,
     DecisionRecord, PromptJudgeRequest, PromptJudgeResult, PublicationGate, QualificationBoundary,

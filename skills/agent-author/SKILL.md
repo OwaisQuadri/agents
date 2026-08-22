@@ -5,6 +5,7 @@ metadata:
   minimum-tier: T4
   short-description: Author agent definitions with contracts + evals
 ---
+<!-- TODO(AGNT-0032.T70): store qualified agent tiers in the tracked map -->
 
 # agent-author
 

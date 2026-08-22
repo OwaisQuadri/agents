@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TODO(AGNT-0032.T37): make the task-graph exam execute real artifact behavior
 set -euo pipefail
 cd "$(dirname "$0")"
 

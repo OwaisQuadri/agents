@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TODO(AGNT-0032.T25): make the computah-voice exam execute real artifact behavior
 # run.sh — computah-voice eval runner
 # usage: ./run.sh [candidate-line-file]   (mechanical pass over ste-check)
 #        ./run.sh --holdout               (runs the holdout slice instead)

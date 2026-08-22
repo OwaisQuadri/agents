@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# TODO(AGNT-0032.T22): make the ai-author exam execute real artifact behavior
+# TODO(AGNT-0032.T17): route predictive graders through the configured judge
 set -euo pipefail
 cd "$(dirname "$0")"
 

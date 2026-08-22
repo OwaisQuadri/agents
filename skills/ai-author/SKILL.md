@@ -5,6 +5,8 @@ metadata:
   minimum-tier: T4
   short-description: Umbrella author + GEPA-tune for skills, agents, workflows
 ---
+<!-- TODO(AGNT-0032.T68): require fresh tier qualification before publication -->
+<!-- TODO(AGNT-0032.T64): apply only the owner-approved catalog tier decisions -->
 
 # ai-author
 

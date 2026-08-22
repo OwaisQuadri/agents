@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TODO(AGNT-0032.T23): make the bro exam execute real artifact behavior
 # run.sh — bro eval runner
 # usage: ./run.sh [candidate-skill.md]   (non-holdout slice; defaults to ../SKILL.md)
 #        ./run.sh --holdout [skill.md]   (held-out slice)

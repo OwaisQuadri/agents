@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# TODO(AGNT-0032.T16): build and link the skill-eval command
 # install.sh — config reset installer. symlinks and one cargo build, never rm. see docs/reset-spec.md
 # usage: ./install.sh [--dry-run] [--test]
 # HOME_TARGET sandboxes every write below (default: the real $HOME). Point it at a scratch

@@ -1,4 +1,5 @@
 #!/bin/zsh
+# TODO(AGNT-0032.T35): make the simplify exam execute real artifact behavior
 set -euo pipefail
 cd "${0:A:h}"
 

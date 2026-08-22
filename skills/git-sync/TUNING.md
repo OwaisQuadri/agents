@@ -1,3 +1,4 @@
+<!-- TODO(AGNT-0032.T51): record only evidence-backed git-sync mutations -->
 # git-sync tuning
 
 The GEPA(Genetic-Pareto prompt evolution) record: mutations, deferred verdicts, the open

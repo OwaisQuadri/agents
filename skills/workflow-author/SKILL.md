@@ -5,6 +5,7 @@ metadata:
   minimum-tier: T4
   short-description: Author multi-agent workflow graphs (GRAPH SPEC)
 ---
+<!-- TODO(AGNT-0032.T71): store workflow floor and node tiers without model names -->
 
 # workflow-author
 

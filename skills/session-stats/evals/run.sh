@@ -1,4 +1,5 @@
 #!/bin/zsh
+# TODO(AGNT-0032.T34): make the session-stats exam execute real artifact behavior
 # ./run.sh — grade the non-holdout functional cases against the fixture store.
 set -euo pipefail
 cd "$(dirname "$0")"

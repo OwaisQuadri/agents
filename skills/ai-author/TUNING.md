@@ -1,3 +1,4 @@
+<!-- TODO(AGNT-0032.T44): record only evidence-backed ai-author mutations -->
 # ai-author: tuning record
 
 The GEPA loop's own inputs and outputs for this skill. Step 1 reads the open list below, and

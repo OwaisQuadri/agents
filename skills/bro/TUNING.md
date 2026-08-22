@@ -1,3 +1,4 @@
+<!-- TODO(AGNT-0032.T45): record only evidence-backed bro mutations -->
 # bro: tuning record
 
 The GEPA loop's inputs and outputs for this skill. `SKILL.md` never loads it. Open it when you

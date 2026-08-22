@@ -1,3 +1,4 @@
+<!-- TODO(AGNT-0032.T49): record only evidence-backed engineer mutations -->
 # engineer: tuning record
 
 The GEPA loop's inputs and outputs for this skill. `SKILL.md` never loads it. Open it when you

@@ -1,3 +1,4 @@
+<!-- TODO(AGNT-0032.T65): publish measured routing and the permanent artifact gate -->
 # model routing
 
 The one policy for which model gets which work, across Pi, Claude Code, and every

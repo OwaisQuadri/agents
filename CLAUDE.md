@@ -1,3 +1,4 @@
+<!-- TODO(AGNT-0032.T18): keep human decisions and irreversible work in the parent -->
 # Global guidance
 
 ## working style: startup, not enterprise
