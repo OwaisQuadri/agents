@@ -143,7 +143,7 @@ export type HerdrRawEvent =
 	| { type: "pane_output_changed"; pane_id: string; workspace_id: string }
 	| { type: string };
 
-export interface HerdrSubscriptionEvent {
+export interface HerdrEventEnvelope {
 	event: string;
 	data: HerdrRawEvent;
 }
