@@ -299,6 +299,7 @@ test("events reports invalid-response for a malformed recognized event and conti
 	assert.equal((events[1] as { type: string }).type, "pane-changed");
 });
 
+// TODO(AGNT-0066.T09): Prove abort-signal forwarding and intentional-abort completion.
 test("events reports unavailable when the subscription fails to start", async () => {
 	const { transport } = makeFakeTransport({
 		eventLines: () => {

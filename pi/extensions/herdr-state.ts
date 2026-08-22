@@ -252,7 +252,7 @@ function parseArguments(args: string): ParsedArguments {
  * @returns Nothing.
  * @throws Never during registration; the registered handler reports Herdr failures through its rendered result instead of throwing them.
  */
-// TODO(AGNT-0066.T09): Read the controller cache and wire its lifecycle hooks.
+// TODO(AGNT-0066.T10): Read the controller cache and wire its lifecycle hooks.
 export function registerHerdrStateCommand(
 	pi: ExtensionAPI,
 	client: HerdrClient,
@@ -300,6 +300,7 @@ export function registerHerdrStateCommand(
  * @param pi The Pi extension application programming interface.
  * @returns The Herdr transport.
  */
+// TODO(AGNT-0066.T09): Add the cancellable read-only socket event subscriber.
 function createTransport(pi: ExtensionAPI): HerdrTransport {
 	return {
 		runCommand: async (commandArguments: string[]): Promise<HerdrCommandResult> => {

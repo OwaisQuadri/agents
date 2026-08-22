@@ -41,7 +41,7 @@ export type HerdrCommandRunner = (args: string[]) => Promise<HerdrCommandResult>
  * @returns An asynchronous iterable of raw JSON event lines.
  * @throws Error when the subscription cannot be started or the connection fails.
  */
-// TODO(AGNT-0066.T08): Thread controller cancellation through the event client.
+// TODO(AGNT-0066.T09): Thread controller cancellation through the event client.
 export type HerdrEventSubscriber = (signal?: AbortSignal) => AsyncIterable<string>;
 
 export interface HerdrTransport {

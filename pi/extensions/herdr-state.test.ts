@@ -169,6 +169,7 @@ async function runCommand(
 	return { notifications };
 }
 
+// TODO(AGNT-0066.T10): Prove lifecycle start, cached reads, recovery, and shutdown.
 test("registers exactly one read-only herdr-state command", () => {
 	const fakeApi = createFakeExtensionAPI();
 	const { client } = makeFakeClient({});
@@ -331,6 +332,7 @@ test("the command never calls the client's live event subscription", async () =>
 	// point without an unhandled rejection is the assertion.
 });
 
+// TODO(AGNT-0066.T09): Prove the socket subscriber sends only events.subscribe and aborts cleanly.
 test("TC-09 the default export wires a transport that only issues read-only herdr commands", async () => {
 	const response = makeSnapshotResponse();
 	const fakeApi = createFakeExtensionAPI(async (command, args) => {
