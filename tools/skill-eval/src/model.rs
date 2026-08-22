@@ -359,6 +359,9 @@ pub(crate) enum CliCommand {
         run_id: RunId,
         artifact: ArtifactName,
     },
+    AuditBriefs {
+        request: AuditBriefRequest,
+    },
     Judge {
         request: PromptJudgeRequest,
     },
@@ -368,6 +371,25 @@ pub(crate) enum CliCommand {
 pub(crate) struct QualifyRequest {
     pub(crate) artifact_roots: Vec<PathBuf>,
     pub(crate) policy: QualificationPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct AuditBriefRequest {
+    pub(crate) artifact_roots: Vec<PathBuf>,
+    pub(crate) output_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct AuditBrief {
+    pub(crate) artifact: ArtifactName,
+    pub(crate) failure_modes: Vec<FailureCount>,
+    pub(crate) reproductions: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FailureCount {
+    pub(crate) failure_mode: String,
+    pub(crate) count: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
