@@ -38,6 +38,7 @@ pub(crate) trait RunIdSource {
 pub(crate) trait CandidateRunner {
     fn execute(
         &mut self,
+        run_id: &RunId,
         key: &TrialKey,
         artifact: &ArtifactDefinition,
         case: &CaseDefinition,
