@@ -30,13 +30,17 @@ import {
 	SELF_WORKSPACE_ID,
 } from "./fixtures.ts";
 
-// TODO(AGNT-0066.T17): Add exact cross-record integrity regression coverage.
 test("TC-24 normalizeSnapshot rejects duplicate workspace identities", () => {
 	const response = makeSnapshotResponse({
+		focused_workspace_id: null,
+		focused_tab_id: null,
+		focused_pane_id: null,
 		workspaces: [
 			{ workspace_id: "dup", label: "one", focused: false },
 			{ workspace_id: "dup", label: "two", focused: false },
 		],
+		tabs: [],
+		panes: [],
 	});
 
 	assert.throws(() => normalizeSnapshot(response), {
@@ -53,6 +57,139 @@ test("TC-24 normalizeSnapshot rejects duplicate workspace identities", () => {
 			{ id: "other", label: "two", isFocused: false },
 		],
 	);
+});
+
+const crossRecordVariants: Array<{
+	name: string;
+	mutate: (response: HerdrSnapshotResponse) => void;
+	message: string;
+}> = [
+	{
+		name: "duplicate workspace_id",
+		mutate: (response) => {
+			response.result.snapshot.workspaces[1]!.workspace_id = SELF_WORKSPACE_ID;
+		},
+		message: "invalid Herdr snapshot response: duplicate workspace_id",
+	},
+	{
+		name: "duplicate tab_id",
+		mutate: (response) => {
+			response.result.snapshot.tabs[1]!.tab_id = SELF_TAB_ID;
+		},
+		message: "invalid Herdr snapshot response: duplicate tab_id",
+	},
+	{
+		name: "duplicate pane_id",
+		mutate: (response) => {
+			response.result.snapshot.panes[1]!.pane_id = SELF_PANE_ID;
+		},
+		message: "invalid Herdr snapshot response: duplicate pane_id",
+	},
+	{
+		name: "tab with a missing workspace",
+		mutate: (response) => {
+			response.result.snapshot.tabs[0]!.workspace_id = "missing-workspace";
+		},
+		message: "invalid Herdr snapshot response: tab references unknown workspace_id",
+	},
+	{
+		name: "pane with a missing workspace",
+		mutate: (response) => {
+			response.result.snapshot.panes[0]!.workspace_id = "missing-workspace";
+		},
+		message: "invalid Herdr snapshot response: pane references unknown workspace_id",
+	},
+	{
+		name: "pane with a missing tab",
+		mutate: (response) => {
+			response.result.snapshot.panes[0]!.tab_id = "missing-tab";
+		},
+		message: "invalid Herdr snapshot response: pane references unknown tab_id",
+	},
+	{
+		name: "missing focused_workspace_id",
+		mutate: (response) => {
+			response.result.snapshot.focused_workspace_id = "missing-workspace";
+		},
+		message: "invalid Herdr snapshot response: focused_workspace_id not found",
+	},
+	{
+		name: "missing focused_tab_id",
+		mutate: (response) => {
+			response.result.snapshot.focused_tab_id = "missing-tab";
+		},
+		message: "invalid Herdr snapshot response: focused_tab_id not found",
+	},
+	{
+		name: "missing focused_pane_id",
+		mutate: (response) => {
+			response.result.snapshot.focused_pane_id = "missing-pane";
+		},
+		message: "invalid Herdr snapshot response: focused_pane_id not found",
+	},
+];
+
+for (const { name, mutate, message } of crossRecordVariants) {
+	test(`TC-28 normalizeSnapshot rejects ${name}`, () => {
+		const response = makeSnapshotResponse();
+		mutate(response);
+
+		assert.throws(() => normalizeSnapshot(response), { message });
+	});
+}
+
+test("TC-28 normalizeSnapshot leaves a valid snapshot unchanged", () => {
+	assert.deepEqual(normalizeSnapshot(makeSnapshotResponse()), {
+		workspaces: [
+			{
+				id: SELF_WORKSPACE_ID,
+				label: "jerusalem",
+				worktree: { path: SELF_CWD, branch: null },
+				isFocused: true,
+			},
+			{
+				id: OTHER_WORKSPACE_ID,
+				label: "edinburgh",
+				worktree: { path: OTHER_CWD, branch: null },
+				isFocused: false,
+			},
+		],
+		tabs: [
+			{
+				id: SELF_TAB_ID,
+				workspaceId: SELF_WORKSPACE_ID,
+				label: "2",
+				isFocused: true,
+			},
+			{
+				id: OTHER_TAB_ID,
+				workspaceId: OTHER_WORKSPACE_ID,
+				label: "2",
+				isFocused: false,
+			},
+		],
+		panes: [
+			{
+				id: SELF_PANE_ID,
+				workspaceId: SELF_WORKSPACE_ID,
+				tabId: SELF_TAB_ID,
+				label: SELF_PANE_ID,
+				cwd: SELF_CWD,
+				isFocused: true,
+			},
+			{
+				id: OTHER_PANE_ID,
+				workspaceId: OTHER_WORKSPACE_ID,
+				tabId: OTHER_TAB_ID,
+				label: OTHER_PANE_ID,
+				cwd: OTHER_CWD,
+				isFocused: false,
+			},
+		],
+		focusedWorkspaceId: SELF_WORKSPACE_ID,
+		focusedTabId: SELF_TAB_ID,
+		focusedPaneId: SELF_PANE_ID,
+	});
 });
 
 test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus", () => {
@@ -185,6 +322,8 @@ test("TC-05 an unknown event is ignored and a replacement snapshot becomes the d
 	assert.equal(normalizeEvent(makeUnknownEvent()), null);
 
 	const replacementResponse = makeSnapshotResponse({
+		focused_tab_id: null,
+		focused_pane_id: null,
 		workspaces: [
 			{
 				workspace_id: SELF_WORKSPACE_ID,
