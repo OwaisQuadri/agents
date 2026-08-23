@@ -219,8 +219,9 @@ test("TC-17 invalid and unavailable results replace state before a dropped strea
 test("TC-29 recovery replaces state before applying a queued valid event", async () => {
 	const recoveryStarted = deferred<void>();
 	const recoverySnapshot = deferred<HerdrSnapshotResponse>();
-	const replacementObservable = deferred<void>();
-	const applyQueuedRename = deferred<void>();
+	const queuedEvent = deferred<HerdrStateEvent>();
+	const queuedEventObserved = deferred<void>();
+	const releaseQueuedEventYield = deferred<void>();
 	const renameApplied = deferred<void>();
 	const queuedRename: HerdrStateEvent = {
 		type: "workspace-changed",
@@ -248,9 +249,10 @@ test("TC-29 recovery replaces state before applying a queued valid event", async
 			subscriptionSignal = signal;
 			return (async function* (): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
 				yield { code: "invalid-response", message: "recover before rename" };
-				replacementObservable.resolve();
-				await applyQueuedRename.promise;
-				yield queuedRename;
+				const event = await queuedEvent.promise;
+				queuedEventObserved.resolve();
+				await releaseQueuedEventYield.promise;
+				yield event;
 				renameApplied.resolve();
 				await waitUntilAborted(signal!);
 			})();
@@ -269,8 +271,13 @@ test("TC-29 recovery replaces state before applying a queued valid event", async
 	assert.equal(snapshotCalls, 2);
 	assert.equal(subscriptionCalls, 1);
 
+	queuedEvent.resolve(queuedRename);
+	await flush();
+	assert.equal(controller.current(), initial);
+	assert.equal(controller.current()?.self?.workspaceId, "w5R");
+
 	recoverySnapshot.resolve(makeLocationSnapshot("w5S", "w5S:t2"));
-	await replacementObservable.promise;
+	await queuedEventObserved.promise;
 	const replacement = controller.current();
 	const replacementSnapshot = replacement?.snapshot;
 
@@ -279,7 +286,7 @@ test("TC-29 recovery replaces state before applying a queued valid event", async
 	assert.notEqual(replacement, initial);
 	assert.notEqual(replacementSnapshot, initialSnapshot);
 
-	applyQueuedRename.resolve();
+	releaseQueuedEventYield.resolve();
 	await renameApplied.promise;
 	const renamed = controller.current();
 
