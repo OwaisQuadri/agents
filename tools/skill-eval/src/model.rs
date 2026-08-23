@@ -21,6 +21,13 @@ pub(crate) enum ArtifactKind {
     Workflow,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunMode {
+    Execute,
+    DryRun,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum TierDestination {
@@ -56,6 +63,7 @@ pub(crate) struct Timestamp(pub(crate) String);
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct RunConfiguration {
     pub(crate) run_id: RunId,
+    pub(crate) mode: RunMode,
     pub(crate) artifacts: Vec<ArtifactDefinition>,
     pub(crate) change: Option<ArtifactChange>,
     pub(crate) policy: QualificationPolicy,
@@ -107,6 +115,21 @@ pub(crate) struct CaseDefinition {
     pub(crate) is_holdout: bool,
     pub(crate) support_files: Vec<PathBuf>,
     pub(crate) execution: ExecutionDefinition,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct CaseDiscovery {
+    pub(crate) id: CaseId,
+    pub(crate) drive: CaseDrive,
+    pub(crate) is_holdout: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct ArtifactDiscovery {
+    pub(crate) artifact: ArtifactName,
+    pub(crate) kind: ArtifactKind,
+    pub(crate) revision: String,
+    pub(crate) cases: Vec<CaseDiscovery>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -179,16 +202,25 @@ pub(crate) struct TrialRecord {
     pub(crate) harness: HarnessIdentity,
     pub(crate) artifact_path: PathBuf,
     pub(crate) transcript_path: PathBuf,
-    pub(crate) usage: TrialUsage,
+    pub(crate) candidate_usage: TrialUsage,
+    pub(crate) judge_model: ModelIdentity,
+    pub(crate) judge_usage: TrialUsage,
     pub(crate) verdict: TrialVerdict,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct TrialVerdict {
     pub(crate) score: u8,
     pub(crate) is_catastrophic: bool,
     pub(crate) failure_mode: Option<String>,
     pub(crate) checks: Vec<CheckResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct JudgeResult {
+    pub(crate) verdict: TrialVerdict,
+    pub(crate) model: ModelIdentity,
+    pub(crate) usage: TrialUsage,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -225,12 +257,14 @@ pub(crate) struct TierEvidence {
     pub(crate) role: EvidenceRole,
     pub(crate) tier: Tier,
     pub(crate) model: ModelIdentity,
-    pub(crate) harness: HarnessIdentity,
+    pub(crate) harnesses: Vec<HarnessIdentity>,
     pub(crate) status: TierStatus,
     pub(crate) completed_trials: u32,
     pub(crate) expected_trials: u32,
     pub(crate) passed_trials: u32,
     pub(crate) score: ConfidenceInterval,
+    pub(crate) candidate_usage: TrialUsage,
+    pub(crate) judge_usage: TrialUsage,
     pub(crate) total_usage: TrialUsage,
 }
 
@@ -254,6 +288,7 @@ pub(crate) struct QualificationBoundary {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ArtifactQualificationState {
     pub(crate) status: ArtifactStatus,
+    pub(crate) pending_candidates: Vec<CandidateArtifact>,
     pub(crate) tiers: Vec<TierEvidence>,
     pub(crate) boundary: Option<QualificationBoundary>,
     pub(crate) review_reason: Option<String>,
@@ -274,7 +309,9 @@ pub(crate) enum ArtifactStatus {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct RunState {
     pub(crate) run_id: RunId,
+    pub(crate) mode: RunMode,
     pub(crate) status: RunStatus,
+    pub(crate) discoveries: Vec<ArtifactDiscovery>,
     pub(crate) artifacts: BTreeMap<ArtifactName, ArtifactQualificationState>,
     pub(crate) pause: Option<PauseReason>,
     pub(crate) decisions: BTreeMap<ArtifactName, DecisionRecord>,
@@ -285,6 +322,7 @@ pub(crate) struct RunState {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RunStatus {
     Running,
+    Discovered,
     Paused,
     AwaitingDecision,
     Completed,
@@ -455,9 +493,12 @@ pub(crate) struct JudgeInput {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualificationReport {
     pub(crate) run_id: RunId,
+    pub(crate) mode: RunMode,
     pub(crate) change: Option<ArtifactChange>,
     pub(crate) status: RunStatus,
+    pub(crate) discoveries: Vec<ArtifactDiscovery>,
     pub(crate) artifacts: Vec<ArtifactReport>,
+    pub(crate) pause: Option<PauseReason>,
     pub(crate) total_usage: TrialUsage,
 }
 
@@ -466,6 +507,8 @@ pub(crate) struct ArtifactReport {
     pub(crate) artifact: ArtifactName,
     pub(crate) kind: ArtifactKind,
     pub(crate) status: ArtifactStatus,
+    pub(crate) review_reason: Option<String>,
+    pub(crate) pending_candidates: Vec<CandidateArtifact>,
     pub(crate) reference: Option<TierEvidence>,
     pub(crate) tiers: Vec<TierEvidence>,
     pub(crate) boundary: Option<QualificationBoundary>,
@@ -527,8 +570,12 @@ pub(crate) enum RunEvent {
     TrialStarted {
         at: Timestamp,
         key: TrialKey,
-        model: ModelIdentity,
+        models: Vec<ModelIdentity>,
         harness: HarnessIdentity,
+    },
+    CandidateExecuted {
+        at: Timestamp,
+        candidate: CandidateArtifact,
     },
     TrialCompleted {
         at: Timestamp,
@@ -563,5 +610,9 @@ pub(crate) enum RunEvent {
     PublicationGateEvaluated {
         at: Timestamp,
         gate: PublicationGate,
+    },
+    DiscoveryCompleted {
+        at: Timestamp,
+        artifacts: Vec<ArtifactDiscovery>,
     },
 }
