@@ -135,6 +135,32 @@ export function normalizeSnapshot(
 	if (workspaceIds.size !== raw.workspaces.length) {
 		throw new Error("invalid Herdr snapshot response: duplicate workspace_id");
 	}
+	const tabIds = new Set(raw.tabs.map((tab) => tab.tab_id));
+	if (tabIds.size !== raw.tabs.length) {
+		throw new Error("invalid Herdr snapshot response: duplicate tab_id");
+	}
+	if (raw.tabs.some((tab) => !workspaceIds.has(tab.workspace_id))) {
+		throw new Error("invalid Herdr snapshot response: tab references unknown workspace_id");
+	}
+	const paneIds = new Set(raw.panes.map((pane) => pane.pane_id));
+	if (paneIds.size !== raw.panes.length) {
+		throw new Error("invalid Herdr snapshot response: duplicate pane_id");
+	}
+	if (
+		raw.panes.some(
+			(pane) => !workspaceIds.has(pane.workspace_id) || !tabIds.has(pane.tab_id),
+		)
+	) {
+		throw new Error("invalid Herdr snapshot response: pane references unknown identifier");
+	}
+	if (
+		(raw.focused_workspace_id !== null &&
+			!workspaceIds.has(raw.focused_workspace_id)) ||
+		(raw.focused_tab_id !== null && !tabIds.has(raw.focused_tab_id)) ||
+		(raw.focused_pane_id !== null && !paneIds.has(raw.focused_pane_id))
+	) {
+		throw new Error("invalid Herdr snapshot response: focused identifier not found");
+	}
 	return {
 		workspaces: raw.workspaces.map(normalizeWorkspace),
 		tabs: raw.tabs.map(normalizeTab),
