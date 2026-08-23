@@ -216,7 +216,90 @@ test("TC-17 invalid and unavailable results replace state before a dropped strea
 	assert.equal(waitCalls, 1);
 });
 
-// TODO(AGNT-0066.T18): Add the pending-recovery valid-event concurrency harness.
+test("TC-29 recovery replaces state before applying a queued valid event", async () => {
+	const recoveryStarted = deferred<void>();
+	const recoverySnapshot = deferred<HerdrSnapshotResponse>();
+	const replacementObservable = deferred<void>();
+	const applyQueuedRename = deferred<void>();
+	const renameApplied = deferred<void>();
+	const queuedRename: HerdrStateEvent = {
+		type: "workspace-changed",
+		workspace: {
+			id: "w5S",
+			label: "renamed",
+			worktree: null,
+			isFocused: true,
+		},
+	};
+	let snapshotCalls = 0;
+	let subscriptionCalls = 0;
+	let subscriptionSignal: AbortSignal | undefined;
+	const client: HerdrClient = {
+		async snapshot() {
+			snapshotCalls += 1;
+			if (snapshotCalls === 1) {
+				return makeLocationSnapshot("w5R", "w5R:t2");
+			}
+			recoveryStarted.resolve();
+			return await recoverySnapshot.promise;
+		},
+		events(signal) {
+			subscriptionCalls += 1;
+			subscriptionSignal = signal;
+			return (async function* (): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
+				yield { code: "invalid-response", message: "recover before rename" };
+				replacementObservable.resolve();
+				await applyQueuedRename.promise;
+				yield queuedRename;
+				renameApplied.resolve();
+				await waitUntilAborted(signal!);
+			})();
+		},
+		readPane: unusedPaneRead,
+	};
+	const controller = new HerdrStateController(client);
+
+	await controller.start(SELF_CWD, SELF_PANE_ID);
+	const initial = controller.current();
+	const initialSnapshot = initial?.snapshot;
+	await recoveryStarted.promise;
+
+	assert.equal(controller.current(), initial);
+	assert.equal(controller.current()?.self?.workspaceId, "w5R");
+	assert.equal(snapshotCalls, 2);
+	assert.equal(subscriptionCalls, 1);
+
+	recoverySnapshot.resolve(makeLocationSnapshot("w5S", "w5S:t2"));
+	await replacementObservable.promise;
+	const replacement = controller.current();
+	const replacementSnapshot = replacement?.snapshot;
+
+	assert.equal(replacement?.self?.workspaceId, "w5S");
+	assert.equal(replacementSnapshot?.workspaces[0]?.label, "w5S");
+	assert.notEqual(replacement, initial);
+	assert.notEqual(replacementSnapshot, initialSnapshot);
+
+	applyQueuedRename.resolve();
+	await renameApplied.promise;
+	const renamed = controller.current();
+
+	assert.equal(renamed?.self?.workspaceId, "w5S");
+	assert.equal(renamed?.snapshot.workspaces[0]?.label, "renamed");
+	assert.notEqual(renamed, replacement);
+	assert.notEqual(renamed?.snapshot, replacementSnapshot);
+	assert.equal(initialSnapshot?.workspaces[0]?.label, "w5R");
+	assert.equal(replacementSnapshot?.workspaces[0]?.label, "w5S");
+	assert.equal(snapshotCalls, 2);
+	assert.equal(subscriptionCalls, 1);
+
+	controller.stop();
+	await flush();
+	assert.equal(subscriptionSignal?.aborted, true);
+	assert.equal(controller.current(), renamed);
+	assert.equal(snapshotCalls, 2);
+	assert.equal(subscriptionCalls, 1);
+});
+
 test("TC-26 invalid-response bursts recover once and valid data resets the guard", async () => {
 	const firstBurstFinished = deferred<void>();
 	const continueAfterFirstBurst = deferred<void>();
