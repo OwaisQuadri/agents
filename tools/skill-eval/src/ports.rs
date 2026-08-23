@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use crate::model::{
-    ArtifactDefinition, CandidateArtifact, CaseDefinition, CheckResult, HarnessIdentity,
-    JudgeInput, ModelIdentity, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId,
-    SkillEvalError, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
+    ArtifactDefinition, CandidateArtifact, CaseDefinition, CheckResult, ExecutionDefinition,
+    HarnessIdentity, JudgeInput, ModelIdentity, PromptJudgeRequest, PromptJudgeResult, RunEvent,
+    RunId, SkillEvalError, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
     TrialVerdict,
 };
 
@@ -21,6 +21,14 @@ pub(crate) trait ModelResolver {
         judge_tier: Tier,
         candidate: Option<&ModelIdentity>,
     ) -> Result<ModelIdentity, SkillEvalError>;
+}
+
+pub(crate) trait HarnessResolver {
+    fn identity(
+        &self,
+        artifact: &ArtifactDefinition,
+        execution: &ExecutionDefinition,
+    ) -> Result<HarnessIdentity, SkillEvalError>;
 }
 
 pub(crate) trait CandidateRunner {
@@ -85,6 +93,14 @@ pub(crate) trait TierWriter {
 }
 
 pub(crate) trait QualificationRuntime:
-    ArtifactSource + ModelResolver + CandidateRunner + Verifier + Judge + RunStore + Clock + TierWriter
+    ArtifactSource
+    + ModelResolver
+    + HarnessResolver
+    + CandidateRunner
+    + Verifier
+    + Judge
+    + RunStore
+    + Clock
+    + TierWriter
 {
 }
