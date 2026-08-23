@@ -297,7 +297,6 @@ export class HerdrCommandClient implements HerdrClient {
 		paneId: string,
 		lineLimit: number,
 	): Promise<HerdrPaneOutput | HerdrStateFailure> {
-		// TODO(AGNT-0066.T12): Reject control-bearing pane identifiers before transport.
 		if (typeof paneId !== "string" || paneId === "" || /\p{Cc}/u.test(paneId)) {
 			return invalidResponse("Herdr pane read requires a non-empty, control-free pane identifier");
 		}

@@ -284,12 +284,47 @@ test("TC-22 readPane rejects out-of-range direct-client line limits before trans
 	}
 });
 
-// TODO(AGNT-0066.T12): Add direct control-bearing pane identifier regression coverage.
-test("readPane reports invalid-response for a malformed pane identifier or line limit", async () => {
+test("TC-23 readPane rejects empty and control-bearing pane identifiers before transport", async (t) => {
+	const rejectedPaneIds = [
+		"pane-ok\n--lines\n999999",
+		"",
+		"p\u0000",
+		"p\u001b",
+		"p\u007f",
+		"p\u0085",
+	];
+
+	for (const paneId of rejectedPaneIds) {
+		await t.test(JSON.stringify(paneId), async () => {
+			const { transport, calls } = makeFakeTransport({});
+			const client = new HerdrCommandClient(transport);
+
+			const result = await client.readPane(paneId, 1);
+
+			assert.equal((result as { code: string }).code, "invalid-response");
+			assert.deepEqual(calls, [], "an invalid pane identifier must never reach the transport");
+		});
+	}
+});
+
+test("TC-23 readPane passes a printable Unicode pane identifier as one exact argument", async () => {
+	const { transport, calls } = makeFakeTransport({
+		paneReadResult: async () => ({ code: 0, stdout: "", stderr: "" }),
+	});
+	const client = new HerdrCommandClient(transport);
+
+	const result = await client.readPane("pane-雪", 1);
+
+	assert.deepEqual(result, { paneId: "pane-雪", text: "", isTruncated: false });
+	assert.deepEqual(calls, [
+		{ args: ["pane", "read", "pane-雪", "--source", "recent", "--lines", "2"] },
+	]);
+});
+
+test("readPane reports invalid-response for a malformed line limit", async () => {
 	const { transport, calls } = makeFakeTransport({});
 	const client = new HerdrCommandClient(transport);
 
-	assert.equal((await client.readPane("", 5) as { code: string }).code, "invalid-response");
 	assert.equal((await client.readPane(SELF_PANE_ID, -1) as { code: string }).code, "invalid-response");
 	assert.equal((await client.readPane(SELF_PANE_ID, 1.5) as { code: string }).code, "invalid-response");
 	assert.equal((await client.readPane(SELF_PANE_ID, Number.MIN_VALUE) as { code: string }).code, "invalid-response");
