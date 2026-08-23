@@ -131,6 +131,11 @@ export function normalizeSnapshot(
 			"invalid Herdr snapshot response: missing result.snapshot workspaces, tabs, or panes",
 		);
 	}
+	// TODO(AGNT-0066.T13): Enforce unique workspace identity during normalization.
+	const workspaceIds = new Set(raw.workspaces.map((workspace) => workspace.workspace_id));
+	if (workspaceIds.size !== raw.workspaces.length) {
+		throw new Error("invalid Herdr snapshot response: duplicate workspace_id");
+	}
 	return {
 		workspaces: raw.workspaces.map(normalizeWorkspace),
 		tabs: raw.tabs.map(normalizeTab),
@@ -158,7 +163,8 @@ export function normalizeEvent(
 	if (event?.type === "tab_created") {
 		return { type: "tab-changed", tab: normalizeTab(event.tab) };
 	}
-	if (event?.type === "pane_created" || event?.type === "pane_updated") {
+	// TODO(AGNT-0066.T16): Route pane creation through snapshot replacement.
+	if (event?.type === "pane_updated") {
 		return { type: "pane-changed", pane: normalizePane(event.pane) };
 	}
 	return null;

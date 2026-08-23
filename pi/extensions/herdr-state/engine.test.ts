@@ -30,6 +30,7 @@ import {
 	SELF_WORKSPACE_ID,
 } from "./fixtures.ts";
 
+// TODO(AGNT-0066.T13): Add duplicate workspace identity regression coverage.
 test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
@@ -198,6 +199,7 @@ test("TC-06 normalizeSnapshot throws for a malformed envelope", () => {
 	);
 });
 
+// TODO(AGNT-0066.T16): Prove pane_created requests replacement and pane_updated stays incremental.
 test("normalizeEvent throws for a malformed recognized event and returns null for unknown events", () => {
 	assert.throws(() =>
 		normalizeEvent(makeMalformedWorkspaceUpdatedEvent() as HerdrRawEvent),

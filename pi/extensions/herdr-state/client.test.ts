@@ -284,6 +284,7 @@ test("TC-22 readPane rejects out-of-range direct-client line limits before trans
 	}
 });
 
+// TODO(AGNT-0066.T12): Add direct control-bearing pane identifier regression coverage.
 test("readPane reports invalid-response for a malformed pane identifier or line limit", async () => {
 	const { transport, calls } = makeFakeTransport({});
 	const client = new HerdrCommandClient(transport);

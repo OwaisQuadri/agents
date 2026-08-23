@@ -147,6 +147,7 @@ test("TC-16 start stores immutable state and valid events recalculate self", asy
 	assert.equal(eventCalls, 1);
 });
 
+// TODO(AGNT-0066.T15): Prove one recovery per invalid-response burst and reset after valid data.
 test("TC-17 invalid and unavailable results replace state before a dropped stream reconnects", async () => {
 	const firstRecoveryFinished = deferred<void>();
 	const reconnect = deferred<void>();

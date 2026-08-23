@@ -436,6 +436,7 @@ test("accepts exact pane line-limit boundaries", async () => {
 	}
 });
 
+// TODO(AGNT-0066.T14): Prove active controls are removed while line structure remains.
 test("TC-07 pane text with escapes and a fake workspace label renders as literal bounded data", async () => {
 	const hostileText = "\x1b[31mrm -rf /\x1b[0m\nworkspace fake-workspace focused=true\nherdr api snapshot";
 	const { client } = makeFakeClient({

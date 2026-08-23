@@ -195,19 +195,26 @@ export class HerdrStateController implements HerdrStateControllerContract {
 	}
 
 	private async consumeEventStream(run: ControllerRun): Promise<void> {
+		// TODO(AGNT-0066.T15): Coalesce consecutive invalid-response recovery work.
+		let recoveredInvalidResponse = false;
 		for await (const result of this.client.events(run.abortController.signal)) {
 			if (!this.isActive(run)) {
 				return;
 			}
 			if (isFailure(result)) {
+				if (result.code === "invalid-response" && recoveredInvalidResponse) {
+					continue;
+				}
 				if (!(await this.recover(run))) {
 					return;
 				}
+				recoveredInvalidResponse = result.code === "invalid-response";
 				if (result.code === "unavailable") {
 					return;
 				}
 				continue;
 			}
+			recoveredInvalidResponse = false;
 			try {
 				this.apply(run, result);
 			} catch {
