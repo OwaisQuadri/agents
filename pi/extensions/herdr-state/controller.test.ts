@@ -216,6 +216,7 @@ test("TC-17 invalid and unavailable results replace state before a dropped strea
 	assert.equal(waitCalls, 1);
 });
 
+// TODO(AGNT-0066.T18): Add the pending-recovery valid-event concurrency harness.
 test("TC-26 invalid-response bursts recover once and valid data resets the guard", async () => {
 	const firstBurstFinished = deferred<void>();
 	const continueAfterFirstBurst = deferred<void>();

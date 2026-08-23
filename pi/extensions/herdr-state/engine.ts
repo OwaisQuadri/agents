@@ -135,6 +135,7 @@ export function normalizeSnapshot(
 	if (workspaceIds.size !== raw.workspaces.length) {
 		throw new Error("invalid Herdr snapshot response: duplicate workspace_id");
 	}
+	// TODO(AGNT-0066.T17): Enforce complete cross-record snapshot integrity.
 	const tabIds = new Set(raw.tabs.map((tab) => tab.tab_id));
 	if (tabIds.size !== raw.tabs.length) {
 		throw new Error("invalid Herdr snapshot response: duplicate tab_id");

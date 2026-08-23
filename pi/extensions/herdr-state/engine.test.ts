@@ -30,6 +30,7 @@ import {
 	SELF_WORKSPACE_ID,
 } from "./fixtures.ts";
 
+// TODO(AGNT-0066.T17): Add exact cross-record integrity regression coverage.
 test("TC-24 normalizeSnapshot rejects duplicate workspace identities", () => {
 	const response = makeSnapshotResponse({
 		workspaces: [
