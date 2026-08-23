@@ -2,9 +2,9 @@ use std::path::Path;
 
 use crate::model::{
     ArtifactDefinition, CandidateArtifact, CaseDefinition, CheckResult, ExecutionDefinition,
-    HarnessIdentity, JudgeInput, ModelIdentity, PromptJudgeRequest, PromptJudgeResult, RunEvent,
-    RunId, SkillEvalError, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
-    TrialVerdict,
+    HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PromptJudgeRequest, PromptJudgeResult,
+    RunEvent, RunId, SkillEvalError, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord,
+    TrialSelector,
 };
 
 pub(crate) trait ArtifactSource {
@@ -31,6 +31,10 @@ pub(crate) trait HarnessResolver {
     ) -> Result<HarnessIdentity, SkillEvalError>;
 }
 
+pub(crate) trait RunIdSource {
+    fn next(&mut self) -> Result<RunId, SkillEvalError>;
+}
+
 pub(crate) trait CandidateRunner {
     fn execute(
         &mut self,
@@ -55,7 +59,7 @@ pub(crate) trait Judge {
         &mut self,
         model: &ModelIdentity,
         input: &JudgeInput,
-    ) -> Result<TrialVerdict, SkillEvalError>;
+    ) -> Result<JudgeResult, SkillEvalError>;
 
     fn grade_prompt(
         &mut self,
@@ -96,6 +100,7 @@ pub(crate) trait QualificationRuntime:
     ArtifactSource
     + ModelResolver
     + HarnessResolver
+    + RunIdSource
     + CandidateRunner
     + Verifier
     + Judge

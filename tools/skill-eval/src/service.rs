@@ -4,9 +4,10 @@
 // TODO(AGNT-0032.T05): reduce ordered events into the boundary-first report
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBrief, AuditBriefRequest, Decision,
-    DecisionRecord, PromptJudgeRequest, PromptJudgeResult, PublicationGate, QualificationBoundary,
-    QualificationPolicy, QualificationReport, QualifyRequest, RunEvent, RunId, RunState,
-    SkillEvalError, SkillRoutingDecision, TierAssignment, TierEvidence, TrialRecord, TrialSelector,
+    DecisionRecord, EvidenceRole, PromptJudgeRequest, PromptJudgeResult, PublicationGate,
+    QualificationBoundary, QualificationPolicy, QualificationReport, QualifyRequest, RunEvent,
+    RunId, RunState, SkillEvalError, SkillRoutingDecision, TierAssignment, TierEvidence,
+    TrialRecord, TrialSelector,
 };
 use crate::ports::{Clock, ProgressSink, QualificationRuntime, RunStore, TierWriter};
 
@@ -93,8 +94,9 @@ pub(crate) fn apply_event(state: &mut RunState, event: &RunEvent) -> Result<(), 
 }
 
 pub(crate) fn evaluate_tier(
+    role: EvidenceRole,
     trials: &[TrialRecord],
-    reference: &TierEvidence,
+    reference: Option<&TierEvidence>,
     policy: &QualificationPolicy,
 ) -> Result<TierEvidence, SkillEvalError> {
     unimplemented!()
