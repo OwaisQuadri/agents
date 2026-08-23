@@ -506,6 +506,7 @@ pub(crate) struct QualificationReport {
 pub(crate) struct ArtifactReport {
     pub(crate) artifact: ArtifactName,
     pub(crate) kind: ArtifactKind,
+    pub(crate) required_destinations: Vec<TierDestination>,
     pub(crate) status: ArtifactStatus,
     pub(crate) review_reason: Option<String>,
     pub(crate) pending_candidates: Vec<CandidateArtifact>,
