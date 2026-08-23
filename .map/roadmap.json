@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 76,
+  "next_nnnn": 77,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1193,6 +1193,23 @@
       "blame_phase": null,
       "created": "2026-08-21T16:19:17-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0076",
+      "kind": "ticket",
+      "status": "todo",
+      "priority": "med",
+      "short": "Make tool lifecycle operations safe and noninteractive",
+      "long": "tool-wizard has interactive-only add and update flows, while tool-sync can validate and apply the complete manifest but cannot select, remove, or expose one tool lifecycle operation in a machine-readable result. Add noninteractive, argument-validated commands that let an agent add a Git source pinned to its resolved commit, update selected pinned sources, install selected tools, and uninstall selected managed tools. Each command must support --dry-run and JSON(JavaScript Object Notation) output, reject an unpinned or dirty source, preserve unmanaged files and links, and require an explicit apply flag for mutation. Keep the existing interactive wizard as a wrapper over the same command layer. Test add, selected update, install, uninstall, repeated runs, invalid arguments, dirty checkouts, dry runs, and a temporary home directory.",
+      "deps": [],
+      "files": [
+        "tools/tool-wizard/",
+        "tools/tool-sync/",
+        "config/tools.toml",
+        "CONTRIBUTING.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-23T13:14:03-0400"
     }
   ]
 }

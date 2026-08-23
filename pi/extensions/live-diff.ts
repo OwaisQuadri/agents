@@ -206,10 +206,6 @@ export function mapKey(data: string): OverlayKey | null {
 			return "top";
 		case "G":
 			return "bottom";
-		case "]":
-			return "next-file";
-		case "[":
-			return "prev-file";
 		case "q":
 		case "\x1b":
 			return "close";
