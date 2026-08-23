@@ -87,6 +87,7 @@ pub(crate) struct ArtifactDefinition {
     pub(crate) kind: ArtifactKind,
     pub(crate) root: PathBuf,
     pub(crate) revision: String,
+    pub(crate) required_destinations: Vec<TierDestination>,
     pub(crate) current_tiers: Vec<TierAssignment>,
     pub(crate) cases: Vec<CaseDefinition>,
 }
