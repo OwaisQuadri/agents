@@ -1,3 +1,4 @@
+// TODO(AGNT-0032.T78): copy frozen required destinations into reports
 // TODO(AGNT-0032.T76): expose required tier destinations in artifact reports
 // TODO(AGNT-0032.T12): record owner decisions and derive safe skill routes
 // TODO(AGNT-0032.T11): resume paused runs without duplicate trial keys
