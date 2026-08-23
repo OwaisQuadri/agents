@@ -30,7 +30,30 @@ import {
 	SELF_WORKSPACE_ID,
 } from "./fixtures.ts";
 
-// TODO(AGNT-0066.T13): Add duplicate workspace identity regression coverage.
+test("TC-24 normalizeSnapshot rejects duplicate workspace identities", () => {
+	const response = makeSnapshotResponse({
+		workspaces: [
+			{ workspace_id: "dup", label: "one", focused: false },
+			{ workspace_id: "dup", label: "two", focused: false },
+		],
+	});
+
+	assert.throws(() => normalizeSnapshot(response), {
+		message: "invalid Herdr snapshot response: duplicate workspace_id",
+	});
+
+	response.result.snapshot.workspaces[1]!.workspace_id = "other";
+	const snapshot = normalizeSnapshot(response);
+
+	assert.deepEqual(
+		snapshot.workspaces.map(({ id, label, isFocused }) => ({ id, label, isFocused })),
+		[
+			{ id: "dup", label: "one", isFocused: false },
+			{ id: "other", label: "two", isFocused: false },
+		],
+	);
+});
+
 test("TC-01 normalizeSnapshot lists every workspace with its worktree and focus", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 
