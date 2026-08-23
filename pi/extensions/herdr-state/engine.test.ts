@@ -222,7 +222,44 @@ test("TC-06 normalizeSnapshot throws for a malformed envelope", () => {
 	);
 });
 
-// TODO(AGNT-0066.T16): Prove pane_created requests replacement and pane_updated stays incremental.
+test("TC-27 normalizeEvent routes an observed pane_created event to snapshot replacement", () => {
+	const event: HerdrRawEvent = {
+		type: "pane_created",
+		pane: {
+			pane_id: "p",
+			workspace_id: "missing-w",
+			tab_id: "missing-t",
+			focused: false,
+		},
+	};
+
+	assert.equal(normalizeEvent(event), null);
+});
+
+test("TC-27 normalizeEvent preserves an observed pane_updated event", () => {
+	const event: HerdrRawEvent = {
+		type: "pane_updated",
+		pane: {
+			pane_id: "w5R:p2",
+			workspace_id: "w5R",
+			tab_id: "w5R:t2",
+			focused: false,
+		},
+	};
+
+	assert.deepEqual(normalizeEvent(event), {
+		type: "pane-changed",
+		pane: {
+			id: "w5R:p2",
+			workspaceId: "w5R",
+			tabId: "w5R:t2",
+			label: "w5R:p2",
+			cwd: null,
+			isFocused: false,
+		},
+	});
+});
+
 test("normalizeEvent throws for a malformed recognized event and returns null for unknown events", () => {
 	assert.throws(() =>
 		normalizeEvent(makeMalformedWorkspaceUpdatedEvent() as HerdrRawEvent),

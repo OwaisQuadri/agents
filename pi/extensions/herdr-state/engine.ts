@@ -162,7 +162,6 @@ export function normalizeEvent(
 	if (event?.type === "tab_created") {
 		return { type: "tab-changed", tab: normalizeTab(event.tab) };
 	}
-	// TODO(AGNT-0066.T16): Route pane creation through snapshot replacement.
 	if (event?.type === "pane_updated") {
 		return { type: "pane-changed", pane: normalizePane(event.pane) };
 	}
