@@ -147,7 +147,6 @@ test("TC-16 start stores immutable state and valid events recalculate self", asy
 	assert.equal(eventCalls, 1);
 });
 
-// TODO(AGNT-0066.T15): Prove one recovery per invalid-response burst and reset after valid data.
 test("TC-17 invalid and unavailable results replace state before a dropped stream reconnects", async () => {
 	const firstRecoveryFinished = deferred<void>();
 	const reconnect = deferred<void>();
@@ -215,6 +214,81 @@ test("TC-17 invalid and unavailable results replace state before a dropped strea
 	assert.equal(snapshotCalls, 3);
 	assert.equal(eventCalls, 2);
 	assert.equal(waitCalls, 1);
+});
+
+test("TC-26 invalid-response bursts recover once and valid data resets the guard", async () => {
+	const firstBurstFinished = deferred<void>();
+	const continueAfterFirstBurst = deferred<void>();
+	const renameApplied = deferred<void>();
+	const continueAfterRename = deferred<void>();
+	const secondBurstFinished = deferred<void>();
+	let snapshotCalls = 0;
+	let eventCalls = 0;
+	const client: HerdrClient = {
+		async snapshot() {
+			snapshotCalls += 1;
+			return makeLocationSnapshot(SELF_WORKSPACE_ID, SELF_TAB_ID);
+		},
+		events(signal) {
+			eventCalls += 1;
+			return (async function* (): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
+				for (let index = 0; index < 25; index += 1) {
+					yield { code: "invalid-response", message: `bad-${index}` };
+				}
+				firstBurstFinished.resolve();
+				await continueAfterFirstBurst.promise;
+				yield {
+					type: "workspace-changed",
+					workspace: {
+						id: SELF_WORKSPACE_ID,
+						label: "renamed",
+						worktree: null,
+						isFocused: true,
+					},
+				};
+				renameApplied.resolve();
+				await continueAfterRename.promise;
+				for (let index = 25; index < 27; index += 1) {
+					yield { code: "invalid-response", message: `bad-${index}` };
+				}
+				secondBurstFinished.resolve();
+				await waitUntilAborted(signal!);
+			})();
+		},
+		readPane: unusedPaneRead,
+	};
+	const controller = new HerdrStateController(client);
+
+	await controller.start(SELF_CWD, SELF_PANE_ID);
+	const initial = controller.current();
+	await firstBurstFinished.promise;
+	const recovered = controller.current();
+
+	assert.equal(snapshotCalls, 2);
+	assert.notEqual(recovered, initial);
+	assert.equal(initial?.snapshot.workspaces[0]?.label, SELF_WORKSPACE_ID);
+	assert.equal(recovered?.snapshot.workspaces[0]?.label, SELF_WORKSPACE_ID);
+
+	continueAfterFirstBurst.resolve();
+	await renameApplied.promise;
+	const renamed = controller.current();
+
+	assert.equal(renamed?.snapshot.workspaces[0]?.label, "renamed");
+	assert.notEqual(renamed, recovered);
+	assert.notEqual(renamed?.snapshot, recovered?.snapshot);
+	assert.equal(initial?.snapshot.workspaces[0]?.label, SELF_WORKSPACE_ID);
+	assert.equal(recovered?.snapshot.workspaces[0]?.label, SELF_WORKSPACE_ID);
+	assert.equal(snapshotCalls, 2);
+
+	continueAfterRename.resolve();
+	await secondBurstFinished.promise;
+	assert.equal(snapshotCalls, 3);
+	assert.equal(eventCalls, 1);
+
+	controller.stop();
+	await flush();
+	assert.equal(snapshotCalls, 3);
+	assert.equal(eventCalls, 1);
 });
 
 test("TC-21 stop aborts a blocked event stream without post-stop work", async () => {
