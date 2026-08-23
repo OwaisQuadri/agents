@@ -110,3 +110,11 @@ commands = []
 pi_extension = "pi/extensions/live-diff"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "donsetch"
+platforms = ["macos", "linux"]
+commands = ["target/release/donsetch"]
+pi_package = "npm"
+source = { url = "https://github.com/dondai44423/donsetch.git", revision = "8ee8e1a5325432ef74c7e7db38f3b8448a7d2d81" }
+installer = { command = "/bin/zsh", args = ["-lc", "cargo build --release && mkdir -p npm/binaries && cp target/release/donsetch npm/binaries/donsetch"], preview_args = ["-lc", "cargo --version"] }

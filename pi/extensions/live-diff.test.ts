@@ -598,15 +598,15 @@ test("W9 mapKey binds space, jk, hl, enter, q and both esc forms; TAB is unbound
 	assert.equal(mapKey("t"), null, "the old toggle-mode letter must be unbound");
 });
 
-test("W9 mapKey binds the viewer motions: d/u, g/G, ]/[", () => {
+test("W9 mapKey binds viewer motions and leaves brackets unbound", () => {
 	assert.equal(mapKey("d"), "page-down");
 	assert.equal(mapKey("u"), "page-up");
 	assert.equal(mapKey("\x04"), null, "ctrl-d never reached the component; it is unbound");
 	assert.equal(mapKey("\x15"), null, "ctrl-u never reached the component; it is unbound");
 	assert.equal(mapKey("g"), "top");
 	assert.equal(mapKey("G"), "bottom");
-	assert.equal(mapKey("]"), "next-file");
-	assert.equal(mapKey("["), "prev-file");
+	assert.equal(mapKey("]"), null);
+	assert.equal(mapKey("["), null);
 });
 
 test("W9 bare Esc still closes and is never confused with an arrow sequence", () => {
@@ -905,7 +905,7 @@ test("W9 space opens the read-only viewer and fetches the selected file's patch"
 	}
 });
 
-test("W9 ] and [ move between files inside the viewer without leaving it", async (t) => {
+test("W9 h and l move between files inside the viewer without leaving it", async (t) => {
 	const { pi, recorder, ctx, repo } = createHarness(t);
 	addUnstagedEdit(repo);
 	addUntrackedFile(repo, "second.txt");
@@ -916,16 +916,16 @@ test("W9 ] and [ move between files inside the viewer without leaving it", async
 	const firstPath = probe.lines.join("\n").match(/╭─ (\S+)/)?.[1];
 	assert.ok(firstPath, "the top border must name the open file");
 
-	const afterNext = await openOverlay(pi, recorder, ctx, 70, [" ", "]"]);
+	const afterNext = await openOverlay(pi, recorder, ctx, 70, [" ", "l"]);
 	const nextJoined = afterNext.lines.join("\n");
-	assert.match(nextJoined, /╭─/, "] must keep the viewer open, not close it");
+	assert.match(nextJoined, /╭─/, "l must keep the viewer open, not close it");
 	const secondPath = nextJoined.match(/╭─ (\S+)/)?.[1];
-	assert.ok(secondPath, "] must still show a bordered file view");
-	assert.notEqual(secondPath, firstPath, "] must move to a different file");
+	assert.ok(secondPath, "l must still show a bordered file view");
+	assert.notEqual(secondPath, firstPath, "l must move to a different file");
 
-	const afterPrev = await openOverlay(pi, recorder, ctx, 70, [" ", "]", "["]);
+	const afterPrev = await openOverlay(pi, recorder, ctx, 70, [" ", "l", "h"]);
 	const prevPath = afterPrev.lines.join("\n").match(/╭─ (\S+)/)?.[1];
-	assert.equal(prevPath, firstPath, "[ must return to the previous file");
+	assert.equal(prevPath, firstPath, "h must return to the previous file");
 });
 
 test("W9 enter is inert inside the viewer and never opens nvim", async (t) => {

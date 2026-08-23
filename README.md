@@ -257,7 +257,7 @@ The read-only window shows one file's diff with line numbers:
 j k         scroll a line
 d u         page down and up
 g G         jump to the top and the bottom
-] [         next and previous file, wrapping at both ends
+h l         previous and next file, wrapping at both ends
 enter       open this file in nvim
 q or esc    back to the list
 ```

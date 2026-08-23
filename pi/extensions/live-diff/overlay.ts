@@ -198,6 +198,8 @@ function reduceViewer(
 				model,
 				effect: { kind: "open-in-nvim", path: viewer.path },
 			};
+		case "mode-right":
+		case "mode-left":
 		case "next-file":
 		case "prev-file": {
 			const index = model.rows.findIndex((r) => r.change.path === viewer.path);
@@ -207,7 +209,7 @@ function reduceViewer(
 			if (model.rows.length < 2) {
 				return { model, effect: null };
 			}
-			const step = key === "next-file" ? 1 : -1;
+			const step = key === "next-file" || key === "mode-right" ? 1 : -1;
 			const nextIndex =
 				(index + step + model.rows.length) % model.rows.length;
 			const nextPath = model.rows[nextIndex].change.path;
@@ -534,7 +536,7 @@ function viewerBorderRow(
 	);
 }
 
-const VIEWER_HINT_TEXT = "j k scroll · d u page · g G ends · ] [ file · ⏎ edit · esc back";
+const VIEWER_HINT_TEXT = "j k scroll · d u page · g G ends · h l file · ⏎ edit · esc back";
 const VIEWER_HINT_ITEM_SEP = " · ";
 
 function fitHintItems(hint: string, maxWidth: number): string | null {
