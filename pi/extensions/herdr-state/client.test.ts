@@ -248,15 +248,50 @@ test("readPane reports unavailable when the command fails to run", async () => {
 	assert.equal((result as { code: string }).code, "unavailable");
 });
 
-// TODO(AGNT-0066.T11): Cover direct-client boundaries and oversized integer rejection.
+test("TC-22 readPane accepts the direct-client line-limit boundaries", async () => {
+	const { transport, calls } = makeFakeTransport({
+		paneReadResult: async () => ({ code: 0, stdout: "", stderr: "" }),
+	});
+	const client = new HerdrCommandClient(transport);
+
+	assert.deepEqual(await client.readPane(SELF_PANE_ID, 1), {
+		paneId: SELF_PANE_ID,
+		text: "",
+		isTruncated: false,
+	});
+	assert.deepEqual(await client.readPane(SELF_PANE_ID, 10_000), {
+		paneId: SELF_PANE_ID,
+		text: "",
+		isTruncated: false,
+	});
+	assert.deepEqual(calls, [
+		{ args: ["pane", "read", SELF_PANE_ID, "--source", "recent", "--lines", "2"] },
+		{ args: ["pane", "read", SELF_PANE_ID, "--source", "recent", "--lines", "10001"] },
+	]);
+});
+
+test("TC-22 readPane rejects out-of-range direct-client line limits before transport", async (t) => {
+	for (const lineLimit of [0, 10_001, Number.MAX_SAFE_INTEGER, Number.MAX_VALUE]) {
+		await t.test(String(lineLimit), async () => {
+			const { transport, calls } = makeFakeTransport({});
+			const client = new HerdrCommandClient(transport);
+
+			const result = await client.readPane(SELF_PANE_ID, lineLimit);
+
+			assert.equal((result as { code: string }).code, "invalid-response");
+			assert.deepEqual(calls, [], "an invalid request must never reach the transport");
+		});
+	}
+});
+
 test("readPane reports invalid-response for a malformed pane identifier or line limit", async () => {
 	const { transport, calls } = makeFakeTransport({});
 	const client = new HerdrCommandClient(transport);
 
 	assert.equal((await client.readPane("", 5) as { code: string }).code, "invalid-response");
-	assert.equal((await client.readPane(SELF_PANE_ID, 0) as { code: string }).code, "invalid-response");
 	assert.equal((await client.readPane(SELF_PANE_ID, -1) as { code: string }).code, "invalid-response");
 	assert.equal((await client.readPane(SELF_PANE_ID, 1.5) as { code: string }).code, "invalid-response");
+	assert.equal((await client.readPane(SELF_PANE_ID, Number.MIN_VALUE) as { code: string }).code, "invalid-response");
 	assert.deepEqual(calls, [], "an invalid request must never reach the transport");
 });
 
