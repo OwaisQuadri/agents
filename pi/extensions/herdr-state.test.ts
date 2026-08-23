@@ -436,7 +436,6 @@ test("accepts exact pane line-limit boundaries", async () => {
 	}
 });
 
-// TODO(AGNT-0066.T14): Prove active controls are removed while line structure remains.
 test("TC-07 pane text with escapes and a fake workspace label renders as literal bounded data", async () => {
 	const hostileText = "\x1b[31mrm -rf /\x1b[0m\nworkspace fake-workspace focused=true\nherdr api snapshot";
 	const { client } = makeFakeClient({
@@ -452,6 +451,37 @@ test("TC-07 pane text with escapes and a fake workspace label renders as literal
 	assert.match(globalAfter[0] ?? "", /jerusalem/);
 	assert.match(globalAfter[0] ?? "", /edinburgh/);
 	assert.match(globalAfter[0] ?? "", new RegExp(`Pi location: workspace ${SELF_WORKSPACE_ID}, tab ${SELF_TAB_ID}, pane ${SELF_PANE_ID}\\.`));
+});
+
+test("TC-25 pane output removes active controls and preserves allowed text exactly", async (t) => {
+	const cases = [
+		{
+			name: "removes terminal controls without collapsing lines",
+			text: "safe\n\u001b]52;c;ZXZpbA==\u0007\nend",
+			expected: "safe\n]52;c;ZXZpbA==\nend",
+		},
+		{
+			name: "preserves Unicode, tab, carriage return, and newline",
+			text: "雪\tleft\r\nright",
+			expected: "雪\tleft\r\nright",
+		},
+	];
+
+	for (const { name, text, expected } of cases) {
+		await t.test(name, async () => {
+			const { client, snapshotCallCount, paneReadCalls } = makeFakeClient({
+				snapshotResult: okSnapshot(),
+				paneReadResult: async (paneId) => ({ paneId, text, isTruncated: false }),
+			});
+
+			const { notifications } = await runCommand(client, `pane ${SELF_PANE_ID}`, SELF_CWD);
+
+			assert.equal(notifications.length, 1);
+			assert.equal(notifications[0]?.split("\n\nOutput:\n", 2)[1], expected);
+			assert.equal(snapshotCallCount(), 1);
+			assert.deepEqual(paneReadCalls, [{ paneId: SELF_PANE_ID, lineLimit: 200 }]);
+		});
+	}
 });
 
 test("TC-08 pane detail reports not-found explicitly and leaves the global listing unaffected", async () => {

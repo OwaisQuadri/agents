@@ -230,7 +230,6 @@ async function renderPaneDetail(
 			? `Output (bounded to the last ${lineLimit} lines; earlier output was truncated):`
 			: "Output:",
 	);
-	// TODO(AGNT-0066.T14): Keep terminal control bytes inert at the Pi UI boundary.
 	lines.push(output.text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, ""));
 	return lines.join("\n");
 }
