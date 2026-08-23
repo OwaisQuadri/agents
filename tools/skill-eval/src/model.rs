@@ -78,6 +78,7 @@ pub(crate) struct ArtifactDefinition {
     pub(crate) name: ArtifactName,
     pub(crate) kind: ArtifactKind,
     pub(crate) root: PathBuf,
+    pub(crate) revision: String,
     pub(crate) current_tiers: Vec<TierAssignment>,
     pub(crate) cases: Vec<CaseDefinition>,
 }
@@ -88,7 +89,13 @@ pub(crate) struct ArtifactChange {
     pub(crate) kind: ArtifactKind,
     pub(crate) incumbent_revision: String,
     pub(crate) candidate_revision: String,
-    pub(crate) own_eval_evidence: PathBuf,
+    pub(crate) own_eval: OwnEvalEvidence,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct OwnEvalEvidence {
+    pub(crate) artifact_revision: String,
+    pub(crate) path: PathBuf,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -206,9 +213,19 @@ pub(crate) struct ConfidenceInterval {
     pub(crate) upper: f64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EvidenceRole {
+    Reference,
+    Candidate,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct TierEvidence {
+    pub(crate) role: EvidenceRole,
     pub(crate) tier: Tier,
+    pub(crate) model: ModelIdentity,
+    pub(crate) harness: HarnessIdentity,
     pub(crate) status: TierStatus,
     pub(crate) completed_trials: u32,
     pub(crate) expected_trials: u32,
@@ -370,7 +387,9 @@ pub(crate) enum CliCommand {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualifyRequest {
     pub(crate) artifact_roots: Vec<PathBuf>,
+    pub(crate) change: Option<ArtifactChange>,
     pub(crate) policy: QualificationPolicy,
+    pub(crate) is_dry_run: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -436,6 +455,7 @@ pub(crate) struct JudgeInput {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualificationReport {
     pub(crate) run_id: RunId,
+    pub(crate) change: Option<ArtifactChange>,
     pub(crate) status: RunStatus,
     pub(crate) artifacts: Vec<ArtifactReport>,
     pub(crate) total_usage: TrialUsage,
@@ -446,6 +466,8 @@ pub(crate) struct ArtifactReport {
     pub(crate) artifact: ArtifactName,
     pub(crate) kind: ArtifactKind,
     pub(crate) status: ArtifactStatus,
+    pub(crate) reference: Option<TierEvidence>,
+    pub(crate) tiers: Vec<TierEvidence>,
     pub(crate) boundary: Option<QualificationBoundary>,
     pub(crate) decision: Option<DecisionRecord>,
     pub(crate) publication_gate: Option<PublicationGate>,
