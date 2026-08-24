@@ -168,6 +168,83 @@ pub(crate) struct ModelIdentity {
     pub(crate) thinking: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub(crate) struct PoolRunId(pub(crate) String);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PoolStage {
+    Calibration,
+    Qualification,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PoolEntrant {
+    pub(crate) model: ModelIdentity,
+    pub(crate) catalog_observed_at: Timestamp,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PoolPolicy {
+    pub(crate) calibration_repeats_per_case: u16,
+    pub(crate) qualification_repeats_per_case: u16,
+    pub(crate) promotion_count: u8,
+    pub(crate) minimum_score: u8,
+    pub(crate) minimum_reliability_basis_points: u16,
+    pub(crate) spending_limit_millionths_of_dollar: u64,
+    pub(crate) is_provider_limit_enforced: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PoolRunConfiguration {
+    pub(crate) run_id: PoolRunId,
+    pub(crate) created_at: Timestamp,
+    pub(crate) entrants: BTreeMap<Tier, Vec<PoolEntrant>>,
+    pub(crate) control: ModelIdentity,
+    pub(crate) policy: PoolPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PoolEntrantEvidence {
+    pub(crate) stage: PoolStage,
+    pub(crate) requested_model: ModelIdentity,
+    pub(crate) effective_model: ModelIdentity,
+    pub(crate) qualification_run_id: RunId,
+    pub(crate) completed_trials: u32,
+    pub(crate) expected_trials: u32,
+    pub(crate) failed_trials: u32,
+    pub(crate) catastrophic_trials: u32,
+    pub(crate) score: ConfidenceInterval,
+    pub(crate) total_usage: TrialUsage,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct RankedPool {
+    pub(crate) tier: Tier,
+    pub(crate) calibration: Vec<PoolEntrantEvidence>,
+    pub(crate) promoted: Vec<ModelIdentity>,
+    pub(crate) qualification: Vec<PoolEntrantEvidence>,
+    pub(crate) ranked: Vec<ModelIdentity>,
+    pub(crate) is_complete: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum PoolPauseReason {
+    Quota {
+        model: ModelIdentity,
+        reset_at: Option<Timestamp>,
+    },
+    SpendingLimit {
+        spent_millionths_of_dollar: u64,
+        limit_millionths_of_dollar: u64,
+    },
+    Infrastructure {
+        message: String,
+    },
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct HarnessIdentity {
     pub(crate) runner_version: String,

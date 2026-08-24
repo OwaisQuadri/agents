@@ -39,6 +39,9 @@
   },
   "orchestrator": "T3",
   "judge": "T5",
+  "capabilities": {},
+  "unranked_controls": {},
+
   "agents": {
     "log-summarizer": "T2",
     "web-research-summarizer": "T2",
