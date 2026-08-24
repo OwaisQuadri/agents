@@ -443,6 +443,7 @@ pub(crate) enum ArtifactStatus {
     AwaitingDecision,
     Accepted,
     Rejected,
+    PoolCompleted,
     Paused,
     NeedsReview,
 }
@@ -739,6 +740,11 @@ pub(crate) enum RunEvent {
     TrialCompleted {
         at: Timestamp,
         record: TrialRecord,
+    },
+    PoolChildCompleted {
+        at: Timestamp,
+        artifact: ArtifactName,
+        tier: Tier,
     },
     TierEvaluated {
         at: Timestamp,
