@@ -280,9 +280,9 @@ pub(crate) enum FailurePoint {
     DirectorySync,
 }
 
-// TODO(AGNT-0032.T88): Reject empty, duplicate, or incomplete frozen exam definitions.
 fn validate_state(state: &PoolRunState, is_initial: bool) -> Result<(), SkillEvalError> {
     validate_identifier(&state.configuration.run_id.0, "pool run")?;
+    validate_artifacts(state)?;
     if state.selected_tiers.is_empty() {
         return Err(invalid("pool state must select at least one tier"));
     }
@@ -354,6 +354,31 @@ fn validate_state(state: &PoolRunState, is_initial: bool) -> Result<(), SkillEva
         return Err(invalid(
             "new pool state must be entirely pending and unspent",
         ));
+    }
+    Ok(())
+}
+
+fn validate_artifacts(state: &PoolRunState) -> Result<(), SkillEvalError> {
+    if state.configuration.artifacts.is_empty() {
+        return Err(invalid(
+            "pool configuration must freeze at least one artifact",
+        ));
+    }
+    let mut names = BTreeSet::new();
+    for artifact in &state.configuration.artifacts {
+        if !names.insert(&artifact.name) {
+            return Err(invalid(
+                "pool configuration contains duplicate frozen artifact names",
+            ));
+        }
+        if artifact.root.as_os_str().is_empty()
+            || artifact.revision.trim().is_empty()
+            || !artifact.cases.iter().any(|case| !case.is_holdout)
+        {
+            return Err(invalid(
+                "pool configuration contains an incomplete frozen artifact definition",
+            ));
+        }
     }
     Ok(())
 }
@@ -509,6 +534,7 @@ fn stage_number(stage: PoolStage) -> u8 {
     }
 }
 
+// TODO(AGNT-0032.T90): Permit only promotion-backed qualification skips and keep them terminal.
 fn is_legal_child_transition(old: PoolChildStatus, next: PoolChildStatus) -> bool {
     matches!(
         (old, next),

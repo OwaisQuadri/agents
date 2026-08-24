@@ -11,9 +11,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use model::{
-    ModelIdentity, PoolChildRun, PoolChildStatus, PoolEntrant, PoolPauseReason, PoolPolicy,
-    PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage, RankedPool, RunId,
-    SkillEvalError, Tier, Timestamp,
+    ArtifactDefinition, ArtifactKind, ArtifactName, CaseDefinition, CaseDrive, CaseId,
+    ExecutionDefinition, ModelIdentity, PoolChildRun, PoolChildStatus, PoolEntrant,
+    PoolPauseReason, PoolPolicy, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus,
+    PoolStage, RankedPool, RunId, SkillEvalError, Tier, TierDestination, Timestamp,
 };
 use pool_store::{FailurePoint, FilePoolStore};
 use ports::PoolStore;
@@ -59,7 +60,30 @@ fn identity(tier: Tier, index: usize) -> ModelIdentity {
     }
 }
 
-// TODO(AGNT-0032.T88): Prove store preservation and rejection for frozen exam definitions.
+fn frozen_artifact() -> ArtifactDefinition {
+    ArtifactDefinition {
+        name: ArtifactName("calibration".to_owned()),
+        kind: ArtifactKind::Skill,
+        root: PathBuf::from("exam"),
+        revision: "exam-revision".to_owned(),
+        required_destinations: vec![TierDestination::SkillMinimum],
+        current_tiers: Vec::new(),
+        cases: vec![CaseDefinition {
+            id: CaseId("fixed".to_owned()),
+            input: "input".to_owned(),
+            expect: "expect".to_owned(),
+            source: "fixture".to_owned(),
+            is_holdout: false,
+            support_files: Vec::new(),
+            execution: ExecutionDefinition {
+                drive: CaseDrive::Response,
+                allowed_tools: Vec::new(),
+                timeout_seconds: 10,
+            },
+        }],
+    }
+}
+
 fn initial_state() -> PoolRunState {
     let tier = Tier::T2;
     let entrants = (0..3)
@@ -91,6 +115,7 @@ fn initial_state() -> PoolRunState {
         configuration: PoolRunConfiguration {
             run_id: PoolRunId("pool-1".to_owned()),
             created_at: Timestamp("2026-08-23T12:00:00-0400".to_owned()),
+            artifacts: vec![frozen_artifact()],
             entrants: BTreeMap::from([(tier, entrants)]),
             control: ModelIdentity {
                 tier: Tier::T1,
@@ -221,6 +246,47 @@ fn creation_requires_complete_unique_preallocation_and_is_not_repeatable() {
         )
         .contains("duplicate child slots")
     );
+
+    let artifact_directory = TemporaryDirectory::new("frozen-artifacts");
+    let mut artifact_store = FilePoolStore::new(artifact_directory.path()).unwrap();
+
+    let mut empty = initial_state();
+    empty.configuration.artifacts.clear();
+    assert!(
+        invalid_message(artifact_store.create_pool(&empty).unwrap_err())
+            .contains("at least one artifact")
+    );
+
+    let mut duplicate = initial_state();
+    duplicate
+        .configuration
+        .artifacts
+        .push(duplicate.configuration.artifacts[0].clone());
+    assert!(
+        invalid_message(artifact_store.create_pool(&duplicate).unwrap_err())
+            .contains("duplicate frozen artifact")
+    );
+
+    let mut blank_revision = initial_state();
+    blank_revision.configuration.artifacts[0].revision.clear();
+    assert!(
+        invalid_message(artifact_store.create_pool(&blank_revision).unwrap_err())
+            .contains("incomplete frozen artifact")
+    );
+
+    let mut empty_root = initial_state();
+    empty_root.configuration.artifacts[0].root = PathBuf::new();
+    assert!(
+        invalid_message(artifact_store.create_pool(&empty_root).unwrap_err())
+            .contains("incomplete frozen artifact")
+    );
+
+    let mut holdout_only = initial_state();
+    holdout_only.configuration.artifacts[0].cases[0].is_holdout = true;
+    assert!(
+        invalid_message(artifact_store.create_pool(&holdout_only).unwrap_err())
+            .contains("incomplete frozen artifact")
+    );
 }
 
 #[test]
@@ -253,6 +319,7 @@ fn unsafe_identifiers_and_escaping_pool_directories_are_rejected() {
 }
 
 #[test]
+// TODO(AGNT-0032.T90): Prove promotion-backed skipped transitions and terminal preservation.
 fn frozen_fields_rollbacks_skips_and_illegal_aggregate_transitions_preserve_bytes() {
     let directory = TemporaryDirectory::new("transitions");
     let mut store = FilePoolStore::new(directory.path()).unwrap();

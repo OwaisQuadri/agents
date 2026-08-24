@@ -18,7 +18,6 @@ use crate::ports::{
 };
 
 // TODO(AGNT-0032.T90): Advance passing calibration entrants through full qualification and ranking.
-// TODO(AGNT-0032.T88): Persist frozen exam definitions before child preallocation or calls.
 pub(crate) fn start_pool_qualification(
     request: PoolQualifyRequest,
     runtime: &mut dyn PoolRuntime,
@@ -28,12 +27,13 @@ pub(crate) fn start_pool_qualification(
     let created_at = runtime.now();
     runtime.validate_pool_plan_freshness(&plan, &created_at)?;
     validate_pool_request(&request, &plan)?;
-    load_and_validate_artifacts(&request.artifact_roots, runtime)?;
+    let artifacts = load_and_validate_artifacts(&request.artifact_roots, runtime)?;
 
     let pool_run_id = runtime.next_pool()?;
     let configuration = PoolRunConfiguration {
         run_id: pool_run_id,
         created_at,
+        artifacts,
         entrants: plan.entrants,
         control: plan.control,
         policy: plan.policy,
@@ -78,7 +78,12 @@ pub(crate) fn start_pool_qualification(
         .model
         .clone();
     let child_request = pool_child_request(
-        &request.artifact_roots,
+        &state
+            .configuration
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.root.clone())
+            .collect::<Vec<_>>(),
         child.tier,
         state.configuration.policy.calibration_repeats_per_case,
         state.configuration.policy.minimum_score,
@@ -179,24 +184,27 @@ fn validate_pool_request(
 fn load_and_validate_artifacts(
     roots: &[std::path::PathBuf],
     runtime: &dyn QualificationRuntime,
-) -> Result<(), SkillEvalError> {
+) -> Result<Vec<ArtifactDefinition>, SkillEvalError> {
+    let artifacts = roots
+        .iter()
+        .map(|root| runtime.load(root))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut names = BTreeSet::new();
-    for root in roots {
-        let artifact = runtime.load(root)?;
-        validate_artifact(&artifact)?;
+    for artifact in &artifacts {
+        validate_artifact(artifact)?;
         if !artifact.cases.iter().any(|case| !case.is_holdout) {
             return Err(SkillEvalError::InvalidConfiguration(format!(
                 "pool exam artifact {:?} has no non-holdout case",
                 artifact.name.0
             )));
         }
-        if !names.insert(artifact.name) {
+        if !names.insert(artifact.name.clone()) {
             return Err(SkillEvalError::InvalidConfiguration(
                 "pool exam contains a duplicate artifact".to_owned(),
             ));
         }
     }
-    Ok(())
+    Ok(artifacts)
 }
 
 fn preallocate_pool_children(
@@ -308,13 +316,753 @@ impl ProgressSink for SilentProgress {
     }
 }
 
-// TODO(AGNT-0032.T89): Resume the first incomplete preallocated child without duplicate work.
+// TODO(AGNT-0032.T89): Skip terminal completed or skipped slots and require frozen promotion.
 pub(crate) fn resume_pool_qualification(
-    _run_id: &PoolRunId,
-    _runtime: &mut dyn PoolRuntime,
-    _progress: &mut dyn PoolProgressSink,
+    run_id: &PoolRunId,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
 ) -> Result<PoolRunState, SkillEvalError> {
-    unimplemented!("AGNT-0032.T89")
+    let mut state = runtime.load_pool(run_id)?;
+    let child_index = validate_pool_resume_state(run_id, &state)?;
+    validate_frozen_pool_artifacts(&state, runtime)?;
+
+    let child = state.child_runs[child_index].clone();
+    let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
+        .model
+        .clone();
+    let repeats_per_case = match child.stage {
+        PoolStage::Calibration => state.configuration.policy.calibration_repeats_per_case,
+        PoolStage::Qualification => state.configuration.policy.qualification_repeats_per_case,
+    };
+    let roots = state
+        .configuration
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.root.clone())
+        .collect::<Vec<_>>();
+
+    let prior_report = match child.status {
+        PoolChildStatus::Pending => None,
+        PoolChildStatus::Running | PoolChildStatus::Paused => {
+            Some(build_report(&child.run_id, runtime)?)
+        }
+        PoolChildStatus::Completed => unreachable!(),
+        PoolChildStatus::Failed => {
+            return Err(resume_drift("failed pool child"));
+        }
+    };
+    let prior_cost = prior_report
+        .as_ref()
+        .map_or(0, |report| report.total_usage.cost_millionths_of_dollar);
+
+    let mut replay = None;
+    let mut exact_candidate = None;
+    let mut pool_judge = None;
+    let pending_judge_tier = if let Some(report) = prior_report.as_ref() {
+        let current_replay = replay_pool_child(&child.run_id, runtime)?;
+        let (candidate, judge) = validate_pool_child_resume(
+            &state,
+            &child,
+            &requested,
+            report,
+            &current_replay,
+            runtime,
+        )?;
+        replay = Some(current_replay);
+        exact_candidate = Some(candidate);
+        pool_judge = Some(judge);
+        None
+    } else {
+        Some(validate_pending_pool_child(
+            &state, &child, &requested, runtime,
+        )?)
+    };
+
+    if state.status == PoolRunStatus::Paused {
+        state.status = PoolRunStatus::Running;
+        state.pause = None;
+        save_pool_and_emit(runtime, progress, &state)?;
+    }
+    if matches!(
+        child.status,
+        PoolChildStatus::Pending | PoolChildStatus::Paused
+    ) {
+        state.child_runs[child_index].status = PoolChildStatus::Running;
+        save_pool_and_emit(runtime, progress, &state)?;
+    }
+
+    let mut child_progress = SilentProgress;
+    let result = match prior_report {
+        None => {
+            let child_request = pool_child_request(
+                &roots,
+                child.tier,
+                repeats_per_case,
+                state.configuration.policy.minimum_score,
+                pending_judge_tier.expect("pending child judge tier is present"),
+            );
+            start_qualification_with_run_id(
+                child.run_id.clone(),
+                Some(requested),
+                child_request,
+                runtime,
+                &mut child_progress,
+            )
+        }
+        Some(report) if report.status == RunStatus::Completed => Ok(report),
+        Some(report) if matches!(report.status, RunStatus::Running | RunStatus::Paused) => {
+            resume_exact_pool_child(
+                &child.run_id,
+                report.status == RunStatus::Paused,
+                replay.as_ref().expect("existing child replay is present"),
+                exact_candidate
+                    .as_ref()
+                    .expect("existing child exact candidate is present"),
+                pool_judge
+                    .as_ref()
+                    .expect("existing child pool judge is present"),
+                runtime,
+                &mut child_progress,
+            )
+        }
+        Some(report) if report.status == RunStatus::Failed => Ok(report),
+        Some(report) => Err(SkillEvalError::InvalidConfiguration(format!(
+            "pool child has invalid resumable status {:?}",
+            report.status
+        ))),
+    };
+
+    let report = match result {
+        Ok(report) => report,
+        Err(
+            error @ (SkillEvalError::InvalidArguments(_)
+            | SkillEvalError::InvalidConfiguration(_)
+            | SkillEvalError::JudgeUnavailable { .. }),
+        ) => return Err(error),
+        Err(error) => {
+            let reason = pause_reason_from_error(error);
+            pause_pool_child(&mut state, child_index, reason, runtime, progress)?;
+            return Ok(state);
+        }
+    };
+
+    add_pool_resume_spending(&mut state, prior_cost, &report, runtime, progress)?;
+    match report.status {
+        RunStatus::Completed => {
+            state.child_runs[child_index].status = PoolChildStatus::Completed;
+            save_pool_and_emit(runtime, progress, &state)?;
+        }
+        RunStatus::Paused => {
+            let reason = report.pause.ok_or_else(|| {
+                SkillEvalError::InvalidConfiguration(
+                    "paused pool child has no pause reason".to_owned(),
+                )
+            })?;
+            pause_pool_child(&mut state, child_index, reason, runtime, progress)?;
+        }
+        RunStatus::Failed => {
+            fail_pool_child(&mut state, child_index, runtime, progress)?;
+        }
+        status => {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "pool child returned malformed status {status:?}"
+            )));
+        }
+    }
+    Ok(state)
+}
+
+fn validate_pool_resume_state(
+    run_id: &PoolRunId,
+    state: &PoolRunState,
+) -> Result<usize, SkillEvalError> {
+    if state.configuration.run_id != *run_id {
+        return Err(resume_drift("pool run identity"));
+    }
+    if !matches!(state.status, PoolRunStatus::Running | PoolRunStatus::Paused) {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "pool resume requires a running or paused nonterminal run".to_owned(),
+        ));
+    }
+    if (state.status == PoolRunStatus::Paused) != state.pause.is_some() {
+        return Err(resume_drift("pool pause state"));
+    }
+    if state.selected_tiers.is_empty()
+        || state
+            .selected_tiers
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .len()
+            != state.selected_tiers.len()
+    {
+        return Err(resume_drift("selected tier plan"));
+    }
+    validate_frozen_pool_plan(state)?;
+
+    let mut ordered = Vec::new();
+    let mut identities = BTreeSet::new();
+    for (tier_order, tier) in state.selected_tiers.iter().enumerate() {
+        let entrants = state
+            .configuration
+            .entrants
+            .get(tier)
+            .ok_or_else(|| resume_drift("selected tier"))?;
+        if entrants.len() != 3 {
+            return Err(resume_drift("pool model plan"));
+        }
+        for stage in [PoolStage::Calibration, PoolStage::Qualification] {
+            for entrant_index in 0_u8..3 {
+                let matches = state
+                    .child_runs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, child)| {
+                        child.tier == *tier
+                            && child.stage == stage
+                            && child.entrant_index == entrant_index
+                    })
+                    .collect::<Vec<_>>();
+                if matches.len() != 1 {
+                    return Err(resume_drift("pool child identity"));
+                }
+                let (index, child) = matches[0];
+                validate_run_id(&child.run_id)?;
+                if !identities.insert(child.run_id.clone()) {
+                    return Err(resume_drift("pool child identity"));
+                }
+                ordered.push((tier_order, stage, entrant_index, index));
+            }
+        }
+    }
+    if identities.len() != state.child_runs.len() {
+        return Err(resume_drift("pool child identity"));
+    }
+    ordered.sort_by_key(|(tier_order, stage, entrant_index, _)| {
+        (
+            *tier_order,
+            match stage {
+                PoolStage::Calibration => 0_u8,
+                PoolStage::Qualification => 1_u8,
+            },
+            *entrant_index,
+        )
+    });
+
+    let first = ordered
+        .iter()
+        .position(|(_, _, _, index)| state.child_runs[*index].status != PoolChildStatus::Completed)
+        .ok_or_else(|| resume_drift("terminal pool status"))?;
+    if ordered[..first]
+        .iter()
+        .any(|(_, _, _, index)| state.child_runs[*index].status != PoolChildStatus::Completed)
+        || ordered[first + 1..]
+            .iter()
+            .any(|(_, _, _, index)| state.child_runs[*index].status != PoolChildStatus::Pending)
+    {
+        return Err(resume_drift("stable pool child order"));
+    }
+
+    let child_index = ordered[first].3;
+    let child_status = state.child_runs[child_index].status;
+    match (state.status, child_status) {
+        (
+            PoolRunStatus::Running,
+            PoolChildStatus::Pending | PoolChildStatus::Running | PoolChildStatus::Paused,
+        )
+        | (PoolRunStatus::Paused, PoolChildStatus::Paused) => Ok(child_index),
+        (_, PoolChildStatus::Failed) => Err(resume_drift("failed pool child")),
+        _ => Err(resume_drift("parent and child status")),
+    }
+}
+
+fn validate_frozen_pool_plan(state: &PoolRunState) -> Result<(), SkillEvalError> {
+    let policy = &state.configuration.policy;
+    if policy.calibration_repeats_per_case == 0
+        || policy.qualification_repeats_per_case == 0
+        || policy.promotion_count != 2
+        || policy.minimum_score > 10
+        || policy.minimum_reliability_basis_points > 10_000
+        || policy.maximum_catalog_age_seconds == 0
+        || policy.spending_limit_millionths_of_dollar == 0
+        || !policy.is_provider_limit_enforced
+        || state.configuration.control.tier != Tier::T1
+    {
+        return Err(resume_drift("pool plan"));
+    }
+
+    let mut models = Vec::new();
+    for tier in [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5] {
+        let entrants = state
+            .configuration
+            .entrants
+            .get(&tier)
+            .ok_or_else(|| resume_drift("pool model plan"))?;
+        if entrants.len() != 3 {
+            return Err(resume_drift("pool model plan"));
+        }
+        for entrant in entrants {
+            if entrant.model.tier != tier
+                || entrant.model.provider.trim().is_empty()
+                || entrant.model.model.trim().is_empty()
+                || entrant.model.thinking.trim().is_empty()
+                || entrant.catalog_observed_at.0.trim().is_empty()
+                || models.contains(&entrant.model)
+            {
+                return Err(resume_drift("pool model plan"));
+            }
+            models.push(entrant.model.clone());
+        }
+    }
+    if state.configuration.entrants.len() != 5
+        || state.configuration.control.provider.trim().is_empty()
+        || state.configuration.control.model.trim().is_empty()
+        || state.configuration.control.thinking.trim().is_empty()
+        || models.contains(&state.configuration.control)
+    {
+        return Err(resume_drift("pool model plan"));
+    }
+    Ok(())
+}
+
+fn validate_frozen_pool_artifacts(
+    state: &PoolRunState,
+    runtime: &dyn QualificationRuntime,
+) -> Result<(), SkillEvalError> {
+    for frozen in &state.configuration.artifacts {
+        let current = runtime.load(&frozen.root)?;
+        if current != *frozen {
+            return Err(resume_drift("complete artifact definition"));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct PoolChildReplay {
+    configuration: Option<RunConfiguration>,
+    discovery: Option<Vec<ArtifactDiscovery>>,
+    started: BTreeMap<TrialKey, StartedTrial>,
+    candidates: BTreeMap<TrialKey, crate::model::CandidateArtifact>,
+    completed: BTreeMap<TrialKey, TrialRecord>,
+    completed_artifacts: BTreeMap<ArtifactName, Tier>,
+}
+
+fn replay_pool_child(
+    run_id: &RunId,
+    store: &dyn RunStore,
+) -> Result<PoolChildReplay, SkillEvalError> {
+    let mut replay = PoolChildReplay::default();
+    store.replay(run_id, &mut |event| {
+        match event {
+            RunEvent::RunStarted { configuration, .. } => {
+                if replay.configuration.replace(configuration).is_some() {
+                    return Err(resume_drift("child frozen configuration"));
+                }
+            }
+            RunEvent::DiscoveryCompleted { artifacts, .. } => {
+                if replay.discovery.replace(artifacts).is_some() {
+                    return Err(resume_drift("child discovery checkpoint"));
+                }
+            }
+            RunEvent::TrialStarted {
+                key,
+                models,
+                harness,
+                ..
+            } => {
+                if replay
+                    .started
+                    .insert(key, StartedTrial { models, harness })
+                    .is_some()
+                {
+                    return Err(resume_drift("child trial checkpoint"));
+                }
+            }
+            RunEvent::CandidateExecuted { candidate, .. } => {
+                if replay
+                    .candidates
+                    .insert(candidate.key.clone(), candidate)
+                    .is_some()
+                {
+                    return Err(resume_drift("child candidate checkpoint"));
+                }
+            }
+            RunEvent::TrialCompleted { record, .. } => {
+                if replay
+                    .completed
+                    .insert(record.key.clone(), record)
+                    .is_some()
+                {
+                    return Err(resume_drift("child trial checkpoint"));
+                }
+            }
+            RunEvent::PoolChildCompleted { artifact, tier, .. } => {
+                if replay.completed_artifacts.insert(artifact, tier).is_some() {
+                    return Err(resume_drift("child completion checkpoint"));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(replay)
+}
+
+fn validate_pending_pool_child(
+    state: &PoolRunState,
+    child: &PoolChildRun,
+    requested: &ModelIdentity,
+    runtime: &dyn QualificationRuntime,
+) -> Result<Tier, SkillEvalError> {
+    let exact_candidate = runtime.exact_candidate(requested)?;
+    if exact_candidate != *requested || exact_candidate.tier != child.tier {
+        return Err(resume_drift("exact child model"));
+    }
+    let judge_tier = runtime.configured_judge_tier()?;
+    let judge = runtime.pool_judge(&exact_candidate)?;
+    validate_external_judge(&exact_candidate, &judge, judge.tier)?;
+    for artifact in &state.configuration.artifacts {
+        for case in artifact.cases.iter().filter(|case| !case.is_holdout) {
+            runtime.identity(artifact, &case.execution)?;
+        }
+    }
+    Ok(judge_tier)
+}
+
+fn validate_pool_child_resume(
+    state: &PoolRunState,
+    child: &PoolChildRun,
+    requested: &ModelIdentity,
+    report: &QualificationReport,
+    replay: &PoolChildReplay,
+    runtime: &dyn QualificationRuntime,
+) -> Result<(ModelIdentity, ModelIdentity), SkillEvalError> {
+    let configuration = replay
+        .configuration
+        .as_ref()
+        .ok_or_else(|| resume_drift("child frozen configuration"))?;
+    let repeats_per_case = match child.stage {
+        PoolStage::Calibration => state.configuration.policy.calibration_repeats_per_case,
+        PoolStage::Qualification => state.configuration.policy.qualification_repeats_per_case,
+    };
+    let expected_policy = pool_child_request(
+        &state
+            .configuration
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.root.clone())
+            .collect::<Vec<_>>(),
+        child.tier,
+        repeats_per_case,
+        state.configuration.policy.minimum_score,
+        configuration.policy.judge_tier,
+    )
+    .policy;
+    if configuration.run_id != child.run_id
+        || configuration.mode != RunMode::Execute
+        || configuration.artifacts != state.configuration.artifacts
+        || configuration.change.is_some()
+        || configuration.policy != expected_policy
+        || report.run_id != child.run_id
+        || report.mode != RunMode::Execute
+        || report.change.is_some()
+    {
+        return Err(resume_drift("child execution plan"));
+    }
+    let expected_discovery = configuration
+        .artifacts
+        .iter()
+        .map(|artifact| ArtifactDiscovery {
+            artifact: artifact.name.clone(),
+            kind: artifact.kind,
+            revision: artifact.revision.clone(),
+            cases: artifact
+                .cases
+                .iter()
+                .map(|case| CaseDiscovery {
+                    id: case.id.clone(),
+                    drive: case.execution.drive.clone(),
+                    is_holdout: case.is_holdout,
+                })
+                .collect(),
+        })
+        .collect::<Vec<_>>();
+    if replay
+        .discovery
+        .as_ref()
+        .is_some_and(|discovery| *discovery != expected_discovery)
+        || report.discoveries != replay.discovery.clone().unwrap_or_default()
+    {
+        return Err(resume_drift("child discovery checkpoint"));
+    }
+    if runtime.configured_judge_tier()? != configuration.policy.judge_tier {
+        return Err(resume_drift("child judge plan"));
+    }
+    let exact_candidate = runtime.exact_candidate(requested)?;
+    if exact_candidate != *requested || exact_candidate.tier != child.tier {
+        return Err(resume_drift("exact child model"));
+    }
+    let judge = runtime.pool_judge(&exact_candidate)?;
+    validate_external_judge(&exact_candidate, &judge, judge.tier)?;
+
+    let mut planned_keys = BTreeSet::new();
+    for artifact in &state.configuration.artifacts {
+        for case in artifact.cases.iter().filter(|case| !case.is_holdout) {
+            let harness = runtime.identity(artifact, &case.execution)?;
+            for attempt in 1..=repeats_per_case {
+                let key = TrialKey {
+                    artifact: artifact.name.clone(),
+                    tier: child.tier,
+                    case: case.id.clone(),
+                    attempt,
+                };
+                planned_keys.insert(key.clone());
+                if let Some(started) = replay.started.get(&key)
+                    && (started.models != [exact_candidate.clone()] || started.harness != harness)
+                {
+                    return Err(resume_drift("child model or harness identity"));
+                }
+            }
+        }
+    }
+    if replay
+        .started
+        .keys()
+        .chain(replay.candidates.keys())
+        .chain(replay.completed.keys())
+        .any(|key| !planned_keys.contains(key))
+    {
+        return Err(resume_drift("child trial plan"));
+    }
+    for (key, candidate) in &replay.candidates {
+        let started = replay
+            .started
+            .get(key)
+            .ok_or_else(|| resume_drift("child candidate checkpoint"))?;
+        if candidate.key != *key
+            || candidate.model != exact_candidate
+            || candidate.harness != started.harness
+        {
+            return Err(resume_drift("child candidate checkpoint"));
+        }
+    }
+    for (key, record) in &replay.completed {
+        let candidate = replay
+            .candidates
+            .get(key)
+            .ok_or_else(|| resume_drift("child candidate checkpoint"))?;
+        if !candidate_matches_record(candidate, record) || record.judge_model != judge {
+            return Err(resume_drift("child judge or trial checkpoint"));
+        }
+    }
+    for (artifact, tier) in &replay.completed_artifacts {
+        if *tier != child.tier
+            || !state
+                .configuration
+                .artifacts
+                .iter()
+                .any(|definition| definition.name == *artifact)
+            || planned_keys
+                .iter()
+                .any(|key| key.artifact == *artifact && !replay.completed.contains_key(key))
+        {
+            return Err(resume_drift("child completion checkpoint"));
+        }
+    }
+    Ok((exact_candidate, judge))
+}
+
+fn resume_exact_pool_child(
+    run_id: &RunId,
+    is_paused: bool,
+    replay: &PoolChildReplay,
+    exact_candidate: &ModelIdentity,
+    judge: &ModelIdentity,
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<QualificationReport, SkillEvalError> {
+    let configuration = replay
+        .configuration
+        .as_ref()
+        .ok_or_else(|| resume_drift("child frozen configuration"))?;
+    if is_paused {
+        let at = runtime.now();
+        append_and_emit(runtime, progress, run_id, RunEvent::RunResumed { at })?;
+    }
+    if replay.discovery.is_none() {
+        append_discovery(runtime, progress, run_id, &configuration.artifacts)?;
+    }
+
+    for artifact in &configuration.artifacts {
+        if replay.completed_artifacts.contains_key(&artifact.name) {
+            continue;
+        }
+        for case in artifact.cases.iter().filter(|case| !case.is_holdout) {
+            let current_harness = runtime.identity(artifact, &case.execution)?;
+            for attempt in 1..=configuration.policy.repeats_per_case {
+                let key = TrialKey {
+                    artifact: artifact.name.clone(),
+                    tier: exact_candidate.tier,
+                    case: case.id.clone(),
+                    attempt,
+                };
+                if replay.completed.contains_key(&key) {
+                    continue;
+                }
+                let harness = if let Some(started) = replay.started.get(&key) {
+                    started.harness.clone()
+                } else {
+                    let at = runtime.now();
+                    append_and_emit(
+                        runtime,
+                        progress,
+                        run_id,
+                        RunEvent::TrialStarted {
+                            at,
+                            key: key.clone(),
+                            models: vec![exact_candidate.clone()],
+                            harness: current_harness.clone(),
+                        },
+                    )?;
+                    current_harness.clone()
+                };
+                let candidate = if let Some(candidate) = replay.candidates.get(&key) {
+                    candidate.clone()
+                } else {
+                    match runtime.execute(run_id, &key, artifact, case, exact_candidate, &harness) {
+                        Ok(candidate) => {
+                            if candidate.key != key
+                                || candidate.model != *exact_candidate
+                                || candidate.harness != harness
+                            {
+                                return Err(resume_drift("exact child execution"));
+                            }
+                            let at = runtime.now();
+                            append_and_emit(
+                                runtime,
+                                progress,
+                                run_id,
+                                RunEvent::CandidateExecuted {
+                                    at,
+                                    candidate: candidate.clone(),
+                                },
+                            )?;
+                            candidate
+                        }
+                        Err(
+                            error @ (SkillEvalError::InvalidArguments(_)
+                            | SkillEvalError::InvalidConfiguration(_)),
+                        ) => return Err(error),
+                        Err(error) => {
+                            append_pause(runtime, progress, run_id, error)?;
+                            return build_report(run_id, runtime);
+                        }
+                    }
+                };
+                let checks = match runtime.verify(case, &candidate) {
+                    Ok(checks) => checks,
+                    Err(
+                        error @ (SkillEvalError::InvalidArguments(_)
+                        | SkillEvalError::InvalidConfiguration(_)),
+                    ) => return Err(error),
+                    Err(error) => {
+                        append_pause(runtime, progress, run_id, error)?;
+                        return build_report(run_id, runtime);
+                    }
+                };
+                let judged = match runtime.grade(
+                    judge,
+                    &JudgeInput {
+                        candidate: candidate.clone(),
+                        expect: case.expect.clone(),
+                        rubric_path: artifact.root.join("evals/rubric.md"),
+                        checks,
+                    },
+                ) {
+                    Ok(judged) => judged,
+                    Err(
+                        error @ (SkillEvalError::InvalidArguments(_)
+                        | SkillEvalError::InvalidConfiguration(_)
+                        | SkillEvalError::JudgeUnavailable { .. }),
+                    ) => return Err(error),
+                    Err(error) => {
+                        append_pause(runtime, progress, run_id, error)?;
+                        return build_report(run_id, runtime);
+                    }
+                };
+                if judged.model != *judge {
+                    return Err(resume_drift("child judge identity"));
+                }
+                let record = TrialRecord {
+                    key,
+                    model: candidate.model.clone(),
+                    harness: candidate.harness.clone(),
+                    artifact_path: candidate.artifact_path.clone(),
+                    transcript_path: candidate.transcript_path.clone(),
+                    candidate_usage: candidate.usage.clone(),
+                    judge_model: judged.model,
+                    judge_usage: judged.usage,
+                    verdict: judged.verdict,
+                };
+                let at = runtime.now();
+                append_and_emit(
+                    runtime,
+                    progress,
+                    run_id,
+                    RunEvent::TrialCompleted { at, record },
+                )?;
+            }
+        }
+        let at = runtime.now();
+        append_and_emit(
+            runtime,
+            progress,
+            run_id,
+            RunEvent::PoolChildCompleted {
+                at,
+                artifact: artifact.name.clone(),
+                tier: exact_candidate.tier,
+            },
+        )?;
+    }
+    build_report(run_id, runtime)
+}
+
+fn add_pool_resume_spending(
+    state: &mut PoolRunState,
+    prior_cost: u64,
+    report: &QualificationReport,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    let current_cost = report.total_usage.cost_millionths_of_dollar;
+    let delta = current_cost.checked_sub(prior_cost).ok_or_else(|| {
+        SkillEvalError::InvalidConfiguration("pool child usage decreased across resume".to_owned())
+    })?;
+    if delta == 0 {
+        return Ok(());
+    }
+    state.spent_millionths_of_dollar = state
+        .spent_millionths_of_dollar
+        .checked_add(delta)
+        .ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration("pool spending arithmetic overflow".to_owned())
+        })?;
+    save_pool_and_emit(runtime, progress, state)
+}
+
+fn fail_pool_child(
+    state: &mut PoolRunState,
+    child_index: usize,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    state.child_runs[child_index].status = PoolChildStatus::Failed;
+    save_pool_and_emit(runtime, progress, state)?;
+    state.status = PoolRunStatus::Failed;
+    state.pause = None;
+    save_pool_and_emit(runtime, progress, state)
 }
 
 // TODO(AGNT-0032.T91): Return the complete pool state for command rendering.
@@ -2637,6 +3385,8 @@ include!("../tests/audit.rs");
 #[cfg(test)]
 include!("../tests/pool_start.rs");
 #[cfg(test)]
+include!("../tests/pool_resume.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -2650,6 +3400,8 @@ publication_tests!();
 audit_tests!();
 #[cfg(test)]
 pool_start_tests!();
+#[cfg(test)]
+pool_resume_tests!();
 
 #[cfg(test)]
 mod state {

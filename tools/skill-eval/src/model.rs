@@ -259,6 +259,7 @@ pub(crate) enum PoolChildStatus {
     Running,
     Paused,
     Completed,
+    // TODO(AGNT-0032.T90): Persist the unpromoted qualification slot as terminal skipped work.
     Skipped,
     Failed,
 }
