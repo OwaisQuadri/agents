@@ -202,6 +202,7 @@ pub(crate) struct PoolPolicy {
     pub(crate) promotion_count: u8,
     pub(crate) minimum_score: u8,
     pub(crate) minimum_reliability_basis_points: u16,
+    pub(crate) maximum_catalog_age_seconds: u32,
     pub(crate) spending_limit_millionths_of_dollar: u64,
     pub(crate) is_provider_limit_enforced: bool,
 }
