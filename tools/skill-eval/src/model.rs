@@ -70,16 +70,17 @@ pub(crate) struct RunConfiguration {
     pub(crate) created_at: Timestamp,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-// TODO(AGNT-0032.T82): Preserve ordinary qualification while enabling the explicit pool purpose.
 pub(crate) enum QualificationPurpose {
+    #[default]
     Artifact,
     ModelPool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualificationPolicy {
+    #[serde(default)]
     pub(crate) purpose: QualificationPurpose,
     pub(crate) candidate_tiers: Vec<Tier>,
     pub(crate) reference_tier: Tier,
@@ -219,7 +220,6 @@ pub(crate) struct PoolEntrantEvidence {
     pub(crate) stage: PoolStage,
     pub(crate) requested_model: ModelIdentity,
     pub(crate) effective_model: ModelIdentity,
-    pub(crate) qualification_run_id: RunId,
     pub(crate) completed_trials: u32,
     pub(crate) expected_trials: u32,
     pub(crate) failed_trials: u32,
