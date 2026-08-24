@@ -207,6 +207,13 @@ pub(crate) struct PoolPolicy {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PoolPlan {
+    pub(crate) entrants: BTreeMap<Tier, Vec<PoolEntrant>>,
+    pub(crate) control: ModelIdentity,
+    pub(crate) policy: PoolPolicy,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PoolRunConfiguration {
     pub(crate) run_id: PoolRunId,
     pub(crate) created_at: Timestamp,
