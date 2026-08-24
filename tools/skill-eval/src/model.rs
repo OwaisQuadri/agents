@@ -218,6 +218,7 @@ pub(crate) struct PoolPlan {
 pub(crate) struct PoolRunConfiguration {
     pub(crate) run_id: PoolRunId,
     pub(crate) created_at: Timestamp,
+    pub(crate) artifacts: Vec<ArtifactDefinition>,
     pub(crate) entrants: BTreeMap<Tier, Vec<PoolEntrant>>,
     pub(crate) control: ModelIdentity,
     pub(crate) policy: PoolPolicy,
@@ -443,7 +444,6 @@ pub(crate) enum ArtifactStatus {
     AwaitingDecision,
     Accepted,
     Rejected,
-    // TODO(AGNT-0032.T88): Reach a terminal pool-child artifact state without a tier boundary.
     PoolCompleted,
     Paused,
     NeedsReview,
@@ -453,6 +453,7 @@ pub(crate) enum ArtifactStatus {
 pub(crate) struct RunState {
     pub(crate) run_id: RunId,
     pub(crate) mode: RunMode,
+    pub(crate) purpose: QualificationPurpose,
     pub(crate) status: RunStatus,
     pub(crate) discoveries: Vec<ArtifactDiscovery>,
     pub(crate) artifacts: BTreeMap<ArtifactName, ArtifactQualificationState>,
@@ -742,7 +743,6 @@ pub(crate) enum RunEvent {
         at: Timestamp,
         record: TrialRecord,
     },
-    // TODO(AGNT-0032.T88): Persist exact trial-set completion only after all expected trials.
     PoolChildCompleted {
         at: Timestamp,
         artifact: ArtifactName,
