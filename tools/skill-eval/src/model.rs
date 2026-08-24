@@ -538,6 +538,22 @@ pub(crate) enum CliCommand {
     Judge {
         request: PromptJudgeRequest,
     },
+    PoolQualify {
+        request: PoolQualifyRequest,
+    },
+    PoolReport {
+        run_id: PoolRunId,
+    },
+    PoolResume {
+        run_id: PoolRunId,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PoolQualifyRequest {
+    pub(crate) plan_path: PathBuf,
+    pub(crate) artifact_roots: Vec<PathBuf>,
+    pub(crate) is_dry_run: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
