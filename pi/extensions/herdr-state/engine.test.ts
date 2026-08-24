@@ -425,6 +425,49 @@ test("normalizeEvent throws for a malformed recognized event and returns null fo
 	assert.equal(normalizeEvent(makeUnknownEvent()), null);
 });
 
+test("TC-30 tab updates preserve parent lineage and model immutability", () => {
+	const snapshot = normalizeSnapshot(makeSnapshotResponse());
+	const model = createModel(snapshot, findSelf(snapshot, SELF_CWD, SELF_PANE_ID));
+	const priorTab = model.snapshot.tabs.find((tab) => tab.id === SELF_TAB_ID);
+	const expectedPriorTab = {
+		id: SELF_TAB_ID,
+		workspaceId: SELF_WORKSPACE_ID,
+		label: "2",
+		isFocused: true,
+	};
+
+	assert.throws(
+		() =>
+			applyEvent(model, {
+				type: "tab-changed",
+				tab: {
+					id: SELF_TAB_ID,
+					workspaceId: "missing-workspace",
+					label: "invalid",
+					isFocused: false,
+				},
+			}),
+		{
+			message: "invalid Herdr tab event: tab references unknown workspace_id",
+		},
+	);
+
+	const validTab = { ...expectedPriorTab, label: "renamed" };
+	const nextModel = applyEvent(model, { type: "tab-changed", tab: validTab });
+
+	assert.notEqual(nextModel, model);
+	assert.notEqual(nextModel.snapshot, model.snapshot);
+	assert.deepEqual(
+		nextModel.snapshot.tabs.find((tab) => tab.id === SELF_TAB_ID),
+		validTab,
+	);
+	assert.deepEqual(
+		model.snapshot.tabs.find((tab) => tab.id === SELF_TAB_ID),
+		expectedPriorTab,
+	);
+	assert.deepEqual(priorTab, expectedPriorTab);
+});
+
 test("TC-30 pane updates preserve parent lineage and model immutability", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 	const model = createModel(snapshot, findSelf(snapshot, SELF_CWD, SELF_PANE_ID));

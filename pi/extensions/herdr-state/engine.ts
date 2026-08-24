@@ -334,6 +334,13 @@ export function applyEvent(
 				},
 			};
 		case "tab-changed":
+			if (
+				!model.snapshot.workspaces.some(
+					(workspace) => workspace.id === event.tab.workspaceId,
+				)
+			) {
+				throw new Error("invalid Herdr tab event: tab references unknown workspace_id");
+			}
 			return {
 				...model,
 				snapshot: {

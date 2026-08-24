@@ -461,9 +461,14 @@ test("TC-25 pane output removes active controls and preserves allowed text exact
 			expected: "safe\n]52;c;ZXZpbA==\nend",
 		},
 		{
-			name: "preserves Unicode, tab, carriage return, and newline",
+			name: "preserves ordinary Unicode, tab, and newline while removing carriage return",
 			text: "雪\tleft\r\nright",
-			expected: "雪\tleft\r\nright",
+			expected: "雪\tleft\nright",
+		},
+		{
+			name: "removes bounded bidirectional controls while preserving adjacent ordinary text",
+			text: "a\u061cb\u200ec\u200fd\u202ae\u202bf\u202cg\u202dh\u202ei\u2066j\u2067k\u2068l\u2069m",
+			expected: "abcdefghijklm",
 		},
 	];
 

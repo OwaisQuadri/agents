@@ -66,6 +66,22 @@ function waitForReconnect(signal: AbortSignal): Promise<void> {
 	});
 }
 
+function freezeModel(model: HerdrStateModel): HerdrStateModel {
+	const seen = new WeakSet<object>();
+	function freeze(value: unknown): void {
+		if (value === null || typeof value !== "object" || seen.has(value)) {
+			return;
+		}
+		seen.add(value);
+		for (const nested of Object.values(value)) {
+			freeze(nested);
+		}
+		Object.freeze(value);
+	}
+	freeze(model);
+	return model;
+}
+
 /**
  * Maintains an immutable live Herdr state model from snapshots and events.
  *
@@ -99,7 +115,7 @@ export class HerdrStateController implements HerdrStateControllerContract {
 		if (snapshot === null || !this.isActive(run)) {
 			return;
 		}
-		this.model = this.createCurrentModel(run, snapshot);
+		this.model = freezeModel(this.createCurrentModel(run, snapshot));
 		void this.runEventLoop(run);
 	}
 
@@ -179,7 +195,7 @@ export class HerdrStateController implements HerdrStateControllerContract {
 		if (snapshot === null || !this.isActive(run)) {
 			return false;
 		}
-		this.model = this.createCurrentModel(run, snapshot);
+		this.model = freezeModel(this.createCurrentModel(run, snapshot));
 		return true;
 	}
 
@@ -188,26 +204,36 @@ export class HerdrStateController implements HerdrStateControllerContract {
 			return;
 		}
 		const model = applyEvent(this.model, event);
-		this.model = {
+		this.model = freezeModel({
 			...model,
 			self: findSelf(model.snapshot, run.cwd, run.paneId),
-		};
+		});
 	}
 
 	private async consumeEventStream(run: ControllerRun): Promise<void> {
-		let isInvalidResponseRecovered = false;
+		let invalidResponseBurst = 0;
+		const beginInvalidResponseBurst = (): void => {
+			const burst = ++invalidResponseBurst;
+			process.nextTick(() => {
+				if (invalidResponseBurst === burst) {
+					invalidResponseBurst = 0;
+				}
+			});
+		};
 		for await (const result of this.client.events(run.abortController.signal)) {
 			if (!this.isActive(run)) {
 				return;
 			}
 			if (isFailure(result)) {
-				if (result.code === "invalid-response" && isInvalidResponseRecovered) {
+				if (result.code === "invalid-response" && invalidResponseBurst !== 0) {
 					continue;
 				}
 				if (!(await this.recover(run))) {
 					return;
 				}
-				isInvalidResponseRecovered = result.code === "invalid-response";
+				if (result.code === "invalid-response") {
+					beginInvalidResponseBurst();
+				}
 				if (result.code === "unavailable") {
 					return;
 				}
@@ -215,7 +241,7 @@ export class HerdrStateController implements HerdrStateControllerContract {
 			}
 			try {
 				this.apply(run, result);
-				isInvalidResponseRecovered = false;
+				invalidResponseBurst = 0;
 			} catch {
 				if (!(await this.recover(run))) {
 					return;

@@ -398,6 +398,53 @@ test("TC-26 invalid-response bursts recover once and valid data resets the guard
 	assert.equal(eventCalls, 1);
 });
 
+test("TC-26 invalid responses on later turns each recover", async () => {
+	const firstRecoveryFinished = deferred<void>();
+	const releaseSecondInvalid = deferred<void>();
+	const secondRecoveryFinished = deferred<void>();
+	const labels = ["initial", "after-first", "after-second"];
+	let snapshotCalls = 0;
+	let eventCalls = 0;
+	const client: HerdrClient = {
+		async snapshot() {
+			const response = makeLocationSnapshot(SELF_WORKSPACE_ID, SELF_TAB_ID);
+			response.result.snapshot.workspaces[0]!.label = labels[snapshotCalls]!;
+			snapshotCalls += 1;
+			return response;
+		},
+		events(signal) {
+			eventCalls += 1;
+			return (async function* (): AsyncIterable<HerdrStateEvent | HerdrStateFailure> {
+				yield { code: "invalid-response", message: "first" };
+				firstRecoveryFinished.resolve();
+				await releaseSecondInvalid.promise;
+				yield { code: "invalid-response", message: "second" };
+				secondRecoveryFinished.resolve();
+				await waitUntilAborted(signal!);
+			})();
+		},
+		readPane: unusedPaneRead,
+	};
+	const controller = new HerdrStateController(client);
+
+	await controller.start(SELF_CWD, SELF_PANE_ID);
+	await firstRecoveryFinished.promise;
+	assert.equal(controller.current()?.snapshot.workspaces[0]?.label, "after-first");
+
+	await flush();
+	releaseSecondInvalid.resolve();
+	await secondRecoveryFinished.promise;
+
+	assert.equal(snapshotCalls, 3);
+	assert.equal(controller.current()?.snapshot.workspaces[0]?.label, "after-second");
+	assert.equal(eventCalls, 1);
+
+	controller.stop();
+	await flush();
+	assert.equal(snapshotCalls, 3);
+	assert.equal(eventCalls, 1);
+});
+
 test("TC-21 stop aborts a blocked event stream without post-stop work", async () => {
 	const streamStarted = deferred<void>();
 	let snapshotCalls = 0;
