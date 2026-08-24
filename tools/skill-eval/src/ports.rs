@@ -2,9 +2,9 @@ use std::path::Path;
 
 use crate::model::{
     ArtifactDefinition, CandidateArtifact, CaseDefinition, CheckResult, ExecutionDefinition,
-    HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolRunConfiguration, PoolRunId,
-    PoolRunState, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError, Tier,
-    TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
+    HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolPlan, PoolRunId, PoolRunState,
+    PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError, Tier, TierAssignment,
+    Timestamp, TrialKey, TrialRecord, TrialSelector,
 };
 
 pub(crate) trait ArtifactSource {
@@ -88,7 +88,7 @@ pub(crate) trait RunStore {
 }
 
 pub(crate) trait PoolPlanSource {
-    fn load_pool_plan(&self, path: &Path) -> Result<PoolRunConfiguration, SkillEvalError>;
+    fn load_pool_plan(&self, path: &Path) -> Result<PoolPlan, SkillEvalError>;
 }
 
 pub(crate) trait PoolStore {
