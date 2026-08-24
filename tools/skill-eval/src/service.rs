@@ -16,8 +16,7 @@ use crate::model::{
 use crate::ports::{
     Clock, PoolProgressSink, PoolRuntime, ProgressSink, QualificationRuntime, RunStore, TierWriter,
 };
-
-// TODO(AGNT-0032.T90): Advance passing calibration entrants through full qualification and ranking.
+use crate::statistics::{evaluate_calibration, evaluate_qualification, rank_pool};
 pub(crate) fn start_pool_qualification(
     request: PoolQualifyRequest,
     runtime: &mut dyn PoolRuntime,
@@ -28,6 +27,7 @@ pub(crate) fn start_pool_qualification(
     runtime.validate_pool_plan_freshness(&plan, &created_at)?;
     validate_pool_request(&request, &plan)?;
     let artifacts = load_and_validate_artifacts(&request.artifact_roots, runtime)?;
+    validate_single_pool_artifact(&artifacts)?;
 
     let pool_run_id = runtime.next_pool()?;
     let configuration = PoolRunConfiguration {
@@ -113,6 +113,12 @@ pub(crate) fn start_pool_qualification(
                 RunStatus::Completed => {
                     state.child_runs[child_index].status = PoolChildStatus::Completed;
                     save_pool_and_emit(runtime, progress, &state)?;
+                    persist_completed_pool_child_evidence(
+                        &mut state,
+                        child_index,
+                        runtime,
+                        progress,
+                    )?;
                 }
                 RunStatus::Paused => {
                     let reason = report.pause.ok_or_else(|| {
@@ -205,6 +211,15 @@ fn load_and_validate_artifacts(
         }
     }
     Ok(artifacts)
+}
+
+fn validate_single_pool_artifact(artifacts: &[ArtifactDefinition]) -> Result<(), SkillEvalError> {
+    if artifacts.len() != 1 {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "pool qualification requires exactly one frozen calibration artifact".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn preallocate_pool_children(
@@ -316,7 +331,6 @@ impl ProgressSink for SilentProgress {
     }
 }
 
-// TODO(AGNT-0032.T89): Skip terminal completed or skipped slots and require frozen promotion.
 pub(crate) fn resume_pool_qualification(
     run_id: &PoolRunId,
     runtime: &mut dyn PoolRuntime,
@@ -325,6 +339,16 @@ pub(crate) fn resume_pool_qualification(
     let mut state = runtime.load_pool(run_id)?;
     let child_index = validate_pool_resume_state(run_id, &state)?;
     validate_frozen_pool_artifacts(&state, runtime)?;
+    validate_single_pool_artifact(&state.configuration.artifacts)?;
+    if state.spent_millionths_of_dollar
+        >= state
+            .configuration
+            .policy
+            .spending_limit_millionths_of_dollar
+    {
+        pause_pool_for_spending_limit(&mut state, runtime, progress)?;
+        return Ok(state);
+    }
 
     let child = state.child_runs[child_index].clone();
     let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
@@ -341,12 +365,19 @@ pub(crate) fn resume_pool_qualification(
         .map(|artifact| artifact.root.clone())
         .collect::<Vec<_>>();
 
+    if child.status == PoolChildStatus::Pending
+        && child.stage == PoolStage::Qualification
+        && !is_promoted_pool_child(&state, &child, &requested)
+    {
+        return Ok(state);
+    }
+
     let prior_report = match child.status {
         PoolChildStatus::Pending => None,
         PoolChildStatus::Running | PoolChildStatus::Paused => {
             Some(build_report(&child.run_id, runtime)?)
         }
-        PoolChildStatus::Completed => unreachable!(),
+        PoolChildStatus::Completed | PoolChildStatus::Skipped => unreachable!(),
         PoolChildStatus::Failed => {
             return Err(resume_drift("failed pool child"));
         }
@@ -451,6 +482,7 @@ pub(crate) fn resume_pool_qualification(
         RunStatus::Completed => {
             state.child_runs[child_index].status = PoolChildStatus::Completed;
             save_pool_and_emit(runtime, progress, &state)?;
+            persist_completed_pool_child_evidence(&mut state, child_index, runtime, progress)?;
         }
         RunStatus::Paused => {
             let reason = report.pause.ok_or_else(|| {
@@ -461,7 +493,7 @@ pub(crate) fn resume_pool_qualification(
             pause_pool_child(&mut state, child_index, reason, runtime, progress)?;
         }
         RunStatus::Failed => {
-            fail_pool_child(&mut state, child_index, runtime, progress)?;
+            review_failed_pool_child(&mut state, child_index, runtime, progress)?;
         }
         status => {
             return Err(SkillEvalError::InvalidConfiguration(format!(
@@ -549,16 +581,22 @@ fn validate_pool_resume_state(
         )
     });
 
+    let is_terminal = |index: usize| {
+        matches!(
+            state.child_runs[index].status,
+            PoolChildStatus::Completed | PoolChildStatus::Skipped
+        )
+    };
     let first = ordered
         .iter()
-        .position(|(_, _, _, index)| state.child_runs[*index].status != PoolChildStatus::Completed)
+        .position(|(_, _, _, index)| !is_terminal(*index))
         .ok_or_else(|| resume_drift("terminal pool status"))?;
     if ordered[..first]
         .iter()
-        .any(|(_, _, _, index)| state.child_runs[*index].status != PoolChildStatus::Completed)
-        || ordered[first + 1..]
-            .iter()
-            .any(|(_, _, _, index)| state.child_runs[*index].status != PoolChildStatus::Pending)
+        .any(|(_, _, _, index)| !is_terminal(*index))
+        || ordered[first + 1..].iter().any(|(_, _, _, index)| {
+            !is_terminal(*index) && state.child_runs[*index].status != PoolChildStatus::Pending
+        })
     {
         return Err(resume_drift("stable pool child order"));
     }
@@ -571,9 +609,26 @@ fn validate_pool_resume_state(
             PoolChildStatus::Pending | PoolChildStatus::Running | PoolChildStatus::Paused,
         )
         | (PoolRunStatus::Paused, PoolChildStatus::Paused) => Ok(child_index),
+        (PoolRunStatus::Paused, PoolChildStatus::Pending)
+            if matches!(state.pause, Some(PoolPauseReason::SpendingLimit { .. })) =>
+        {
+            Ok(child_index)
+        }
         (_, PoolChildStatus::Failed) => Err(resume_drift("failed pool child")),
         _ => Err(resume_drift("parent and child status")),
     }
+}
+
+fn is_promoted_pool_child(
+    state: &PoolRunState,
+    child: &PoolChildRun,
+    requested: &ModelIdentity,
+) -> bool {
+    state.pools.iter().any(|pool| {
+        pool.tier == child.tier
+            && pool.promoted.len() == usize::from(state.configuration.policy.promotion_count)
+            && pool.promoted.contains(requested)
+    })
 }
 
 fn validate_frozen_pool_plan(state: &PoolRunState) -> Result<(), SkillEvalError> {
@@ -1052,7 +1107,181 @@ fn add_pool_resume_spending(
     save_pool_and_emit(runtime, progress, state)
 }
 
-fn fail_pool_child(
+fn pause_pool_for_spending_limit(
+    state: &mut PoolRunState,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    let limit = state
+        .configuration
+        .policy
+        .spending_limit_millionths_of_dollar;
+    if matches!(state.pause, Some(PoolPauseReason::SpendingLimit { .. })) {
+        return Ok(());
+    }
+    if state.status == PoolRunStatus::Paused {
+        state.status = PoolRunStatus::Running;
+        state.pause = None;
+        save_pool_and_emit(runtime, progress, state)?;
+    }
+    state.status = PoolRunStatus::Paused;
+    state.pause = Some(PoolPauseReason::SpendingLimit {
+        spent_millionths_of_dollar: state.spent_millionths_of_dollar,
+        limit_millionths_of_dollar: limit,
+    });
+    save_pool_and_emit(runtime, progress, state)
+}
+
+fn persist_completed_pool_child_evidence(
+    state: &mut PoolRunState,
+    child_index: usize,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    let child = state.child_runs[child_index].clone();
+    let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
+        .model
+        .clone();
+    let replay = replay_pool_child(&child.run_id, runtime)?;
+    let artifact = state
+        .configuration
+        .artifacts
+        .first()
+        .ok_or_else(|| resume_drift("single frozen calibration artifact"))?;
+    if replay.completed_artifacts.len() != 1
+        || replay.completed_artifacts.get(&artifact.name) != Some(&child.tier)
+    {
+        return Err(resume_drift("complete child artifact evidence"));
+    }
+    let expected_cases = artifact
+        .cases
+        .iter()
+        .filter(|case| !case.is_holdout)
+        .map(|case| case.id.clone())
+        .collect::<Vec<_>>();
+    let trials = replay.completed.into_values().collect::<Vec<_>>();
+    let evidence = match child.stage {
+        PoolStage::Calibration => evaluate_calibration(
+            &requested,
+            &expected_cases,
+            &trials,
+            &state.configuration.policy,
+        )?,
+        PoolStage::Qualification => evaluate_qualification(
+            &requested,
+            &expected_cases,
+            &trials,
+            &state.configuration.policy,
+        )?,
+    };
+
+    let pool_index = match state.pools.iter().position(|pool| pool.tier == child.tier) {
+        Some(index) => index,
+        None => {
+            state.pools.push(crate::model::RankedPool {
+                tier: child.tier,
+                calibration: Vec::new(),
+                promoted: Vec::new(),
+                qualification: Vec::new(),
+                ranked: Vec::new(),
+                is_complete: false,
+            });
+            state.pools.len() - 1
+        }
+    };
+    let stage_evidence = match child.stage {
+        PoolStage::Calibration => &mut state.pools[pool_index].calibration,
+        PoolStage::Qualification => &mut state.pools[pool_index].qualification,
+    };
+    if stage_evidence
+        .iter()
+        .any(|item| item.requested_model == requested)
+    {
+        return Ok(());
+    }
+    stage_evidence.push(evidence.clone());
+    save_pool_and_emit(runtime, progress, state)?;
+
+    match child.stage {
+        PoolStage::Calibration if state.pools[pool_index].calibration.len() == 3 => {
+            let ranked = rank_pool(
+                child.tier,
+                &state.pools[pool_index].calibration,
+                &[],
+                &state.configuration.policy,
+            )?;
+            state.pools[pool_index] = ranked;
+            save_pool_and_emit(runtime, progress, state)?;
+            if state.pools[pool_index].promoted.len()
+                < usize::from(state.configuration.policy.promotion_count)
+            {
+                state.status = PoolRunStatus::AwaitingDecision;
+                save_pool_and_emit(runtime, progress, state)?;
+                return Ok(());
+            }
+            skip_unpromoted_qualification_children(
+                state, child.tier, pool_index, runtime, progress,
+            )?;
+        }
+        PoolStage::Qualification if state.pools[pool_index].calibration.len() != 3 => {}
+        PoolStage::Qualification => {
+            let ranked = rank_pool(
+                child.tier,
+                &state.pools[pool_index].calibration,
+                &state.pools[pool_index].qualification,
+                &state.configuration.policy,
+            )?;
+            let is_failed = !evidence.is_passing;
+            state.pools[pool_index] = ranked;
+            save_pool_and_emit(runtime, progress, state)?;
+            if is_failed
+                || state.pools[pool_index].is_complete && are_selected_pools_complete(state)
+            {
+                state.status = PoolRunStatus::AwaitingDecision;
+                save_pool_and_emit(runtime, progress, state)?;
+            }
+        }
+        PoolStage::Calibration => {}
+    }
+    Ok(())
+}
+
+fn skip_unpromoted_qualification_children(
+    state: &mut PoolRunState,
+    tier: Tier,
+    pool_index: usize,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    let promoted = state.pools[pool_index].promoted.clone();
+    for child_index in 0..state.child_runs.len() {
+        let child = &state.child_runs[child_index];
+        if child.tier != tier
+            || child.stage != PoolStage::Qualification
+            || child.status != PoolChildStatus::Pending
+        {
+            continue;
+        }
+        let entrant = &state.configuration.entrants[&tier][usize::from(child.entrant_index)].model;
+        if promoted.contains(entrant) {
+            continue;
+        }
+        state.child_runs[child_index].status = PoolChildStatus::Skipped;
+        save_pool_and_emit(runtime, progress, state)?;
+    }
+    Ok(())
+}
+
+fn are_selected_pools_complete(state: &PoolRunState) -> bool {
+    state.selected_tiers.iter().all(|tier| {
+        state
+            .pools
+            .iter()
+            .any(|pool| pool.tier == *tier && pool.is_complete)
+    })
+}
+
+fn review_failed_pool_child(
     state: &mut PoolRunState,
     child_index: usize,
     runtime: &mut dyn PoolRuntime,
@@ -1060,7 +1289,7 @@ fn fail_pool_child(
 ) -> Result<(), SkillEvalError> {
     state.child_runs[child_index].status = PoolChildStatus::Failed;
     save_pool_and_emit(runtime, progress, state)?;
-    state.status = PoolRunStatus::Failed;
+    state.status = PoolRunStatus::AwaitingDecision;
     state.pause = None;
     save_pool_and_emit(runtime, progress, state)
 }
@@ -3387,6 +3616,8 @@ include!("../tests/pool_start.rs");
 #[cfg(test)]
 include!("../tests/pool_resume.rs");
 #[cfg(test)]
+include!("../tests/pool_qualification.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -3402,6 +3633,8 @@ audit_tests!();
 pool_start_tests!();
 #[cfg(test)]
 pool_resume_tests!();
+#[cfg(test)]
+pool_qualification_tests!();
 
 #[cfg(test)]
 mod state {
