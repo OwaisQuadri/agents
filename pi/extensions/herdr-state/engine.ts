@@ -345,8 +345,7 @@ export function applyEvent(
 					tabs: upsertById(model.snapshot.tabs, event.tab),
 				},
 			};
-		case "pane-changed":
-			// TODO(AGNT-0066.T19): Enforce pane-event parent lineage before upsert.
+		case "pane-changed": {
 			if (
 				!model.snapshot.workspaces.some(
 					(workspace) => workspace.id === event.pane.workspaceId,
@@ -354,8 +353,12 @@ export function applyEvent(
 			) {
 				throw new Error("invalid Herdr pane event: pane references unknown workspace_id");
 			}
-			if (!model.snapshot.tabs.some((tab) => tab.id === event.pane.tabId)) {
+			const tab = model.snapshot.tabs.find((candidate) => candidate.id === event.pane.tabId);
+			if (tab === undefined) {
 				throw new Error("invalid Herdr pane event: pane references unknown tab_id");
+			}
+			if (tab.workspaceId !== event.pane.workspaceId) {
+				throw new Error("invalid Herdr pane event: pane and tab workspace_id differ");
 			}
 			return {
 				...model,
@@ -364,6 +367,7 @@ export function applyEvent(
 					panes: upsertById(model.snapshot.panes, event.pane),
 				},
 			};
+		}
 		default:
 			throw new Error(`invalid Herdr state event: ${JSON.stringify(event)}`);
 	}

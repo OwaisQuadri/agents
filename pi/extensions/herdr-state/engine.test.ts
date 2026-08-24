@@ -8,7 +8,11 @@ import {
 	normalizeEvent,
 	normalizeSnapshot,
 } from "./engine.ts";
-import type { HerdrRawEvent, HerdrSnapshotResponse } from "./types.ts";
+import type {
+	HerdrRawEvent,
+	HerdrSnapshotResponse,
+	HerdrStateEvent,
+} from "./types.ts";
 import {
 	makeMalformedWorkspaceUpdatedEvent,
 	makePaneUpdatedEvent,
@@ -107,6 +111,13 @@ const crossRecordVariants: Array<{
 		message: "invalid Herdr snapshot response: pane references unknown tab_id",
 	},
 	{
+		name: "pane and tab from different workspaces",
+		mutate: (response) => {
+			response.result.snapshot.panes[0]!.tab_id = OTHER_TAB_ID;
+		},
+		message: "invalid Herdr snapshot response: pane and tab workspace_id differ",
+	},
+	{
 		name: "missing focused_workspace_id",
 		mutate: (response) => {
 			response.result.snapshot.focused_workspace_id = "missing-workspace";
@@ -127,9 +138,15 @@ const crossRecordVariants: Array<{
 		},
 		message: "invalid Herdr snapshot response: focused_pane_id not found",
 	},
+	{
+		name: "focused IDs from different workspaces",
+		mutate: (response) => {
+			response.result.snapshot.focused_tab_id = OTHER_TAB_ID;
+		},
+		message: "invalid Herdr snapshot response: focused IDs do not form one lineage",
+	},
 ];
 
-// TODO(AGNT-0066.T20): Permanently cover snapshot pane-parent and focused lineage rejection.
 for (const { name, mutate, message } of crossRecordVariants) {
 	test(`TC-28 normalizeSnapshot rejects ${name}`, () => {
 		const response = makeSnapshotResponse();
@@ -408,7 +425,83 @@ test("normalizeEvent throws for a malformed recognized event and returns null fo
 	assert.equal(normalizeEvent(makeUnknownEvent()), null);
 });
 
-// TODO(AGNT-0066.T19): Cover absent, cross-lineage, and valid pane-change parents.
+test("TC-30 pane updates preserve parent lineage and model immutability", () => {
+	const snapshot = normalizeSnapshot(makeSnapshotResponse());
+	const model = createModel(snapshot, findSelf(snapshot, SELF_CWD, SELF_PANE_ID));
+	const priorPane = model.snapshot.panes.find((pane) => pane.id === SELF_PANE_ID);
+	const expectedPriorPane = {
+		id: SELF_PANE_ID,
+		workspaceId: SELF_WORKSPACE_ID,
+		tabId: SELF_TAB_ID,
+		label: SELF_PANE_ID,
+		cwd: SELF_CWD,
+		isFocused: true,
+	};
+	const invalidCases: Array<{ event: HerdrStateEvent; message: string }> = [
+		{
+			event: {
+				type: "pane-changed",
+				pane: {
+					id: "p-missing-w",
+					workspaceId: "missing-w",
+					tabId: SELF_TAB_ID,
+					label: "p-missing-w",
+					cwd: null,
+					isFocused: false,
+				},
+			},
+			message: "invalid Herdr pane event: pane references unknown workspace_id",
+		},
+		{
+			event: {
+				type: "pane-changed",
+				pane: {
+					id: "p-missing-t",
+					workspaceId: SELF_WORKSPACE_ID,
+					tabId: "missing-t",
+					label: "p-missing-t",
+					cwd: null,
+					isFocused: false,
+				},
+			},
+			message: "invalid Herdr pane event: pane references unknown tab_id",
+		},
+		{
+			event: {
+				type: "pane-changed",
+				pane: {
+					id: "p-cross",
+					workspaceId: SELF_WORKSPACE_ID,
+					tabId: OTHER_TAB_ID,
+					label: "p-cross",
+					cwd: null,
+					isFocused: false,
+				},
+			},
+			message: "invalid Herdr pane event: pane and tab workspace_id differ",
+		},
+	];
+
+	for (const { event, message } of invalidCases) {
+		assert.throws(() => applyEvent(model, event), { message });
+	}
+
+	const validPane = { ...expectedPriorPane, isFocused: false };
+	const nextModel = applyEvent(model, { type: "pane-changed", pane: validPane });
+
+	assert.notEqual(nextModel, model);
+	assert.notEqual(nextModel.snapshot, model.snapshot);
+	assert.deepEqual(
+		nextModel.snapshot.panes.find((pane) => pane.id === SELF_PANE_ID),
+		validPane,
+	);
+	assert.deepEqual(
+		model.snapshot.panes.find((pane) => pane.id === SELF_PANE_ID),
+		expectedPriorPane,
+	);
+	assert.deepEqual(priorPane, expectedPriorPane);
+});
+
 test("createModel and applyEvent throw for malformed input", () => {
 	assert.throws(() => createModel(null as never, null));
 	assert.throws(() => createModel({} as never, null));

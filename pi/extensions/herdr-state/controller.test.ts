@@ -88,7 +88,6 @@ function unusedPaneRead(): Promise<HerdrPaneOutput | HerdrStateFailure> {
 	return Promise.resolve(unavailable("unused pane read"));
 }
 
-// TODO(AGNT-0066.T19): Seed valid destination parents before pane self-recalculation.
 test("TC-16 start stores immutable state and valid events recalculate self", async () => {
 	const eventApplied = deferred<void>();
 	const eventSignals: AbortSignal[] = [];
@@ -99,7 +98,23 @@ test("TC-16 start stores immutable state and valid events recalculate self", asy
 		async snapshot(signal) {
 			snapshotCalls += 1;
 			snapshotSignals.push(signal!);
-			return makeLocationSnapshot(SELF_WORKSPACE_ID, SELF_TAB_ID);
+			const response = makeLocationSnapshot(SELF_WORKSPACE_ID, SELF_TAB_ID);
+			response.result.snapshot.workspaces.push(
+				makeRawWorkspace({
+					workspace_id: "w5S",
+					label: "w5S",
+					focused: false,
+					worktree: undefined,
+				}),
+			);
+			response.result.snapshot.tabs.push(
+				makeRawTab({
+					tab_id: "w5S:t2",
+					workspace_id: "w5S",
+					focused: false,
+				}),
+			);
+			return response;
 		},
 		events(signal) {
 			eventCalls += 1;
