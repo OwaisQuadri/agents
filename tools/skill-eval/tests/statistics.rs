@@ -3,6 +3,7 @@
     reason = "the test imports private production modules to exercise crate-private statistics"
 )]
 
+// TODO(AGNT-0032.T90): Prove full-stage evidence under qualification repeat counts.
 #[path = "../src/model.rs"]
 mod model;
 #[path = "../src/statistics.rs"]
@@ -702,7 +703,6 @@ fn policy_with(change: impl FnOnce(&mut PoolPolicy)) -> PoolPolicy {
     result
 }
 
-// TODO(AGNT-0032.T101): Add the positive catalog freshness window to statistics fixtures.
 fn policy() -> PoolPolicy {
     PoolPolicy {
         calibration_repeats_per_case: 2,
@@ -710,6 +710,7 @@ fn policy() -> PoolPolicy {
         promotion_count: 2,
         minimum_score: 7,
         minimum_reliability_basis_points: 7_500,
+        maximum_catalog_age_seconds: 7_200,
         spending_limit_millionths_of_dollar: 10_000_000,
         is_provider_limit_enforced: true,
     }

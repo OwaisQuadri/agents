@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
@@ -6,7 +7,6 @@ use crate::model::{
     Tier, TierEvidence, TierStatus, TrialRecord, TrialUsage,
 };
 
-// TODO(AGNT-0032.T86): Preserve complete split calibration evidence before resolution.
 pub(crate) fn evaluate_calibration(
     requested: &ModelIdentity,
     expected_cases: &[CaseId],
@@ -14,6 +14,13 @@ pub(crate) fn evaluate_calibration(
     policy: &PoolPolicy,
 ) -> Result<PoolEntrantEvidence, SkillEvalError> {
     validate_calibration_policy(policy)?;
+
+    let expected_case_set = expected_cases.iter().cloned().collect::<BTreeSet<_>>();
+    if expected_cases.is_empty() || expected_case_set.len() != expected_cases.len() {
+        return Err(invalid(
+            "calibration expected cases must be nonempty and unique",
+        ));
+    }
 
     let first = trials
         .first()
@@ -26,9 +33,18 @@ pub(crate) fn evaluate_calibration(
     if first.key.tier != requested.tier {
         return Err(invalid("calibration trial tier differs from its model"));
     }
+    if is_same_model(&first.judge_model, &first.model) {
+        return Err(invalid("calibration candidate cannot judge itself"));
+    }
 
-    let mut attempts_by_case = BTreeMap::<_, BTreeSet<_>>::new();
-    let mut total_usage = empty_usage();
+    let mut attempts_by_case = expected_case_set
+        .iter()
+        .cloned()
+        .map(|case| (case, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    let mut harness_by_case = BTreeMap::new();
+    let mut candidate_usage = empty_usage();
+    let mut judge_usage = empty_usage();
     let mut total_score = 0_u64;
     let mut failed_trials = 0_u32;
     let mut catastrophic_trials = 0_u32;
@@ -43,6 +59,12 @@ pub(crate) fn evaluate_calibration(
         if trial.model.tier != trial.key.tier {
             return Err(invalid("calibration trial tier differs from its model"));
         }
+        if trial.judge_model != first.judge_model {
+            return Err(invalid("calibration trial set mixes judge identities"));
+        }
+        if is_same_model(&trial.judge_model, &trial.model) {
+            return Err(invalid("calibration candidate cannot judge itself"));
+        }
         if trial.harness.runner_version != first.harness.runner_version
             || trial.harness.pi_version != first.harness.pi_version
             || trial.harness.artifact_revision != first.harness.artifact_revision
@@ -53,14 +75,28 @@ pub(crate) fn evaluate_calibration(
             return Err(invalid("calibration trial score is outside 0 through 10"));
         }
 
-        let attempts = attempts_by_case.entry(trial.key.case.clone()).or_default();
+        let Some(attempts) = attempts_by_case.get_mut(&trial.key.case) else {
+            return Err(invalid("calibration trial set contains an unknown case"));
+        };
         if !attempts.insert(trial.key.attempt) {
             return Err(invalid(
                 "calibration trial set contains a duplicate case attempt",
             ));
         }
-        add_usage(&mut total_usage, &trial.candidate_usage)?;
-        add_usage(&mut total_usage, &trial.judge_usage)?;
+        match harness_by_case.entry(trial.key.case.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(trial.harness.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if entry.get() != &trial.harness =>
+            {
+                return Err(invalid("calibration case has harness identity drift"));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+
+        add_usage(&mut candidate_usage, &trial.candidate_usage)?;
+        add_usage(&mut judge_usage, &trial.judge_usage)?;
         total_score = total_score
             .checked_add(u64::from(trial.verdict.score))
             .ok_or_else(|| invalid("calibration score arithmetic overflow"))?;
@@ -82,17 +118,15 @@ pub(crate) fn evaluate_calibration(
         }
     }
 
-    let required_repeats = usize::from(policy.calibration_repeats_per_case);
-    if attempts_by_case.values().any(|attempts| {
-        attempts.len() != required_repeats
-            || attempts
-                .iter()
-                .any(|attempt| *attempt == 0 || *attempt > policy.calibration_repeats_per_case)
-    }) {
+    let required_attempts = (1..=policy.calibration_repeats_per_case).collect::<BTreeSet<_>>();
+    if attempts_by_case
+        .values()
+        .any(|attempts| attempts != &required_attempts)
+    {
         return Err(invalid("calibration trial set is incomplete"));
     }
 
-    let expected_trials = u32::try_from(attempts_by_case.len())
+    let expected_trials = u32::try_from(expected_cases.len())
         .ok()
         .and_then(|cases| cases.checked_mul(u32::from(policy.calibration_repeats_per_case)))
         .ok_or_else(|| invalid("calibration expected trial count overflow"))?;
@@ -119,19 +153,38 @@ pub(crate) fn evaluate_calibration(
     let is_passing = mean_score >= f64::from(policy.minimum_score) / 10.0
         && reliability_basis_points >= u64::from(policy.minimum_reliability_basis_points)
         && catastrophic_trials == 0;
+    let harnesses = expected_cases
+        .iter()
+        .map(|case| {
+            harness_by_case
+                .get(case)
+                .cloned()
+                .ok_or_else(|| invalid("calibration trial set is incomplete"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut total_usage = candidate_usage.clone();
+    add_usage(&mut total_usage, &judge_usage)?;
 
     Ok(PoolEntrantEvidence {
         stage: PoolStage::Calibration,
         requested_model: requested.clone(),
         effective_model: first.model.clone(),
+        judge_model: first.judge_model.clone(),
+        harnesses,
         is_passing,
         completed_trials,
         expected_trials,
         failed_trials,
         catastrophic_trials,
         score,
+        candidate_usage,
+        judge_usage,
         total_usage,
     })
+}
+
+fn is_same_model(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.provider == right.provider && left.model == right.model
 }
 
 fn validate_calibration_policy(policy: &PoolPolicy) -> Result<(), SkillEvalError> {
@@ -148,14 +201,225 @@ fn validate_calibration_policy(policy: &PoolPolicy) -> Result<(), SkillEvalError
     Ok(())
 }
 
-// TODO(AGNT-0032.T87): Rank only the complete pair of fully qualified finalists.
-pub(crate) fn rank_pool(
-    _tier: Tier,
-    _calibration: &[PoolEntrantEvidence],
-    _qualification: &[PoolEntrantEvidence],
+// TODO(AGNT-0032.T90): Evaluate promoted finalists with full qualification repeat counts.
+pub(crate) fn evaluate_qualification(
+    _requested: &ModelIdentity,
+    _expected_cases: &[CaseId],
+    _trials: &[TrialRecord],
     _policy: &PoolPolicy,
+) -> Result<PoolEntrantEvidence, SkillEvalError> {
+    unimplemented!("AGNT-0032.T90")
+}
+
+pub(crate) fn rank_pool(
+    tier: Tier,
+    calibration: &[PoolEntrantEvidence],
+    qualification: &[PoolEntrantEvidence],
+    policy: &PoolPolicy,
 ) -> Result<RankedPool, SkillEvalError> {
-    unimplemented!("AGNT-0032.T87")
+    validate_calibration_policy(policy)?;
+    let promotion_count = usize::from(policy.promotion_count);
+    if calibration.len() != 3 {
+        return Err(invalid(
+            "pool calibration must contain exactly three entrants",
+        ));
+    }
+    if qualification.len() > promotion_count {
+        return Err(invalid(
+            "pool qualification contains more than two finalists",
+        ));
+    }
+
+    validate_pool_stage(
+        calibration,
+        tier,
+        PoolStage::Calibration,
+        policy.calibration_repeats_per_case,
+        policy,
+    )?;
+
+    let mut passing = calibration
+        .iter()
+        .filter(|evidence| evidence.is_passing)
+        .collect::<Vec<_>>();
+    passing.sort_by(|left, right| compare_pool_evidence(left, right));
+    let promoted = passing
+        .into_iter()
+        .take(promotion_count)
+        .map(|evidence| evidence.requested_model.clone())
+        .collect::<Vec<_>>();
+
+    validate_pool_stage(
+        qualification,
+        tier,
+        PoolStage::Qualification,
+        policy.qualification_repeats_per_case,
+        policy,
+    )?;
+    for evidence in qualification {
+        if !promoted.contains(&evidence.requested_model) {
+            return Err(invalid(
+                "pool qualification contains a non-promoted entrant",
+            ));
+        }
+    }
+
+    let is_complete = promoted.len() == promotion_count
+        && qualification.len() == promotion_count
+        && qualification.iter().all(|evidence| evidence.is_passing)
+        && promoted.iter().all(|model| {
+            qualification
+                .iter()
+                .any(|evidence| evidence.requested_model == *model)
+        });
+    let ranked = if is_complete {
+        let mut finalists = qualification.iter().collect::<Vec<_>>();
+        finalists.sort_by(|left, right| compare_pool_evidence(left, right));
+        finalists
+            .into_iter()
+            .map(|evidence| evidence.requested_model.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(RankedPool {
+        tier,
+        calibration: calibration.to_vec(),
+        promoted,
+        qualification: qualification.to_vec(),
+        ranked,
+        is_complete,
+    })
+}
+
+fn validate_pool_stage(
+    evidence: &[PoolEntrantEvidence],
+    tier: Tier,
+    stage: PoolStage,
+    repeats_per_case: u16,
+    policy: &PoolPolicy,
+) -> Result<(), SkillEvalError> {
+    let mut identities = Vec::with_capacity(evidence.len());
+    let mut expected_harnesses = None;
+
+    for item in evidence {
+        if item.stage != stage {
+            return Err(invalid("pool evidence has the wrong stage"));
+        }
+        if item.requested_model.tier != tier || item.effective_model.tier != tier {
+            return Err(invalid("pool evidence has the wrong tier"));
+        }
+        if item.requested_model != item.effective_model {
+            return Err(invalid(
+                "pool requested and effective model identities differ",
+            ));
+        }
+        if identities.contains(&item.requested_model) {
+            return Err(invalid("pool evidence contains a duplicate entrant"));
+        }
+        identities.push(item.requested_model.clone());
+        if is_same_model(&item.judge_model, &item.effective_model) {
+            return Err(invalid("pool entrant cannot judge itself"));
+        }
+        if item.expected_trials == 0 || item.completed_trials != item.expected_trials {
+            return Err(invalid("pool evidence has incomplete trial counts"));
+        }
+        if item.failed_trials > item.completed_trials
+            || item.catastrophic_trials > item.completed_trials
+        {
+            return Err(invalid("pool evidence has impossible trial counts"));
+        }
+
+        let harness_count = u32::try_from(item.harnesses.len())
+            .map_err(|_| invalid("pool evidence harness count overflow"))?;
+        let evidence_expected_trials = harness_count
+            .checked_mul(u32::from(repeats_per_case))
+            .ok_or_else(|| invalid("pool evidence expected trial count overflow"))?;
+        if evidence_expected_trials != item.expected_trials {
+            return Err(invalid("pool evidence has inconsistent trial counts"));
+        }
+        match expected_harnesses {
+            Some(harnesses) if harnesses != item.harnesses.as_slice() => {
+                return Err(invalid("pool evidence mixes exam harnesses"));
+            }
+            None => expected_harnesses = Some(item.harnesses.as_slice()),
+            Some(_) => {}
+        }
+
+        if !is_valid_interval(&item.score) {
+            return Err(invalid("pool evidence has invalid score metrics"));
+        }
+        let passing_trials = item
+            .completed_trials
+            .checked_sub(item.failed_trials)
+            .ok_or_else(|| invalid("pool evidence has invalid failure metrics"))?;
+        let reliability_numerator = u64::from(passing_trials)
+            .checked_mul(10_000)
+            .ok_or_else(|| invalid("pool evidence reliability arithmetic overflow"))?;
+        let reliability_floor = u64::from(item.completed_trials)
+            .checked_mul(u64::from(policy.minimum_reliability_basis_points))
+            .ok_or_else(|| invalid("pool evidence reliability arithmetic overflow"))?;
+        if item.is_passing
+            && (item.score.estimate < f64::from(policy.minimum_score) / 10.0
+                || reliability_numerator < reliability_floor
+                || item.catastrophic_trials != 0)
+        {
+            return Err(invalid("passing pool evidence does not meet policy"));
+        }
+
+        let mut expected_total_usage = item.candidate_usage.clone();
+        add_usage(&mut expected_total_usage, &item.judge_usage)?;
+        if expected_total_usage != item.total_usage {
+            return Err(invalid("pool evidence has inconsistent total usage"));
+        }
+    }
+
+    Ok(())
+}
+
+fn compare_pool_evidence(left: &PoolEntrantEvidence, right: &PoolEntrantEvidence) -> Ordering {
+    compare_rate(
+        left.candidate_usage.cost_millionths_of_dollar,
+        left.completed_trials,
+        right.candidate_usage.cost_millionths_of_dollar,
+        right.completed_trials,
+    )
+    .then_with(|| {
+        compare_rate(
+            left.candidate_usage.elapsed_milliseconds,
+            left.completed_trials,
+            right.candidate_usage.elapsed_milliseconds,
+            right.completed_trials,
+        )
+    })
+    .then_with(|| {
+        compare_rate(
+            u64::from(left.failed_trials),
+            left.completed_trials,
+            u64::from(right.failed_trials),
+            right.completed_trials,
+        )
+    })
+    .then_with(|| compare_model_identity(&left.requested_model, &right.requested_model))
+}
+
+fn compare_rate(
+    left_numerator: u64,
+    left_denominator: u32,
+    right_numerator: u64,
+    right_denominator: u32,
+) -> Ordering {
+    (u128::from(left_numerator) * u128::from(right_denominator))
+        .cmp(&(u128::from(right_numerator) * u128::from(left_denominator)))
+}
+
+fn compare_model_identity(left: &ModelIdentity, right: &ModelIdentity) -> Ordering {
+    left.tier
+        .cmp(&right.tier)
+        .then_with(|| left.provider.cmp(&right.provider))
+        .then_with(|| left.model.cmp(&right.model))
+        .then_with(|| left.thinking.cmp(&right.thinking))
 }
 
 pub(crate) fn evaluate_tier(
