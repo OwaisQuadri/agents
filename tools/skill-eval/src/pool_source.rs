@@ -20,7 +20,6 @@ const PROMOTION_COUNT: u8 = 2;
 /// # Errors
 ///
 /// Returns an error when the repository path is missing, unreadable, or not a directory.
-// TODO(AGNT-0032.T83): Verify the strict frozen pool-plan loader before resolution.
 pub(crate) struct FilePoolPlanSource {
     repository_root: PathBuf,
 }
@@ -46,6 +45,7 @@ impl FilePoolPlanSource {
     }
 }
 
+// TODO(AGNT-0032.T100): Return a frozen plan without runtime identity or creation time.
 impl PoolPlanSource for FilePoolPlanSource {
     fn load_pool_plan(&self, path: &Path) -> Result<PoolRunConfiguration, SkillEvalError> {
         validate_relative_path(path)?;
