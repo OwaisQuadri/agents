@@ -87,18 +87,14 @@ function normalizePane(raw: HerdrRawPane): HerdrPane {
 	};
 }
 
-function isSnapshotShapeValid(snapshot: HerdrSessionSnapshot): boolean {
-	return (
-		snapshot !== null &&
-		typeof snapshot === "object" &&
-		Array.isArray(snapshot.workspaces) &&
-		Array.isArray(snapshot.tabs) &&
-		Array.isArray(snapshot.panes)
-	);
-}
-
 function requireValidSnapshot(snapshot: HerdrSessionSnapshot): void {
-	if (!isSnapshotShapeValid(snapshot)) {
+	if (
+		snapshot === null ||
+		typeof snapshot !== "object" ||
+		!Array.isArray(snapshot.workspaces) ||
+		!Array.isArray(snapshot.tabs) ||
+		!Array.isArray(snapshot.panes)
+	) {
 		throw new Error("invalid Herdr session snapshot");
 	}
 }

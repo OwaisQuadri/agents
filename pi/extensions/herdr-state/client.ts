@@ -117,9 +117,7 @@ function parseCommandError(stderr: string): { code: string; message: string } | 
 		) {
 			return { code: parsed.error.code, message: parsed.error.message };
 		}
-	} catch {
-		// stderr was not a JSON error envelope; fall through to the generic failure below.
-	}
+	} catch {}
 	return null;
 }
 

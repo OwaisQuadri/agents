@@ -6,7 +6,7 @@ import { createConnection } from "node:net";
 
 import { HerdrCommandClient, type HerdrClient, type HerdrCommandResult, type HerdrTransport } from "./herdr-state/client.ts";
 import { HerdrStateController as LiveHerdrStateController } from "./herdr-state/controller.ts";
-import { createModel, findSelf, normalizeSnapshot } from "./herdr-state/engine.ts";
+import { findSelf, normalizeSnapshot } from "./herdr-state/engine.ts";
 import type {
 	HerdrAgentLocation,
 	HerdrPane,
@@ -55,12 +55,10 @@ interface LoadedState {
 	self: HerdrAgentLocation | null;
 }
 
-interface ParsedArguments {
-	kind: "global" | "workspace" | "pane";
-	workspaceId?: string;
-	paneId?: string;
-	lineLimit?: number;
-}
+type ParsedArguments =
+	| { kind: "global" }
+	| { kind: "workspace"; workspaceId: string }
+	| { kind: "pane"; paneId: string; lineLimit: number };
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -108,9 +106,7 @@ async function loadState(client: HerdrClient, cwd: string): Promise<LoadedState 
 	} catch (error) {
 		return { code: "invalid-response", message: errorMessage(error) };
 	}
-	const self = findSelf(snapshot, cwd, selfPaneIdFromEnvironment());
-	const model = createModel(snapshot, self);
-	return { snapshot: model.snapshot, self: model.self };
+	return { snapshot, self: findSelf(snapshot, cwd, selfPaneIdFromEnvironment()) };
 }
 
 function formatWorkspaceLine(workspace: HerdrWorkspace, self: HerdrAgentLocation | null): string {
@@ -251,7 +247,7 @@ function parseArguments(args: string): ParsedArguments {
 		if (tokens.length !== 2) {
 			throw new Error(`Herdr state workspace detail requires exactly one workspace identifier. ${USAGE}`);
 		}
-		return { kind: "workspace", workspaceId: tokens[1] };
+		return { kind: "workspace", workspaceId: tokens[1] as string };
 	}
 	if (tokens[0] === "pane") {
 		if (tokens.length < 2 || tokens.length > 3) {
@@ -266,7 +262,7 @@ function parseArguments(args: string): ParsedArguments {
 			}
 			lineLimit = parsedLimit;
 		}
-		return { kind: "pane", paneId: tokens[1], lineLimit };
+		return { kind: "pane", paneId: tokens[1] as string, lineLimit };
 	}
 	throw new Error(`Herdr state received an unrecognized request. ${USAGE}`);
 }
@@ -310,7 +306,7 @@ export function registerHerdrStateCommand(
 				return;
 			}
 			if (parsed.kind === "workspace") {
-				ctx.ui.notify(renderWorkspaceDetail(snapshot, self, parsed.workspaceId as string));
+				ctx.ui.notify(renderWorkspaceDetail(snapshot, self, parsed.workspaceId));
 				return;
 			}
 			ctx.ui.notify(
@@ -318,8 +314,8 @@ export function registerHerdrStateCommand(
 					client,
 					snapshot,
 					self,
-					parsed.paneId as string,
-					parsed.lineLimit ?? DEFAULT_PANE_LINE_LIMIT,
+					parsed.paneId,
+					parsed.lineLimit,
 				),
 			);
 		},
