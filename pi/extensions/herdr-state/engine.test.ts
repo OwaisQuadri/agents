@@ -129,6 +129,7 @@ const crossRecordVariants: Array<{
 	},
 ];
 
+// TODO(AGNT-0066.T20): Permanently cover snapshot pane-parent and focused lineage rejection.
 for (const { name, mutate, message } of crossRecordVariants) {
 	test(`TC-28 normalizeSnapshot rejects ${name}`, () => {
 		const response = makeSnapshotResponse();
