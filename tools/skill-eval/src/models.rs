@@ -65,8 +65,18 @@ impl ConfiguredModelResolver {
         })?;
         Ok(identity(tier, route, key, model))
     }
+
+    fn is_control(&self, requested: &ModelKey) -> Result<bool, SkillEvalError> {
+        for control in self.configuration.unranked_controls.values() {
+            if parse_identifier(&control.pi)? == *requested {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
+// TODO(AGNT-0032.T102): Resolve a distinct configured external judge for pool candidates.
 impl ModelResolverPort for ConfiguredModelResolver {
     fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
         let route = self.route(tier)?;
@@ -85,7 +95,48 @@ impl ModelResolverPort for ConfiguredModelResolver {
         Ok(candidates)
     }
 
-    // TODO(AGNT-0032.T84): Resolve a frozen pool entrant without consulting fallback routes.
+    fn exact_candidate(&self, requested: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError> {
+        validate_thinking(&requested.thinking)?;
+        let key = exact_model_key(requested)?;
+        if is_moving_alias(&key.model) {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "exact model route {}/{} uses a moving alias",
+                key.provider, key.model
+            )));
+        }
+        if self.is_control(&key)? {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "exact model route {}/{} is an unranked control",
+                key.provider, key.model
+            )));
+        }
+        let catalog_model = self.catalog.get(&key).ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(format!(
+                "exact model route {}/{} is not available in the Pi catalog",
+                key.provider, key.model
+            ))
+        })?;
+        if requested.thinking != "off" && !catalog_model.is_thinking_supported {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "exact model route {}/{} does not support thinking level {:?}",
+                key.provider, key.model, requested.thinking
+            )));
+        }
+
+        let effective = ModelIdentity {
+            tier: requested.tier,
+            provider: key.provider,
+            model: key.model,
+            thinking: requested.thinking.clone(),
+        };
+        if effective != *requested {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "exact model route returned a different effective identity".to_owned(),
+            ));
+        }
+        Ok(effective)
+    }
+
     fn configured_judge_tier(&self) -> Result<Tier, SkillEvalError> {
         let tier = parse_tier(&self.configuration.judge)?;
         self.route(tier)?;
@@ -138,6 +189,8 @@ impl ModelResolverPort for ConfiguredModelResolver {
 struct RoutingConfiguration {
     tiers: BTreeMap<String, TierRoute>,
     judge: String,
+    #[serde(default)]
+    unranked_controls: BTreeMap<String, UnrankedControl>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +316,37 @@ fn parse_identifier(identifier: &str) -> Result<ModelKey, SkillEvalError> {
         provider: provider.to_owned(),
         model: model.to_owned(),
     })
+}
+
+fn exact_model_key(requested: &ModelIdentity) -> Result<ModelKey, SkillEvalError> {
+    if !is_exact_segment(&requested.provider)
+        || requested.provider.contains('/')
+        || !requested.model.split('/').all(is_exact_segment)
+    {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "exact model route is malformed".to_owned(),
+        ));
+    }
+    Ok(ModelKey {
+        provider: requested.provider.clone(),
+        model: requested.model.clone(),
+    })
+}
+
+fn is_exact_segment(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && !segment
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+}
+
+fn is_moving_alias(model: &str) -> bool {
+    model
+        .rsplit(['/', '-', ':', '@'])
+        .next()
+        .is_some_and(|segment| segment == "latest")
 }
 
 fn identity(

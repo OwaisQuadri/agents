@@ -15,9 +15,9 @@ use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CaseId, CliCommand,
     CliRequest, Decision, ExecutionDefinition, HarnessIdentity, ModelIdentity, OutputFormat,
-    OwnEvalEvidence, PromptJudgeRequest, QualificationPolicy, QualificationReport, QualifyRequest,
-    RunEvent, RunId, SkillEvalError, Tier, TierAssignment, TierDestination, Timestamp, TrialRecord,
-    TrialSelector,
+    OwnEvalEvidence, PromptJudgeRequest, QualificationPolicy, QualificationPurpose,
+    QualificationReport, QualifyRequest, RunEvent, RunId, SkillEvalError, Tier, TierAssignment,
+    TierDestination, Timestamp, TrialRecord, TrialSelector,
 };
 use crate::models::ConfiguredModelResolver;
 use crate::pi_runner::PiCandidateRunner;
@@ -202,6 +202,7 @@ fn parse_qualify(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEva
             artifact_roots: roots,
             change,
             policy: QualificationPolicy {
+                purpose: QualificationPurpose::Artifact,
                 candidate_tiers,
                 reference_tier,
                 judge_tier,
@@ -522,6 +523,11 @@ pub(crate) fn execute_command(
                 OutputFormat::JsonLines => write_json_line(&result, output),
             }
         }
+        CliCommand::PoolQualify { .. }
+        | CliCommand::PoolReport { .. }
+        | CliCommand::PoolResume { .. } => Err(SkillEvalError::InvalidConfiguration(
+            "model-pool commands are not implemented".to_owned(),
+        )),
     }
 }
 
@@ -785,9 +791,16 @@ impl ArtifactSource for ConcreteRuntime {
     }
 }
 
+// TODO(AGNT-0032.T102): Delegate pool-judge selection through the concrete runtime.
 impl ModelResolver for ConcreteRuntime {
     fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
         self.models.candidates(tier)
+    }
+
+    fn exact_candidate(&self, _requested: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError> {
+        Err(SkillEvalError::InvalidConfiguration(
+            "exact model-pool candidate resolution is not implemented".to_owned(),
+        ))
     }
 
     fn configured_judge_tier(&self) -> Result<Tier, SkillEvalError> {
