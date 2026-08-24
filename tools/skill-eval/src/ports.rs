@@ -2,9 +2,9 @@ use std::path::Path;
 
 use crate::model::{
     ArtifactDefinition, CandidateArtifact, CaseDefinition, CheckResult, ExecutionDefinition,
-    HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PromptJudgeRequest, PromptJudgeResult,
-    RunEvent, RunId, SkillEvalError, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord,
-    TrialSelector,
+    HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolRunConfiguration, PoolRunId,
+    PoolRunState, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError, Tier,
+    TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
 };
 
 pub(crate) trait ArtifactSource {
@@ -13,6 +13,8 @@ pub(crate) trait ArtifactSource {
 
 pub(crate) trait ModelResolver {
     fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError>;
+
+    fn exact_candidate(&self, requested: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError>;
 
     fn configured_judge_tier(&self) -> Result<Tier, SkillEvalError>;
 
@@ -33,6 +35,10 @@ pub(crate) trait HarnessResolver {
 
 pub(crate) trait RunIdSource {
     fn next(&mut self) -> Result<RunId, SkillEvalError>;
+}
+
+pub(crate) trait PoolRunIdSource {
+    fn next_pool(&mut self) -> Result<PoolRunId, SkillEvalError>;
 }
 
 pub(crate) trait CandidateRunner {
@@ -81,6 +87,18 @@ pub(crate) trait RunStore {
     fn find_trial(&self, selector: &TrialSelector) -> Result<TrialRecord, SkillEvalError>;
 }
 
+pub(crate) trait PoolPlanSource {
+    fn load_pool_plan(&self, path: &Path) -> Result<PoolRunConfiguration, SkillEvalError>;
+}
+
+pub(crate) trait PoolStore {
+    fn create_pool(&mut self, state: &PoolRunState) -> Result<(), SkillEvalError>;
+
+    fn load_pool(&self, run_id: &PoolRunId) -> Result<PoolRunState, SkillEvalError>;
+
+    fn save_pool(&mut self, state: &PoolRunState) -> Result<(), SkillEvalError>;
+}
+
 pub(crate) trait Clock {
     fn now(&self) -> Timestamp;
 }
@@ -89,12 +107,21 @@ pub(crate) trait ProgressSink {
     fn emit(&mut self, event: &RunEvent) -> Result<(), SkillEvalError>;
 }
 
+pub(crate) trait PoolProgressSink {
+    fn emit_pool(&mut self, state: &PoolRunState) -> Result<(), SkillEvalError>;
+}
+
 pub(crate) trait TierWriter {
     fn write(
         &mut self,
         artifact: &ArtifactDefinition,
         assignments: &[TierAssignment],
     ) -> Result<(), SkillEvalError>;
+}
+
+pub(crate) trait PoolRuntime:
+    QualificationRuntime + PoolRunIdSource + PoolPlanSource + PoolStore
+{
 }
 
 pub(crate) trait QualificationRuntime:
