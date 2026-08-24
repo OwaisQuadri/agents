@@ -72,6 +72,7 @@ pub(crate) struct RunConfiguration {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+// TODO(AGNT-0032.T82): Preserve ordinary qualification while enabling the explicit pool purpose.
 pub(crate) enum QualificationPurpose {
     Artifact,
     ModelPool,

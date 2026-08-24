@@ -140,6 +140,16 @@ that makes the floor unnecessary.
 Every floor is a hypothesis. They rest on judgment today, and the bottom-up sweep in
 AGNT-0018 is what can prove one wrong.
 
+## skill delegation
+
+An accepted `metadata.target-tier` gives a skill a cheaper child route. The parent may use
+that route for bounded mechanical work. It does not have to delegate. The parent keeps
+every human decision, irreversible action, and final verification. If target metadata is
+absent, the skill keeps its existing parent path.
+
+The target names a tier only. `config/model-tiers.json` resolves the tier. A target is not
+permission to move retained work into the child.
+
 ## what T1 cost, measured
 
 T1 has no agent assigned, and four runs on 2026-08-20 are why. The free model answered a
