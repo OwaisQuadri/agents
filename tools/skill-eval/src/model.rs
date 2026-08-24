@@ -443,6 +443,7 @@ pub(crate) enum ArtifactStatus {
     AwaitingDecision,
     Accepted,
     Rejected,
+    // TODO(AGNT-0032.T88): Reach a terminal pool-child artifact state without a tier boundary.
     PoolCompleted,
     Paused,
     NeedsReview,
@@ -741,6 +742,7 @@ pub(crate) enum RunEvent {
         at: Timestamp,
         record: TrialRecord,
     },
+    // TODO(AGNT-0032.T88): Persist exact trial-set completion only after all expected trials.
     PoolChildCompleted {
         at: Timestamp,
         artifact: ArtifactName,

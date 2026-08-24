@@ -220,6 +220,7 @@ impl SequenceState {
             })
     }
 
+    // TODO(AGNT-0032.T88): Validate pool-child completion purpose, trial coverage, and terminal ordering.
     fn accept(
         &mut self,
         event: &RunEvent,
@@ -496,8 +497,9 @@ mod tests {
 
     use crate::model::{
         ArtifactName, CandidateArtifact, CaseId, HarnessIdentity, ModelIdentity, PauseReason,
-        QualificationPolicy, RunConfiguration, RunEvent, RunId, RunMode, SkillEvalError, Tier,
-        Timestamp, TrialKey, TrialRecord, TrialSelector, TrialUsage, TrialVerdict,
+        QualificationPolicy, QualificationPurpose, RunConfiguration, RunEvent, RunId, RunMode,
+        SkillEvalError, Tier, Timestamp, TrialKey, TrialRecord, TrialSelector, TrialUsage,
+        TrialVerdict,
     };
     use crate::ports::RunStore;
 
@@ -735,8 +737,8 @@ mod tests {
                 mode: RunMode::Execute,
                 artifacts: Vec::new(),
                 change: None,
-                // TODO(AGNT-0032.T82): Mark the stored ordinary run as artifact qualification.
                 policy: QualificationPolicy {
+                    purpose: QualificationPurpose::Artifact,
                     candidate_tiers: vec![Tier::T2],
                     reference_tier: Tier::T4,
                     judge_tier: Tier::T5,

@@ -7,9 +7,10 @@ use crate::model::{
     CaseDiscovery, Decision, DecisionRecord, EvidenceRole, JudgeInput, ParentResponsibility,
     PauseReason, PoolQualifyRequest, PoolRunId, PoolRunState, PromptJudgeRequest,
     PromptJudgeResult, PublicationGate, PublicationStatus, QualificationBoundary,
-    QualificationPolicy, QualificationReport, QualifyRequest, RunConfiguration, RunEvent, RunId,
-    RunMode, RunState, RunStatus, SkillEvalError, SkillRoutingDecision, Tier, TierAssignment,
-    TierDestination, TierEvidence, TierStatus, TrialKey, TrialRecord, TrialSelector, TrialUsage,
+    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest,
+    RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus, SkillEvalError,
+    SkillRoutingDecision, Tier, TierAssignment, TierDestination, TierEvidence, TierStatus,
+    TrialKey, TrialRecord, TrialSelector, TrialUsage,
 };
 use crate::ports::{
     Clock, PoolProgressSink, PoolRuntime, ProgressSink, QualificationRuntime, RunStore, TierWriter,
@@ -43,12 +44,17 @@ pub(crate) fn build_pool_report(
 }
 
 pub(crate) fn start_qualification_with_run_id(
-    _run_id: RunId,
-    _request: QualifyRequest,
+    run_id: RunId,
+    _exact_candidate: Option<crate::model::ModelIdentity>,
+    request: QualifyRequest,
     _runtime: &mut dyn QualificationRuntime,
     _progress: &mut dyn ProgressSink,
 ) -> Result<QualificationReport, SkillEvalError> {
-    unimplemented!("AGNT-0032.T88")
+    validate_start_request(&request)?;
+    validate_run_id(&run_id)?;
+    Err(SkillEvalError::InvalidConfiguration(
+        "preallocated qualification runs are not implemented".to_owned(),
+    ))
 }
 
 pub(crate) fn start_qualification(
@@ -330,6 +336,8 @@ fn run_tier_trials(
             let judge = runtime
                 .judge(policy.judge_tier, Some(&candidate.model))
                 .map_err(checkpoint_error)?;
+            validate_external_judge(&candidate.model, &judge, policy.judge_tier)
+                .map_err(checkpoint_error)?;
             let judged = runtime
                 .grade(
                     &judge,
@@ -340,6 +348,8 @@ fn run_tier_trials(
                         checks,
                     },
                 )
+                .map_err(checkpoint_error)?;
+            validate_external_judge(&candidate.model, &judged.model, policy.judge_tier)
                 .map_err(checkpoint_error)?;
             let record = TrialRecord {
                 key,
@@ -368,6 +378,20 @@ fn run_tier_trials(
     }
 
     Ok(trials)
+}
+
+fn validate_external_judge(
+    candidate: &crate::model::ModelIdentity,
+    judge: &crate::model::ModelIdentity,
+    judge_tier: Tier,
+) -> Result<(), SkillEvalError> {
+    if candidate.provider == judge.provider && candidate.model == judge.model {
+        Err(SkillEvalError::InvalidConfiguration(format!(
+            "judge tier {judge_tier:?} resolved to the candidate model"
+        )))
+    } else {
+        Ok(())
+    }
 }
 
 fn checkpoint_error(error: SkillEvalError) -> StartTrialError {
@@ -455,10 +479,19 @@ fn validate_start_request(request: &QualifyRequest) -> Result<(), SkillEvalError
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
+    let is_candidate_order_valid = match request.policy.purpose {
+        QualificationPurpose::Artifact => {
+            tiers.iter().all(|tier| request.policy.judge_tier > *tier)
+        }
+        QualificationPurpose::ModelPool => tiers.iter().all(|tier| {
+            request.policy.judge_tier > *tier
+                || (*tier == Tier::T5 && request.policy.judge_tier == Tier::T5)
+        }),
+    };
     if tiers.len() != request.policy.candidate_tiers.len()
         || tiers.contains(&request.policy.reference_tier)
         || request.policy.judge_tier <= request.policy.reference_tier
-        || tiers.iter().any(|tier| request.policy.judge_tier <= *tier)
+        || !is_candidate_order_valid
     {
         return Err(SkillEvalError::InvalidConfiguration(
             "qualification policy has invalid tier ordering".to_string(),
@@ -986,6 +1019,8 @@ fn resume_tier_trials(
             let judge = runtime
                 .judge(policy.judge_tier, Some(&candidate.model))
                 .map_err(checkpoint_error)?;
+            validate_external_judge(&candidate.model, &judge, policy.judge_tier)
+                .map_err(checkpoint_error)?;
             let judged = runtime
                 .grade(
                     &judge,
@@ -996,6 +1031,8 @@ fn resume_tier_trials(
                         checks,
                     },
                 )
+                .map_err(checkpoint_error)?;
+            validate_external_judge(&candidate.model, &judged.model, policy.judge_tier)
                 .map_err(checkpoint_error)?;
             let record = TrialRecord {
                 key,
@@ -2088,9 +2125,9 @@ mod state {
         CandidateArtifact, CaseDiscovery, CaseDrive, CaseId, ConfidenceInterval, Decision,
         DecisionRecord, EvidenceRole, HarnessIdentity, ModelIdentity, OwnEvalEvidence, PauseReason,
         PublicationGate, PublicationStatus, QualificationBoundary, QualificationPolicy,
-        RunConfiguration, RunEvent, RunId, RunMode, RunStatus, SkillEvalError, Tier,
-        TierDestination, TierEvidence, TierStatus, Timestamp, TrialKey, TrialRecord, TrialSelector,
-        TrialUsage, TrialVerdict,
+        QualificationPurpose, RunConfiguration, RunEvent, RunId, RunMode, RunStatus,
+        SkillEvalError, Tier, TierDestination, TierEvidence, TierStatus, Timestamp, TrialKey,
+        TrialRecord, TrialSelector, TrialUsage, TrialVerdict,
     };
     use crate::ports::RunStore;
 
@@ -2622,6 +2659,7 @@ mod state {
                 artifacts: vec![artifact_definition()],
                 change: Some(change()),
                 policy: QualificationPolicy {
+                    purpose: QualificationPurpose::Artifact,
                     candidate_tiers: vec![Tier::T2],
                     reference_tier: Tier::T4,
                     judge_tier: Tier::T5,
