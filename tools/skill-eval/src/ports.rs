@@ -24,7 +24,11 @@ pub(crate) trait ModelResolver {
         candidate: Option<&ModelIdentity>,
     ) -> Result<ModelIdentity, SkillEvalError>;
 
-    fn pool_judge(&self, candidate: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError>;
+    fn pool_judge(&self, _candidate: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError> {
+        Err(SkillEvalError::InvalidConfiguration(
+            "pool judge resolution is not implemented".to_owned(),
+        ))
+    }
 }
 
 pub(crate) trait HarnessResolver {
