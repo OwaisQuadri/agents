@@ -89,6 +89,12 @@ pub(crate) trait RunStore {
 
 pub(crate) trait PoolPlanSource {
     fn load_pool_plan(&self, path: &Path) -> Result<PoolPlan, SkillEvalError>;
+
+    fn validate_pool_plan_freshness(
+        &self,
+        plan: &PoolPlan,
+        now: &Timestamp,
+    ) -> Result<(), SkillEvalError>;
 }
 
 pub(crate) trait PoolStore {
