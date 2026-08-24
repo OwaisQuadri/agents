@@ -220,12 +220,16 @@ pub(crate) struct PoolEntrantEvidence {
     pub(crate) stage: PoolStage,
     pub(crate) requested_model: ModelIdentity,
     pub(crate) effective_model: ModelIdentity,
+    pub(crate) judge_model: ModelIdentity,
+    pub(crate) harnesses: Vec<HarnessIdentity>,
     pub(crate) is_passing: bool,
     pub(crate) completed_trials: u32,
     pub(crate) expected_trials: u32,
     pub(crate) failed_trials: u32,
     pub(crate) catastrophic_trials: u32,
     pub(crate) score: ConfidenceInterval,
+    pub(crate) candidate_usage: TrialUsage,
+    pub(crate) judge_usage: TrialUsage,
     pub(crate) total_usage: TrialUsage,
 }
 
