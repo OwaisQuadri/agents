@@ -49,6 +49,8 @@ const GENERAL_EVENT_FILTERS = [
 const DEFAULT_PANE_LINE_LIMIT = 200;
 const SELF_MARKER = " <- Pi is here";
 const USAGE = "Usage: /herdr-state [workspace <workspace-id> | pane <pane-id> [line-limit]]";
+const INLINE_UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+const PANE_OUTPUT_UNSAFE_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
 
 interface LoadedState {
 	snapshot: HerdrSessionSnapshot;
@@ -73,28 +75,23 @@ function isFailure(value: unknown): value is HerdrStateFailure {
 	);
 }
 
-function formatFailure(failure: HerdrStateFailure): string {
-	return `Herdr state is not available (${failure.code}): ${failure.message}`;
+function sanitizeInlineText(value: string): string {
+	return value.replace(INLINE_UNSAFE_TEXT, "");
 }
 
-/**
- * Reads the Herdr pane identifier injected into the Pi process environment.
- *
- * @returns The injected pane identifier, or undefined when it is absent.
- */
+function sanitizePaneOutput(value: string): string {
+	return value.replace(PANE_OUTPUT_UNSAFE_TEXT, "");
+}
+
+function formatFailure(failure: HerdrStateFailure): string {
+	return `Herdr state is not available (${sanitizeInlineText(failure.code)}): ${sanitizeInlineText(failure.message)}`;
+}
+
 function selfPaneIdFromEnvironment(): string | undefined {
 	const value = process.env.HERDR_PANE_ID;
 	return value === undefined || value === "" ? undefined : value;
 }
 
-/**
- * Loads and normalizes the live Herdr session snapshot, and locates Pi
- * within it.
- *
- * @param client The read-only Herdr client to query.
- * @param cwd The Pi process working directory.
- * @returns The normalized snapshot and Pi's location, or a classified failure.
- */
 async function loadState(client: HerdrClient, cwd: string): Promise<LoadedState | HerdrStateFailure> {
 	const response = await client.snapshot();
 	if (isFailure(response)) {
@@ -110,32 +107,25 @@ async function loadState(client: HerdrClient, cwd: string): Promise<LoadedState 
 }
 
 function formatWorkspaceLine(workspace: HerdrWorkspace, self: HerdrAgentLocation | null): string {
-	const worktree = workspace.worktree !== null ? workspace.worktree.path : "(no worktree)";
+	const worktree = workspace.worktree !== null ? sanitizeInlineText(workspace.worktree.path) : "(no worktree)";
 	const focus = workspace.isFocused ? " [focused]" : "";
 	const marker = self !== null && self.workspaceId === workspace.id ? SELF_MARKER : "";
-	return `  ${workspace.id}  ${workspace.label}  ${worktree}${focus}${marker}`;
+	return `  ${sanitizeInlineText(workspace.id)}  ${sanitizeInlineText(workspace.label)}  ${worktree}${focus}${marker}`;
 }
 
 function formatTabLine(tab: HerdrTab, self: HerdrAgentLocation | null): string {
 	const focus = tab.isFocused ? " [focused]" : "";
 	const marker = self !== null && self.tabId === tab.id ? SELF_MARKER : "";
-	return `  ${tab.id}  ${tab.label}${focus}${marker}`;
+	return `  ${sanitizeInlineText(tab.id)}  ${sanitizeInlineText(tab.label)}${focus}${marker}`;
 }
 
 function formatPaneLine(pane: HerdrPane, self: HerdrAgentLocation | null): string {
 	const focus = pane.isFocused ? " [focused]" : "";
-	const cwd = pane.cwd ?? "(unknown cwd)";
+	const cwd = pane.cwd === null ? "(unknown cwd)" : sanitizeInlineText(pane.cwd);
 	const marker = self !== null && self.paneId === pane.id ? SELF_MARKER : "";
-	return `  ${pane.id}  ${cwd}${focus}${marker}`;
+	return `  ${sanitizeInlineText(pane.id)}  ${cwd}${focus}${marker}`;
 }
 
-/**
- * Renders every Herdr workspace and marks Pi's own workspace, tab, and pane.
- *
- * @param snapshot The normalized Herdr session snapshot.
- * @param self Pi's location, or null when it is absent from the snapshot.
- * @returns The rendered global state text.
- */
 function renderGlobalState(snapshot: HerdrSessionSnapshot, self: HerdrAgentLocation | null): string {
 	const lines = ["Herdr workspaces:"];
 	if (snapshot.workspaces.length === 0) {
@@ -149,19 +139,11 @@ function renderGlobalState(snapshot: HerdrSessionSnapshot, self: HerdrAgentLocat
 	lines.push(
 		self === null
 			? "Pi location: not found in the current Herdr session."
-			: `Pi location: workspace ${self.workspaceId}, tab ${self.tabId}, pane ${self.paneId}.`,
+			: `Pi location: workspace ${sanitizeInlineText(self.workspaceId)}, tab ${sanitizeInlineText(self.tabId)}, pane ${sanitizeInlineText(self.paneId)}.`,
 	);
 	return lines.join("\n");
 }
 
-/**
- * Renders one workspace's tabs and panes, scoped to that workspace only.
- *
- * @param snapshot The normalized Herdr session snapshot.
- * @param self Pi's location, or null when it is absent from the snapshot.
- * @param workspaceId The requested workspace identifier.
- * @returns The rendered workspace detail text, or an explicit absent-workspace message.
- */
 function renderWorkspaceDetail(
 	snapshot: HerdrSessionSnapshot,
 	self: HerdrAgentLocation | null,
@@ -169,7 +151,7 @@ function renderWorkspaceDetail(
 ): string {
 	const workspace = snapshot.workspaces.find((candidate) => candidate.id === workspaceId);
 	if (workspace === undefined) {
-		return `Workspace ${workspaceId} is absent from the current Herdr session.`;
+		return `Workspace ${sanitizeInlineText(workspaceId)} is absent from the current Herdr session.`;
 	}
 	const lines = [formatWorkspaceLine(workspace, self), "", "Tabs:"];
 	const tabs = snapshot.tabs.filter((tab) => tab.workspaceId === workspaceId);
@@ -192,18 +174,6 @@ function renderWorkspaceDetail(
 	return lines.join("\n");
 }
 
-/**
- * Renders one pane's bounded recent output, marking Pi's own pane when it
- * matches. Pane text is always shown as literal bounded data; it is never
- * interpreted as a command or a workspace label.
- *
- * @param client The read-only Herdr client to read pane output from.
- * @param snapshot The normalized Herdr session snapshot.
- * @param self Pi's location, or null when it is absent from the snapshot.
- * @param paneId The requested pane identifier.
- * @param lineLimit The positive bounded maximum number of recent lines to show.
- * @returns The rendered pane detail text, or an explicit failure message.
- */
 async function renderPaneDetail(
 	client: HerdrClient,
 	snapshot: HerdrSessionSnapshot,
@@ -218,7 +188,7 @@ async function renderPaneDetail(
 	const pane = snapshot.panes.find((candidate) => candidate.id === paneId);
 	const lines =
 		pane === undefined
-			? [`Pane ${paneId} is absent from the current workspace listing.`]
+			? [`Pane ${sanitizeInlineText(paneId)} is absent from the current workspace listing.`]
 			: [formatPaneLine(pane, self)];
 	lines.push("");
 	lines.push(
@@ -226,18 +196,10 @@ async function renderPaneDetail(
 			? `Output (bounded to the last ${lineLimit} lines; earlier output was truncated):`
 			: "Output:",
 	);
-	lines.push(output.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, ""));
+	lines.push(sanitizePaneOutput(output.text));
 	return lines.join("\n");
 }
 
-/**
- * Parses the `/herdr-state` command arguments into a global, workspace, or
- * pane detail request.
- *
- * @param args The raw command argument string.
- * @returns The parsed request.
- * @throws Error when the arguments do not match a supported request shape.
- */
 function parseArguments(args: string): ParsedArguments {
 	const tokens = args.trim().split(/\s+/).filter((token) => token.length > 0);
 	if (tokens.length === 0) {

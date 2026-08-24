@@ -489,6 +489,136 @@ test("TC-25 pane output removes active controls and preserves allowed text exact
 	}
 });
 
+test("inline render paths remove C0, C1, and bounded bidirectional controls", async () => {
+	const controls = "\u0001\u0080\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069";
+	const tainted = (value: string) => `雪${controls}${value}${controls}界`;
+	const clean = (value: string) => `雪${value}界`;
+	const selfWorkspaceId = tainted("workspace-id");
+	const selfWorkspaceLabel = tainted("workspace-label");
+	const selfWorktreePath = tainted("/worktree-path");
+	const selfTabId = tainted("tab-id");
+	const selfTabLabel = tainted("tab-label");
+	const selfPaneId = tainted("pane-id");
+	const selfCwd = tainted("/pane-cwd");
+	const response = makeSnapshotResponse();
+	const raw = response.result.snapshot;
+	raw.focused_workspace_id = selfWorkspaceId;
+	raw.focused_tab_id = selfTabId;
+	raw.focused_pane_id = selfPaneId;
+	raw.workspaces[0]!.workspace_id = selfWorkspaceId;
+	raw.workspaces[0]!.label = selfWorkspaceLabel;
+	raw.workspaces[0]!.worktree!.checkout_path = selfWorktreePath;
+	raw.tabs[0]!.tab_id = selfTabId;
+	raw.tabs[0]!.workspace_id = selfWorkspaceId;
+	raw.tabs[0]!.label = selfTabLabel;
+	raw.panes[0]!.pane_id = selfPaneId;
+	raw.panes[0]!.workspace_id = selfWorkspaceId;
+	raw.panes[0]!.tab_id = selfTabId;
+	raw.panes[0]!.cwd = selfCwd;
+	const { client } = makeFakeClient({
+		snapshotResult: async () => response,
+		paneReadResult: async (paneId) => ({ paneId, text: "ordinary pane output", isTruncated: false }),
+	});
+
+	const { notifications: globalNotifications } = await runCommand(
+		client,
+		"",
+		selfCwd,
+		selfPaneId,
+	);
+	const globalOutput = globalNotifications[0] ?? "";
+	for (const value of [
+		"workspace-id",
+		"workspace-label",
+		"/worktree-path",
+		"tab-id",
+		"pane-id",
+	]) {
+		assert.ok(globalOutput.includes(clean(value)));
+	}
+
+	const { notifications: workspaceNotifications } = await runCommand(
+		client,
+		`workspace ${selfWorkspaceId}`,
+		selfCwd,
+		selfPaneId,
+	);
+	const workspaceOutput = workspaceNotifications[0] ?? "";
+	for (const value of [
+		"workspace-id",
+		"workspace-label",
+		"/worktree-path",
+		"tab-id",
+		"tab-label",
+		"pane-id",
+		"/pane-cwd",
+	]) {
+		assert.ok(workspaceOutput.includes(clean(value)));
+	}
+
+	const { notifications: paneNotifications } = await runCommand(
+		client,
+		`pane ${selfPaneId}`,
+		selfCwd,
+		selfPaneId,
+	);
+	const paneOutput = paneNotifications[0] ?? "";
+	assert.ok(paneOutput.includes(`${clean("pane-id")}  ${clean("/pane-cwd")}`));
+
+	const missingWorkspaceId = tainted("missing-workspace-id");
+	const { notifications: missingWorkspaceNotifications } = await runCommand(
+		client,
+		`workspace ${missingWorkspaceId}`,
+		selfCwd,
+		selfPaneId,
+	);
+	assert.equal(
+		missingWorkspaceNotifications[0],
+		`Workspace ${clean("missing-workspace-id")} is absent from the current Herdr session.`,
+	);
+
+	const missingPaneId = tainted("missing-pane-id");
+	const { notifications: missingPaneNotifications } = await runCommand(
+		client,
+		`pane ${missingPaneId}`,
+		selfCwd,
+		selfPaneId,
+	);
+	assert.match(
+		missingPaneNotifications[0] ?? "",
+		new RegExp(`^Pane ${clean("missing-pane-id")} is absent from the current workspace listing\\.`),
+	);
+
+	const failureCode = tainted("unavailable");
+	const failureMessage = tainted("session-failure");
+	const { client: failingClient } = makeFakeClient({
+		snapshotResult: async () => ({ code: failureCode, message: failureMessage }),
+	});
+	const { notifications: failureNotifications } = await runCommand(
+		failingClient,
+		"",
+		selfCwd,
+		selfPaneId,
+	);
+	assert.equal(
+		failureNotifications[0],
+		`Herdr state is not available (${clean("unavailable")}): ${clean("session-failure")}`,
+	);
+
+	for (const output of [
+		globalOutput,
+		workspaceOutput,
+		paneOutput,
+		missingWorkspaceNotifications[0] ?? "",
+		missingPaneNotifications[0] ?? "",
+		failureNotifications[0] ?? "",
+	]) {
+		for (const control of controls) {
+			assert.equal(output.includes(control), false);
+		}
+	}
+});
+
 test("TC-08 pane detail reports not-found explicitly and leaves the global listing unaffected", async () => {
 	const notFound: HerdrStateFailure = { code: "not-found", message: "pane bogus-pane-id not found" };
 	const { client } = makeFakeClient({

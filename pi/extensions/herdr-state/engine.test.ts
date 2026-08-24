@@ -429,6 +429,9 @@ test("TC-30 tab updates preserve parent lineage and model immutability", () => {
 	const snapshot = normalizeSnapshot(makeSnapshotResponse());
 	const model = createModel(snapshot, findSelf(snapshot, SELF_CWD, SELF_PANE_ID));
 	const priorTab = model.snapshot.tabs.find((tab) => tab.id === SELF_TAB_ID);
+	const priorTabs = model.snapshot.tabs;
+	const priorPanes = model.snapshot.panes;
+	const expectedPriorModel = structuredClone(model);
 	const expectedPriorTab = {
 		id: SELF_TAB_ID,
 		workspaceId: SELF_WORKSPACE_ID,
@@ -451,6 +454,25 @@ test("TC-30 tab updates preserve parent lineage and model immutability", () => {
 			message: "invalid Herdr tab event: tab references unknown workspace_id",
 		},
 	);
+
+	assert.throws(
+		() =>
+			applyEvent(model, {
+				type: "tab-changed",
+				tab: {
+					id: SELF_TAB_ID,
+					workspaceId: OTHER_WORKSPACE_ID,
+					label: "invalid duplicate",
+					isFocused: false,
+				},
+			}),
+		{
+			message: "invalid Herdr tab event: tab workspace_id cannot change",
+		},
+	);
+	assert.deepEqual(model, expectedPriorModel);
+	assert.equal(model.snapshot.tabs, priorTabs);
+	assert.equal(model.snapshot.panes, priorPanes);
 
 	const validTab = { ...expectedPriorTab, label: "renamed" };
 	const nextModel = applyEvent(model, { type: "tab-changed", tab: validTab });

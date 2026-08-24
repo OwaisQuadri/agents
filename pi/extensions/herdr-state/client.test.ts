@@ -20,12 +20,6 @@ interface RecordedCall {
 	signal?: AbortSignal;
 }
 
-/**
- * Builds a fake `HerdrTransport` whose `runCommand` dispatches on the
- * command's first two arguments and whose `subscribeEvents` replays a fixed
- * list of raw JSON lines, matching the shape a real spawned `herdr` command
- * or socket connection would present to `HerdrCommandClient`.
- */
 function makeFakeTransport(options: {
 	snapshotResult?: (signal?: AbortSignal) => Promise<HerdrCommandResult>;
 	paneReadResult?: (signal?: AbortSignal) => Promise<HerdrCommandResult>;
