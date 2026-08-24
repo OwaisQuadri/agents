@@ -70,8 +70,16 @@ pub(crate) struct RunConfiguration {
     pub(crate) created_at: Timestamp,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum QualificationPurpose {
+    Artifact,
+    ModelPool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct QualificationPolicy {
+    pub(crate) purpose: QualificationPurpose,
     pub(crate) candidate_tiers: Vec<Tier>,
     pub(crate) reference_tier: Tier,
     pub(crate) judge_tier: Tier,
