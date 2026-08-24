@@ -626,6 +626,7 @@ mod tests {
     }
 
     fn policy() -> QualificationPolicy {
+        // TODO(AGNT-0032.T82): Mark the shared statistics fixture as artifact qualification.
         QualificationPolicy {
             candidate_tiers: vec![Tier::T1, Tier::T2, Tier::T3],
             reference_tier: Tier::T4,
