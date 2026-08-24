@@ -270,6 +270,7 @@ pub(crate) enum PoolRunStatus {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PoolRunState {
     pub(crate) configuration: PoolRunConfiguration,
+    pub(crate) selected_tiers: Vec<Tier>,
     pub(crate) status: PoolRunStatus,
     pub(crate) child_runs: Vec<PoolChildRun>,
     pub(crate) pools: Vec<RankedPool>,
@@ -561,6 +562,7 @@ pub(crate) enum CliCommand {
 pub(crate) struct PoolQualifyRequest {
     pub(crate) plan_path: PathBuf,
     pub(crate) artifact_roots: Vec<PathBuf>,
+    pub(crate) selected_tiers: Vec<Tier>,
     pub(crate) is_dry_run: bool,
 }
 
