@@ -582,6 +582,7 @@ pub(crate) fn render_event(
     if format == OutputFormat::JsonLines {
         return write_json_line(event, output);
     }
+    // TODO(AGNT-0032.T88): Render minimal pool-child completion identity before full pool reporting.
     let line = match event {
         RunEvent::RunStarted { configuration, .. } => {
             format!("run {} started", configuration.run_id.0)
@@ -791,7 +792,6 @@ impl ArtifactSource for ConcreteRuntime {
     }
 }
 
-// TODO(AGNT-0032.T102): Delegate pool-judge selection through the concrete runtime.
 impl ModelResolver for ConcreteRuntime {
     fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
         self.models.candidates(tier)
@@ -805,6 +805,10 @@ impl ModelResolver for ConcreteRuntime {
 
     fn configured_judge_tier(&self) -> Result<Tier, SkillEvalError> {
         self.models.configured_judge_tier()
+    }
+
+    fn pool_judge(&self, candidate: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError> {
+        self.models.pool_judge(candidate)
     }
 
     fn judge(
