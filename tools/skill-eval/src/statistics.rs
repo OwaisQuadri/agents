@@ -1,12 +1,30 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    ConfidenceInterval, EvidenceRole, QualificationBoundary, QualificationPolicy, SkillEvalError,
-    Tier, TierEvidence, TierStatus, TrialRecord, TrialUsage,
+    ConfidenceInterval, EvidenceRole, ModelIdentity, PoolEntrantEvidence, PoolPolicy,
+    QualificationBoundary, QualificationPolicy, RankedPool, SkillEvalError, Tier, TierEvidence,
+    TierStatus, TrialRecord, TrialUsage,
 };
 
 // TODO(AGNT-0032.T86): Apply pool calibration floors before any entrant ranking.
+pub(crate) fn evaluate_calibration(
+    _requested: &ModelIdentity,
+    _trials: &[TrialRecord],
+    _policy: &PoolPolicy,
+) -> Result<PoolEntrantEvidence, SkillEvalError> {
+    unimplemented!("AGNT-0032.T86")
+}
+
 // TODO(AGNT-0032.T87): Rank only the complete pair of fully qualified finalists.
+pub(crate) fn rank_pool(
+    _tier: Tier,
+    _calibration: &[PoolEntrantEvidence],
+    _qualification: &[PoolEntrantEvidence],
+    _policy: &PoolPolicy,
+) -> Result<RankedPool, SkillEvalError> {
+    unimplemented!("AGNT-0032.T87")
+}
+
 pub(crate) fn evaluate_tier(
     role: EvidenceRole,
     trials: &[TrialRecord],
@@ -424,8 +442,8 @@ mod tests {
 
     use crate::model::{
         ArtifactName, CaseId, ConfidenceInterval, EvidenceRole, HarnessIdentity, ModelIdentity,
-        QualificationPolicy, Tier, TierEvidence, TierStatus, TrialKey, TrialRecord, TrialUsage,
-        TrialVerdict,
+        QualificationPolicy, QualificationPurpose, Tier, TierEvidence, TierStatus, TrialKey,
+        TrialRecord, TrialUsage, TrialVerdict,
     };
 
     use super::{evaluate_tier, find_boundary};
@@ -626,8 +644,8 @@ mod tests {
     }
 
     fn policy() -> QualificationPolicy {
-        // TODO(AGNT-0032.T82): Mark the shared statistics fixture as artifact qualification.
         QualificationPolicy {
+            purpose: QualificationPurpose::Artifact,
             candidate_tiers: vec![Tier::T1, Tier::T2, Tier::T3],
             reference_tier: Tier::T4,
             judge_tier: Tier::T5,
