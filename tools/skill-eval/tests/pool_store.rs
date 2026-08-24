@@ -59,6 +59,7 @@ fn identity(tier: Tier, index: usize) -> ModelIdentity {
     }
 }
 
+// TODO(AGNT-0032.T88): Prove store preservation and rejection for frozen exam definitions.
 fn initial_state() -> PoolRunState {
     let tier = Tier::T2;
     let entrants = (0..3)
@@ -97,13 +98,13 @@ fn initial_state() -> PoolRunState {
                 model: "openrouter/free".to_owned(),
                 thinking: "low".to_owned(),
             },
-            // TODO(AGNT-0032.T101): Add the positive catalog freshness window to store fixtures.
             policy: PoolPolicy {
                 calibration_repeats_per_case: 1,
                 qualification_repeats_per_case: 3,
                 promotion_count: 2,
                 minimum_score: 8,
                 minimum_reliability_basis_points: 9_500,
+                maximum_catalog_age_seconds: 7_200,
                 spending_limit_millionths_of_dollar: 10_000_000,
                 is_provider_limit_enforced: true,
             },

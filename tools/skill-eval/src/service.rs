@@ -4,26 +4,308 @@ use std::path::{Component, Path};
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
-    CaseDiscovery, Decision, DecisionRecord, EvidenceRole, JudgeInput, ParentResponsibility,
-    PauseReason, PoolQualifyRequest, PoolRunId, PoolRunState, PromptJudgeRequest,
-    PromptJudgeResult, PublicationGate, PublicationStatus, QualificationBoundary,
-    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest,
-    RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus, SkillEvalError,
-    SkillRoutingDecision, Tier, TierAssignment, TierDestination, TierEvidence, TierStatus,
-    TrialKey, TrialRecord, TrialSelector, TrialUsage,
+    CaseDiscovery, Decision, DecisionRecord, EvidenceRole, JudgeInput, ModelIdentity,
+    ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolPauseReason,
+    PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage,
+    PromptJudgeRequest, PromptJudgeResult, PublicationGate, PublicationStatus,
+    QualificationBoundary, QualificationPolicy, QualificationPurpose, QualificationReport,
+    QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus,
+    SkillEvalError, SkillRoutingDecision, Tier, TierAssignment, TierDestination, TierEvidence,
+    TierStatus, TrialKey, TrialRecord, TrialSelector, TrialUsage,
 };
 use crate::ports::{
     Clock, PoolProgressSink, PoolRuntime, ProgressSink, QualificationRuntime, RunStore, TierWriter,
 };
 
-// TODO(AGNT-0032.T88): Persist preallocated child identities before the first exact model call.
 // TODO(AGNT-0032.T90): Advance passing calibration entrants through full qualification and ranking.
+// TODO(AGNT-0032.T88): Persist frozen exam definitions before child preallocation or calls.
 pub(crate) fn start_pool_qualification(
-    _request: PoolQualifyRequest,
-    _runtime: &mut dyn PoolRuntime,
-    _progress: &mut dyn PoolProgressSink,
+    request: PoolQualifyRequest,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
 ) -> Result<PoolRunState, SkillEvalError> {
-    unimplemented!("AGNT-0032.T88")
+    let plan = runtime.load_pool_plan(&request.plan_path)?;
+    let created_at = runtime.now();
+    runtime.validate_pool_plan_freshness(&plan, &created_at)?;
+    validate_pool_request(&request, &plan)?;
+    load_and_validate_artifacts(&request.artifact_roots, runtime)?;
+
+    let pool_run_id = runtime.next_pool()?;
+    let configuration = PoolRunConfiguration {
+        run_id: pool_run_id,
+        created_at,
+        entrants: plan.entrants,
+        control: plan.control,
+        policy: plan.policy,
+    };
+    let child_runs = preallocate_pool_children(&request.selected_tiers, &configuration, runtime)?;
+    let mut state = PoolRunState {
+        configuration,
+        selected_tiers: request.selected_tiers,
+        status: PoolRunStatus::Pending,
+        child_runs,
+        pools: Vec::new(),
+        pause: None,
+        spent_millionths_of_dollar: 0,
+    };
+    runtime.create_pool(&state)?;
+    progress.emit_pool(&state)?;
+
+    if request.is_dry_run {
+        return Ok(state);
+    }
+
+    state.status = PoolRunStatus::Running;
+    save_pool_and_emit(runtime, progress, &state)?;
+    let child_index = state
+        .child_runs
+        .iter()
+        .position(|child| {
+            child.tier == state.selected_tiers[0]
+                && child.entrant_index == 0
+                && child.stage == PoolStage::Calibration
+        })
+        .ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(
+                "pool has no first selected calibration child".to_owned(),
+            )
+        })?;
+    state.child_runs[child_index].status = PoolChildStatus::Running;
+    save_pool_and_emit(runtime, progress, &state)?;
+
+    let child = state.child_runs[child_index].clone();
+    let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
+        .model
+        .clone();
+    let child_request = pool_child_request(
+        &request.artifact_roots,
+        child.tier,
+        state.configuration.policy.calibration_repeats_per_case,
+        state.configuration.policy.minimum_score,
+        runtime.configured_judge_tier()?,
+    );
+    let mut child_progress = SilentProgress;
+    match start_qualification_with_run_id(
+        child.run_id,
+        Some(requested),
+        child_request,
+        runtime,
+        &mut child_progress,
+    ) {
+        Ok(report) => {
+            if report.total_usage.cost_millionths_of_dollar > 0 {
+                state.spent_millionths_of_dollar = state
+                    .spent_millionths_of_dollar
+                    .checked_add(report.total_usage.cost_millionths_of_dollar)
+                    .ok_or_else(|| {
+                        SkillEvalError::InvalidConfiguration(
+                            "pool spending arithmetic overflow".to_owned(),
+                        )
+                    })?;
+                save_pool_and_emit(runtime, progress, &state)?;
+            }
+            match report.status {
+                RunStatus::Completed => {
+                    state.child_runs[child_index].status = PoolChildStatus::Completed;
+                    save_pool_and_emit(runtime, progress, &state)?;
+                }
+                RunStatus::Paused => {
+                    let reason = report.pause.ok_or_else(|| {
+                        SkillEvalError::InvalidConfiguration(
+                            "paused pool child has no pause reason".to_owned(),
+                        )
+                    })?;
+                    pause_pool_child(&mut state, child_index, reason, runtime, progress)?;
+                }
+                status => {
+                    return Err(SkillEvalError::InvalidConfiguration(format!(
+                        "pool child returned nonterminal status {status:?}"
+                    )));
+                }
+            }
+            Ok(state)
+        }
+        Err(
+            error @ (SkillEvalError::InvalidArguments(_)
+            | SkillEvalError::InvalidConfiguration(_)
+            | SkillEvalError::JudgeUnavailable { .. }),
+        ) => Err(error),
+        Err(error) => {
+            let reason = pause_reason_from_error(error);
+            pause_pool_child(&mut state, child_index, reason, runtime, progress)?;
+            Ok(state)
+        }
+    }
+}
+
+fn validate_pool_request(
+    request: &PoolQualifyRequest,
+    plan: &crate::model::PoolPlan,
+) -> Result<(), SkillEvalError> {
+    if request.artifact_roots.is_empty() || request.selected_tiers.is_empty() {
+        return Err(SkillEvalError::InvalidArguments(
+            "pool qualification requires an exam and at least one selected tier".to_owned(),
+        ));
+    }
+    let selected = request
+        .selected_tiers
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if selected.len() != request.selected_tiers.len() {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "pool qualification contains duplicate selected tiers".to_owned(),
+        ));
+    }
+    if selected.iter().any(|tier| {
+        plan.entrants
+            .get(tier)
+            .is_none_or(|entrants| entrants.len() != 3)
+    }) {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "each selected pool tier must contain exactly three entrants".to_owned(),
+        ));
+    }
+    if plan.policy.spending_limit_millionths_of_dollar == 0
+        || !plan.policy.is_provider_limit_enforced
+    {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "pool launch requires a positive provider-enforced spending limit".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn load_and_validate_artifacts(
+    roots: &[std::path::PathBuf],
+    runtime: &dyn QualificationRuntime,
+) -> Result<(), SkillEvalError> {
+    let mut names = BTreeSet::new();
+    for root in roots {
+        let artifact = runtime.load(root)?;
+        validate_artifact(&artifact)?;
+        if !artifact.cases.iter().any(|case| !case.is_holdout) {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "pool exam artifact {:?} has no non-holdout case",
+                artifact.name.0
+            )));
+        }
+        if !names.insert(artifact.name) {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "pool exam contains a duplicate artifact".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn preallocate_pool_children(
+    selected_tiers: &[Tier],
+    configuration: &PoolRunConfiguration,
+    runtime: &mut dyn PoolRuntime,
+) -> Result<Vec<PoolChildRun>, SkillEvalError> {
+    let mut child_runs = Vec::with_capacity(selected_tiers.len().saturating_mul(6));
+    let mut run_ids = BTreeSet::new();
+    for tier in selected_tiers {
+        for entrant_index in 0_u8..3 {
+            for stage in [PoolStage::Calibration, PoolStage::Qualification] {
+                let run_id = runtime.next()?;
+                validate_run_id(&run_id)?;
+                if !run_ids.insert(run_id.clone()) {
+                    return Err(SkillEvalError::InvalidConfiguration(
+                        "pool child run identifiers must be unique".to_owned(),
+                    ));
+                }
+                if usize::from(entrant_index) >= configuration.entrants[tier].len() {
+                    return Err(SkillEvalError::InvalidConfiguration(
+                        "pool child entrant index is out of range".to_owned(),
+                    ));
+                }
+                child_runs.push(PoolChildRun {
+                    tier: *tier,
+                    entrant_index,
+                    stage,
+                    run_id,
+                    status: PoolChildStatus::Pending,
+                });
+            }
+        }
+    }
+    Ok(child_runs)
+}
+
+fn pool_child_request(
+    artifact_roots: &[std::path::PathBuf],
+    candidate_tier: Tier,
+    repeats_per_case: u16,
+    minimum_score: u8,
+    judge_tier: Tier,
+) -> QualifyRequest {
+    QualifyRequest {
+        artifact_roots: artifact_roots.to_vec(),
+        change: None,
+        policy: QualificationPolicy {
+            purpose: QualificationPurpose::ModelPool,
+            candidate_tiers: vec![candidate_tier],
+            reference_tier: pool_reference_tier(candidate_tier),
+            judge_tier,
+            repeats_per_case,
+            minimum_score,
+            noninferiority_margin: 0.0,
+            confidence_level: 0.95,
+        },
+        is_dry_run: false,
+    }
+}
+
+fn pool_reference_tier(candidate_tier: Tier) -> Tier {
+    match candidate_tier {
+        Tier::T1 => Tier::T2,
+        Tier::T2 | Tier::T3 | Tier::T4 | Tier::T5 => Tier::T1,
+    }
+}
+
+fn save_pool_and_emit(
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+    state: &PoolRunState,
+) -> Result<(), SkillEvalError> {
+    runtime.save_pool(state)?;
+    progress.emit_pool(state)
+}
+
+fn pause_pool_child(
+    state: &mut PoolRunState,
+    child_index: usize,
+    reason: PauseReason,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    state.child_runs[child_index].status = PoolChildStatus::Paused;
+    save_pool_and_emit(runtime, progress, state)?;
+    state.status = PoolRunStatus::Paused;
+    state.pause = Some(match reason {
+        PauseReason::Quota { model, reset_at } => PoolPauseReason::Quota { model, reset_at },
+        PauseReason::Infrastructure { message } => PoolPauseReason::Infrastructure { message },
+    });
+    save_pool_and_emit(runtime, progress, state)
+}
+
+fn pause_reason_from_error(error: SkillEvalError) -> PauseReason {
+    match error {
+        SkillEvalError::Quota { model, reset_at } => PauseReason::Quota { model, reset_at },
+        error => PauseReason::Infrastructure {
+            message: format!("{error:?}"),
+        },
+    }
+}
+
+struct SilentProgress;
+
+impl ProgressSink for SilentProgress {
+    fn emit(&mut self, _event: &RunEvent) -> Result<(), SkillEvalError> {
+        Ok(())
+    }
 }
 
 // TODO(AGNT-0032.T89): Resume the first incomplete preallocated child without duplicate work.
@@ -45,16 +327,12 @@ pub(crate) fn build_pool_report(
 
 pub(crate) fn start_qualification_with_run_id(
     run_id: RunId,
-    _exact_candidate: Option<crate::model::ModelIdentity>,
+    exact_candidate: Option<ModelIdentity>,
     request: QualifyRequest,
-    _runtime: &mut dyn QualificationRuntime,
-    _progress: &mut dyn ProgressSink,
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
 ) -> Result<QualificationReport, SkillEvalError> {
-    validate_start_request(&request)?;
-    validate_run_id(&run_id)?;
-    Err(SkillEvalError::InvalidConfiguration(
-        "preallocated qualification runs are not implemented".to_owned(),
-    ))
+    start_qualification_for_run(run_id, exact_candidate, request, true, runtime, progress)
 }
 
 pub(crate) fn start_qualification(
@@ -63,9 +341,23 @@ pub(crate) fn start_qualification(
     progress: &mut dyn ProgressSink,
 ) -> Result<QualificationReport, SkillEvalError> {
     validate_start_request(&request)?;
-
     let run_id = runtime.next()?;
+    start_qualification_for_run(run_id, None, request, false, runtime, progress)
+}
+
+fn start_qualification_for_run(
+    run_id: RunId,
+    exact_candidate: Option<ModelIdentity>,
+    request: QualifyRequest,
+    is_preallocated: bool,
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<QualificationReport, SkillEvalError> {
+    validate_start_request(&request)?;
     validate_run_id(&run_id)?;
+    if is_preallocated {
+        validate_exact_candidate_shape(&request, exact_candidate.as_ref())?;
+    }
 
     let artifacts = request
         .artifact_roots
@@ -83,6 +375,18 @@ pub(crate) fn start_qualification(
         }
     }
     validate_change(request.change.as_ref(), &artifacts)?;
+    let exact_candidate = match exact_candidate {
+        Some(requested) => {
+            let effective = runtime.exact_candidate(&requested)?;
+            if effective != requested {
+                return Err(SkillEvalError::InvalidConfiguration(
+                    "exact candidate resolution changed the requested identity".to_owned(),
+                ));
+            }
+            Some(effective)
+        }
+        None => None,
+    };
 
     let created_at = runtime.now();
     let mode = if request.is_dry_run {
@@ -109,29 +413,20 @@ pub(crate) fn start_qualification(
     )?;
 
     if request.is_dry_run {
-        let discoveries = artifacts
-            .iter()
-            .map(|artifact| ArtifactDiscovery {
-                artifact: artifact.name.clone(),
-                kind: artifact.kind,
-                revision: artifact.revision.clone(),
-                cases: artifact
-                    .cases
-                    .iter()
-                    .map(|case| CaseDiscovery {
-                        id: case.id.clone(),
-                        drive: case.execution.drive.clone(),
-                        is_holdout: case.is_holdout,
-                    })
-                    .collect(),
-            })
-            .collect();
-        let event = RunEvent::DiscoveryCompleted {
-            at: runtime.now(),
-            artifacts: discoveries,
-        };
-        append_and_emit(runtime, progress, &run_id, event)?;
+        append_discovery(runtime, progress, &run_id, &artifacts)?;
         return build_report(&run_id, runtime);
+    }
+
+    if let Some(exact_candidate) = exact_candidate.as_ref() {
+        append_discovery(runtime, progress, &run_id, &artifacts)?;
+        return run_exact_pool_child(
+            &run_id,
+            &artifacts,
+            exact_candidate,
+            &request.policy,
+            runtime,
+            progress,
+        );
     }
 
     let configured_judge_tier = runtime.configured_judge_tier()?;
@@ -262,6 +557,206 @@ pub(crate) fn start_qualification(
     }
 
     build_report(&run_id, runtime)
+}
+
+fn validate_exact_candidate_shape(
+    request: &QualifyRequest,
+    exact_candidate: Option<&ModelIdentity>,
+) -> Result<(), SkillEvalError> {
+    match (request.policy.purpose, exact_candidate) {
+        (QualificationPurpose::Artifact, None) => Ok(()),
+        (QualificationPurpose::Artifact, Some(_)) => Err(SkillEvalError::InvalidConfiguration(
+            "artifact qualification cannot use an exact candidate".to_owned(),
+        )),
+        (QualificationPurpose::ModelPool, None) => Err(SkillEvalError::InvalidConfiguration(
+            "model-pool qualification requires an exact candidate".to_owned(),
+        )),
+        (QualificationPurpose::ModelPool, Some(candidate))
+            if request.policy.candidate_tiers.len() == 1
+                && request.policy.candidate_tiers[0] == candidate.tier =>
+        {
+            Ok(())
+        }
+        (QualificationPurpose::ModelPool, Some(_)) => Err(SkillEvalError::InvalidConfiguration(
+            "model-pool qualification requires one candidate tier matching the exact candidate"
+                .to_owned(),
+        )),
+    }
+}
+
+fn append_discovery(
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+    run_id: &RunId,
+    artifacts: &[ArtifactDefinition],
+) -> Result<(), SkillEvalError> {
+    let discoveries = artifacts
+        .iter()
+        .map(|artifact| ArtifactDiscovery {
+            artifact: artifact.name.clone(),
+            kind: artifact.kind,
+            revision: artifact.revision.clone(),
+            cases: artifact
+                .cases
+                .iter()
+                .map(|case| CaseDiscovery {
+                    id: case.id.clone(),
+                    drive: case.execution.drive.clone(),
+                    is_holdout: case.is_holdout,
+                })
+                .collect(),
+        })
+        .collect();
+    let event = RunEvent::DiscoveryCompleted {
+        at: runtime.now(),
+        artifacts: discoveries,
+    };
+    append_and_emit(runtime, progress, run_id, event)
+}
+
+fn run_exact_pool_child(
+    run_id: &RunId,
+    artifacts: &[ArtifactDefinition],
+    exact_candidate: &ModelIdentity,
+    policy: &QualificationPolicy,
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<QualificationReport, SkillEvalError> {
+    for artifact in artifacts {
+        for case in artifact.cases.iter().filter(|case| !case.is_holdout) {
+            let harness = runtime.identity(artifact, &case.execution)?;
+            for attempt in 1..=policy.repeats_per_case {
+                let key = TrialKey {
+                    artifact: artifact.name.clone(),
+                    tier: exact_candidate.tier,
+                    case: case.id.clone(),
+                    attempt,
+                };
+                let at = runtime.now();
+                append_and_emit(
+                    runtime,
+                    progress,
+                    run_id,
+                    RunEvent::TrialStarted {
+                        at,
+                        key: key.clone(),
+                        models: vec![exact_candidate.clone()],
+                        harness: harness.clone(),
+                    },
+                )?;
+
+                let candidate = match runtime.execute(
+                    run_id,
+                    &key,
+                    artifact,
+                    case,
+                    exact_candidate,
+                    &harness,
+                ) {
+                    Ok(candidate) => candidate,
+                    Err(
+                        error @ (SkillEvalError::InvalidArguments(_)
+                        | SkillEvalError::InvalidConfiguration(_)),
+                    ) => return Err(error),
+                    Err(error) => {
+                        append_pause(runtime, progress, run_id, error)?;
+                        return build_report(run_id, runtime);
+                    }
+                };
+                if candidate.model != *exact_candidate {
+                    return Err(SkillEvalError::InvalidConfiguration(
+                        "exact candidate execution returned a different model".to_owned(),
+                    ));
+                }
+                let at = runtime.now();
+                append_and_emit(
+                    runtime,
+                    progress,
+                    run_id,
+                    RunEvent::CandidateExecuted {
+                        at,
+                        candidate: candidate.clone(),
+                    },
+                )?;
+
+                let checks = match runtime.verify(case, &candidate) {
+                    Ok(checks) => checks,
+                    Err(
+                        error @ (SkillEvalError::InvalidArguments(_)
+                        | SkillEvalError::InvalidConfiguration(_)),
+                    ) => return Err(error),
+                    Err(error) => {
+                        append_pause(runtime, progress, run_id, error)?;
+                        return build_report(run_id, runtime);
+                    }
+                };
+                let judge = match runtime.pool_judge(&candidate.model) {
+                    Ok(judge) => judge,
+                    Err(
+                        error @ (SkillEvalError::InvalidArguments(_)
+                        | SkillEvalError::InvalidConfiguration(_)
+                        | SkillEvalError::JudgeUnavailable { .. }),
+                    ) => return Err(error),
+                    Err(error) => {
+                        append_pause(runtime, progress, run_id, error)?;
+                        return build_report(run_id, runtime);
+                    }
+                };
+                validate_external_judge(&candidate.model, &judge, judge.tier)?;
+                let judged = match runtime.grade(
+                    &judge,
+                    &JudgeInput {
+                        candidate: candidate.clone(),
+                        expect: case.expect.clone(),
+                        rubric_path: artifact.root.join("evals/rubric.md"),
+                        checks,
+                    },
+                ) {
+                    Ok(judged) => judged,
+                    Err(
+                        error @ (SkillEvalError::InvalidArguments(_)
+                        | SkillEvalError::InvalidConfiguration(_)
+                        | SkillEvalError::JudgeUnavailable { .. }),
+                    ) => return Err(error),
+                    Err(error) => {
+                        append_pause(runtime, progress, run_id, error)?;
+                        return build_report(run_id, runtime);
+                    }
+                };
+                validate_external_judge(&candidate.model, &judged.model, judged.model.tier)?;
+                let record = TrialRecord {
+                    key,
+                    model: candidate.model.clone(),
+                    harness: candidate.harness.clone(),
+                    artifact_path: candidate.artifact_path.clone(),
+                    transcript_path: candidate.transcript_path.clone(),
+                    candidate_usage: candidate.usage.clone(),
+                    judge_model: judged.model,
+                    judge_usage: judged.usage,
+                    verdict: judged.verdict,
+                };
+                let at = runtime.now();
+                append_and_emit(
+                    runtime,
+                    progress,
+                    run_id,
+                    RunEvent::TrialCompleted { at, record },
+                )?;
+            }
+        }
+        let at = runtime.now();
+        append_and_emit(
+            runtime,
+            progress,
+            run_id,
+            RunEvent::PoolChildCompleted {
+                at,
+                artifact: artifact.name.clone(),
+                tier: exact_candidate.tier,
+            },
+        )?;
+    }
+    build_report(run_id, runtime)
 }
 
 enum StartTrialError {
@@ -1638,6 +2133,7 @@ pub(crate) fn apply_event(state: &mut RunState, event: &RunEvent) -> Result<(), 
 
         state.run_id = configuration.run_id.clone();
         state.mode = configuration.mode;
+        state.purpose = configuration.policy.purpose;
         state.status = RunStatus::Running;
         state.discoveries.clear();
         state.artifacts = artifacts;
@@ -1688,6 +2184,34 @@ pub(crate) fn apply_event(state: &mut RunState, event: &RunEvent) -> Result<(), 
                     transition_error("trial completion has no matching candidate checkpoint")
                 })?;
             qualification.pending_candidates.remove(position);
+        }
+        RunEvent::PoolChildCompleted { artifact, .. } => {
+            require_running(state)?;
+            if state.purpose != QualificationPurpose::ModelPool {
+                return Err(transition_error(
+                    "pool child completion requires model-pool purpose",
+                ));
+            }
+            if !state.decisions.is_empty() || !state.publication_gates.is_empty() {
+                return Err(transition_error(
+                    "pool child completion cannot follow a decision or publication gate",
+                ));
+            }
+            let qualification = artifact_mut(state, artifact)?;
+            if !matches!(
+                qualification.status,
+                ArtifactStatus::Pending | ArtifactStatus::Running
+            ) || !qualification.pending_candidates.is_empty()
+                || !qualification.tiers.is_empty()
+                || qualification.boundary.is_some()
+                || qualification.review_reason.is_some()
+            {
+                return Err(transition_error(
+                    "pool child completion requires exact trials without artifact evidence",
+                ));
+            }
+            qualification.status = ArtifactStatus::PoolCompleted;
+            refresh_run_status(state);
         }
         RunEvent::TierEvaluated {
             artifact, evidence, ..
@@ -1872,10 +2396,15 @@ pub(crate) fn apply_event(state: &mut RunState, event: &RunEvent) -> Result<(), 
         }
         RunEvent::DiscoveryCompleted { artifacts, .. } => {
             require_running(state)?;
-            if state.mode != crate::model::RunMode::DryRun {
+            if state.mode != crate::model::RunMode::DryRun
+                && state.purpose != QualificationPurpose::ModelPool
+            {
                 return Err(transition_error(
-                    "discovery completion requires a dry-run mode",
+                    "discovery completion requires dry-run or model-pool purpose",
                 ));
+            }
+            if !state.discoveries.is_empty() {
+                return Err(transition_error("duplicate discovery completion"));
             }
             if state.artifacts.values().any(|artifact| {
                 artifact.status != ArtifactStatus::Pending
@@ -1888,7 +2417,9 @@ pub(crate) fn apply_event(state: &mut RunState, event: &RunEvent) -> Result<(), 
                 ));
             }
             state.discoveries = artifacts.clone();
-            state.status = RunStatus::Discovered;
+            if state.mode == crate::model::RunMode::DryRun {
+                state.status = RunStatus::Discovered;
+            }
         }
     }
     Ok(())
@@ -1898,6 +2429,7 @@ fn empty_run_state() -> RunState {
     RunState {
         run_id: RunId(String::new()),
         mode: crate::model::RunMode::Execute,
+        purpose: QualificationPurpose::Artifact,
         status: RunStatus::Running,
         discoveries: Vec::new(),
         artifacts: BTreeMap::new(),
@@ -2103,6 +2635,8 @@ include!("../tests/publication.rs");
 #[cfg(test)]
 include!("../tests/audit.rs");
 #[cfg(test)]
+include!("../tests/pool_start.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -2114,6 +2648,8 @@ report_destination_tests!();
 publication_tests!();
 #[cfg(test)]
 audit_tests!();
+#[cfg(test)]
+pool_start_tests!();
 
 #[cfg(test)]
 mod state {
@@ -2122,12 +2658,12 @@ mod state {
 
     use crate::model::{
         ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
-        CandidateArtifact, CaseDiscovery, CaseDrive, CaseId, ConfidenceInterval, Decision,
-        DecisionRecord, EvidenceRole, HarnessIdentity, ModelIdentity, OwnEvalEvidence, PauseReason,
-        PublicationGate, PublicationStatus, QualificationBoundary, QualificationPolicy,
-        QualificationPurpose, RunConfiguration, RunEvent, RunId, RunMode, RunStatus,
-        SkillEvalError, Tier, TierDestination, TierEvidence, TierStatus, Timestamp, TrialKey,
-        TrialRecord, TrialSelector, TrialUsage, TrialVerdict,
+        ArtifactStatus, CandidateArtifact, CaseDiscovery, CaseDrive, CaseId, ConfidenceInterval,
+        Decision, DecisionRecord, EvidenceRole, HarnessIdentity, ModelIdentity, OwnEvalEvidence,
+        PauseReason, PublicationGate, PublicationStatus, QualificationBoundary,
+        QualificationPolicy, QualificationPurpose, RunConfiguration, RunEvent, RunId, RunMode,
+        RunStatus, SkillEvalError, Tier, TierDestination, TierEvidence, TierStatus, Timestamp,
+        TrialKey, TrialRecord, TrialSelector, TrialUsage, TrialVerdict,
     };
     use crate::ports::RunStore;
 
@@ -2260,6 +2796,37 @@ mod state {
         };
         *artifact = ArtifactName("unknown".to_string());
         assert_invalid(apply_event(&mut state, &unknown));
+    }
+
+    #[test]
+    fn pool_completion_is_a_terminal_aggregate_transition_without_artifact_evidence() {
+        let completion = RunEvent::PoolChildCompleted {
+            at: timestamp(),
+            artifact: artifact_name(),
+            tier: Tier::T2,
+        };
+        let mut artifact_state = empty_run_state_after_start();
+        assert_invalid(apply_event(&mut artifact_state, &completion));
+
+        let mut started = run_started();
+        let RunEvent::RunStarted { configuration, .. } = &mut started else {
+            unreachable!();
+        };
+        configuration.policy.purpose = QualificationPurpose::ModelPool;
+        configuration.policy.candidate_tiers = vec![Tier::T2];
+        configuration.policy.reference_tier = Tier::T1;
+        let mut pool_state = empty_run_state();
+        apply_event(&mut pool_state, &started).unwrap();
+        apply_event(&mut pool_state, &completion).unwrap();
+        assert_eq!(pool_state.status, RunStatus::Completed);
+        assert_eq!(
+            pool_state.artifacts[&artifact_name()].status,
+            ArtifactStatus::PoolCompleted
+        );
+        assert!(pool_state.artifacts[&artifact_name()].tiers.is_empty());
+        assert!(pool_state.artifacts[&artifact_name()].boundary.is_none());
+        assert!(pool_state.decisions.is_empty());
+        assert_invalid(apply_event(&mut pool_state, &completion));
     }
 
     #[test]
