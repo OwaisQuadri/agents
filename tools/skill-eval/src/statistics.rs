@@ -1,18 +1,151 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    ConfidenceInterval, EvidenceRole, ModelIdentity, PoolEntrantEvidence, PoolPolicy,
-    QualificationBoundary, QualificationPolicy, RankedPool, SkillEvalError, Tier, TierEvidence,
-    TierStatus, TrialRecord, TrialUsage,
+    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, ModelIdentity, PoolEntrantEvidence,
+    PoolPolicy, PoolStage, QualificationBoundary, QualificationPolicy, RankedPool, SkillEvalError,
+    Tier, TierEvidence, TierStatus, TrialRecord, TrialUsage,
 };
 
-// TODO(AGNT-0032.T86): Apply pool calibration floors before any entrant ranking.
+// TODO(AGNT-0032.T86): Preserve complete split calibration evidence before resolution.
 pub(crate) fn evaluate_calibration(
-    _requested: &ModelIdentity,
-    _trials: &[TrialRecord],
-    _policy: &PoolPolicy,
+    requested: &ModelIdentity,
+    expected_cases: &[CaseId],
+    trials: &[TrialRecord],
+    policy: &PoolPolicy,
 ) -> Result<PoolEntrantEvidence, SkillEvalError> {
-    unimplemented!("AGNT-0032.T86")
+    validate_calibration_policy(policy)?;
+
+    let first = trials
+        .first()
+        .ok_or_else(|| invalid("calibration trial set is empty"))?;
+    if first.model != *requested {
+        return Err(invalid(
+            "calibration effective model differs from the requested model",
+        ));
+    }
+    if first.key.tier != requested.tier {
+        return Err(invalid("calibration trial tier differs from its model"));
+    }
+
+    let mut attempts_by_case = BTreeMap::<_, BTreeSet<_>>::new();
+    let mut total_usage = empty_usage();
+    let mut total_score = 0_u64;
+    let mut failed_trials = 0_u32;
+    let mut catastrophic_trials = 0_u32;
+
+    for trial in trials {
+        if trial.key.artifact != first.key.artifact || trial.key.tier != first.key.tier {
+            return Err(invalid("calibration trial set mixes exams or tiers"));
+        }
+        if trial.model != first.model || trial.model != *requested {
+            return Err(invalid("calibration trial set mixes candidate identities"));
+        }
+        if trial.model.tier != trial.key.tier {
+            return Err(invalid("calibration trial tier differs from its model"));
+        }
+        if trial.harness.runner_version != first.harness.runner_version
+            || trial.harness.pi_version != first.harness.pi_version
+            || trial.harness.artifact_revision != first.harness.artifact_revision
+        {
+            return Err(invalid("calibration trial set has common harness drift"));
+        }
+        if trial.verdict.score > 10 {
+            return Err(invalid("calibration trial score is outside 0 through 10"));
+        }
+
+        let attempts = attempts_by_case.entry(trial.key.case.clone()).or_default();
+        if !attempts.insert(trial.key.attempt) {
+            return Err(invalid(
+                "calibration trial set contains a duplicate case attempt",
+            ));
+        }
+        add_usage(&mut total_usage, &trial.candidate_usage)?;
+        add_usage(&mut total_usage, &trial.judge_usage)?;
+        total_score = total_score
+            .checked_add(u64::from(trial.verdict.score))
+            .ok_or_else(|| invalid("calibration score arithmetic overflow"))?;
+
+        let has_failed_check = trial
+            .verdict
+            .checks
+            .iter()
+            .any(|check| check.status == CheckStatus::Failed);
+        if trial.verdict.score < policy.minimum_score || has_failed_check {
+            failed_trials = failed_trials
+                .checked_add(1)
+                .ok_or_else(|| invalid("calibration failed trial count overflow"))?;
+        }
+        if trial.verdict.is_catastrophic {
+            catastrophic_trials = catastrophic_trials
+                .checked_add(1)
+                .ok_or_else(|| invalid("calibration catastrophic trial count overflow"))?;
+        }
+    }
+
+    let required_repeats = usize::from(policy.calibration_repeats_per_case);
+    if attempts_by_case.values().any(|attempts| {
+        attempts.len() != required_repeats
+            || attempts
+                .iter()
+                .any(|attempt| *attempt == 0 || *attempt > policy.calibration_repeats_per_case)
+    }) {
+        return Err(invalid("calibration trial set is incomplete"));
+    }
+
+    let expected_trials = u32::try_from(attempts_by_case.len())
+        .ok()
+        .and_then(|cases| cases.checked_mul(u32::from(policy.calibration_repeats_per_case)))
+        .ok_or_else(|| invalid("calibration expected trial count overflow"))?;
+    let completed_trials =
+        u32::try_from(trials.len()).map_err(|_| invalid("calibration trial count overflow"))?;
+    if completed_trials != expected_trials {
+        return Err(invalid("calibration trial set is incomplete"));
+    }
+
+    let passing_trials = expected_trials
+        .checked_sub(failed_trials)
+        .ok_or_else(|| invalid("calibration reliability denominator is invalid"))?;
+    let reliability_basis_points = u64::from(passing_trials)
+        .checked_mul(10_000)
+        .ok_or_else(|| invalid("calibration reliability arithmetic overflow"))?
+        .checked_div(u64::from(expected_trials))
+        .ok_or_else(|| invalid("calibration reliability denominator is invalid"))?;
+    let mean_score = total_score as f64 / f64::from(expected_trials) / 10.0;
+    let score = ConfidenceInterval {
+        lower: mean_score,
+        estimate: mean_score,
+        upper: mean_score,
+    };
+    let is_passing = mean_score >= f64::from(policy.minimum_score) / 10.0
+        && reliability_basis_points >= u64::from(policy.minimum_reliability_basis_points)
+        && catastrophic_trials == 0;
+
+    Ok(PoolEntrantEvidence {
+        stage: PoolStage::Calibration,
+        requested_model: requested.clone(),
+        effective_model: first.model.clone(),
+        is_passing,
+        completed_trials,
+        expected_trials,
+        failed_trials,
+        catastrophic_trials,
+        score,
+        total_usage,
+    })
+}
+
+fn validate_calibration_policy(policy: &PoolPolicy) -> Result<(), SkillEvalError> {
+    if policy.calibration_repeats_per_case == 0
+        || policy.qualification_repeats_per_case == 0
+        || policy.promotion_count != 2
+        || policy.minimum_score > 10
+        || policy.minimum_reliability_basis_points > 10_000
+        || policy.spending_limit_millionths_of_dollar == 0
+        || !policy.is_provider_limit_enforced
+    {
+        return Err(invalid("pool policy has invalid calibration values"));
+    }
+    Ok(())
 }
 
 // TODO(AGNT-0032.T87): Rank only the complete pair of fully qualified finalists.
