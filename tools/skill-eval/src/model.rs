@@ -218,7 +218,6 @@ pub(crate) struct PoolPlan {
 pub(crate) struct PoolRunConfiguration {
     pub(crate) run_id: PoolRunId,
     pub(crate) created_at: Timestamp,
-    // TODO(AGNT-0032.T88): Freeze complete loaded exam definitions for later child resume.
     pub(crate) artifacts: Vec<ArtifactDefinition>,
     pub(crate) entrants: BTreeMap<Tier, Vec<PoolEntrant>>,
     pub(crate) control: ModelIdentity,
@@ -260,6 +259,7 @@ pub(crate) enum PoolChildStatus {
     Running,
     Paused,
     Completed,
+    Skipped,
     Failed,
 }
 
