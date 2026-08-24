@@ -220,6 +220,7 @@ pub(crate) struct PoolEntrantEvidence {
     pub(crate) stage: PoolStage,
     pub(crate) requested_model: ModelIdentity,
     pub(crate) effective_model: ModelIdentity,
+    pub(crate) is_passing: bool,
     pub(crate) completed_trials: u32,
     pub(crate) expected_trials: u32,
     pub(crate) failed_trials: u32,
