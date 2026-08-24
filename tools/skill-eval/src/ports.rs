@@ -23,6 +23,8 @@ pub(crate) trait ModelResolver {
         judge_tier: Tier,
         candidate: Option<&ModelIdentity>,
     ) -> Result<ModelIdentity, SkillEvalError>;
+
+    fn pool_judge(&self, candidate: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError>;
 }
 
 pub(crate) trait HarnessResolver {
