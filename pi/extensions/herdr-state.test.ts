@@ -38,11 +38,6 @@ interface RegisteredCommand {
 	handler: CommandHandler;
 }
 
-/**
- * Builds a fake `ExtensionAPI` that only implements `registerCommand`,
- * matching the mocked Pi command-registration pattern already used by
- * `telemetry.test.ts` and `live-diff.test.ts`.
- */
 function createFakeExtensionAPI(execImpl?: ExtensionAPI["exec"]) {
 	const commands = new Map<string, RegisteredCommand>();
 	const handlers = new Map<string, LifecycleHandler[]>();
@@ -134,11 +129,6 @@ interface FakeClientOptions {
 	paneReadResult?: (paneId: string, lineLimit: number) => Promise<HerdrPaneOutput | HerdrStateFailure>;
 }
 
-/**
- * Builds a fake `HerdrClient` that records every `readPane` call and
- * dispatches configured responses, matching the injected-client testing
- * seam named in `.map/AGNT-0066/testability.md`.
- */
 function makeFakeClient(options: FakeClientOptions): {
 	client: HerdrClient;
 	snapshotCallCount: () => number;
@@ -706,8 +696,6 @@ test("the command never calls the client's live event subscription", async () =>
 	await runCommand(client, "", SELF_CWD);
 	await runCommand(client, `workspace ${SELF_WORKSPACE_ID}`, SELF_CWD);
 	await runCommand(client, `pane ${SELF_PANE_ID}`, SELF_CWD);
-	// `events()` throws in the fake client above if invoked; reaching this
-	// point without an unhandled rejection is the assertion.
 });
 
 test("TC-18 transport forwards snapshot cancellation to Pi exec", async () => {

@@ -295,8 +295,13 @@ export class HerdrCommandClient implements HerdrClient {
 		paneId: string,
 		lineLimit: number,
 	): Promise<HerdrPaneOutput | HerdrStateFailure> {
-		if (typeof paneId !== "string" || paneId === "" || /\p{Cc}/u.test(paneId)) {
-			return invalidResponse("Herdr pane read requires a non-empty, control-free pane identifier");
+		if (
+			typeof paneId !== "string" ||
+			paneId === "" ||
+			paneId.startsWith("-") ||
+			/\p{Cc}/u.test(paneId)
+		) {
+			return invalidResponse("Herdr pane read requires a non-empty, control-free, non-option pane identifier");
 		}
 		if (
 			!Number.isInteger(lineLimit) ||

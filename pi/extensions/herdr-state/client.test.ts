@@ -278,10 +278,13 @@ test("TC-22 readPane rejects out-of-range direct-client line limits before trans
 	}
 });
 
-test("TC-23 readPane rejects empty and control-bearing pane identifiers before transport", async (t) => {
+test("TC-23 readPane rejects empty, control-bearing, and option-shaped pane identifiers before transport", async (t) => {
 	const rejectedPaneIds = [
 		"pane-ok\n--lines\n999999",
 		"",
+		"-h",
+		"--help",
+		"--lines",
 		"p\u0000",
 		"p\u001b",
 		"p\u007f",
