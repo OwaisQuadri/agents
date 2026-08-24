@@ -5,8 +5,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 
 use crate::model::{
-    ModelIdentity, PoolEntrant, PoolPolicy, PoolRunConfiguration, PoolRunId, SkillEvalError, Tier,
-    Timestamp,
+    ModelIdentity, PoolEntrant, PoolPlan, PoolPolicy, SkillEvalError, Tier, Timestamp,
 };
 use crate::ports::PoolPlanSource;
 
@@ -45,9 +44,8 @@ impl FilePoolPlanSource {
     }
 }
 
-// TODO(AGNT-0032.T100): Return a frozen plan without runtime identity or creation time.
 impl PoolPlanSource for FilePoolPlanSource {
-    fn load_pool_plan(&self, path: &Path) -> Result<PoolRunConfiguration, SkillEvalError> {
+    fn load_pool_plan(&self, path: &Path) -> Result<PoolPlan, SkillEvalError> {
         validate_relative_path(path)?;
         let joined = self.repository_root.join(path);
         let canonical = fs::canonicalize(&joined).map_err(|error| io_error(&joined, error))?;
@@ -79,8 +77,6 @@ impl PoolPlanSource for FilePoolPlanSource {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawPoolPlan {
-    run_id: String,
-    created_at: String,
     entrants: RawEntrants,
     control: RawControl,
     policy: RawPoolPolicy,
@@ -135,6 +131,7 @@ enum RawTier {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+// TODO(AGNT-0032.T101): Load and enforce the plan-owned catalog freshness window.
 struct RawPoolPolicy {
     calibration_repeats_per_case: u16,
     qualification_repeats_per_case: u16,
@@ -145,9 +142,7 @@ struct RawPoolPolicy {
     is_provider_limit_enforced: bool,
 }
 
-fn normalize(raw: RawPoolPlan) -> Result<PoolRunConfiguration, SkillEvalError> {
-    validate_run_id(&raw.run_id)?;
-    validate_timestamp(&raw.created_at, "created_at")?;
+fn normalize(raw: RawPoolPlan) -> Result<PoolPlan, SkillEvalError> {
     let policy = normalize_policy(raw.policy)?;
     let control = normalize_control(raw.control)?;
     let control_route = (control.provider.clone(), control.model.clone());
@@ -200,9 +195,7 @@ fn normalize(raw: RawPoolPlan) -> Result<PoolRunConfiguration, SkillEvalError> {
         entrants.insert(tier, normalized);
     }
 
-    Ok(PoolRunConfiguration {
-        run_id: PoolRunId(raw.run_id),
-        created_at: Timestamp(raw.created_at),
+    Ok(PoolPlan {
         entrants,
         control,
         policy,
@@ -310,19 +303,6 @@ fn validate_relative_path(path: &Path) -> Result<(), SkillEvalError> {
                 path.display()
             )));
         }
-    }
-    Ok(())
-}
-
-fn validate_run_id(run_id: &str) -> Result<(), SkillEvalError> {
-    if run_id.is_empty()
-        || !run_id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        return Err(invalid(format!(
-            "pool plan run_id {run_id:?} is not a safe path component"
-        )));
     }
     Ok(())
 }
