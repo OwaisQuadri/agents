@@ -407,6 +407,7 @@ test("normalizeEvent throws for a malformed recognized event and returns null fo
 	assert.equal(normalizeEvent(makeUnknownEvent()), null);
 });
 
+// TODO(AGNT-0066.T19): Cover absent, cross-lineage, and valid pane-change parents.
 test("createModel and applyEvent throw for malformed input", () => {
 	assert.throws(() => createModel(null as never, null));
 	assert.throws(() => createModel({} as never, null));

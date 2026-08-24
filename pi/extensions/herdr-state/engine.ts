@@ -135,7 +135,10 @@ export function normalizeSnapshot(
 	if (workspaceIds.size !== raw.workspaces.length) {
 		throw new Error("invalid Herdr snapshot response: duplicate workspace_id");
 	}
-	const tabIds = new Set(raw.tabs.map((tab) => tab.tab_id));
+	const tabWorkspaceIds = new Map(
+		raw.tabs.map((tab) => [tab.tab_id, tab.workspace_id]),
+	);
+	const tabIds = new Set(tabWorkspaceIds.keys());
 	if (tabIds.size !== raw.tabs.length) {
 		throw new Error("invalid Herdr snapshot response: duplicate tab_id");
 	}
@@ -152,6 +155,9 @@ export function normalizeSnapshot(
 	if (raw.panes.some((pane) => !tabIds.has(pane.tab_id))) {
 		throw new Error("invalid Herdr snapshot response: pane references unknown tab_id");
 	}
+	if (raw.panes.some((pane) => tabWorkspaceIds.get(pane.tab_id) !== pane.workspace_id)) {
+		throw new Error("invalid Herdr snapshot response: pane and tab workspace_id differ");
+	}
 	if (
 		raw.focused_workspace_id !== null &&
 		!workspaceIds.has(raw.focused_workspace_id)
@@ -163,6 +169,20 @@ export function normalizeSnapshot(
 	}
 	if (raw.focused_pane_id !== null && !paneIds.has(raw.focused_pane_id)) {
 		throw new Error("invalid Herdr snapshot response: focused_pane_id not found");
+	}
+	const focusedPane = raw.panes.find((pane) => pane.pane_id === raw.focused_pane_id);
+	if (
+		(raw.focused_workspace_id !== null &&
+			raw.focused_tab_id !== null &&
+			tabWorkspaceIds.get(raw.focused_tab_id) !== raw.focused_workspace_id) ||
+		(focusedPane !== undefined &&
+			raw.focused_workspace_id !== null &&
+			focusedPane.workspace_id !== raw.focused_workspace_id) ||
+		(focusedPane !== undefined &&
+			raw.focused_tab_id !== null &&
+			focusedPane.tab_id !== raw.focused_tab_id)
+	) {
+		throw new Error("invalid Herdr snapshot response: focused IDs do not form one lineage");
 	}
 	return {
 		workspaces: raw.workspaces.map(normalizeWorkspace),
@@ -326,6 +346,17 @@ export function applyEvent(
 				},
 			};
 		case "pane-changed":
+			// TODO(AGNT-0066.T19): Enforce pane-event parent lineage before upsert.
+			if (
+				!model.snapshot.workspaces.some(
+					(workspace) => workspace.id === event.pane.workspaceId,
+				)
+			) {
+				throw new Error("invalid Herdr pane event: pane references unknown workspace_id");
+			}
+			if (!model.snapshot.tabs.some((tab) => tab.id === event.pane.tabId)) {
+				throw new Error("invalid Herdr pane event: pane references unknown tab_id");
+			}
 			return {
 				...model,
 				snapshot: {

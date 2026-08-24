@@ -88,6 +88,7 @@ function unusedPaneRead(): Promise<HerdrPaneOutput | HerdrStateFailure> {
 	return Promise.resolve(unavailable("unused pane read"));
 }
 
+// TODO(AGNT-0066.T19): Seed valid destination parents before pane self-recalculation.
 test("TC-16 start stores immutable state and valid events recalculate self", async () => {
 	const eventApplied = deferred<void>();
 	const eventSignals: AbortSignal[] = [];
