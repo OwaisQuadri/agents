@@ -229,6 +229,46 @@ pub(crate) struct RankedPool {
     pub(crate) is_complete: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PoolChildStatus {
+    Pending,
+    Running,
+    Paused,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PoolChildRun {
+    pub(crate) tier: Tier,
+    pub(crate) entrant_index: u8,
+    pub(crate) stage: PoolStage,
+    pub(crate) run_id: RunId,
+    pub(crate) status: PoolChildStatus,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PoolRunStatus {
+    Pending,
+    Running,
+    Paused,
+    AwaitingDecision,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PoolRunState {
+    pub(crate) configuration: PoolRunConfiguration,
+    pub(crate) status: PoolRunStatus,
+    pub(crate) child_runs: Vec<PoolChildRun>,
+    pub(crate) pools: Vec<RankedPool>,
+    pub(crate) pause: Option<PoolPauseReason>,
+    pub(crate) spent_millionths_of_dollar: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum PoolPauseReason {
