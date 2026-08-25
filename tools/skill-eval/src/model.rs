@@ -182,7 +182,7 @@ pub(crate) struct ModelIdentity {
 #[serde(transparent)]
 pub(crate) struct PoolRunId(pub(crate) String);
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PoolStage {
     Calibration,
@@ -192,7 +192,6 @@ pub(crate) enum PoolStage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct PoolEntrant {
     pub(crate) model: ModelIdentity,
-    // TODO(AGNT-0032.T103): Preserve bounded thinking levels while migrating every constructor.
     pub(crate) thinking_levels: Vec<String>,
     pub(crate) catalog_observed_at: Timestamp,
 }
@@ -278,7 +277,6 @@ pub(crate) enum PoolChildStatus {
 pub(crate) struct PoolChildRun {
     pub(crate) tier: Tier,
     pub(crate) entrant_index: u8,
-    // TODO(AGNT-0032.T105): Persist the exact thinking variant in every child identity.
     pub(crate) thinking_index: u8,
     pub(crate) stage: PoolStage,
     pub(crate) run_id: RunId,
