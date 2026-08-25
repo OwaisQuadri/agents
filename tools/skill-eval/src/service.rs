@@ -222,6 +222,7 @@ fn validate_single_pool_artifact(artifacts: &[ArtifactDefinition]) -> Result<(),
     Ok(())
 }
 
+// TODO(AGNT-0032.T105): Preallocate and resume model-plus-thinking child identities.
 fn preallocate_pool_children(
     selected_tiers: &[Tier],
     configuration: &PoolRunConfiguration,
@@ -1132,6 +1133,7 @@ fn pause_pool_for_spending_limit(
     save_pool_and_emit(runtime, progress, state)
 }
 
+// TODO(AGNT-0032.T106): Advance independent thinking staircases before model promotion.
 fn persist_completed_pool_child_evidence(
     state: &mut PoolRunState,
     child_index: usize,
@@ -1294,12 +1296,11 @@ fn review_failed_pool_child(
     save_pool_and_emit(runtime, progress, state)
 }
 
-// TODO(AGNT-0032.T91): Return the complete pool state for command rendering.
 pub(crate) fn build_pool_report(
-    _run_id: &PoolRunId,
-    _store: &dyn crate::ports::PoolStore,
+    run_id: &PoolRunId,
+    store: &dyn crate::ports::PoolStore,
 ) -> Result<PoolRunState, SkillEvalError> {
-    unimplemented!("AGNT-0032.T91")
+    store.load_pool(run_id)
 }
 
 pub(crate) fn start_qualification_with_run_id(

@@ -338,6 +338,7 @@ fn validate_state(state: &PoolRunState, is_initial: bool) -> Result<(), SkillEva
     }
 
     validate_pools(state)?;
+    validate_skipped_children(state)?;
     if matches!(state.status, PoolRunStatus::Paused) != state.pause.is_some() {
         return Err(invalid("pool pause reason does not match aggregate status"));
     }
@@ -442,6 +443,32 @@ fn validate_pools(state: &PoolRunState) -> Result<(), SkillEvalError> {
     Ok(())
 }
 
+// TODO(AGNT-0032.T106): Validate skipped unneeded thinking and unpromoted children.
+fn validate_skipped_children(state: &PoolRunState) -> Result<(), SkillEvalError> {
+    for child in &state.child_runs {
+        if child.status != PoolChildStatus::Skipped {
+            continue;
+        }
+        if child.stage != PoolStage::Qualification {
+            return Err(invalid("only qualification children can be skipped"));
+        }
+        let entrant =
+            &state.configuration.entrants[&child.tier][usize::from(child.entrant_index)].model;
+        let promotion_count = usize::from(state.configuration.policy.promotion_count);
+        let is_backed_by_promotion = state.pools.iter().any(|pool| {
+            pool.tier == child.tier
+                && pool.promoted.len() == promotion_count
+                && !pool.promoted.contains(entrant)
+        });
+        if !is_backed_by_promotion {
+            return Err(invalid(
+                "skipped qualification child is not backed by its promoted pair",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn has_duplicate_models(models: &[crate::model::ModelIdentity]) -> bool {
     models
         .iter()
@@ -466,7 +493,7 @@ fn validate_transition(stored: &PoolRunState, next: &PoolRunState) -> Result<(),
             return Err(invalid("pool child identities changed after creation"));
         }
         if old.status != new.status {
-            if !is_legal_child_transition(old.status, new.status) {
+            if !is_legal_child_transition(old, new, next) {
                 return Err(invalid(
                     "pool child status moved backward or skipped a state",
                 ));
@@ -518,6 +545,7 @@ fn validate_pool_progress(
     Ok(())
 }
 
+// TODO(AGNT-0032.T105): Include thinking index in frozen child identity and transitions.
 fn child_identity(child: &PoolChildRun) -> (Tier, u8, u8, &str) {
     (
         child.tier,
@@ -534,10 +562,26 @@ fn stage_number(stage: PoolStage) -> u8 {
     }
 }
 
-// TODO(AGNT-0032.T90): Permit only promotion-backed qualification skips and keep them terminal.
-fn is_legal_child_transition(old: PoolChildStatus, next: PoolChildStatus) -> bool {
+fn is_legal_child_transition(
+    old: &PoolChildRun,
+    next: &PoolChildRun,
+    state: &PoolRunState,
+) -> bool {
+    if old.status == PoolChildStatus::Pending && next.status == PoolChildStatus::Skipped {
+        if next.stage != PoolStage::Qualification {
+            return false;
+        }
+        let entrant =
+            &state.configuration.entrants[&next.tier][usize::from(next.entrant_index)].model;
+        return state.pools.iter().any(|pool| {
+            pool.tier == next.tier
+                && pool.promoted.len() == usize::from(state.configuration.policy.promotion_count)
+                && !pool.promoted.contains(entrant)
+        });
+    }
+
     matches!(
-        (old, next),
+        (old.status, next.status),
         (PoolChildStatus::Pending, PoolChildStatus::Running)
             | (PoolChildStatus::Running, PoolChildStatus::Paused)
             | (PoolChildStatus::Running, PoolChildStatus::Completed)

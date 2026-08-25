@@ -72,6 +72,43 @@ impl PoolPlanSource for FilePoolPlanSource {
         })?;
         normalize(raw)
     }
+
+    fn validate_pool_plan_freshness(
+        &self,
+        plan: &PoolPlan,
+        now: &Timestamp,
+    ) -> Result<(), SkillEvalError> {
+        if plan.policy.maximum_catalog_age_seconds == 0 {
+            return Err(invalid(
+                "pool policy maximum_catalog_age_seconds must be positive",
+            ));
+        }
+
+        let now_seconds = parse_timestamp(&now.0, "runtime timestamp")?;
+        let maximum_age = u64::from(plan.policy.maximum_catalog_age_seconds);
+        for (tier, entrants) in &plan.entrants {
+            for entrant in entrants {
+                let field = format!(
+                    "{} catalog_observed_at for {}/{}",
+                    tier_name(*tier),
+                    entrant.model.provider,
+                    entrant.model.model
+                );
+                let observed_seconds = parse_timestamp(&entrant.catalog_observed_at.0, &field)?;
+                let age = now_seconds.checked_sub(observed_seconds).ok_or_else(|| {
+                    invalid(format!(
+                        "pool plan {field} is in the future relative to runtime timestamp"
+                    ))
+                })?;
+                if age > maximum_age {
+                    return Err(invalid(format!(
+                        "pool plan {field} is older than maximum_catalog_age_seconds"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -99,6 +136,7 @@ struct RawEntrants {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+// TODO(AGNT-0032.T103): Load and validate model-specific thinking levels plus start.
 struct RawEntrant {
     model: RawModelIdentity,
     catalog_observed_at: String,
@@ -131,13 +169,13 @@ enum RawTier {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-// TODO(AGNT-0032.T101): Load and enforce the plan-owned catalog freshness window.
 struct RawPoolPolicy {
     calibration_repeats_per_case: u16,
     qualification_repeats_per_case: u16,
     promotion_count: u8,
     minimum_score: u8,
     minimum_reliability_basis_points: u16,
+    maximum_catalog_age_seconds: u32,
     spending_limit_millionths_of_dollar: u64,
     is_provider_limit_enforced: bool,
 }
@@ -165,7 +203,7 @@ fn normalize(raw: RawPoolPlan) -> Result<PoolPlan, SkillEvalError> {
 
         let mut normalized = Vec::with_capacity(ENTRANTS_PER_TIER);
         for entrant in raw_entrants {
-            validate_timestamp(
+            parse_timestamp(
                 &entrant.catalog_observed_at,
                 &format!("{tier_name} catalog_observed_at"),
             )?;
@@ -267,6 +305,11 @@ fn normalize_policy(raw: RawPoolPolicy) -> Result<PoolPolicy, SkillEvalError> {
             "pool policy minimum_reliability_basis_points must not exceed 10000",
         ));
     }
+    if raw.maximum_catalog_age_seconds == 0 {
+        return Err(invalid(
+            "pool policy maximum_catalog_age_seconds must be positive",
+        ));
+    }
     if raw.spending_limit_millionths_of_dollar == 0 {
         return Err(invalid(
             "pool policy spending_limit_millionths_of_dollar must be positive",
@@ -284,6 +327,7 @@ fn normalize_policy(raw: RawPoolPolicy) -> Result<PoolPolicy, SkillEvalError> {
         promotion_count: raw.promotion_count,
         minimum_score: raw.minimum_score,
         minimum_reliability_basis_points: raw.minimum_reliability_basis_points,
+        maximum_catalog_age_seconds: raw.maximum_catalog_age_seconds,
         spending_limit_millionths_of_dollar: raw.spending_limit_millionths_of_dollar,
         is_provider_limit_enforced: raw.is_provider_limit_enforced,
     })
@@ -307,7 +351,11 @@ fn validate_relative_path(path: &Path) -> Result<(), SkillEvalError> {
     Ok(())
 }
 
-fn validate_timestamp(value: &str, field: &str) -> Result<(), SkillEvalError> {
+fn parse_timestamp(value: &str, field: &str) -> Result<u64, SkillEvalError> {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    const SECONDS_PER_HOUR: u64 = 3_600;
+    const SECONDS_PER_MINUTE: u64 = 60;
+
     let bytes = value.as_bytes();
     let is_shape_valid = bytes.len() == 24
         && bytes[4] == b'-'
@@ -350,7 +398,25 @@ fn validate_timestamp(value: &str, field: &str) -> Result<(), SkillEvalError> {
             "pool plan {field} contains an invalid date, time, or numeric offset"
         )));
     }
-    Ok(())
+
+    let days =
+        days_before_year(year) + u64::from(days_before_month(year, month)) + u64::from(day - 1);
+    let local_seconds = days * SECONDS_PER_DAY
+        + u64::from(hour) * SECONDS_PER_HOUR
+        + u64::from(minute) * SECONDS_PER_MINUTE
+        + u64::from(second);
+    let offset_seconds =
+        u64::from(offset_hour) * SECONDS_PER_HOUR + u64::from(offset_minute) * SECONDS_PER_MINUTE;
+    let maximum_seconds = days_before_year(10_000) * SECONDS_PER_DAY - 1;
+    let utc_seconds = match bytes[19] {
+        b'+' => local_seconds.checked_sub(offset_seconds),
+        b'-' => local_seconds.checked_add(offset_seconds),
+        _ => unreachable!(),
+    }
+    .filter(|seconds| *seconds <= maximum_seconds)
+    .ok_or_else(|| invalid(format!("pool plan {field} timestamp arithmetic overflow")))?;
+
+    Ok(utc_seconds)
 }
 
 fn parse_time_part(
@@ -362,6 +428,15 @@ fn parse_time_part(
     value[start..end]
         .parse()
         .map_err(|_| invalid(format!("pool plan {field} contains an invalid number")))
+}
+
+fn days_before_year(year: u32) -> u64 {
+    let previous_year = u64::from(year - 1);
+    previous_year * 365 + previous_year / 4 - previous_year / 100 + previous_year / 400
+}
+
+fn days_before_month(year: u32, month: u32) -> u32 {
+    (1..month).map(|prior| days_in_month(year, prior)).sum()
 }
 
 fn days_in_month(year: u32, month: u32) -> u32 {

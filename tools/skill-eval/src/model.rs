@@ -192,6 +192,7 @@ pub(crate) enum PoolStage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct PoolEntrant {
     pub(crate) model: ModelIdentity,
+    // TODO(AGNT-0032.T103): Freeze each model's bounded ordered thinking levels.
     pub(crate) thinking_levels: Vec<String>,
     pub(crate) catalog_observed_at: Timestamp,
 }
@@ -254,6 +255,7 @@ pub(crate) struct ThinkingDecision {
 pub(crate) struct RankedPool {
     pub(crate) tier: Tier,
     pub(crate) calibration: Vec<PoolEntrantEvidence>,
+    // TODO(AGNT-0032.T106): Freeze one lowest passing thinking identity per model.
     pub(crate) thinking_selections: Vec<ModelIdentity>,
     pub(crate) promoted: Vec<ModelIdentity>,
     pub(crate) qualification: Vec<PoolEntrantEvidence>,
@@ -276,6 +278,7 @@ pub(crate) enum PoolChildStatus {
 pub(crate) struct PoolChildRun {
     pub(crate) tier: Tier,
     pub(crate) entrant_index: u8,
+    // TODO(AGNT-0032.T105): Persist the exact thinking variant in every child identity.
     pub(crate) thinking_index: u8,
     pub(crate) stage: PoolStage,
     pub(crate) run_id: RunId,

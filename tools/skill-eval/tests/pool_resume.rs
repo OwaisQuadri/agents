@@ -1,4 +1,4 @@
-// TODO(AGNT-0032.T89): Prove skipped child ordering and promotion-gated qualification resume.
+// TODO(AGNT-0032.T105): Prove thinking-indexed resume, skipped levels, and stable child ids.
 #[macro_export]
 macro_rules! pool_resume_tests {
     () => {
@@ -14,8 +14,8 @@ macro_rules! pool_resume_tests {
                 JudgeResult, ModelIdentity, PoolChildRun, PoolChildStatus, PoolEntrant,
                 PoolPauseReason, PoolPlan, PoolPolicy, PoolRunConfiguration, PoolRunId,
                 PoolRunState, PoolRunStatus, PoolStage, PromptJudgeRequest, PromptJudgeResult,
-                QualificationPolicy, QualificationPurpose, RunConfiguration, RunEvent, RunId,
-                RunMode, SkillEvalError, Tier, TierAssignment, TierDestination, Timestamp,
+                QualificationPolicy, QualificationPurpose, RankedPool, RunConfiguration, RunEvent,
+                RunId, RunMode, SkillEvalError, Tier, TierAssignment, TierDestination, Timestamp,
                 TrialKey, TrialRecord, TrialSelector, TrialUsage, TrialVerdict,
             };
             use $crate::ports::{
@@ -182,6 +182,58 @@ macro_rules! pool_resume_tests {
                         .count(),
                     3
                 );
+            }
+
+            #[test]
+            fn qualification_waits_for_promotion_without_starting_a_child() {
+                let mut runtime = FakeRuntime::new(PoolChildStatus::Pending);
+                for index in [0, 2, 4] {
+                    runtime.complete_child(index);
+                }
+                let before = runtime.state.clone();
+
+                let state = resume_pool_qualification(
+                    &PoolRunId("pool-1".to_owned()),
+                    &mut runtime,
+                    &mut FakeProgress::new_detached(),
+                )
+                .unwrap();
+
+                assert_eq!(state, before);
+                assert!(runtime.started_ids.is_empty());
+                assert_eq!(runtime.child_calls(), 0);
+            }
+
+            #[test]
+            fn skipped_qualification_child_is_terminal_and_never_runs() {
+                let mut runtime = FakeRuntime::new(PoolChildStatus::Pending);
+                for index in [0, 2, 4] {
+                    runtime.complete_child(index);
+                }
+                runtime.state.child_runs[1].status = PoolChildStatus::Skipped;
+                runtime.state.pools.push(RankedPool {
+                    tier: Tier::T2,
+                    calibration: Vec::new(),
+                    promoted: vec![model(Tier::T2, 1), model(Tier::T2, 2)],
+                    qualification: Vec::new(),
+                    ranked: Vec::new(),
+                    is_complete: false,
+                });
+                runtime.persist();
+                let skipped = runtime.state.child_runs[1].run_id.clone();
+                let expected = runtime.state.child_runs[3].run_id.clone();
+                let persisted = runtime.persisted.clone();
+
+                let state = resume_pool_qualification(
+                    &PoolRunId("pool-1".to_owned()),
+                    &mut runtime,
+                    &mut FakeProgress::new(persisted),
+                )
+                .unwrap();
+
+                assert_eq!(runtime.started_ids, vec![expected]);
+                assert!(!runtime.runs.contains_key(&skipped));
+                assert_eq!(state.child_runs[1].status, PoolChildStatus::Skipped);
             }
 
             #[test]

@@ -2,9 +2,10 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, ModelIdentity, PoolEntrantEvidence,
-    PoolPolicy, PoolStage, QualificationBoundary, QualificationPolicy, RankedPool, SkillEvalError,
-    Tier, TierEvidence, TierStatus, TrialRecord, TrialUsage,
+    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, ModelIdentity, PoolEntrant,
+    PoolEntrantEvidence, PoolPolicy, PoolStage, QualificationBoundary, QualificationPolicy,
+    RankedPool, SkillEvalError, ThinkingDecision, Tier, TierEvidence, TierStatus, TrialRecord,
+    TrialUsage,
 };
 
 pub(crate) fn evaluate_calibration(
@@ -14,27 +15,66 @@ pub(crate) fn evaluate_calibration(
     policy: &PoolPolicy,
 ) -> Result<PoolEntrantEvidence, SkillEvalError> {
     validate_calibration_policy(policy)?;
+    evaluate_pool_evidence(
+        requested,
+        expected_cases,
+        trials,
+        policy,
+        PoolStage::Calibration,
+        policy.calibration_repeats_per_case,
+        "calibration",
+    )
+}
 
+pub(crate) fn evaluate_qualification(
+    requested: &ModelIdentity,
+    expected_cases: &[CaseId],
+    trials: &[TrialRecord],
+    policy: &PoolPolicy,
+) -> Result<PoolEntrantEvidence, SkillEvalError> {
+    validate_calibration_policy(policy)?;
+    evaluate_pool_evidence(
+        requested,
+        expected_cases,
+        trials,
+        policy,
+        PoolStage::Qualification,
+        policy.qualification_repeats_per_case,
+        "qualification",
+    )
+}
+
+fn evaluate_pool_evidence(
+    requested: &ModelIdentity,
+    expected_cases: &[CaseId],
+    trials: &[TrialRecord],
+    policy: &PoolPolicy,
+    stage: PoolStage,
+    repeats_per_case: u16,
+    label: &str,
+) -> Result<PoolEntrantEvidence, SkillEvalError> {
     let expected_case_set = expected_cases.iter().cloned().collect::<BTreeSet<_>>();
     if expected_cases.is_empty() || expected_case_set.len() != expected_cases.len() {
-        return Err(invalid(
-            "calibration expected cases must be nonempty and unique",
-        ));
+        return Err(invalid(&format!(
+            "{label} expected cases must be nonempty and unique"
+        )));
     }
 
     let first = trials
         .first()
-        .ok_or_else(|| invalid("calibration trial set is empty"))?;
+        .ok_or_else(|| invalid(&format!("{label} trial set is empty")))?;
     if first.model != *requested {
-        return Err(invalid(
-            "calibration effective model differs from the requested model",
-        ));
+        return Err(invalid(&format!(
+            "{label} effective model differs from the requested model"
+        )));
     }
     if first.key.tier != requested.tier {
-        return Err(invalid("calibration trial tier differs from its model"));
+        return Err(invalid(&format!(
+            "{label} trial tier differs from its model"
+        )));
     }
     if is_same_model(&first.judge_model, &first.model) {
-        return Err(invalid("calibration candidate cannot judge itself"));
+        return Err(invalid(&format!("{label} candidate cannot judge itself")));
     }
 
     let mut attempts_by_case = expected_case_set
@@ -51,37 +91,49 @@ pub(crate) fn evaluate_calibration(
 
     for trial in trials {
         if trial.key.artifact != first.key.artifact || trial.key.tier != first.key.tier {
-            return Err(invalid("calibration trial set mixes exams or tiers"));
+            return Err(invalid(&format!("{label} trial set mixes exams or tiers")));
         }
         if trial.model != first.model || trial.model != *requested {
-            return Err(invalid("calibration trial set mixes candidate identities"));
+            return Err(invalid(&format!(
+                "{label} trial set mixes candidate identities"
+            )));
         }
         if trial.model.tier != trial.key.tier {
-            return Err(invalid("calibration trial tier differs from its model"));
+            return Err(invalid(&format!(
+                "{label} trial tier differs from its model"
+            )));
         }
         if trial.judge_model != first.judge_model {
-            return Err(invalid("calibration trial set mixes judge identities"));
+            return Err(invalid(&format!(
+                "{label} trial set mixes judge identities"
+            )));
         }
         if is_same_model(&trial.judge_model, &trial.model) {
-            return Err(invalid("calibration candidate cannot judge itself"));
+            return Err(invalid(&format!("{label} candidate cannot judge itself")));
         }
         if trial.harness.runner_version != first.harness.runner_version
             || trial.harness.pi_version != first.harness.pi_version
             || trial.harness.artifact_revision != first.harness.artifact_revision
         {
-            return Err(invalid("calibration trial set has common harness drift"));
+            return Err(invalid(&format!(
+                "{label} trial set has common harness drift"
+            )));
         }
         if trial.verdict.score > 10 {
-            return Err(invalid("calibration trial score is outside 0 through 10"));
+            return Err(invalid(&format!(
+                "{label} trial score is outside 0 through 10"
+            )));
         }
 
         let Some(attempts) = attempts_by_case.get_mut(&trial.key.case) else {
-            return Err(invalid("calibration trial set contains an unknown case"));
+            return Err(invalid(&format!(
+                "{label} trial set contains an unknown case"
+            )));
         };
         if !attempts.insert(trial.key.attempt) {
-            return Err(invalid(
-                "calibration trial set contains a duplicate case attempt",
-            ));
+            return Err(invalid(&format!(
+                "{label} trial set contains a duplicate case attempt"
+            )));
         }
         match harness_by_case.entry(trial.key.case.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
@@ -90,7 +142,7 @@ pub(crate) fn evaluate_calibration(
             std::collections::btree_map::Entry::Occupied(entry)
                 if entry.get() != &trial.harness =>
             {
-                return Err(invalid("calibration case has harness identity drift"));
+                return Err(invalid(&format!("{label} case has harness identity drift")));
             }
             std::collections::btree_map::Entry::Occupied(_) => {}
         }
@@ -99,7 +151,7 @@ pub(crate) fn evaluate_calibration(
         add_usage(&mut judge_usage, &trial.judge_usage)?;
         total_score = total_score
             .checked_add(u64::from(trial.verdict.score))
-            .ok_or_else(|| invalid("calibration score arithmetic overflow"))?;
+            .ok_or_else(|| invalid(&format!("{label} score arithmetic overflow")))?;
 
         let has_failed_check = trial
             .verdict
@@ -109,41 +161,41 @@ pub(crate) fn evaluate_calibration(
         if trial.verdict.score < policy.minimum_score || has_failed_check {
             failed_trials = failed_trials
                 .checked_add(1)
-                .ok_or_else(|| invalid("calibration failed trial count overflow"))?;
+                .ok_or_else(|| invalid(&format!("{label} failed trial count overflow")))?;
         }
         if trial.verdict.is_catastrophic {
             catastrophic_trials = catastrophic_trials
                 .checked_add(1)
-                .ok_or_else(|| invalid("calibration catastrophic trial count overflow"))?;
+                .ok_or_else(|| invalid(&format!("{label} catastrophic trial count overflow")))?;
         }
     }
 
-    let required_attempts = (1..=policy.calibration_repeats_per_case).collect::<BTreeSet<_>>();
+    let required_attempts = (1..=repeats_per_case).collect::<BTreeSet<_>>();
     if attempts_by_case
         .values()
         .any(|attempts| attempts != &required_attempts)
     {
-        return Err(invalid("calibration trial set is incomplete"));
+        return Err(invalid(&format!("{label} trial set is incomplete")));
     }
 
     let expected_trials = u32::try_from(expected_cases.len())
         .ok()
-        .and_then(|cases| cases.checked_mul(u32::from(policy.calibration_repeats_per_case)))
-        .ok_or_else(|| invalid("calibration expected trial count overflow"))?;
-    let completed_trials =
-        u32::try_from(trials.len()).map_err(|_| invalid("calibration trial count overflow"))?;
+        .and_then(|cases| cases.checked_mul(u32::from(repeats_per_case)))
+        .ok_or_else(|| invalid(&format!("{label} expected trial count overflow")))?;
+    let completed_trials = u32::try_from(trials.len())
+        .map_err(|_| invalid(&format!("{label} trial count overflow")))?;
     if completed_trials != expected_trials {
-        return Err(invalid("calibration trial set is incomplete"));
+        return Err(invalid(&format!("{label} trial set is incomplete")));
     }
 
     let passing_trials = expected_trials
         .checked_sub(failed_trials)
-        .ok_or_else(|| invalid("calibration reliability denominator is invalid"))?;
+        .ok_or_else(|| invalid(&format!("{label} reliability denominator is invalid")))?;
     let reliability_basis_points = u64::from(passing_trials)
         .checked_mul(10_000)
-        .ok_or_else(|| invalid("calibration reliability arithmetic overflow"))?
+        .ok_or_else(|| invalid(&format!("{label} reliability arithmetic overflow")))?
         .checked_div(u64::from(expected_trials))
-        .ok_or_else(|| invalid("calibration reliability denominator is invalid"))?;
+        .ok_or_else(|| invalid(&format!("{label} reliability denominator is invalid")))?;
     let mean_score = total_score as f64 / f64::from(expected_trials) / 10.0;
     let score = ConfidenceInterval {
         lower: mean_score,
@@ -159,14 +211,14 @@ pub(crate) fn evaluate_calibration(
             harness_by_case
                 .get(case)
                 .cloned()
-                .ok_or_else(|| invalid("calibration trial set is incomplete"))
+                .ok_or_else(|| invalid(&format!("{label} trial set is incomplete")))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut total_usage = candidate_usage.clone();
     add_usage(&mut total_usage, &judge_usage)?;
 
     Ok(PoolEntrantEvidence {
-        stage: PoolStage::Calibration,
+        stage,
         requested_model: requested.clone(),
         effective_model: first.model.clone(),
         judge_model: first.judge_model.clone(),
@@ -201,14 +253,12 @@ fn validate_calibration_policy(policy: &PoolPolicy) -> Result<(), SkillEvalError
     Ok(())
 }
 
-// TODO(AGNT-0032.T90): Evaluate promoted finalists with full qualification repeat counts.
-pub(crate) fn evaluate_qualification(
-    _requested: &ModelIdentity,
-    _expected_cases: &[CaseId],
-    _trials: &[TrialRecord],
-    _policy: &PoolPolicy,
-) -> Result<PoolEntrantEvidence, SkillEvalError> {
-    unimplemented!("AGNT-0032.T90")
+// TODO(AGNT-0032.T104): Select each model's lowest passing bounded thinking level.
+pub(crate) fn select_thinking_level(
+    _entrant: &PoolEntrant,
+    _evidence: &[PoolEntrantEvidence],
+) -> Result<ThinkingDecision, SkillEvalError> {
+    unimplemented!("AGNT-0032.T104")
 }
 
 pub(crate) fn rank_pool(
