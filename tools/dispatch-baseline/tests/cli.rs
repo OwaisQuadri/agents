@@ -254,6 +254,44 @@ fn clean_repo_with_no_activity_is_empty_delta() {
 // dirty, and an untracked work product is the normal case this tool exists for. Without a
 // content hash the verifier's own fix reflex reports a clean delta.
 #[test]
+fn stamp_output_inside_repository_is_rejected() {
+    let fixture = Fixture::new("stamp-inside-repo");
+    let stamp = fixture.dir.join("stamp.json");
+    let output = Command::new(BIN)
+        .args(["stamp", "--repo"])
+        .arg(&fixture.dir)
+        .arg("--out")
+        .arg(&stamp)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("must be outside repository"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!stamp.exists());
+}
+
+#[test]
+fn deleting_an_already_ignored_file_is_deleted() {
+    let fixture = Fixture::new("delete-ignored");
+    fixture.write(".gitignore", "scratch/\n");
+    fixture.git(&["add", ".gitignore"]);
+    fixture.git(&["commit", "-m", "ignore scratch"]);
+    std::fs::create_dir(fixture.dir.join("scratch")).unwrap();
+    fixture.write("scratch/product", "before\n");
+    let stamp = fixture.stamp();
+    std::fs::remove_file(fixture.dir.join("scratch/product")).unwrap();
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "deleting an ignored file must be a delta: {out}");
+    assert!(
+        out.contains("\"deleted\": [\n    \"scratch/product\"\n  ]"),
+        "the ignored work product must be classified as deleted: {out}"
+    );
+}
+
+#[test]
 fn deleting_an_already_untracked_file_is_deleted() {
     let fixture = Fixture::new("delete-untracked");
     fixture.write("product.json", "{\"tasks\":[]}\n");

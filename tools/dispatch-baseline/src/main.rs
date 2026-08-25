@@ -30,8 +30,17 @@ fn run() -> Result<ExitCode, String> {
             let json =
                 serde_json::to_string_pretty(&baseline).map_err(|error| error.to_string())? + "\n";
             match options.out {
-                Some(path) => std::fs::write(&path, json)
-                    .map_err(|error| format!("{}: {error}", path.display()))?,
+                Some(path) => {
+                    if output_is_inside_repo(&path, &baseline.repo)? {
+                        return Err(format!(
+                            "stamp output {} must be outside repository {}",
+                            path.display(),
+                            baseline.repo
+                        ));
+                    }
+                    std::fs::write(&path, json)
+                        .map_err(|error| format!("{}: {error}", path.display()))?;
+                }
                 None => print!("{json}"),
             }
             Ok(ExitCode::SUCCESS)
@@ -73,6 +82,26 @@ fn run() -> Result<ExitCode, String> {
         }
         other => Err(format!("unknown subcommand {other}\n{USAGE}")),
     }
+}
+
+fn output_is_inside_repo(path: &std::path::Path, repo: &str) -> Result<bool, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("current directory: {error}"))?
+            .join(path)
+    };
+    let parent = absolute
+        .parent()
+        .ok_or("stamp output has no parent directory")?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| format!("{}: {error}", parent.display()))?;
+    let repo = std::path::Path::new(repo)
+        .canonicalize()
+        .map_err(|error| format!("{repo}: {error}"))?;
+    Ok(parent.starts_with(repo))
 }
 
 #[derive(Default)]
