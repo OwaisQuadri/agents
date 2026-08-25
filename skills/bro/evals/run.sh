@@ -24,10 +24,19 @@ import shutil
 import subprocess
 import sys
 
-# install.sh links ste-check onto PATH; fall back to the repo build so an uninstalled
-# checkout still runs the harness
-CHECKER = shutil.which("ste-check") or os.path.abspath(
-    "../../../tools/ste-check/target/release/ste-check")
+# A branch must be graded by a checker built from that branch. Merely preferring an
+# existing target/release binary is not enough: it can predate the source change. Build
+# once before the cases; PATH remains the fallback for an installed artifact checkout.
+REPO_MANIFEST = os.path.abspath("../../../tools/ste-check/Cargo.toml")
+REPO_CHECKER = os.path.abspath("../../../tools/ste-check/target/release/ste-check")
+if os.path.exists(REPO_MANIFEST):
+    subprocess.run(
+        ["cargo", "build", "--release", "--quiet", "--manifest-path", REPO_MANIFEST],
+        check=True,
+    )
+    CHECKER = REPO_CHECKER
+else:
+    CHECKER = shutil.which("ste-check")
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]
 is_holdout_slice = slice_name == "holdout"

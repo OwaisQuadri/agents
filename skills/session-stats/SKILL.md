@@ -45,5 +45,9 @@ At the end of a use, append one bounded JSON line (~2KB, local timezone with off
 never UTC) to `skills/session-stats/logs/usage.jsonl`:
 
 ```json
-{"ts":"<date +%Y-%m-%dT%H:%M:%S%z>","artifact":"session-stats","trigger":"<what fired it>","excerpt":"<question + key figures>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<date +%Y-%m-%dT%H:%M:%S%z>","artifact":"session-stats","trigger":"<what fired it>","excerpt":"<question + key figures>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
+
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.

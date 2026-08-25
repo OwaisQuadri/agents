@@ -1,15 +1,18 @@
 use crate::bro::{bare_acronym, jargon};
 use crate::ste::Rule;
-use crate::text::{dashes, find_words, is_emoji, MASK};
+use crate::text::{dashes, find_words, is_emoji};
 
-/// 600, not 500. STE keeps the articles and spells every word out, so the same status
-/// runs longer than the texting register it replaced. Two eval cases came back as clean
-/// STE at 511 and 586 characters.
-const CHAR_CAP: usize = 600;
 const LIST_CAP: usize = 5;
 
 const JOINERS: &[&str] = &["however", "moreover", "furthermore", "in conclusion"];
-const PRAISE: &[&str] = &["awesome", "excellent", "absolutely", "amazing", "perfect", "great"];
+const PRAISE: &[&str] = &[
+    "awesome",
+    "excellent",
+    "absolutely",
+    "amazing",
+    "perfect",
+    "great",
+];
 
 fn r_dashes(text: &str) -> Vec<String> {
     dashes(text)
@@ -31,15 +34,15 @@ pub fn not_just_but(text: &str) -> Vec<String> {
         let start = from + offset;
         let after = start + "not just".len();
         let window: String = lower[after..].chars().take(60).collect();
-        let clipped = window
-            .split(['.', '\n'])
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let clipped = window.split(['.', '\n']).next().unwrap_or("").to_string();
         if let Some(comma) = clipped.find(',') {
             let rest = clipped[comma + 1..].trim_start();
             if rest.starts_with("but")
-                && rest[3..].chars().next().map(|c| !c.is_alphanumeric()).unwrap_or(true)
+                && rest[3..]
+                    .chars()
+                    .next()
+                    .map(|c| !c.is_alphanumeric())
+                    .unwrap_or(true)
             {
                 hits.push(format!("not just{clipped}"));
             }
@@ -99,10 +102,20 @@ pub fn timestamps(text: &str) -> Vec<String> {
             i += 1;
             continue;
         }
-        let head = chars[..i].iter().rev().take_while(|c| c.is_ascii_digit()).count();
-        let tail = chars[i + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let head = chars[..i]
+            .iter()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        let tail = chars[i + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
         let is_free_before = i - head == 0 || !chars[i - head - 1].is_alphanumeric();
-        let is_free_after = chars.get(i + 1 + tail).map(|c| !c.is_alphanumeric()).unwrap_or(true);
+        let is_free_after = chars
+            .get(i + 1 + tail)
+            .map(|c| !c.is_alphanumeric())
+            .unwrap_or(true);
         if (1..=2).contains(&head) && tail == 2 && is_free_before && is_free_after {
             hits.push(chars[i - head..=i + 2].iter().collect());
         }
@@ -139,24 +152,17 @@ pub fn list_cap(text: &str) -> Vec<String> {
     }
 }
 
-pub fn char_cap(text: &str) -> Vec<String> {
-    let count = text.chars().filter(|c| *c != MASK).count();
-    if count > CHAR_CAP {
-        vec![format!("{count} chars over a {CHAR_CAP} cap")]
-    } else {
-        Vec::new()
-    }
-}
-
 pub const RULES: &[Rule] = &[
     ("no dash between clauses", r_dashes),
     ("no however/moreover/furthermore/in conclusion", r_joiners),
-    ("no awesome/excellent/absolutely/amazing/perfect/great", r_praise),
+    (
+        "no awesome/excellent/absolutely/amazing/perfect/great",
+        r_praise,
+    ),
     ("never 'not just x, but y'", not_just_but),
     ("plain text: no emoji/bold/italics/headings", plain_text),
     ("relative time, no timestamps", timestamps),
     ("numbered lists capped at 5", list_cap),
-    ("body <= 600 chars excluding exact info", char_cap),
     // Borrowed from the bro register: the end-user message is graded on them as well.
     ("plain words, no term of art", jargon),
     ("every abbreviation expanded at first use", bare_acronym),

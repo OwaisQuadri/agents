@@ -130,9 +130,12 @@ date +%Y-%m-%dT%H:%M:%S%z   # 2026-07-31T02:45:10-0400
 ```
 
 ```json
-{"ts":"2026-07-31T02:45:10-0400","artifact":"<name>","trigger":"<what fired it>","excerpt":"<bounded>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"2026-07-31T02:45:10-0400","artifact":"<name>","trigger":"<what fired it>","excerpt":"<bounded>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 ## 5. Failure modes and drift signals
 
 Diagnose a misbehaving skill against these, in order of frequency:

@@ -12,7 +12,6 @@ skill="${1:-../SKILL.md}"
 python3 - "$skill" "$slice" <<'PY'
 import json
 import os
-import subprocess
 import sys
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]
@@ -20,6 +19,9 @@ is_holdout_slice = slice_name == "holdout"
 skill_dir = os.path.abspath("..")
 skill = open(skill_path, encoding="utf-8").read()
 rubric = open("rubric.md", encoding="utf-8").read()
+
+sys.path.insert(0, "../../..")
+from evals.grade import grade  # noqa: E402
 
 cases = [json.loads(line) for line in open("cases.jsonl", encoding="utf-8") if line.strip()]
 cases = [c for c in cases if bool(c.get("holdout")) == is_holdout_slice]
@@ -39,15 +41,7 @@ for case in cases:
         "\n\nEXPECT:\n" + case["expect"] +
         "\n\nWould an agent following the skill on this input meet EXPECT? Grade per the rubric."
     )
-    verdict = None
-    for model_args in ([], ["--model", "opus"]):
-        run = subprocess.run(["claude", "-p", *model_args, prompt], capture_output=True, text=True)
-        start, end = run.stdout.find("{"), run.stdout.rfind("}")
-        if run.returncode == 0 and start != -1:
-            verdict = json.loads(run.stdout[start:end + 1])
-            break
-    if verdict is None:
-        sys.exit(f"grader failed on the default model and on opus (case {case['id']})")
+    verdict = grade(prompt, case["id"])
     print(json.dumps({"id": case["id"], "score": verdict["score"], "failure_mode": verdict.get("failure_mode")}))
     scores.append(verdict["score"])
 

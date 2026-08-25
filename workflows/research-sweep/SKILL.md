@@ -71,9 +71,12 @@ At the end of a use, append ONE JSON(JavaScript Object Notation) line to this
 artifact's `logs/usage.jsonl` in the agents repo at `~/Documents/agents`:
 
 ```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"research-sweep","trigger":"<what fired it>","excerpt":"<goal, dispatch labels, counts, critic verdict>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"research-sweep","trigger":"<what fired it>","excerpt":"<goal, dispatch labels, counts, critic verdict>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 - `ts` is the machine's current local timezone with offset
   (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user
   analyzes these against their own day.

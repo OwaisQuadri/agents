@@ -19,10 +19,16 @@ fn find_fenced(chars: &[char], spans: &mut Vec<(usize, usize)>) {
     while i + 2 < chars.len() {
         if chars[i] == '`' && chars[i + 1] == '`' && chars[i + 2] == '`' {
             let mut j = i + 3;
-            while j + 2 < chars.len() && !(chars[j] == '`' && chars[j + 1] == '`' && chars[j + 2] == '`') {
+            while j + 2 < chars.len()
+                && !(chars[j] == '`' && chars[j + 1] == '`' && chars[j + 2] == '`')
+            {
                 j += 1;
             }
-            let end = if j + 2 < chars.len() { j + 3 } else { chars.len() };
+            let end = if j + 2 < chars.len() {
+                j + 3
+            } else {
+                chars.len()
+            };
             spans.push((i, end));
             i = end;
             continue;

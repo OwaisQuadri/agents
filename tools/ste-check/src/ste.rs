@@ -9,56 +9,132 @@ const PARAGRAPH_SENTENCE_CAP: usize = 6;
 
 const IMPERATIVE_VERBS: &[&str] = &[
     "add", "always", "append", "apply", "ask", "assert", "assume", "avoid", "bound", "build",
-    "call", "cap", "check", "choose", "cite", "close", "commit", "confirm", "copy", "count",
-    "cut", "decide", "delete", "dispatch", "do", "drop", "emit", "ensure", "escalate",
-    "exclude", "expand", "extend", "filter", "find", "fix", "flag", "follow", "get", "give",
-    "grade", "grep", "hold", "include", "judge", "keep", "land", "leave", "limit", "link",
-    "list", "log", "make", "mark", "merge", "move", "name", "never", "note", "open", "parse",
-    "pick", "poll", "prefer", "print", "promote", "pull", "push", "put", "quote", "rank",
-    "read", "reduce", "reject", "remove", "rename", "replace", "report", "resolve", "retry",
-    "return", "run", "sample", "say", "scan", "score", "send", "set", "ship", "show", "skip",
-    "sort", "spend", "split", "start", "state", "stash", "stop", "surface", "take", "tell",
-    "trace", "treat", "tune", "use", "verify", "wait", "watch", "write",
+    "call", "cap", "check", "choose", "cite", "close", "commit", "confirm", "copy", "count", "cut",
+    "decide", "delete", "dispatch", "do", "drop", "emit", "ensure", "escalate", "exclude",
+    "expand", "extend", "filter", "find", "fix", "flag", "follow", "get", "give", "grade", "grep",
+    "hold", "include", "judge", "keep", "land", "leave", "limit", "link", "list", "log", "make",
+    "mark", "merge", "move", "name", "never", "note", "open", "parse", "pick", "poll", "prefer",
+    "print", "promote", "pull", "push", "put", "quote", "rank", "read", "reduce", "reject",
+    "remove", "rename", "replace", "report", "resolve", "retry", "return", "run", "sample", "say",
+    "scan", "score", "send", "set", "ship", "show", "skip", "sort", "spend", "split", "start",
+    "state", "stash", "stop", "surface", "take", "tell", "trace", "treat", "tune", "use", "verify",
+    "wait", "watch", "write",
 ];
 
 const BE_VERBS: &[&str] = &["am", "is", "are", "was", "were", "be", "been", "being"];
 
 const IRREGULAR_PARTICIPLES: &[&str] = &[
-    "born", "brought", "built", "caught", "chosen", "done", "drawn", "driven", "eaten",
-    "fallen", "flown", "forgotten", "found", "frozen", "given", "grown", "held", "hidden",
-    "kept", "known", "left", "lost", "made", "met", "paid", "ridden", "risen", "seen", "sent",
-    "shown", "sold", "sought", "spoken", "spent", "stolen", "taken", "taught", "thought",
-    "thrown", "told", "torn", "woken", "worn", "written",
+    "born",
+    "brought",
+    "built",
+    "caught",
+    "chosen",
+    "done",
+    "drawn",
+    "driven",
+    "eaten",
+    "fallen",
+    "flown",
+    "forgotten",
+    "found",
+    "frozen",
+    "given",
+    "grown",
+    "held",
+    "hidden",
+    "kept",
+    "known",
+    "left",
+    "lost",
+    "made",
+    "met",
+    "paid",
+    "ridden",
+    "risen",
+    "seen",
+    "sent",
+    "shown",
+    "sold",
+    "sought",
+    "spoken",
+    "spent",
+    "stolen",
+    "taken",
+    "taught",
+    "thought",
+    "thrown",
+    "told",
+    "torn",
+    "woken",
+    "worn",
+    "written",
 ];
 
 /// Words that follow a be-verb as adjectives, where the sentence is not passive. "the
 /// migration is done" reports a state, and it names no hidden actor.
 const PARTICIPLE_ADJECTIVES: &[&str] = &[
-    "aged", "annoyed", "blessed", "bored", "confused", "crooked", "done", "excited", "gone",
-    "interested", "learned", "naked", "pleased", "ragged", "rugged", "sacred", "scared",
-    "stuck", "surprised", "tired", "wicked", "worried",
+    "aged",
+    "annoyed",
+    "blessed",
+    "bored",
+    "confused",
+    "crooked",
+    "done",
+    "excited",
+    "gone",
+    "interested",
+    "learned",
+    "naked",
+    "pleased",
+    "ragged",
+    "rugged",
+    "sacred",
+    "scared",
+    "stuck",
+    "surprised",
+    "tired",
+    "wicked",
+    "worried",
 ];
 
 /// A transliterated dua opens in lowercase by convention, so sentence case skips it.
 const DUA_OPENERS: &[&str] = &[
-    "alhamdulillah", "assalamu", "bismillah", "inshallah", "jazak", "salam", "wa",
+    "alhamdulillah",
+    "assalamu",
+    "bismillah",
+    "inshallah",
+    "jazak",
+    "salam",
+    "wa",
 ];
 
 const TEXTING_SHORTFORMS: &[&str] = &[
-    "bc", "idk", "imo", "kinda", "lmk", "nah", "ppl", "prob", "prolly", "rn", "tbh", "tho",
-    "u", "ur", "wanna", "ya", "yea",
+    "bc", "idk", "imo", "kinda", "lmk", "nah", "ppl", "prob", "prolly", "rn", "tbh", "tho", "u",
+    "ur", "wanna", "ya", "yea",
 ];
 
 const DROPPED_APOSTROPHES: &[&str] = &[
-    "arent", "cant", "couldnt", "didnt", "dont", "hadnt", "hasnt", "havent", "im", "isnt",
-    "ive", "lets", "shouldnt", "thats", "theyre", "theyve", "wasnt", "werent", "whats", "wont",
-    "wouldnt", "youre", "youve",
+    "arent", "cant", "couldnt", "didnt", "dont", "hadnt", "hasnt", "havent", "im", "isnt", "ive",
+    "lets", "shouldnt", "thats", "theyre", "theyve", "wasnt", "werent", "whats", "wont", "wouldnt",
+    "youre", "youve",
 ];
 
 const COMPLEX_WORDS: &[&str] = &[
-    "aforementioned", "approximately", "commence", "endeavor", "endeavour", "facilitate",
-    "initiate", "subsequent", "subsequently", "terminate", "utilisation", "utilise",
-    "utilization", "utilize", "whilst",
+    "aforementioned",
+    "approximately",
+    "commence",
+    "endeavor",
+    "endeavour",
+    "facilitate",
+    "initiate",
+    "subsequent",
+    "subsequently",
+    "terminate",
+    "utilisation",
+    "utilise",
+    "utilization",
+    "utilize",
+    "whilst",
 ];
 
 const COMPLEX_PHRASES: &[&str] = &["prior to", "in order to"];
@@ -72,10 +148,10 @@ const FUNCTION_WORDS: &[&str] = &[
     "a", "after", "all", "already", "also", "always", "an", "and", "any", "as", "at", "before",
     "both", "but", "by", "can", "each", "either", "every", "for", "from", "if", "in", "into",
     "her", "his", "it", "its", "just", "may", "must", "my", "never", "no", "nor", "not", "of",
-    "off", "often", "on", "once", "one", "only", "or", "our", "out", "over", "own", "per",
-    "since", "so", "some", "still", "than", "that", "the", "their", "then", "there", "these",
-    "this", "those", "to", "two", "under", "until", "up", "when", "where", "which", "while",
-    "who", "whose", "will", "with", "within", "without", "your",
+    "off", "often", "on", "once", "one", "only", "or", "our", "out", "over", "own", "per", "since",
+    "so", "some", "still", "than", "that", "the", "their", "then", "there", "these", "this",
+    "those", "to", "two", "under", "until", "up", "when", "where", "which", "while", "who",
+    "whose", "will", "with", "within", "without", "your",
 ];
 
 const DETERMINERS: &[&str] = &[
@@ -84,8 +160,8 @@ const DETERMINERS: &[&str] = &[
 
 /// Verbs that legitimately take a bare -ing complement, so no relative pronoun is missing.
 const CATENATIVE_VERBS: &[&str] = &[
-    "avoid", "begin", "consider", "continue", "enjoy", "finish", "keep", "prefer", "risk",
-    "start", "stop", "suggest", "try", "worth",
+    "avoid", "begin", "consider", "continue", "enjoy", "finish", "keep", "prefer", "risk", "start",
+    "stop", "suggest", "try", "worth",
 ];
 
 fn is_in(word: &str, list: &[&str]) -> bool {
@@ -174,7 +250,10 @@ pub fn sentence_case(text: &str) -> Vec<String> {
             let is_uncheckable = matches!(
                 body.chars().next(),
                 None | Some(MASK) | Some('0'..='9') | Some('`')
-            ) || tokens(body).first().map(|t| is_in(t, DUA_OPENERS)).unwrap_or(false);
+            ) || tokens(body)
+                .first()
+                .map(|t| is_in(t, DUA_OPENERS))
+                .unwrap_or(false);
             if is_uncheckable {
                 continue;
             }
@@ -185,7 +264,11 @@ pub fn sentence_case(text: &str) -> Vec<String> {
             }
         }
     }
-    let last_line = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let last_line = text
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
     if !is_structural_line(last_line) {
         let tail = text.trim_end_matches(|c: char| c.is_whitespace() || c == MASK);
         match tail.chars().last() {
@@ -259,7 +342,9 @@ pub fn paragraph_length(text: &str) -> Vec<String> {
         let count = sentences(block).len();
         if count > PARAGRAPH_SENTENCE_CAP {
             let head: String = block.chars().take(40).collect();
-            hits.push(format!("{head} ({count} sentences, cap {PARAGRAPH_SENTENCE_CAP})"));
+            hits.push(format!(
+                "{head} ({count} sentences, cap {PARAGRAPH_SENTENCE_CAP})"
+            ));
         }
     }
     hits
@@ -268,13 +353,25 @@ pub fn paragraph_length(text: &str) -> Vec<String> {
 pub type Rule = (&'static str, fn(&str) -> Vec<String>);
 
 pub const RULES: &[Rule] = &[
-    ("one instruction per sentence, within the word cap", sentence_length),
+    (
+        "one instruction per sentence, within the word cap",
+        sentence_length,
+    ),
     ("active voice, actor named", active_voice),
     ("no texting shortforms", texting_shortforms),
-    ("contractions keep their apostrophe", contraction_apostrophes),
+    (
+        "contractions keep their apostrophe",
+        contraction_apostrophes,
+    ),
     ("sentence case with terminal punctuation", sentence_case),
-    ("articles and relative pronouns kept", dropped_relative_pronoun),
-    ("a parenthetical holds examples only", imperative_in_parenthetical),
+    (
+        "articles and relative pronouns kept",
+        dropped_relative_pronoun,
+    ),
+    (
+        "a parenthetical holds examples only",
+        imperative_in_parenthetical,
+    ),
     ("the simplest word that carries the meaning", simple_word),
     ("never genuine/genuinely", banned_word),
     ("paragraph within the sentence cap", paragraph_length),

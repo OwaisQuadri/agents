@@ -144,10 +144,20 @@ At the end of every use of this skill, append ONE bounded JSON line — the rele
 transcript excerpt only, ~2KB cap — to `skills/agent-author/logs/usage.jsonl`:
 
 ```sh
-mkdir -p skills/agent-author/logs
-printf '%s\n' "{\"ts\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"artifact\":\"agent-author\",\"trigger\":\"<what fired it>\",\"excerpt\":\"<trigger + key outputs + any correction>\",\"outcome\":\"success|failure|partial\",\"notes\":\"<surprises>\"}" \
+cd ~/Documents/agents && mkdir -p skills/agent-author/logs && jq -cn \
+  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- skills/agent-author ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
+  --arg trigger '<what fired it>' \
+  --arg excerpt '<trigger + key outputs + any correction>' \
+  --arg outcome 'success|failure|partial' \
+  --arg notes '<surprises>' \
+  '{ts:$ts,artifact:"agent-author",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
   >> skills/agent-author/logs/usage.jsonl
 ```
+
+jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
+excerpt cannot break it. Never hand-build this line with printf: that is what cost
+the fleet 19 unreadable log lines.
 
 The timestamp is the machine's CURRENT LOCAL TIMEZONE with offset, never
 UTC(Coordinated Universal Time) — these lines get analyzed against the user's own day,

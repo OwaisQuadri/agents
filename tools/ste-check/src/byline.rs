@@ -6,36 +6,76 @@ const RHYTHM_MIN_STDEV: f64 = 3.0;
 const RHYTHM_MIN_SENTENCES: usize = 4;
 
 const OPENERS: &[&str] = &[
-    "in today's fast-paced", "it's worth noting", "it is worth noting", "at its core",
-    "in this section", "let's dive in", "when it comes to", "it is important to understand",
-    "first and foremost", "in order to better", "needless to say",
+    "in today's fast-paced",
+    "it's worth noting",
+    "it is worth noting",
+    "at its core",
+    "in this section",
+    "let's dive in",
+    "when it comes to",
+    "it is important to understand",
+    "first and foremost",
+    "in order to better",
+    "needless to say",
 ];
 
 const HEDGE_WORDS: &[&str] = &[
-    "arguably", "somewhat", "fairly", "quite", "rather", "perhaps", "essentially",
-    "basically", "virtually", "relatively",
+    "arguably",
+    "somewhat",
+    "fairly",
+    "quite",
+    "rather",
+    "perhaps",
+    "essentially",
+    "basically",
+    "virtually",
+    "relatively",
 ];
 
 const HEDGE_PHRASES: &[&str] = &["generally speaking", "in some sense"];
 
 const VAGUE: &[&str] = &[
-    "game-changer", "powerful", "robust", "seamless", "leverage", "delve", "landscape",
-    "realm", "tapestry", "underscore", "pivotal", "crucial", "cutting-edge", "best-in-class",
-    "world-class", "revolutionize", "unlock", "elevate", "streamline",
+    "game-changer",
+    "powerful",
+    "robust",
+    "seamless",
+    "leverage",
+    "delve",
+    "landscape",
+    "realm",
+    "tapestry",
+    "underscore",
+    "pivotal",
+    "crucial",
+    "cutting-edge",
+    "best-in-class",
+    "world-class",
+    "revolutionize",
+    "unlock",
+    "elevate",
+    "streamline",
 ];
 
 const META: &[&str] = &[
-    "as mentioned above", "as we will see", "this document will", "in this article",
-    "the following section", "it should be noted", "for the purposes of this",
+    "as mentioned above",
+    "as we will see",
+    "this document will",
+    "in this article",
+    "the following section",
+    "it should be noted",
+    "for the purposes of this",
 ];
 
 const WH_OPENERS: &[&str] = &[
-    "what makes this", "why this matters", "how this works is", "what's interesting here",
+    "what makes this",
+    "why this matters",
+    "how this works is",
+    "what's interesting here",
 ];
 
 const LY_EXCEPTIONS: &[&str] = &[
-    "only", "early", "family", "reply", "apply", "supply", "likely", "daily", "weekly",
-    "monthly", "yearly", "ugly", "italy", "assembly", "anomaly",
+    "only", "early", "family", "reply", "apply", "supply", "likely", "daily", "weekly", "monthly",
+    "yearly", "ugly", "italy", "assembly", "anomaly",
 ];
 
 pub fn openers(text: &str) -> Vec<String> {
@@ -98,7 +138,10 @@ fn adverbs(text: &str) -> Vec<String> {
 }
 
 fn rhythm(text: &str) -> Vec<String> {
-    let plain: String = text.chars().map(|c| if c == MASK { ' ' } else { c }).collect();
+    let plain: String = text
+        .chars()
+        .map(|c| if c == MASK { ' ' } else { c })
+        .collect();
     let lengths: Vec<usize> = sentences(&plain)
         .iter()
         .map(|s| s.split_whitespace().count())

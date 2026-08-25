@@ -32,8 +32,11 @@ Run `evals/run.sh` for development cases. Run `evals/run.sh --holdout` for the h
 At the end of a use, append one bounded JSON (JavaScript Object Notation) line to `logs/usage.jsonl`:
 
 ```json
-{"ts":"<local time with offset>","artifact":"rust-style","trigger":"<what fired it>","excerpt":"<relevant input and output>","outcome":"success|failure|partial","notes":"<corrections or surprises>"}
+{"ts":"<local time with offset>","artifact":"rust-style","trigger":"<what fired it>","excerpt":"<relevant input and output>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections or surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 Use the machine's current timezone with `date +%Y-%m-%dT%H:%M:%S%z`. Never use Coordinated Universal Time.
 Keep the excerpt under 2KB. Include only the trigger, key output, and any human correction.

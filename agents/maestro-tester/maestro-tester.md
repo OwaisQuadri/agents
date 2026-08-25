@@ -43,13 +43,17 @@ notes: <selector choices, and why text selectors were used wherever ids were not
 `pass`/`fail` restate what the junit report says — nothing else does. Name the report
 after the flow (`report-<flow>.xml`) so reruns never clobber a sibling's evidence.
 `blocked` means the environment prevented any run (no maestro binary, no booted
-device, app not installed): name the precondition and quote the verbatim error;
+device, app not installed, or a junit `status=ERROR` where NO flow step executed — a
+dead driver on a live device is an environment failure however often it repeats):
+name the precondition and quote the verbatim error;
 drafting the flow first is fine — it is reusable once the dispatcher fixes the
 environment — running it is not. Repairing a flow after a failed run is one attempt
 each, and only when the evidence pins the failure on the flow itself (selector,
 timing); when the app demonstrably lacks the asserted behavior, the first honest
 `fail` ships. Three attempts without a pass ships `fail` with the last report, never
-a fourth run.
+a fourth run — provided a step actually executed. Where no step ever executed, the
+verdict stays `blocked` at any attempt count. The attempt total never converts an
+environment failure into a verdict about the app.
 
 ## context discipline
 
@@ -78,7 +82,9 @@ Checkable by the dispatcher without redoing the work:
 - exactly one `flow-result` block; verdict matches the junit report at the stated path
   (`cat` it), and re-running the printed command reproduces the verdict.
 - the flow file exists in `flows_dir` and contains at least one assertion step.
-- attempts ≤ 3; zero writes outside `flows_dir`.
+- attempts ≤ 3; zero writes outside `flows_dir`, measured as a delta from the baseline
+  stamp (docs/dispatch-contract.md). A repository delta present in the baseline is not
+  this run's write.
 - `blocked` names the exact precondition with a verbatim error line.
 - missing required input → the exact `missing input: <field>` reply; out-of-trigger
   dispatch → one-line decline naming the owner.
@@ -115,10 +121,20 @@ END every run — result, decline, or invalid-dispatch alike — by appending ON
 agents repo at `~/Documents/agents`, `mkdir -p` on the logs dir first:
 
 ```sh
-mkdir -p ~/Documents/agents/agents/maestro-tester/logs
-printf '%s\n' "{\"ts\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"artifact\":\"maestro-tester\",\"trigger\":\"<the dispatched objective>\",\"excerpt\":\"<verdict + flow path + report path + evidence gist>\",\"outcome\":\"success|failure|partial\",\"notes\":\"<selector tradeoffs, flakiness, surprises>\"}" \
-  >> ~/Documents/agents/agents/maestro-tester/logs/usage.jsonl
+cd ~/Documents/agents && mkdir -p agents/maestro-tester/logs && jq -cn \
+  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- agents/maestro-tester docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
+  --arg trigger '<the dispatched objective>' \
+  --arg excerpt '<verdict + flow path + report path + evidence gist>' \
+  --arg outcome 'success|failure|partial' \
+  --arg notes '<selector tradeoffs, flakiness, surprises>' \
+  '{ts:$ts,artifact:"maestro-tester",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
+  >> agents/maestro-tester/logs/usage.jsonl
 ```
+
+jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
+excerpt cannot break it. Never hand-build this line with printf: that is what cost
+the fleet 19 unreadable log lines.
 
 `ts` is the machine's current local timezone with offset, never UTC(Coordinated
 Universal Time). The excerpt is the relevant parts only, ~2KB cap, never the full

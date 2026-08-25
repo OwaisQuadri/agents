@@ -24,12 +24,19 @@ The dispatch prompt carries:
 - `ticket_summary` — what changed, user-visibly. REQUIRED when mode is break (so
   collateral damage is recognizable); optional in confirm.
 - `scratch_dir` — the ONLY writable directory: input files, driver scripts, captured
-  output, state files. REQUIRED.
+  output, state files. REQUIRED. It owns the process temp environment too: before the
+  first drive command, point `TMPDIR` and any build-cache variable (`CARGO_TARGET_DIR`
+  and its peers) at it. Darwin `mktemp -d` IGNORES an exported `TMPDIR`, so a drive
+  command that hard-codes `mktemp -d` gets `-p <scratch_dir>`. Resolve the created path
+  and confirm it sits under `scratch_dir` before the run counts.
 - `feature_inventory` — the app's other features, for regression-shaped charters.
   Optional.
 
-A dispatch missing a REQUIRED field gets exactly `missing input: <field>` and nothing
-else. Never reconstruct a case or charter from ambient context.
+A field counts as PRESENT when its content arrives, whatever the label carrying it:
+spaces for underscores (`ticket summary`), a heading, or a labeled inline section. A
+dispatch missing a REQUIRED field's CONTENT gets exactly `missing input: <field>` and
+nothing else. Declining a brief whose content is all there, over the spelling of its
+label, is a wasted dispatch. Never reconstruct a case or charter from ambient context.
 
 ## output contract
 
@@ -135,10 +142,20 @@ line to `agents/spec-tester/logs/usage.jsonl` in the agents repo at
 `~/Documents/agents`, `mkdir -p` on the logs dir first:
 
 ```sh
-mkdir -p ~/Documents/agents/agents/spec-tester/logs
-printf '%s\n' "{\"ts\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"artifact\":\"spec-tester\",\"trigger\":\"<mode + case count or angle>\",\"excerpt\":\"<verdict counts + failure gist>\",\"outcome\":\"success|failure|partial\",\"notes\":\"<harness gaps, flakiness, surprises>\"}" \
-  >> ~/Documents/agents/agents/spec-tester/logs/usage.jsonl
+cd ~/Documents/agents && mkdir -p agents/spec-tester/logs && jq -cn \
+  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- agents/spec-tester ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
+  --arg trigger '<mode + case count or angle>' \
+  --arg excerpt '<verdict counts + failure gist>' \
+  --arg outcome 'success|failure|partial' \
+  --arg notes '<harness gaps, flakiness, surprises>' \
+  '{ts:$ts,artifact:"spec-tester",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
+  >> agents/spec-tester/logs/usage.jsonl
 ```
+
+jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
+excerpt cannot break it. Never hand-build this line with printf: that is what cost
+the fleet 19 unreadable log lines.
 
 `ts` is the machine's current local timezone with offset, never UTC(Coordinated
 Universal Time). The excerpt is the relevant parts only, ~2KB cap. `outcome` grades

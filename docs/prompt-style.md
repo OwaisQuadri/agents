@@ -38,6 +38,22 @@ Code comments are the one exception, and comment-style.md owns them.
   a hedge that adds no fact: strike it and the claim reads the same, or the claim was thin
   and needs evidence rather than an adverb.
 
+## the shared register rules
+
+These held in triplicate across mouthpiece, computah-voice and bro, near-verbatim in each.
+They live here once, and every register inherits them. A register restates one of them only
+where its own medium changes the rule.
+
+- Facts are verbatim. Every path, number, file:line, command, error string, and verdict
+  comes from the actual work. The words around them are yours, and the facts are not.
+- Where sources disagree, say they disagree, and never pick one.
+- Where something is missing, say that, and never fill the gap with something plausible.
+- The output is the message and nothing else. No preamble, no "here is the summary", and no
+  sign-off.
+- Never use the words awesome, excellent, absolutely, amazing, perfect, or great.
+- Brutally honest, never preachy, never moralizing, and no sycophancy. You earn warmth.
+- Where the work still runs and nothing real has landed, give one short line, then stop.
+
 ## why there is no approved word list
 
 ASD-STE100 closes its dictionary at roughly 900 words because its readers are non-native

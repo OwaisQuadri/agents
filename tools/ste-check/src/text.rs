@@ -68,7 +68,10 @@ pub fn strip_frontmatter(text: &str) -> &str {
 }
 
 pub fn is_structural_line(line: &str) -> bool {
-    matches!(line.trim_start().chars().next(), Some('#') | Some('|') | Some('>'))
+    matches!(
+        line.trim_start().chars().next(),
+        Some('#') | Some('|') | Some('>')
+    )
 }
 
 pub fn is_list_line(line: &str) -> bool {
@@ -79,7 +82,10 @@ pub fn is_list_line(line: &str) -> bool {
 /// than running into the line under it.
 pub fn is_label_line(line: &str) -> bool {
     let trimmed = line.trim_start();
-    let label: String = trimmed.chars().take_while(|c| c.is_ascii_uppercase()).collect();
+    let label: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_uppercase())
+        .collect();
     !label.is_empty() && trimmed[label.len()..].starts_with(':')
 }
 
@@ -196,7 +202,11 @@ pub fn dashes(text: &str) -> Vec<String> {
         let mut i = 0;
         while i < chars.len() {
             if chars[i] == '-' {
-                let run = if i + 1 < chars.len() && chars[i + 1] == '-' { 2 } else { 1 };
+                let run = if i + 1 < chars.len() && chars[i + 1] == '-' {
+                    2
+                } else {
+                    1
+                };
                 let before = i > 0 && chars[i - 1] == ' ';
                 let after = chars.get(i + run).map(|c| *c == ' ').unwrap_or(false);
                 if before && after {

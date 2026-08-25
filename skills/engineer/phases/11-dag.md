@@ -24,7 +24,7 @@ OUT: tasks.json final for implementation; a plan view shown through /show-me
 
    The dispatch must not carry this session's reasoning, drafts, or approval summary. Done when the verdict returns.
 4. Fix each rubric failure. Re-dispatch until the verdict is pass. Each cycle increments `loop_counts.plan`. These fixes do not count against the phase-13 cap. Done when the verdict is pass.
-5. Present Human Gate B. Include the chosen pattern and rejected alternates from ux.md. Include data-structures.md, interfaces.md, test-cases.md, and tasks.json. Present the plan view through /show-me. The interaction choice must reach the user before implementation. Commit `map(<ID>): phase 11 dag`. Done when the user sees the bundle, `state.json.gates.B` records the verdict, and the commit exists.
+5. Present Human Gate B. Include the chosen pattern and rejected alternates from ux.md. Include test-cases.md and tasks.json. Include structure as the DELTA since Gate S only — the shapes and signatures that changed after he approved them, and nothing he already read. Apply STANDING APPROVAL from SKILL.md over tasks.json, the plan docs, test-cases.md, ux.md, and the rendered plan view. On re-entry, an equal candidate carries approval and continues to phase 12; a decisional delta fires approval N+1. Never replay an identical bundle for another verdict. Present the plan view through /show-me. The interaction choice must reach the user before implementation. Commit `map(<ID>): phase 11 dag`. Done when the governing rule has carried approval or the user sees the fired bundle, `state.json.gates.B` carries its approval number and immutable snapshot, and the commit exists.
 
 ## blame tags
 

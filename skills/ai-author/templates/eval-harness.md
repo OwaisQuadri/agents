@@ -61,12 +61,22 @@ At the end of a use, append ONE JSON(JavaScript Object Notation) line to this
 artifact's `logs/usage.jsonl`:
 
 ```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"<name>","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"<name>","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 - `ts` is the machine's current local timezone with offset
   (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user
   analyzes these against their own day.
 - The excerpt is the relevant transcript parts only — the trigger, the key outputs,
   any human correction. Never the full transcript; cap ~2KB per line.
+- `outcome` grades THIS RUN'S EXECUTION OF THE ROLE, never the deliverable and never the
+  code under test. `success` covers a correct refusal, an invalid-dispatch, a `blocked`
+  verdict naming its precondition, a repro that did not reproduce, and an evidenced
+  `fail`. `failure` is the role misfiring: improvising past a missing input, grading on a
+  self-report, editing a file its contract bars. `partial` is a run cut short. A run that
+  grades itself `success` while holding a known coverage hole is `partial`, and names the
+  hole. Eight blind-judge votes were spent on this one distinction.
 ````

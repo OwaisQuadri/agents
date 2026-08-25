@@ -2,7 +2,7 @@
 
 JOB: every planned capability reachable through a written signature, with its contract documented along the call path — and no pre-existing body edited
 IN:  data-structures.md; phase 06 committed
-OUT: signatures in-repo; `.map/<ID>/interfaces.md`; `.map/<ID>/call-stacks.md`
+OUT: signatures in-repo; `.map/<ID>/interfaces.md`; `.map/<ID>/call-stacks.md`; `state.json.gates.S`
 
 paths: interface, protocol, header, and service files. Name the concrete glob in interfaces.md.
 
@@ -17,9 +17,10 @@ paths: interface, protocol, header, and service files. Name the concrete glob in
    - every error it can raise, throw, or return.
    - every side-effect: a file write, a network call, a mutation of shared state, a spawned process, a change on screen.
 
-   Plan the call path, and do not write the body. The user reads this file at GATE B, and he judges the design before phase 13 builds it. Write `none` where a level has no errors or no side-effects. An omitted fact is a gap, not an empty set. Done when every signature from step 2 sits at some level of some stack.
-5. verify the scope: the glob plus `.map/` only, and no body edits of pre-existing functions. Commit `map(<ID>): phase 07 interfaces`.
+   Plan the call path, and do not write the body. The user reads this file at GATE S, one phase from now, and he judges the design before phase 08 decomposes it and phase 13 builds it. Write `none` where a level has no errors or no side-effects. An omitted fact is a gap, not an empty set. Done when every signature from step 2 sits at some level of some stack.
+5. verify the scope: the glob plus `.map/` only, and no body edits of pre-existing functions.
+6. HUMAN GATE S. Present the structure through /show-me. Ask for the smallest fitting view, prefer a console-safe one, and do not select the format. Three parts. (a) every phase-06 type as before→after, each externally-owned shape beside the executed probe output that proves it. (b) every new or changed signature as one line, with the type that owns it. (c) each call stack as its levels, so a signature at the wrong level is visible as a line in the wrong place. Declarations only, never bodies. Ask two questions and no more: is any shape wrong, missing a state, or owned by the wrong type; does any signature sit at the wrong level. On every visit, apply STANDING APPROVAL from SKILL.md exactly: build a fresh candidate directory and manifest. On re-entry, classify every changed hunk in `.map/<ID>/gates/S/classifications/<candidate-basename>.json`, as the governing contract requires; `prose-only` carries the existing approval, while `decisional` presents the delta and records approval N+1 in a new immutable directory. Wait only when the governing rule says the gate fires; then `state.json.gates.S` records the verdict, approval number and immutable manifest path. Commit `map(<ID>): phase 07 interfaces`. Done when the user has seen all three parts and the entry exists.
 
 ## blame tags
 
-`wrong-signature` `caller-mismatch` `missing-error-path` `contract-undocumented` `call-stack-gap` `missing-side-effect`
+`wrong-signature` `caller-mismatch` `missing-error-path` `contract-undocumented` `call-stack-gap` `missing-side-effect` `gate-s-unpresented`

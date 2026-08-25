@@ -25,10 +25,19 @@ import shutil
 import subprocess
 import sys
 
-# install.sh links ste-check onto PATH; fall back to the repo build so an uninstalled
-# checkout still runs the harness
-CHECKER = shutil.which("ste-check") or os.path.abspath(
-    "../../../tools/ste-check/target/release/ste-check")
+# A branch must be graded by a checker built from that branch. Merely preferring an
+# existing target/release binary is not enough: it can predate the source change. Build
+# once before the cases; PATH remains the fallback for an installed artifact checkout.
+REPO_MANIFEST = os.path.abspath("../../../tools/ste-check/Cargo.toml")
+REPO_CHECKER = os.path.abspath("../../../tools/ste-check/target/release/ste-check")
+if os.path.exists(REPO_MANIFEST):
+    subprocess.run(
+        ["cargo", "build", "--release", "--quiet", "--manifest-path", REPO_MANIFEST],
+        check=True,
+    )
+    CHECKER = REPO_CHECKER
+else:
+    CHECKER = shutil.which("ste-check")
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]
 is_holdout_slice = slice_name == "holdout"
@@ -41,6 +50,9 @@ prose_style = ""
 if os.path.exists("../../../docs/prompt-style.md"):
     prose_style = "\n\nPROSE STYLE (the base every register runs on):\n" + open(
         "../../../docs/prompt-style.md", encoding="utf-8").read()
+sys.path.insert(0, "../../..")
+from evals.grade import grade  # noqa: E402
+
 cases = [json.loads(line) for line in open("cases.jsonl", encoding="utf-8") if line.strip()]
 cases = [c for c in cases if bool(c.get("holdout")) == is_holdout_slice]
 
@@ -76,8 +88,7 @@ for case in cases:
         "\n\nCANDIDATE MESSAGE:\n" + candidate +
         "\n\nGrade the candidate against EXPECT per the rubric."
     )
-    out = ask(judge_prompt)
-    verdict = json.loads(out[out.find("{"):out.rfind("}") + 1])
+    verdict = grade(judge_prompt, case["id"])
 
     score = verdict["score"]
     failure_mode = verdict.get("failure_mode")

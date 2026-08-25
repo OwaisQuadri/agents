@@ -18,8 +18,8 @@ Simplified Technical English, per `docs/prompt-style.md`, with paragraphs where 
 help. Every register in this repo runs on that base. What byline adds is the AI-tell pass
 below, because this is the only prose a stranger reads.
 
-`/mouthpiece` shares the base and differs in shape. That register caps the body at 500
-characters and ends on a next action. The reader there is the user himself, and he acts on
+`/mouthpiece` shares the base and differs in shape. That register bounds length by the
+facts and ends on a next action. The reader there is the user himself, and he acts on
 it. Reach for it only where he is the reader.
 
 ## the pass
@@ -68,8 +68,11 @@ At the end of a use, append ONE JSON (JavaScript Object Notation) line to this s
 `logs/usage.jsonl`:
 
 ```json
-{"ts":"<local iso with offset>","artifact":"byline","trigger":"<what was edited>","excerpt":"<the flags ste-check raised + what was cut>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<local iso with offset>","artifact":"byline","trigger":"<what was edited>","excerpt":"<the flags ste-check raised + what was cut>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/prompt-style.md tools/ste-check/src ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 `ts` comes from `date +%Y-%m-%dT%H:%M:%S%z` in local time with its offset, and never in
 UTC (Coordinated Universal Time). Cap the line at ~2KB.

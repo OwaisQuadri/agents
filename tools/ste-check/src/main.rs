@@ -14,11 +14,12 @@ mod ste;
 mod text;
 
 use mask::Profile;
-use ste::Rule;
 use std::io::Read;
 use std::process::ExitCode;
+use ste::Rule;
 
-const USAGE: &str = "usage: ste-check --register <mouthpiece|computah|byline|bro|agent> [file]";
+const USAGE: &str =
+    "usage: ste-check --register <mouthpiece|computah|byline|bro|agent> [--quiet] [file]";
 
 fn register_rules(name: &str) -> Option<(&'static [Rule], Profile)> {
     match name {
@@ -42,9 +43,11 @@ fn read_input(path: Option<String>) -> std::io::Result<String> {
     }
 }
 
-fn report(name: &str, offenders: &[String]) {
+fn report(name: &str, offenders: &[String], is_quiet: bool) {
     if offenders.is_empty() {
-        println!("pass  {name}");
+        if !is_quiet {
+            println!("pass  {name}");
+        }
         return;
     }
     let shown: Vec<String> = offenders
@@ -64,9 +67,11 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut register = None;
     let mut path = None;
+    let mut is_quiet = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--register" | "-r" => register = args.next(),
+            "--quiet" | "-q" => is_quiet = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
@@ -100,9 +105,12 @@ fn main() -> ExitCode {
         if offenders.is_empty() {
             passed += 1;
         }
-        report(name, &offenders);
+        report(name, &offenders, is_quiet);
     }
-    println!("score: {passed}/{total} ({:.3})", passed as f64 / total as f64);
+    println!(
+        "score: {passed}/{total} ({:.3})",
+        passed as f64 / total as f64
+    );
 
     if passed == total {
         ExitCode::SUCCESS
@@ -124,8 +132,14 @@ mod tests {
     }
 
     fn check(rule: fn(&str) -> Vec<String>, clean: &str, dirty: &str) {
-        assert!(rule(&spoken(clean)).is_empty(), "clean case failed: {clean:?}");
-        assert!(!rule(&spoken(dirty)).is_empty(), "dirty case passed: {dirty:?}");
+        assert!(
+            rule(&spoken(clean)).is_empty(),
+            "clean case failed: {clean:?}"
+        );
+        assert!(
+            !rule(&spoken(dirty)).is_empty(),
+            "dirty case passed: {dirty:?}"
+        );
     }
 
     #[test]
@@ -149,7 +163,11 @@ mod tests {
 
     #[test]
     fn texting_shortforms() {
-        check(ste::texting_shortforms, "Tell me if you want the diff.", "lmk if u want it.");
+        check(
+            ste::texting_shortforms,
+            "Tell me if you want the diff.",
+            "lmk if u want it.",
+        );
     }
 
     #[test]
@@ -218,10 +236,21 @@ mod tests {
 
     #[test]
     fn mouthpiece_rules() {
-        check(mouthpiece::not_just_but, "The cap is 500 characters.", "not just a cap, but a rule.");
-        check(mouthpiece::timestamps, "The backfill ends at 5pm.", "The backfill ends at 14:32.");
-        check(mouthpiece::plain_text, "The sweep is done.", "The **sweep** is done.");
-        check(mouthpiece::char_cap, "Short.", &"word ".repeat(140));
+        check(
+            mouthpiece::not_just_but,
+            "The cap is 500 characters.",
+            "not just a cap, but a rule.",
+        );
+        check(
+            mouthpiece::timestamps,
+            "The backfill ends at 5pm.",
+            "The backfill ends at 14:32.",
+        );
+        check(
+            mouthpiece::plain_text,
+            "The sweep is done.",
+            "The **sweep** is done.",
+        );
         check(
             mouthpiece::list_cap,
             "1. one\n2. two\n3. three",
@@ -232,16 +261,34 @@ mod tests {
     #[test]
     fn mouthpiece_grades_the_bro_plain_words_pair() {
         let dirty = spoken("The PR is open and I dispatched the checker.");
-        let failed = mouthpiece::RULES.iter().filter(|(_, rule)| !rule(&dirty).is_empty());
+        let failed = mouthpiece::RULES
+            .iter()
+            .filter(|(_, rule)| !rule(&dirty).is_empty());
         assert_eq!(failed.count(), 2);
     }
 
     #[test]
     fn bare_acronym_counts_both_expansion_orders() {
-        check(bro::jargon, "I sent the checker over every register.", "I dispatched the checker.");
-        check(bro::bare_acronym, "The pull request is open.", "The PR is open.");
-        check(bro::bare_acronym, "All checks pass on pull request (PR) 412.", "All checks pass on PR 412.");
-        check(bro::bare_acronym, "The push landed before GATE E cleared.", "The push landed before ACK E.");
+        check(
+            bro::jargon,
+            "I sent the checker over every register.",
+            "I dispatched the checker.",
+        );
+        check(
+            bro::bare_acronym,
+            "The pull request is open.",
+            "The PR is open.",
+        );
+        check(
+            bro::bare_acronym,
+            "All checks pass on pull request (PR) 412.",
+            "All checks pass on PR 412.",
+        );
+        check(
+            bro::bare_acronym,
+            "The push landed before GATE E cleared.",
+            "The push landed before ACK E.",
+        );
         check(
             bro::bare_acronym,
             "Simplified Technical English (STE) is a standard. Every reply runs on STE.",
@@ -272,7 +319,6 @@ mod tests {
         assert!(ste::texting_shortforms(&spoken(text)).is_empty());
         assert!(ste::contraction_apostrophes(&spoken(text)).is_empty());
         assert!(ste::simple_word(&spoken(text)).is_empty());
-        assert!(mouthpiece::char_cap(&spoken(&format!("{}{text}", "x".repeat(460)))).is_empty());
     }
 
     #[test]
@@ -287,7 +333,9 @@ mod tests {
     fn bro_rules() {
         let clean = "Basically, the check runs twice. The first run finds the words that \
                      lose a reader, and the second run proves they are gone.";
-        assert!(bro::RULES.iter().all(|(_, rule)| rule(&shipped(clean)).is_empty()));
+        assert!(bro::RULES
+            .iter()
+            .all(|(_, rule)| rule(&shipped(clean)).is_empty()));
         let dirty = shipped("It is worth noting that the DAG is idempotent.");
         assert!(bro::RULES.iter().any(|(_, rule)| !rule(&dirty).is_empty()));
     }
@@ -304,8 +352,12 @@ mod tests {
     fn byline_rules() {
         let clean = "The installer links every skill. It backs up what it replaces first, \
                      and it never removes a path. Read install.sh for the order.";
-        assert!(byline::RULES.iter().all(|(_, rule)| rule(&shipped(clean)).is_empty()));
+        assert!(byline::RULES
+            .iter()
+            .all(|(_, rule)| rule(&shipped(clean)).is_empty()));
         let dirty = shipped("It's worth noting that the pass is arguably quite robust.");
-        assert!(byline::RULES.iter().any(|(_, rule)| !rule(&dirty).is_empty()));
+        assert!(byline::RULES
+            .iter()
+            .any(|(_, rule)| !rule(&dirty).is_empty()));
     }
 }

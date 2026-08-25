@@ -44,9 +44,14 @@ live_ready() {
 total=0
 sum=0
 catastrophic=0
+ungraded=0
 
 emit() {
   printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$1" "$2" "$3"
+  if [ "$2" -lt 0 ]; then
+    ungraded=$((ungraded + 1))
+    return
+  fi
   total=$((total + 1))
   sum=$((sum + $2))
   [ "$2" -eq 0 ] && catastrophic=$((catastrophic + 1))
@@ -66,11 +71,28 @@ while IFS= read -r line; do
   scratch="$(mktemp -d)"
   mkdir -p "$scratch/.claude/agents"
   cp "$DEF" "$scratch/.claude/agents/maestro-tester.md"
-  booted_before="$(xcrun simctl list devices booted | grep -c Booted)"
+  if needs_live "$id"; then
+    booted_before="$(xcrun simctl list devices booted | grep -c Booted)"
+  else
+    booted_before="not-applicable"
+  fi
   # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
   # case loop's remaining lines without it
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
-  booted_after="$(xcrun simctl list devices booted | grep -c Booted)"
+  error_file="$(mktemp)"
+  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>"$error_file" < /dev/null)"
+  dispatch_status=$?
+  if [ "$dispatch_status" -ne 0 ]; then
+    emit "$id" -1 "\"dispatch-failed:$dispatch_status\""
+    cat "$error_file" >&2
+    rm -rf "$scratch" "$error_file"
+    continue
+  fi
+  rm -f "$error_file"
+  if needs_live "$id"; then
+    booted_after="$(xcrun simctl list devices booted | grep -c Booted)"
+  else
+    booted_after="not-applicable"
+  fi
 
   block="$(printf '%s\n' "$out" | awk '/^[[:space:]]*```flow-result/{f=1; next} /^[[:space:]]*```[[:space:]]*$/{f=0} f')"
   verdict="$(printf '%s\n' "$block" | sed -n 's/^[[:space:]]*verdict: *//p' | head -1 | awk '{print $1}')"
@@ -146,7 +168,7 @@ while IFS= read -r line; do
       fi
       ;;
     *)
-      emit "$id" 1 '"unknown-case"'
+      emit "$id" -1 '"ungraded"'
       ;;
   esac
   rm -rf "$scratch"
@@ -159,5 +181,12 @@ else
 fi
 slice="non-holdout"
 [ "$WANT_HOLDOUT" = "true" ] && slice="holdout"
-printf 'slice=%s cases=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
-  "$slice" "$total" "$mean" "$catastrophic" >&2
+printf 'slice=%s cases=%d ungraded=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
+  "$slice" "$total" "$ungraded" "$mean" "$catastrophic" >&2
+
+if [ "$ungraded" -gt 0 ]; then
+  exit 2
+fi
+if [ "$catastrophic" -gt 0 ]; then
+  exit 1
+fi
