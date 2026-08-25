@@ -87,7 +87,9 @@ Checkable by the dispatcher without redoing the work:
   cites file:line inside the diff.
 - test and repro files unmodified; no files created; no hunks the root_cause does not
   implicate.
-- if not fixed: working tree untouched (git status clean).
+- if not fixed: working tree untouched, meaning zero delta from the baseline stamp
+  (docs/dispatch-contract.md), never a clean tree. Pre-existing dirt and a sibling
+  agent's concurrent edits are reported in notes and left alone.
 
 ## failure-mode watch-list
 

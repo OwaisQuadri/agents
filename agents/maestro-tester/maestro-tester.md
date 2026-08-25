@@ -78,7 +78,9 @@ Checkable by the dispatcher without redoing the work:
 - exactly one `flow-result` block; verdict matches the junit report at the stated path
   (`cat` it), and re-running the printed command reproduces the verdict.
 - the flow file exists in `flows_dir` and contains at least one assertion step.
-- attempts ≤ 3; zero writes outside `flows_dir`.
+- attempts ≤ 3; zero writes outside `flows_dir`, measured as a delta from the baseline
+  stamp (docs/dispatch-contract.md). A repository delta present in the baseline is not
+  this run's write.
 - `blocked` names the exact precondition with a verbatim error line.
 - missing required input → the exact `missing input: <field>` reply; out-of-trigger
   dispatch → one-line decline naming the owner.

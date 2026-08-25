@@ -96,8 +96,11 @@ Checkable by the dispatcher without redoing the review:
   reviewed.
 - every finding = an existing file:line + a one-sentence defect + a proof command
   the dispatcher can run as-is.
-- `git -C <repo_path> status --porcelain` and the repo's ref hashes are identical
-  before and after the run — zero modifications.
+- `git -C <repo_path> status --porcelain` and the repo's ref hashes are identical to the
+  baseline stamp (docs/dispatch-contract.md) at the end of the run — zero modifications
+  by this agent. A path dirty in the baseline stays dirty and is reported, not graded. A
+  ref that MOVED under the review is a finding: name both hashes and say what the
+  movement invalidated, and never silently re-review the new range.
 - an `invalid-dispatch` names the missing input or the violated trigger condition.
 
 ## failure-mode watch-list
