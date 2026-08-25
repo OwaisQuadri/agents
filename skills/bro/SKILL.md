@@ -52,8 +52,10 @@ them, because they are the plain-talk joins this register asks for.
 - Never call a tool. You wrote the material, so you already hold it.
 - Add nothing. A detail, a cause, or a number the message never stated stays out. A figure
   you work out from two of its numbers is a new number.
-- Facts survive verbatim. Every path, command, filename, number, URL (Uniform Resource
-  Locator), name, and decision stays exactly as it was.
+- The shared register rules in `docs/prompt-style.md` bind here, and the verbatim-facts one
+  reaches further in this register: every path, command, filename, number, URL (Uniform
+  Resource Locator), name, and decision stays exactly as it was, because a rewrite is where
+  a fact is most likely to move.
 - Simpler, and not always shorter. An idea that needs room gets the room, and no sentence
   gets padding.
 - Answer in the language of the original message.

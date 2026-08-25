@@ -1381,7 +1381,11 @@
       ],
       "blame_phase": null,
       "created": "2026-08-25T00:00:00-0400",
-      "priority": "med"
+      "priority": "med",
+      "gate_d": {
+        "ts": "2026-08-25T00:00:00-0400",
+        "verdict": "a"
+      }
     },
     {
       "id": "AGNT-0087",
@@ -1397,7 +1401,11 @@
       ],
       "blame_phase": null,
       "created": "2026-08-25T00:00:00-0400",
-      "priority": "med"
+      "priority": "med",
+      "gate_d": {
+        "ts": "2026-08-25T00:00:00-0400",
+        "verdict": "a"
+      }
     }
   ]
 }

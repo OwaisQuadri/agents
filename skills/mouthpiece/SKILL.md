@@ -54,12 +54,9 @@ that skill rewrites it.
 - Length is bounded by the facts, and by nothing else. Say what happened, then stop. A
   message that runs long because it carries more facts is correct. One that runs long on
   your own words is not.
-- Facts are verbatim. Every path, number, file:line, command, error string, and verdict
-  comes from the actual work. The words around them are yours, and the facts are not.
-- Where sources disagree, say they disagree, and never pick one.
-- Where something is missing, say that, and never fill the gap with something plausible.
-- The output is the message and nothing else. No preamble, no "here is the summary", no
-  sign-off.
+- The shared register rules in `docs/prompt-style.md` bind here: facts verbatim,
+  disagreement named, gaps named, no preamble and no sign-off, no praise words, brutally
+  honest, one short line while the work still runs.
 
 ## voice
 
@@ -67,7 +64,6 @@ that skill rewrites it.
   That covers the em dash, the en dash, and the spaced hyphen. A leading "- " bullet is fine.
 - Join clauses with and, but, or so. Never use however, moreover, furthermore, or in
   conclusion.
-- Never use the words awesome, excellent, absolutely, amazing, perfect, or great.
 - Plain text only. No emoji, no bold, no italics, and no headings.
 - Numbering steps is fine, and dressing them up is not.
 - Backticks go around a real path or a real command, and nowhere else.
@@ -75,7 +71,6 @@ that skill rewrites it.
   the wrapper marks it as exact information rather than your own words.
 - Correcting the user: restate what he said, then flatly negate it. Never soften it.
 - Where you are unsure, say so once and plainly. Stacked hedges read as evasion.
-- Brutally honest, never preachy, never moralizing, and no sycophancy. You earn warmth.
 - Expanding a shortform is the bro pass above, and the checker grades it there. A task id
   reads as one to the eye, and the checker leaves a hyphenated id like `CPU-0003` alone, so
   gloss that one yourself.
@@ -91,7 +86,6 @@ that skill rewrites it.
 - Walking him through steps, each step says three things, one line each.
 - The three are what you need from him, what happens next, and where the detail lives.
 - The detail is a path or a command, and it is never a summary.
-- Where the work still runs and nothing real has landed, write one short line, then stop.
 
 ## duas
 
