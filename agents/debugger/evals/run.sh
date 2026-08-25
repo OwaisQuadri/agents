@@ -320,17 +320,26 @@ while IFS= read -r case_json; do
   dirty_fixture "$id" "$dir"
 
   out_file=$(mktemp)
+  error_file=$(mktemp)
   # bypassPermissions is deliberate against the ask-first default: the agent runs
   # inside a throwaway fixture directory this script just created, and a permission
   # prompt would hang a headless run.
   # < /dev/null is load-bearing: claude -p reads piped stdin, and without it the
   # invocation swallows the remaining case lines from the while-read loop
-  (cd "$dir" && claude --agent debugger -p "$input" --permission-mode bypassPermissions --max-turns 40 < /dev/null) > "$out_file" 2>/dev/null
+  (cd "$dir" && claude --agent debugger -p "$input" --permission-mode bypassPermissions --max-turns 40 < /dev/null) > "$out_file" 2>"$error_file"
+  dispatch_status=$?
+  if [[ $dispatch_status -ne 0 ]]; then
+    jq -cn --arg id "$id" --arg fm "dispatch-failed:$dispatch_status" \
+      '{id: $id, score: -1, failure_mode: $fm}' >> "$results"
+    cat "$error_file" >&2
+    rm -rf "$dir" "$out_file" "$error_file" ${DIRT_REF:+"$DIRT_REF"}
+    continue
+  fi
 
   grade "$id" "$dir" "$out_file" "$seed"
   jq -cn --arg id "$id" --argjson score "$score" --arg fm "$failure" \
     '{id: $id, score: $score, failure_mode: (if $fm == "" then null else $fm end)}' >> "$results"
-  rm -rf "$dir" "$out_file" ${DIRT_REF:+"$DIRT_REF"}
+  rm -rf "$dir" "$out_file" "$error_file" ${DIRT_REF:+"$DIRT_REF"}
 done < <(jq -c "$FILTER" cases.jsonl)
 
 cat "$results"
