@@ -168,10 +168,12 @@ After logging, dispatch a fresh-context judge:
   ONLY. It must NOT read `votes/`, prior `logs/` history, or any other vote.
 - It grades harshly, strictly, critically, constructively: a grade (letter or 0-10) plus
   an open-ended vote on where to adjust the artifact and what it is lacking.
-- It submits ONLY via the script — never by editing files:
+- It submits ONLY via the script — never by editing files. The first line of the vote is
+  the exact `prompt_version` from the usage line it judged, so a later Reflect pass can
+  retire the vote with that prompt:
 
 ```sh
-echo "<open-ended vote text>" | \
+printf 'prompt_version: %s\n%s\n' '<short sha from usage line>' '<open-ended vote text>' | \
   python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>
 ```
 
@@ -184,9 +186,11 @@ Run per artifact, on demand or once logs/votes accumulate:
 
 1. **Reflect**: compute the artifact's current `prompt_version` with the command in its
    logging section. Read only lines in `logs/usage.jsonl` whose `prompt_version` equals that
-   value; a missing or different value is stale evidence, counted and dropped. Then read the
-   surviving lines + `votes/votes.jsonl`, AND the artifact's own `TUNING.md` if it has one,
-   whose open list is the standing input. Build a failure histogram — which criteria fail
+   value; a missing or different value is stale evidence, counted and dropped. Apply the
+   same filter to `votes/votes.jsonl`: keep only votes whose `vote` text starts with
+   `prompt_version: <current value>`; a missing or different first line is stale, counted
+   and dropped. Then read the surviving usage lines + surviving votes, AND the artifact's
+   own `TUNING.md` if it has one, whose open list is the standing input. Build a failure histogram — which criteria fail
    most, which complaints repeat — and record it in the usage line with the vote
    indices it came from, so the next pass can recompute it from `votes.jsonl` instead of
    trusting this one. A blind judge cannot open `votes/`, so an asserted count is unverifiable

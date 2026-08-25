@@ -278,6 +278,45 @@ fn edit_inside_an_already_untracked_directory_is_delta() {
     );
 }
 
+#[test]
+fn staged_index_change_with_same_worktree_bytes_is_delta() {
+    let fixture = Fixture::new("staged-index");
+    fixture.write("tracked.txt", "index one\n");
+    fixture.git(&["add", "tracked.txt"]);
+    fixture.write("tracked.txt", "worktree\n");
+    let stamp = fixture.stamp();
+    fixture.write("tracked.txt", "index two\n");
+    fixture.git(&["add", "tracked.txt"]);
+    fixture.write("tracked.txt", "worktree\n");
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "a staged-index change must be a delta: {out}");
+    assert!(
+        out.contains("tracked.txt"),
+        "the delta must name the file: {out}"
+    );
+}
+
+#[test]
+fn edit_to_an_existing_ignored_work_product_is_delta() {
+    let fixture = Fixture::new("ignored-work-product");
+    fixture.write(".gitignore", "scratch/\n");
+    fixture.git(&["add", ".gitignore"]);
+    fixture.git(&["commit", "-m", "ignore scratch"]);
+    std::fs::create_dir(fixture.dir.join("scratch")).unwrap();
+    fixture.write("scratch/product", "before\n");
+    let stamp = fixture.stamp();
+    fixture.write("scratch/product", "after\n");
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(
+        code, 1,
+        "an ignored work-product edit must be a delta: {out}"
+    );
+    assert!(
+        out.contains("scratch/product"),
+        "the delta must name the file: {out}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn executable_bit_change_on_an_already_dirty_file_is_delta() {

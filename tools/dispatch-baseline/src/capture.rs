@@ -67,12 +67,25 @@ fn status_entries(repo: &Path) -> Result<BTreeMap<String, String>, String> {
         if is_rename {
             if let Some(origin) = fields.next() {
                 let origin = git_path(origin)?;
-                let stamp = format!("{code} {}", content_hash(repo, origin));
+                let stamp = format!(
+                    "{code} {} {}",
+                    content_hash(repo, origin),
+                    index_hash(repo, origin)
+                );
                 entries.insert(origin.to_string(), stamp);
             }
         }
-        let stamp = format!("{code} {}", content_hash(repo, path));
+        let stamp = format!(
+            "{code} {} {}",
+            content_hash(repo, path),
+            index_hash(repo, path)
+        );
         entries.insert(path.to_string(), stamp);
+    }
+    for path in ignored_files(repo)? {
+        entries
+            .entry(path.clone())
+            .or_insert_with(|| format!("!! {} none", content_hash(repo, &path)));
     }
     Ok(entries)
 }
@@ -81,6 +94,30 @@ fn git_path(path: &[u8]) -> Result<&str, String> {
     std::str::from_utf8(path).map_err(|_| {
         "non-UTF-8 git paths are unsupported; refusing an incomplete stamp".to_string()
     })
+}
+
+fn ignored_files(repo: &Path) -> Result<Vec<String>, String> {
+    let raw = git_bytes(
+        repo,
+        &[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+    raw.split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|path| git_path(path).map(str::to_string))
+        .collect()
+}
+
+fn index_hash(repo: &Path, path: &str) -> String {
+    git(repo, &["ls-files", "-s", "--", path])
+        .ok()
+        .and_then(|line| line.split_whitespace().nth(1).map(str::to_string))
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn content_hash(repo: &Path, path: &str) -> String {
