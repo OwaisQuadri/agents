@@ -24,10 +24,12 @@ import shutil
 import subprocess
 import sys
 
-# install.sh links ste-check onto PATH; fall back to the repo build so an uninstalled
-# checkout still runs the harness
-CHECKER = shutil.which("ste-check") or os.path.abspath(
-    "../../../tools/ste-check/target/release/ste-check")
+# The CHECKOUT's build wins over the installed one. A branch that changes a rule must
+# be graded by that branch's checker: on 2026-08-25 this harness capped three cases on
+# a character rule the branch had already deleted, because PATH still held main's
+# binary. PATH is the fallback, for a checkout with nothing built.
+REPO_CHECKER = os.path.abspath("../../../tools/ste-check/target/release/ste-check")
+CHECKER = REPO_CHECKER if os.path.exists(REPO_CHECKER) else shutil.which("ste-check")
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]
 is_holdout_slice = slice_name == "holdout"
