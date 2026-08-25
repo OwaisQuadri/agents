@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 77,
+  "next_nnnn": 86,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -208,7 +208,7 @@
     {
       "id": "AGNT-0013",
       "kind": "ticket",
-      "status": "resolved",
+      "status": "done",
       "short": "Run Claude Code as a subscription-backed Pi child.",
       "long": "Add a project-owned Pi agent that invokes the installed claude command through the external command runner in nicobailon/pi-subagents. Verify the supported flags from the installed Claude Code command instead of copying an example. Preserve fresh context and worktree isolation for mutation-capable runs. Run one bounded child task and confirm that its result returns to Pi. Verify that the call appears in Claude subscription usage before this route becomes the default.",
       "deps": [
@@ -221,7 +221,8 @@
         "README.md"
       ],
       "blame_phase": null,
-      "created": "2026-08-17T01:57:33-0400"
+      "created": "2026-08-17T01:57:33-0400",
+      "pr": "https://github.com/OwaisQuadri/agents/pull/37"
     },
     {
       "id": "AGNT-0014",
@@ -268,7 +269,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Add decision aids to the engineering gates.",
-      "long": "Add Wayfinder's destination, frontier, fog, and out-of-scope fields to engineering plans. Use grilling only when unresolved answers can change execution. Use show-me for concise system views and Plannotator for visual plan or diff feedback. Keep the existing human gates as the authority and record each aid's output in the run artifacts. Add evaluations that prove the aids do not create new mandatory stops on clean runs.",
+      "long": "Add Wayfinder's destination, frontier, fog, and out-of-scope fields to engineering plans. Use grilling only when unresolved answers can change execution. Use show-me for concise system views and Plannotator for visual plan or diff feedback before each human gate. Keep the existing human gates as the authority. Record each aid's output in the run artifacts. Add evaluations that prove the aids create no mandatory stops on clean runs.\n\nEvaluate selected patterns from https://patterns.smithers.sh/ against observed planning failures. Compare plan quality, dependency accuracy, and orchestration cost.",
       "deps": [
         "AGNT-0012"
       ],
@@ -916,8 +917,8 @@
       "kind": "ticket",
       "status": "todo",
       "priority": "high",
-      "short": "phase 23 should land through /git-sync instead of reimplementing it",
-      "long": "Two skills own landing and they have already drifted. skills/engineer/phases/23-close.md step 7 carries its own route choice, its own push, and its own PR call, while skills/git-sync/SKILL.md owns exactly that job for the whole machine. When the gate E standard changed on 2026-08-20 - a project WITH a remote lands through a PR, a project without lands by local squash merge - the change was propagated by hand into SKILL.md, phase 01 and phase 23, and git-sync was missed. It still carries the old local-squash default. That is the duplication reporting itself.\n\nFix has two halves. First, update git-sync to the current standard so the skill that owns landing states it correctly. Second, make phase 23 step 7 DELEGATE: it should hand the branch to /git-sync and record what came back, keeping only what is genuinely engineer's - the gate E presentation, the status flips in roadmap.json and tasks.json, and the usage log line. The route choice, the push, the PR body and the branch cleanup all belong to git-sync.\n\nTwo constraints learned on the AGNT-0015 run. A squash merge is invisible to git branch --merged, because the squashed commit is new and the branch tip never becomes an ancestor, so whichever skill owns the close-out sweep needs the tree-parity fallback that phase 01 already documents. And create-pr does not gate on its own - it stops only on an empty diff or a rejected push - so the human gate has to stay on engineer's side of the handoff, before the call, never inside it.",
+      "short": "Make phase 23 land through /git-sync instead of reimplementing it.",
+      "long": "Engineer phase 23 and git-sync both own landing, and their route rules have drifted. Phase 23 chooses the route, pushes, and calls create-pr. Git-sync owns the same machine-wide job. Gate E now requires a PR for remote repositories and a local squash merge for repositories without remotes. Engineer adopted that standard, but git-sync still carries the old local-squash default.\n\nUpdate git-sync to the current landing standard. Make phase 23 delegate landing to git-sync after Gate E and record the result. Engineer keeps Gate E, ticket and task status changes, and its usage log. Git-sync owns route selection, pushes, PR bodies, merges, and branch cleanup.\n\nA squash merge is invisible to `git branch --merged` because the branch tip is not an ancestor of the squash commit. Keep phase 01's tree-parity fallback in the close-out owner. Create-pr does not provide a human gate, so Gate E must remain before delegation.\n\nThe landing PR must carry ticket status `done`, so its merge puts the final state on main. Use `resolved` only for reviewed work that has not entered its landing PR. Add a regression that merges a fixture PR and leaves no merged ticket at `resolved`.",
       "deps": [],
       "files": [
         "skills/engineer/phases/23-close.md",
@@ -946,8 +947,8 @@
       "id": "AGNT-0058",
       "kind": "ticket",
       "status": "todo",
-      "short": "Show gitignored files in the /diff view when they were edited",
-      "long": "The /diff view (live-diff) only shows tracked-file changes. A gitignored file that gets edited during a session (e.g. a generated config, a local override, an untracked scratch file the agent wrote to) never shows up, so the owner can't review it there even though it changed. Owner feedback (2026-08-21): 'i want to see the ignored files in the diff menu if they were edited too.' Add ignored-but-edited files to the /diff view's file list, distinguishable from tracked changes (e.g. an [ignored] tag), sourced by diffing against the file's state at session start rather than against git (git ignores them entirely).",
+      "short": "Show edited gitignored files in the /diff view",
+      "long": "The `/diff` view shows tracked changes only, so ignored edits never appear for review. Affected files include generated configs, local overrides, and ignored scratch files written by an agent. Track each ignored file from its session-start state and mark it `[ignored]` in the file list. The live-diff `turn` baseline starts when the user sends a message and stays fixed across every tool call until the next user message. Add a multi-tool regression that edits separate files and keeps earlier changes in the turn count and view. Keep the label `turn` only while this contract holds.",
       "deps": [],
       "files": [
         "pi/extensions/live-diff/"
@@ -1055,14 +1056,15 @@
     {
       "id": "AGNT-0066",
       "kind": "ticket",
-      "status": "todo",
+      "status": "done",
       "short": "Give Pi read access to Herdr state: workspaces, nvim viewports, terminal logs",
       "long": "Owner ask (2026-08-21): Pi currently has no visibility into the live Herdr(the workspace/pane manager this repo integrates with) session state around it -- which workspaces/worktrees are open, what's showing in nvim viewports, what terminal windows exist and their scrollback/logs. Give Pi read access to that state so an agent session can answer questions about or act on what the owner is actually looking at across his panes, not just its own transcript. Related existing ticket AGNT-0017 (replayable cockpit -- restore Herdr tabs/state on cold start) is about persistence/restore, not live read access from within a running Pi session; this ticket is the live-query surface, likely a new Herdr-side API/extension Pi calls into. Scope needs definition at phase 03/04: which Herdr surfaces expose queryable state today (panes, tabs, active commands), what a live nvim-viewport read requires (nvim RPC?), and whether terminal log access needs each pane's scrollback captured to a file Pi can read or a live RPC channel.",
       "deps": [],
       "files": [],
       "blame_phase": null,
       "created": "2026-08-21T14:25:02-0400",
-      "priority": "med"
+      "priority": "med",
+      "pr": "https://github.com/OwaisQuadri/agents/pull/46"
     },
     {
       "id": "AGNT-0067",
@@ -1148,7 +1150,7 @@
       ],
       "blame_phase": null,
       "created": "2026-08-21T14:58:37-0400",
-      "priority": "med"
+      "priority": "urgent"
     },
     {
       "id": "AGNT-0073",
@@ -1210,6 +1212,160 @@
       ],
       "blame_phase": null,
       "created": "2026-08-23T13:14:03-0400"
+    },
+    {
+      "id": "AGNT-0077",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Make Pi visual artifacts visible in Herdr",
+      "long": "A picture or visual artifact produced by Pi is not visible to the owner in Herdr. Trace each visual handoff from Pi to its stored artifact, then expose a reachable Herdr path and a text fallback. Keep the artifact tied to the exact workspace, tab, pane, and session that produced it. Test images, interactive artifacts, missing files, stale sessions, and paths outside the active worktree.",
+      "deps": [
+        "AGNT-0066"
+      ],
+      "files": [
+        "pi/extensions/",
+        "herdr/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0078",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Focus the next Herdr agent that needs attention",
+      "long": "Add one Herdr shortcut with four priority groups. Rank unread agents that await an owner answer first and unread completed agents second. Rank read agents that await an owner answer third and read completed agents fourth. Within one group, select the earliest state transition. Exclude agents that are in progress. Do nothing when every agent is in progress.\n\nRepeated use advances through eligible agents in the same priority order. Use an explicit focus-write interface outside the read-only AGNT-0066 extension. Test every priority boundary, tie, no-op, and repeat.",
+      "deps": [
+        "AGNT-0066"
+      ],
+      "files": [
+        "herdr/",
+        "pi/extensions/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0079",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Quick-scroll between the owner’s messages in Pi",
+      "long": "Add keyboard actions that move the conversation viewport to the previous or next user-authored message without leaving the active session. Repeated use traverses only user messages in chronological order, keeps the selected message visible, and stops at the first or last message. Test long conversations, adjacent user messages, mixed tool and assistant output, both boundaries, and remapped keys.",
+      "deps": [],
+      "files": [
+        "pi/extensions/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0080",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Retry policy-stopped model calls once with a safer prompt",
+      "long": "Classify model calls that stop because of a usage-policy decision. Retry once with a narrower prompt that preserves allowed intent. The retry must not bypass the policy or repeat blocked text unchanged. Never loop. Record the stop category, safe rewrite, and retry outcome without storing sensitive prompt content. Test non-policy errors, a second policy stop, redaction, cancellation, and successful continuation.",
+      "deps": [],
+      "files": [
+        "pi/extensions/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0081",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Hide the inapplicable Ghost Xvfb warning on macOS",
+      "long": "Ghost prints an Xvfb-not-found warning on macOS with apt and pacman installation commands that cannot apply. Gate the warning and setup guidance by supported platform. Keep actionable Xvfb guidance on Linux and stay silent on macOS when Xvfb is not required. Test macOS, supported Linux package managers, an unsupported Linux distribution, and an installed Xvfb binary.",
+      "deps": [],
+      "files": [
+        "config/tools.toml",
+        "tools/tool-sync/",
+        "pi/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0082",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Fix the engineer phase-16 backup branch namespace",
+      "long": "Phase 16 specifies `map/<ID>/impl-backup-<N>`, but Git cannot create that reference while `map/<ID>` exists. One reference cannot be both a file and a directory prefix. Replace it with a collision-free attempt-numbered namespace. Add a regression that creates the active ticket branch before the backup. The regression verifies the backup, repeats the phase with the next attempt, and deletes only the consumed backup.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/16-stash.md",
+        "skills/engineer/phases/18-final-implement.md",
+        "skills/engineer/evals/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "high"
+    },
+    {
+      "id": "AGNT-0083",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Remove mouthpiece character-count enforcement",
+      "long": "Keep the mouthpiece voice and clarity rules, but remove hard character-count enforcement and count-only regeneration. A valid user-facing reply must not retry because it exceeds a character budget by a few words. Preserve checks for content, register, and actionable next steps. Add evaluations for concise replies, necessary longer replies, and verbose replies that fail for reasons other than a fixed count.",
+      "deps": [],
+      "files": [
+        "skills/mouthpiece/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0084",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Turn recurring agent anti-patterns into deterministic checks",
+      "long": "Create a Rust linter or checker when repeated agent failures establish a pattern that is always invalid in a bounded context. Each rule must cite observed failures, define its scope, include positive and negative fixtures, and avoid claims that require judgment. Prefer deleting prompt prose after a deterministic check owns the same rule. Start with the anti-patterns already recorded in engineer walkbacks and measure false positives before enabling a rule by default.",
+      "deps": [],
+      "files": [
+        "tools/",
+        "skills/engineer/",
+        "docs/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0085",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Build a Herdr agent control tower",
+      "long": "Compose the AGNT-0066 read-only state model and AGNT-0017 cockpit restoration into one inspectable agent control tower. Show wide agent events, snapshot recovery, attention order, visible artifacts, and owner-message navigation without duplicating restoration state. Keep reads separate from explicit focus writes. Use the project’s adopted Honeycomb wide-event and tmux snapshot-recovery patterns. Test cold restoration, stale events, partial workspaces, attention transitions, missing artifacts, repeated navigation, and read/write authority boundaries.",
+      "deps": [
+        "AGNT-0017",
+        "AGNT-0077",
+        "AGNT-0078",
+        "AGNT-0079"
+      ],
+      "files": [
+        "pi/extensions/",
+        "herdr/",
+        "config/",
+        "README.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-24T09:20:12-0400",
+      "priority": "med"
     }
   ]
 }

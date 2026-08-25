@@ -12,3 +12,5 @@
 - Honeycomb wide events: keep rich, high-cardinality context together, then reveal and filter it on demand instead of fixing the questions in advance. Adopted for local agent telemetry at Gate UX on 2026-08-17. https://www.honeycomb.io/blog/evaluating-observability-tools-for-the-ai-era
 
 - magit (Emacs) status buffer: one keyboard-driven buffer where files are collapsible sections — TAB unfolds a file into its hunks in place, so the list survives while the patch is read; no view switch. Adopted for the Pi live-diff overlay at Gate UX on 2026-08-19 (AGNT-0015). https://magit.vc/manual/magit/Sections.html
+
+- tmux control mode: maintain a live event stream and use a full pane capture to recover after a gap. Adopted for Pi's global Herdr state view at Gate UX on 2026-08-21 (AGNT-0066). https://github.com/tmux/tmux/wiki/Control-Mode
