@@ -18,7 +18,7 @@ Simplified Technical English, per `docs/prompt-style.md`, with paragraphs where 
 help. Every register in this repo runs on that base. What byline adds is the AI-tell pass
 below, because this is the only prose a stranger reads.
 
-`/mouthpiece` shares the base and differs in shape. That register caps the body at 500
+`/mouthpiece` shares the base and differs in shape. That register caps the body at 600
 characters and ends on a next action. The reader there is the user himself, and he acts on
 it. Reach for it only where he is the reader.
 

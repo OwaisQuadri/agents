@@ -72,3 +72,17 @@ against 4.47 and 4.71. All 8 abbreviation failures in it were false positives.
   600 characters. A gloss adds sentences, so the bro pass makes that worse.
 - The pass evidence lives under `.context/`, which a local exclude drops, so the 88 graded
   messages and the per-case scores die with the session. Only the reproduction above survives.
+
+## 2026-08-24 — list cap raised to 5
+
+Mutation: `SKILL.md:95` capped lists at 3 while `tools/ste-check/src/mouthpiece.rs:9`
+(`LIST_CAP`) has always enforced 5. Owner ruled for 5. The eval paragraph also claimed the
+checker does not grade the list cap; it does, through the `numbered lists capped at 5` rule,
+so that sentence moved the cap into the graded list and left only the backtick restriction
+and the negation stack ungraded. Evidence: 14 logged lines where SKILL.md and the checker
+disagreed, and case m10, unscorable as written because it asks for a 5-step walkthrough
+against a skill capping at 3. Path used: owner ruling on a contradiction, plus a defect fix
+on a false statement about the checker. Not a harness win.
+
+Open, measured: m10, m12 and m22 were authored against the cap of 3. m12 expects 3
+explicitly. They need re-authoring by a case author blind to this change.

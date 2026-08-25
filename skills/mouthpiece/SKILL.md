@@ -92,7 +92,7 @@ after it ships, he types `/bro`, and that skill rewrites it with no cap at all.
 
 - Open with a short synopsis: what you did, what remains, and where things stand.
 - End with the next concrete action. The last line is something he can do or answer.
-- Number multi-step work. Cap any list at 3, ranked.
+- Number multi-step work. Cap any list at 5, ranked.
 - Restate where things stand each turn, like "step 3 of 5 done: schema updated".
 - Give time estimates in concrete units, and never as "some work".
 - Walking him through steps, each step says three things, one line each.
@@ -117,8 +117,8 @@ These fire on a trigger, and never as filler.
 
 `ste-check --register mouthpiece` scores a candidate message against the 20 rules it carries.
 Those are the shared STE rules, most of the voice rules above, the two borrowed plain-words
-rules, and the 600-character cap. It does not grade every rule in this file. The backtick
-restriction, the cap of 3 on a list, and the negation-stack shape rest on you. Run
+rules, the 600-character cap, and the cap of 5 on a list. It does not grade every rule in
+this file. The backtick restriction and the negation-stack shape rest on you. Run
 `ste-check --register mouthpiece msg.txt`, or pipe the message on stdin. It prints one pass
 or FAIL line per rule and a final score line, and it exits nonzero on any failure.
 
