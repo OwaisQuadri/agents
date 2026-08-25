@@ -1453,6 +1453,21 @@
       "blame_phase": null,
       "created": "2026-08-25T00:00:00-0400",
       "priority": "high"
+    },
+    {
+      "id": "AGNT-0091",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "the anchor-verifier harness blames the agent for its own verify_command's side effects",
+      "long": "FOUND 2026-08-25. The anchor-verifier eval harness scored c1 and c2 as 0 / `fix-reflex`, which its own scorer counts as CATASTROPHIC. The agent did not modify anything. The harness did.\n\nMECHANISM. evals/run.sh defines `snapshot() { find \"$FIXROOT\" -type f -print0 | sort -z | xargs -0 shasum -a 256; }` and compares BEFORE against AFTER around the dispatch. The c1 and c2 dispatches carry `verify_command: cd __FIXTURE_ROOT__/cN && python3 test_*.py`, and CPython writes `__pycache__/*.pyc` on import. The verifier is required by its own anti-early-victory rule to EXECUTE that command, so it cannot pass the case without dirtying the tree, and it cannot dirty the tree without being graded catastrophic. The case is unwinnable by construction.\n\nPROVEN, not inferred. A standalone repro with the same snapshot function and an equivalent two-file fixture:\n  CHANGED - the verify command dirtied the tree by itself:\n  0a1\n  > b92be5ff...  /tmp/avtest/c1/__pycache__/slugify.cpython-314.pyc\nNo agent was involved in that run at all.\n\nNOT A REGRESSION from the 2026-08-24 tuning. FIXROOT is a fresh `mktemp -d` per run, so every run has always regenerated the fixtures, executed the command, produced the cache files and failed. The mechanism is independent of the definition text: ANY agent that obeys the instruction trips it.\n\nTHE IRONY WORTH KEEPING. This is precisely the failure the same night's work fixed in the definitions: 55 logged runs where a delta the agent did not author was attributed to it, answered by docs/dispatch-contract.md and the dispatch-baseline tool. The harness that grades the verifier commits the same error it now grades the verifier for not committing.\n\nFIX, smallest first: exclude generated paths from the snapshot (`__pycache__`, `*.pyc`, .pytest_cache, target/, node_modules) rather than hashing every file under FIXROOT. Better: take the BEFORE snapshot AFTER a warm-up execution of verify_command, so the command's own artifacts exist in the baseline and only the agent's writes can appear as a delta. Best, and the one that matches what the fleet now does: use `dispatch-baseline stamp` and `check`, whose whole purpose is separating an agent's delta from the state it inherited, and which was built and tested earlier the same night.\n\nSCOPE NOTE: anchor-verifier was the ONLY one of the four agent harnesses whose new cases are genuinely graded, which makes this the difference between having evidence for the 2026-08-24 tuning and having none.",
+      "deps": [],
+      "files": [
+        "agents/anchor-verifier/evals/run.sh",
+        "tools/dispatch-baseline/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-25T00:00:00-0400",
+      "priority": "high"
     }
   ]
 }
