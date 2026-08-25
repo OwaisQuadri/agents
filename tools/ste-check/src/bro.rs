@@ -19,10 +19,30 @@ const MAX_ACRONYM: usize = 5;
 /// Seeded narrow on purpose. A wide list flags prose that already reads clearly, so this
 /// grows on a logged miss and never on a guess. The mouthpiece register grades on it too.
 const JARGON: &[&str] = &[
-    "abstraction", "abstractions", "canonical", "canonicalize", "deterministic", "determinism",
-    "dispatch", "dispatched", "dispatches", "heuristic", "heuristics", "idempotency",
-    "idempotent", "instantiate", "instantiated", "instantiates", "invariant", "invariants",
-    "monotonic", "orthogonal", "serialize", "serialized", "serializes", "topology",
+    "abstraction",
+    "abstractions",
+    "canonical",
+    "canonicalize",
+    "deterministic",
+    "determinism",
+    "dispatch",
+    "dispatched",
+    "dispatches",
+    "heuristic",
+    "heuristics",
+    "idempotency",
+    "idempotent",
+    "instantiate",
+    "instantiated",
+    "instantiates",
+    "invariant",
+    "invariants",
+    "monotonic",
+    "orthogonal",
+    "serialize",
+    "serialized",
+    "serializes",
+    "topology",
 ];
 
 const NOT_ACRONYMS: &[&str] = &["OK", "TV", "AM", "PM", "GATE"];
@@ -91,7 +111,11 @@ pub fn bare_acronym(text: &str) -> Vec<String> {
         {
             continue;
         }
-        let after = if chars.get(end) == Some(&' ') { end + 1 } else { end };
+        let after = if chars.get(end) == Some(&' ') {
+            end + 1
+        } else {
+            end
+        };
         let is_expanded = chars.get(after) == Some(&'(')
             || (start > 0
                 && chars[start - 1] == '('
@@ -120,7 +144,10 @@ fn flat_prose(text: &str) -> Vec<String> {
 pub const RULES: &[Rule] = &[
     ("plain words, no term of art", jargon),
     ("every abbreviation expanded at first use", bare_acronym),
-    ("flat prose: no headings, tables, bold, or emoji", flat_prose),
+    (
+        "flat prose: no headings, tables, bold, or emoji",
+        flat_prose,
+    ),
     ("no throat-clearing openers", openers),
     ("no consultant-speak", vague),
 ];

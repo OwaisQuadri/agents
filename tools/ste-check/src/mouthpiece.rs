@@ -5,7 +5,14 @@ use crate::text::{dashes, find_words, is_emoji};
 const LIST_CAP: usize = 5;
 
 const JOINERS: &[&str] = &["however", "moreover", "furthermore", "in conclusion"];
-const PRAISE: &[&str] = &["awesome", "excellent", "absolutely", "amazing", "perfect", "great"];
+const PRAISE: &[&str] = &[
+    "awesome",
+    "excellent",
+    "absolutely",
+    "amazing",
+    "perfect",
+    "great",
+];
 
 fn r_dashes(text: &str) -> Vec<String> {
     dashes(text)
@@ -27,15 +34,15 @@ pub fn not_just_but(text: &str) -> Vec<String> {
         let start = from + offset;
         let after = start + "not just".len();
         let window: String = lower[after..].chars().take(60).collect();
-        let clipped = window
-            .split(['.', '\n'])
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let clipped = window.split(['.', '\n']).next().unwrap_or("").to_string();
         if let Some(comma) = clipped.find(',') {
             let rest = clipped[comma + 1..].trim_start();
             if rest.starts_with("but")
-                && rest[3..].chars().next().map(|c| !c.is_alphanumeric()).unwrap_or(true)
+                && rest[3..]
+                    .chars()
+                    .next()
+                    .map(|c| !c.is_alphanumeric())
+                    .unwrap_or(true)
             {
                 hits.push(format!("not just{clipped}"));
             }
@@ -95,10 +102,20 @@ pub fn timestamps(text: &str) -> Vec<String> {
             i += 1;
             continue;
         }
-        let head = chars[..i].iter().rev().take_while(|c| c.is_ascii_digit()).count();
-        let tail = chars[i + 1..].iter().take_while(|c| c.is_ascii_digit()).count();
+        let head = chars[..i]
+            .iter()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        let tail = chars[i + 1..]
+            .iter()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
         let is_free_before = i - head == 0 || !chars[i - head - 1].is_alphanumeric();
-        let is_free_after = chars.get(i + 1 + tail).map(|c| !c.is_alphanumeric()).unwrap_or(true);
+        let is_free_after = chars
+            .get(i + 1 + tail)
+            .map(|c| !c.is_alphanumeric())
+            .unwrap_or(true);
         if (1..=2).contains(&head) && tail == 2 && is_free_before && is_free_after {
             hits.push(chars[i - head..=i + 2].iter().collect());
         }
@@ -138,7 +155,10 @@ pub fn list_cap(text: &str) -> Vec<String> {
 pub const RULES: &[Rule] = &[
     ("no dash between clauses", r_dashes),
     ("no however/moreover/furthermore/in conclusion", r_joiners),
-    ("no awesome/excellent/absolutely/amazing/perfect/great", r_praise),
+    (
+        "no awesome/excellent/absolutely/amazing/perfect/great",
+        r_praise,
+    ),
     ("never 'not just x, but y'", not_just_but),
     ("plain text: no emoji/bold/italics/headings", plain_text),
     ("relative time, no timestamps", timestamps),

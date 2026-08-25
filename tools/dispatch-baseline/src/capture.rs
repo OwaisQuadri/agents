@@ -46,28 +46,39 @@ pub fn capture(repo: &Path) -> Result<Baseline, String> {
 }
 
 fn status_entries(repo: &Path) -> Result<BTreeMap<String, String>, String> {
-    let raw = git(
+    let raw = git_bytes(
         repo,
         &["status", "--porcelain", "-z", "--untracked-files=all"],
     )?;
-    let mut fields = raw.split('\0').filter(|field| !field.is_empty());
+    let mut fields = raw
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
     let mut entries = BTreeMap::new();
     while let Some(field) = fields.next() {
-        let (code, path) = match field.split_at_checked(3) {
-            Some((code, path)) => (code[..2].to_string(), path.to_string()),
-            None => continue,
-        };
+        if field.len() < 3 {
+            continue;
+        }
+        let code = std::str::from_utf8(&field[..2])
+            .map_err(|_| "git status returned a non-UTF-8 status code".to_string())?;
+        let path = git_path(&field[3..])?;
         let is_rename = code.starts_with('R') || code.starts_with('C');
         if is_rename {
             if let Some(origin) = fields.next() {
+                let origin = git_path(origin)?;
                 let stamp = format!("{code} {}", content_hash(repo, origin));
                 entries.insert(origin.to_string(), stamp);
             }
         }
-        let stamp = format!("{code} {}", content_hash(repo, &path));
-        entries.insert(path, stamp);
+        let stamp = format!("{code} {}", content_hash(repo, path));
+        entries.insert(path.to_string(), stamp);
     }
     Ok(entries)
+}
+
+fn git_path(path: &[u8]) -> Result<&str, String> {
+    std::str::from_utf8(path).map_err(|_| {
+        "non-UTF-8 git paths are unsupported; refusing an incomplete stamp".to_string()
+    })
 }
 
 fn content_hash(repo: &Path, path: &str) -> String {
@@ -130,6 +141,23 @@ fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
     let mut full = vec!["-C", repo.to_str().ok_or("repo path is not utf-8")?];
     full.extend_from_slice(args);
     run("git", &full)
+}
+
+fn git_bytes(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let mut full = vec!["-C", repo.to_str().ok_or("repo path is not utf-8")?];
+    full.extend_from_slice(args);
+    let output = Command::new("git")
+        .args(&full)
+        .output()
+        .map_err(|error| format!("git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {}: {}",
+            full.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output.stdout)
 }
 
 fn run(program: &str, args: &[&str]) -> Result<String, String> {

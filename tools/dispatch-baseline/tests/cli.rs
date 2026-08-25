@@ -191,6 +191,32 @@ fn stamp_from_another_repository_is_rejected() {
     );
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn non_utf8_path_rejects_the_stamp() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let fixture = Fixture::new("non-utf8-path");
+    let path = fixture.dir.join(OsString::from_vec(vec![b'f', 0xff]));
+    std::fs::write(path, b"content").unwrap();
+    let stamp = fixture.root.join("non-utf8-stamp.json");
+    let output = Command::new(BIN)
+        .args(["stamp", "--repo"])
+        .arg(&fixture.dir)
+        .arg("--out")
+        .arg(&stamp)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("non-UTF-8 git paths are unsupported"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!stamp.exists());
+}
+
 #[test]
 fn clean_repo_with_no_activity_is_empty_delta() {
     let fixture = Fixture::new("clean");

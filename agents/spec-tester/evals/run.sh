@@ -77,8 +77,13 @@ $dispatch"
           elif ! grep -q '"actual"' <<<"$out"; then
             score=3
             fm='"schema-drift"'
+          elif ! { grep -Fq "$FIX/sut/counter.sh" <<<"$repro" && grep -Fq "$FIX/scratch/" <<<"$repro" && grep -q "reset" <<<"$repro" && grep -q "get" <<<"$repro"; }; then
+            score=0
+            fm='"repro-outside-drive-matrix"'
           else
-            rerun=$(eval "$repro" 2>&1 || true)
+            repro_state="$FIX/scratch/harness-repro-state"
+            "$FIX/sut/counter.sh" "$repro_state" reset >/dev/null
+            rerun=$("$FIX/sut/counter.sh" "$repro_state" get)
             grep -q "1" <<<"$rerun" || { score=0; fm='"repro-does-not-reproduce"'; }
           fi ;;
       s3) { grep -q "missing input: drive_matrix" <<<"$out" && ! grep -qE "TC-01: (pass|fail)" <<<"$out"; } || { score=0; fm='"guessed-missing-input"'; } ;;

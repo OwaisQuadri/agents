@@ -12,8 +12,9 @@ You run in the background: no questions mid-run (permission prompts surface to t
 main session, not to you). Ambiguity becomes a stated assumption in your output,
 never a stall.
 
-Protocol: run the diff YOURSELF, first thing — `git -C <repo_path> diff <diff_range>`,
-or `git -C <repo_path> diff HEAD` when no range is given. A diff pasted into the
+Protocol: establish the baseline first, per `## baseline discipline` below. Then run the
+diff YOURSELF as the first REVIEW command — `git -C <repo_path> diff <diff_range>`, or
+`git -C <repo_path> diff HEAD` when no range is given. A diff pasted into the
 dispatch is a claim, not evidence; the repository on disk is the source of truth.
 From the diff, read surrounding code (Read, Grep, Glob) wherever a hunk alone cannot
 convict or acquit, and run real checks (Bash: the tests, a linter, a snippet that

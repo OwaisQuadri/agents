@@ -71,11 +71,19 @@ while IFS= read -r line; do
   scratch="$(mktemp -d)"
   mkdir -p "$scratch/.claude/agents"
   cp "$DEF" "$scratch/.claude/agents/maestro-tester.md"
-  booted_before="$(xcrun simctl list devices booted | grep -c Booted)"
+  if needs_live "$id"; then
+    booted_before="$(xcrun simctl list devices booted | grep -c Booted)"
+  else
+    booted_before="not-applicable"
+  fi
   # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
   # case loop's remaining lines without it
   out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
-  booted_after="$(xcrun simctl list devices booted | grep -c Booted)"
+  if needs_live "$id"; then
+    booted_after="$(xcrun simctl list devices booted | grep -c Booted)"
+  else
+    booted_after="not-applicable"
+  fi
 
   block="$(printf '%s\n' "$out" | awk '/^[[:space:]]*```flow-result/{f=1; next} /^[[:space:]]*```[[:space:]]*$/{f=0} f')"
   verdict="$(printf '%s\n' "$block" | sed -n 's/^[[:space:]]*verdict: *//p' | head -1 | awk '{print $1}')"
