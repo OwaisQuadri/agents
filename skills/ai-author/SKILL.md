@@ -55,11 +55,33 @@ pass reached, not only the most recent.
 Decide in order, stop at the first match:
 1. An existing artifact already owns the capability → update it. Never author a sibling.
 2. Genuine one-off, pure Q&A(question and answer), or unrepeatable → author nothing.
-3. Linear recipe a single agent follows → **skill** (prose SKILL.md).
-4. A distinct role needing its own context, tools, and judgment, dispatched fresh → **agent**.
-5. Fans out over ≥2 agents, loops over items, or has a generate→judge shape → **workflow**.
+3. Decidable from files and exit codes, with no judgment → **a checker**, never prose. Author
+   the tool (Rust, per AGENTS.md), and let the prose CITE it.
+4. Linear recipe a single agent follows → **skill** (prose SKILL.md).
+5. A distinct role needing its own context, tools, and judgment, dispatched fresh → **agent**.
+6. Fans out over ≥2 agents, loops over items, or has a generate→judge shape → **workflow**.
 
 One-sentence test: if the artifact can't justify its existence in one sentence, don't author it.
+
+### the checker test (step 3, expanded)
+
+A rule belongs in a program when a program can decide it: it reads a file, a diff, or a
+command's exit code, and it returns pass or fail without taste. Prose asks an agent to
+remember the rule on every load, and it pays context tokens for the asking. A checker asks
+nothing and cannot forget.
+
+Most rules split rather than fall one way. Take the mechanizable core into the tool, and
+leave the prose the judgment residue only. "Never invent a specific" splits into a checker
+that lists every number, hash, and path in the output that is absent from the input, and a
+prose rule about which of those the writer may keep.
+
+Where a tool already owns a rule, the prose NAMES the tool and never restates its constant.
+A restated constant drifts: `skills/mouthpiece/SKILL.md` capped lists at 3 while
+`tools/ste-check` enforced 5, and 14 logged lines record agents caught between them.
+
+A checker also earns the shape that makes the failure impossible instead of visible. A tool
+that WRITES the log line beats a rule asking for care with shell quoting, which the fleet
+lost 19 log lines to.
 
 ## type depth: the sibling authors
 
@@ -132,7 +154,9 @@ Run per artifact, on demand or once logs/votes accumulate:
    is why it is an input here.
 2. **Propose**: targeted mutations aimed at the top failure modes (sharpen the trigger,
    add a skip-when, tighten a step — or widen a trigger the logs show never firing).
-   Small, named, one concern each. A narrowing mutation names the logged false positive
+   Small, named, one concern each. Every mutation states whether it is PROSE or a CHECKER,
+   against the checker test above. A mutation a checker could enforce ships as the checker,
+   because the failure it answers already survived the prose telling an agent not to do it. A narrowing mutation names the logged false positive
    it answers; none logged → don't narrow.
 3. **Test**: run `evals/run.sh` — incumbent vs candidate on the same cases.
 4. **Decide**: accept ONLY on a harness win — no new catastrophic failure, higher mean
