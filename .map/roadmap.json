@@ -1421,6 +1421,21 @@
       "blame_phase": null,
       "created": "2026-08-25T00:00:00-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0089",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "trial graphify against engineer phases 02 and 08, and let it fail",
+      "long": "Time-boxed trial of graphify (github.com/Graphify-Labs/graphify, YC S26, Python, installs as a skill into Claude Code). It parses code with tree-sitter AST, deterministic and local with no model in the code path, and emits graph.json plus graph.html. Its own pitch is 'Not a vector index. No embeddings, no vector store: a real graph you traverse.'\n\nWHY THESE TWO PHASES. Phase 02 step 2 surveys project state with the Explore agent \u2014 what exists, where this feature lands, what it can reuse. Phase 08 step 2 requires a non-empty `files` array per task, and phase 08's own blame tag `files-list-wrong` says it gets that wrong. Both are graph questions answered today by reading files: what calls this, what breaks if this changes, which files does this task own.\n\nMEASURE, do not adopt on impression. Take 3 real tickets from this roadmap that are already closed, so the right answer is known. For each, compare the Explore agent's project-state output against a graphify query on the same question. Score on: did it name every file the finished change actually touched, did it invent a file, and what did each approach cost in tokens and wall clock. A pass means graphify names the touched set at least as completely for less, on 2 of 3.\n\nCHECK BEFORE TRUSTING. Confirm the code path really stays local: the README says docs, PDFs, images and video use a configured backend for a semantic pass, and only code is local. This repo's phases would use the code path only. Also check whether EXTRACTED versus INFERRED edge tags survive into graph.json, since an INFERRED edge is exactly the 'assumed' grade phase 02 now records, and an unlabelled inference is what phase 02 exists to stop.\n\nRISKS TO STATE IN THE VERDICT. The open-source command line tool is the funnel for a hosted product, so the always-on version is the paid one and a dependency here is a bet on a company three months old. graphify is Python, which does not violate this repo's Rust rule (that binds what we WRITE, never what we install), but a stale graph is worse than no graph, so any adoption needs a refresh trigger.\n\nLET IT FAIL. A trial that cannot come back 'no' is not a trial. Record the verdict either way in .map/knowledge/ per phase 02's durable-research rule.",
+      "deps": [],
+      "files": [
+        "skills/engineer/phases/02-research.md",
+        "skills/engineer/phases/08-task-breakdown.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-25T00:00:00-0400",
+      "priority": "med"
     }
   ]
 }
