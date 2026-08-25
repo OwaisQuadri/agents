@@ -172,6 +172,26 @@ fn commit_after_stamp_reports_moved_ref_with_both_hashes() {
 }
 
 #[test]
+fn stamp_from_another_repository_is_rejected() {
+    let stamped = Fixture::new("stamp-source");
+    let checked = Fixture::new("stamp-target");
+    let stamp = stamped.stamp();
+    let output = Command::new(BIN)
+        .args(["check", "--repo"])
+        .arg(&checked.dir)
+        .arg("--stamp")
+        .arg(&stamp)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("stamp repository"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn clean_repo_with_no_activity_is_empty_delta() {
     let fixture = Fixture::new("clean");
     let stamp = fixture.stamp();

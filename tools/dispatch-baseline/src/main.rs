@@ -50,6 +50,12 @@ fn run() -> Result<ExitCode, String> {
                 ));
             }
             let fresh = capture::capture(&repo)?;
+            if stamp.repo != fresh.repo {
+                return Err(format!(
+                    "stamp repository {:?} is not requested repository {:?}",
+                    stamp.repo, fresh.repo
+                ));
+            }
             let delta = delta::diff(&stamp, &fresh);
             if options.is_json {
                 println!(

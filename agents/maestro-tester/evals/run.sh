@@ -170,3 +170,6 @@ printf 'slice=%s cases=%d ungraded=%d mean=%s catastrophic=%d (mechanical ceilin
 if [ "$ungraded" -gt 0 ]; then
   exit 2
 fi
+if [ "$catastrophic" -gt 0 ]; then
+  exit 1
+fi
