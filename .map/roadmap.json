@@ -1436,6 +1436,23 @@
       "blame_phase": null,
       "created": "2026-08-25T00:00:00-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0090",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "an ungraded eval case scores 0, so a coverage gap reads as a catastrophic failure",
+      "long": "FOUND 2026-08-25 while running the four agent harnesses against 13 newly authored cases.\n\nTHE DEFECT. Three of the four harnesses are mechanical shell graders built on a `case \"$id\" in` dispatch with a hand-built fixture per case. They do not grade against rubric.md at all. The hard-coded id lists are: debugger c1-c5, spec-tester s1-s7, maestro-tester c1-c5. Anchor-verifier is the exception and has no per-case dispatch.\n\nAny case id outside those lists falls through to the grade() initialiser, `score=0` with `failure=\"\"`, and is then counted in both the mean and the catastrophic tally. So a case the harness CANNOT GRADE is indistinguishable in the output from a case the definition catastrophically failed. That is a false alarm wearing the colour of the loudest possible true alarm, and it is the worst failure shape a test harness can have.\n\nMEASURED. The debugger run reported `\"cases\": 6, \"mean\": 5.33, \"catastrophic\": 2`. Both numbers are wrong. c6 and c7 have no branch and no fixture; the four cases that really ran scored 5, 9, 9, 9. Across the sweep, 9 of the 13 new cases (debugger c6/c7, spec-tester s8-s11, maestro-tester c6/c7/c8) cannot be graded, and only anchor-verifier's c6/c7/c8 genuinely execute.\n\nMINIMUM FIX, non-negotiable and about three lines per harness: an id with no branch reports `ungraded`, is EXCLUDED from the mean, is excluded from the catastrophic count, and makes the harness exit non-zero so the gap is loud. A harness may refuse to grade. It may never score a refusal as a zero.\n\nTHE STRUCTURAL PROBLEM BEHIND IT, which is the real subject. ai-author's GEPA fence says the mutation proposer never writes the eval cases, because cases authored with sight of the mutation only paraphrase it. That fence held tonight and worked: a blind author wrote 13 cases and one of them, engineer w4, scored the proposer's own change 2 out of 10 and was right. But these harnesses need a SHELL FIXTURE per case as well as a schema-conformant line in cases.jsonl, and the fenced author was told to match the schema exactly and nothing more. So the fence produces cases the harness structurally cannot run. Three ways out, and this ticket does not pick one: (a) unknown ids fall through to an LLM judge against rubric.md, which is how the prose harnesses already work; (b) the blind case author is briefed to write the fixture too, which needs the harness shape in its dispatch without leaking the mutation; (c) fixtures become a separate fenced job after case authoring. Option (a) is the smallest and makes every future case runnable by default.\n\nUNTIL THIS IS FIXED, treat any mean or catastrophic count from debugger, spec-tester or maestro-tester as unreliable whenever the case set has grown.",
+      "deps": [],
+      "files": [
+        "agents/debugger/evals/run.sh",
+        "agents/spec-tester/evals/run.sh",
+        "agents/maestro-tester/evals/run.sh",
+        "skills/ai-author/SKILL.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-25T00:00:00-0400",
+      "priority": "high"
     }
   ]
 }

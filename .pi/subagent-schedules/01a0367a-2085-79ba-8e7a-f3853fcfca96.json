@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "cwTOxnrjXF",
+      "name": "Report harness sweep results",
+      "description": "Report harness sweep results",
+      "schedule": "2026-08-25T05:41:46.849Z",
+      "scheduleType": "once",
+      "subagent_type": "general-purpose",
+      "prompt": "You are reporting the result of an eval sweep that was running when you were scheduled. Read-only research plus one small judgment call. Do NOT edit any file, do NOT fix anything.\n\nCONTEXT. On the night of 2026-08-24/25 the owner of /Users/owaisquadri/Documents/agents accepted eight tuning changes to four subagent definitions, mined from 1,700 lines of real usage logs. A fenced case author then wrote 13 new eval cases for those changes, blind to the changes themselves. The four harnesses were then run in sequence to find out whether the changes survive their own exams. That sweep is what you are reporting on. The work all sits on a git branch at /Users/owaisquadri/.herdr/worktrees/agents/worktree-brave-cloud-2988 and nothing has been merged.\n\nYOUR INPUT is one file: `/tmp/gepa-evals/agents.out`. It holds the concatenated output of four harness runs, in this order: debugger, spec-tester, maestro-tester, anchor-verifier. Each harness prints one JSON line per case (`{\"id\",\"score\",\"failure_mode\"}`) and then a JSON summary block with `cases`, `mean`, and `catastrophic`. Section markers look like `===== debugger =====` and `===== debugger exit=0 =====`.\n\nFIRST, decide whether the sweep even finished. Run `pgrep -fl agents-sweep.sh` and check whether the file ends with an `anchor-verifier exit=` marker. If it is still running, say exactly that, report what has completed so far, and stop — do not wait or poll.\n\nWHAT TO REPORT, under 400 words, no preamble:\n\n1. Per harness: mean, case count, and catastrophic count, quoted from the summary block rather than recomputed.\n2. Every case scoring 4 or below, with its id and `failure_mode` verbatim. These are the point of the exercise.\n3. The new cases specifically. They are the ones added on 2026-08-24: debugger c6/c7/c8, spec-tester s8/s9/s10/s11, maestro-tester c6/c7/c8, anchor-verifier c6/c7/c8. Say plainly how many of them passed and how many failed, because a change that fails its own new exam has not been demonstrated.\n4. One judgment call, and be careful with it: for each failing NEW case, read the case in `agents/<name>/evals/cases.jsonl` and the matching section of the definition file (`agents/<name>/<name>.md`) in the worktree, then say whether the failure looks like (a) the definition genuinely not doing what the case asks, or (b) the case being unfair or malformed against that harness's rubric in `agents/<name>/evals/rubric.md`. State which and why in one sentence each. Do NOT fix either one.\n\nKnown already, so do not re-report it as news: debugger came back mean 5.33 over 6 cases with 2 catastrophic, c6 and c7 both scoring 0 with a null failure_mode. What is wanted from you is the other three harnesses plus the judgment call above.\n\nEnd with a single line naming the one thing the owner should look at first.",
+      "isolated": false,
+      "enabled": true,
+      "createdAt": "2026-08-25T05:16:46.849Z",
+      "runCount": 0
+    }
+  ]
+}
