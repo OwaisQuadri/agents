@@ -26,7 +26,7 @@ VERIFY:   anchor-verifier per branch, fresh context: work_product_paths = the
 LOOP:     next wave when the current wave's verifies pass
 RULE:     any divergence from plan → a deviation line BEFORE proceeding. A gap
           classifies back to the phase that owns it, and is never patched over
-          silently
+          silently. The wave's lines COLLECT: no walk opens mid-wave
 CAP:      3 concurrent builders; 3 walk-back cycles then human escalation
 ON FAIL:  a dead builder's tasks revert to todo and are named in the report
 REPORT:   per-task statuses + open-deviation count + verifier verdicts
@@ -46,7 +46,7 @@ Apply the timing rule per task. Show a measured span only when that task has sta
 
 ## exit
 
-Open deviations route through the walk-back rule in SKILL.md, to the earliest blamed phase. Leave only when all non-cancelled tasks are resolved, `jq 'select(.status=="open")' deviations.jsonl` counts 0, and the phase is committed as `map(<ID>): phase 13 implement`.
+Open deviations route through the walk-back rule in SKILL.md, ONE walk per wave, at the earliest phase the whole wave blames, carrying every open line as input. A second walk for a finding the wave already held is the churn this rule exists to stop. Leave only when all non-cancelled tasks are resolved, `jq 'select(.status=="open")' deviations.jsonl` counts 0, and the phase is committed as `map(<ID>): phase 13 implement`.
 
 ## blame tags
 

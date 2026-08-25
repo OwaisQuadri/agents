@@ -127,3 +127,34 @@ previously justified itself with "the owner squash-merges always" and now names 
 each half of the sweep serves. Path used: owner instruction, not a harness win — no eval case
 measures which route a run picks, and inventing one would measure the instruction rather than
 the behaviour.
+
+## 2026-08-24 — GATE S, probed shapes, and one walk per wave
+
+Reflect pass over four `.map/*/walkback.jsonl` ledgers (AGNT-0032, AGNT-0063, AGNT-0066,
+AGNT-0028): 49 walk-back `open` lines. Blame lands at phase 06 twenty-four times, phase 08
+nine, phase 07 eight — 84% inside 06-08. Discovery is phase 13 thirty-one times. Cost:
+AGNT-0032 spent 244 phase visits across 32 one-finding walks to reach 9 visits of phase 13,
+re-presenting Gate B 34 times and Gate F 29 times.
+
+Four mutations, one concern each:
+
+- HUMAN GATE S at the end of phase 07 — types, signatures, call stacks, declarations only.
+  The blame concentrates in 06-07 and the first human look at structure used to be Gate B at
+  phase 11, four phases of derived work later. Gate S re-presents as a delta on a walk-back.
+- phase 06 exits only with EXECUTED PROBE output beside every externally-owned shape.
+  AGNT-0066 W1, W2 and W4 are all one failure: the declared shape was read from
+  documentation and the real boundary returned something else.
+- phase 08 stops over 25 tasks and puts the split to the user. Walks scale with ticket size:
+  5, 7, 20 and 107 tasks produced 3, 3, 11 and 32 walks.
+- phase 13 opens ONE walk per wave at the earliest phase the whole wave blames. AGNT-0032
+  opened W7 through W32 one finding at a time.
+
+Gate B now carries structure as the delta since Gate S, never the full 06 and 07 files
+again. The gate test's arm one widened to admit "a decision this map's own ledgers show is
+expensive to reverse" — Gate S binds no permanent id and publishes nothing, and rejecting it
+on the old wording would have meant the most expensive reversal in the map could never earn
+a stop.
+
+Path used: defect fix on a measured failure mode, not a harness mean. No eval case in
+`cases.jsonl` exercises a walk-back's cost or a structural gate. Cases owed, to be authored
+blind to this text.
