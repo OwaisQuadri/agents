@@ -72,16 +72,22 @@ fn status_entries(repo: &Path) -> Result<BTreeMap<String, String>, String> {
 
 fn content_hash(repo: &Path, path: &str) -> String {
     let full = repo.join(path);
-    match std::fs::read(&full) {
-        Ok(bytes) => {
+    let content = match std::fs::symlink_metadata(&full) {
+        Ok(metadata) if metadata.file_type().is_symlink() => std::fs::read_link(&full)
+            .map(|target| (b'L', target.as_os_str().as_encoded_bytes().to_vec())),
+        Ok(_) => std::fs::read(&full).map(|bytes| (b'F', bytes)),
+        Err(error) => return format!("absent:{error}"),
+    };
+    match content {
+        Ok((kind, bytes)) => {
             let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-            for byte in bytes {
+            for byte in std::iter::once(kind).chain(bytes) {
                 hash ^= u64::from(byte);
                 hash = hash.wrapping_mul(0x1000_0000_01b3);
             }
             format!("{hash:016x}")
         }
-        Err(_) => "absent".to_string(),
+        Err(error) => format!("unreadable:{error}"),
     }
 }
 

@@ -41,6 +41,7 @@ body=$(awk 'c>=2{print} /^---$/{c++}' "$def")
 sut_sum() { find "$FIX/sut" -type f -exec shasum {} + | shasum; }
 
 ungraded=0
+catastrophic=0
 total=0
 sumscore=0
 while IFS= read -r line <&3; do
@@ -140,11 +141,12 @@ $dispatch"
   else
     total=$((total + 1))
     sumscore=$((sumscore + score))
+    [[ $score -eq 0 ]] && catastrophic=$((catastrophic + 1))
   fi
 done 3< cases.jsonl
 
 if [[ $total -gt 0 ]]; then
-  awk "BEGIN{printf \"mean %.2f over $total cases, $ungraded ungraded ($slice slice)\n\", $sumscore/$total}" >&2
+  awk "BEGIN{printf \"mean %.2f over $total cases, $ungraded ungraded, $catastrophic catastrophic ($slice slice)\n\", $sumscore/$total}" >&2
 elif [[ $ungraded -gt 0 ]]; then
   echo "no graded cases, $ungraded ungraded ($slice slice)" >&2
 else
@@ -153,4 +155,7 @@ fi
 
 if [[ $ungraded -gt 0 ]]; then
   exit 2
+fi
+if [[ $catastrophic -gt 0 ]]; then
+  exit 1
 fi

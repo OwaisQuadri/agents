@@ -218,6 +218,31 @@ fn edit_inside_an_already_untracked_directory_is_delta() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn dirty_symlink_target_change_is_delta_even_when_target_contents_match() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new("symlink-target");
+    fixture.write("a", "same\n");
+    fixture.write("b", "same\n");
+    fixture.write("c", "same\n");
+    symlink("c", fixture.dir.join("link")).unwrap();
+    fixture.git(&["add", "."]);
+    fixture.git(&["commit", "-m", "symlink"]);
+    std::fs::remove_file(fixture.dir.join("link")).unwrap();
+    symlink("b", fixture.dir.join("link")).unwrap();
+    let stamp = fixture.stamp();
+    std::fs::remove_file(fixture.dir.join("link")).unwrap();
+    symlink("a", fixture.dir.join("link")).unwrap();
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "a symlink target change must be a delta: {out}");
+    assert!(
+        out.contains("link"),
+        "the delta must name the symlink: {out}"
+    );
+}
+
 #[test]
 fn edit_to_an_already_modified_tracked_file_is_delta() {
     let fixture = Fixture::new("edit-modified");
