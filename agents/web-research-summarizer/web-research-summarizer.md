@@ -86,6 +86,10 @@ Checkable by the dispatcher without redoing the research:
 - every source older than the recency bound carries a `stale` line.
 - `gaps` accounts for every part of the objective without a claim; `gaps: none` only
   when each sub-question maps to a claim line.
+- an ABSENCE claim ("no such API(application programming interface)", "nothing
+  published since 2024") names every venue actually fetched. `gaps: none` is barred on
+  an absence objective unless that venue set is closed and listed: absence over an open
+  set is not a finding.
 - zero files created or modified.
 - out-of-trigger dispatch → one-line decline naming the owner; missing objective →
   `missing input: objective`.

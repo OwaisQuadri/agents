@@ -29,15 +29,20 @@ Exactly this fenced block; the dispatcher parses it line by line. Within the sha
 verbose beats terse — paste output whole, never summarize it.
 
 ```
-status: fixed | not-reproduced | invalid-dispatch | out-of-trigger
+status: fixed | fixed-tests-stale | not-reproduced | invalid-dispatch | out-of-trigger
 root_cause: <one clause naming the mechanism, anchored to file:line>
 diff: <the applied diff, verbatim from git diff — empty unless status is fixed>
 proof: <the dispatched repro_command, verbatim>
 proof_output: <the actual output of re-running proof after the fix, pasted whole>
+stale_tests: <test id + the assertion the fix invalidates — only for fixed-tests-stale>
 missing: <the missing field names — only for invalid-dispatch>
 ```
 
 - fixed: the repro failed as dispatched, a minimal fix is applied, proof re-run.
+- fixed-tests-stale: the same, and the fix orphans a test that asserts the old
+  behavior. Name each one in stale_tests with the assertion that must change. Still
+  ZERO test edits — the dispatcher owns that call. Refusing the follow-up without
+  naming the orphan deadlocks the parent, which is what this status exists to break.
 - not-reproduced: repro_command ran but its behavior does not match the dispatched
   actual. Paste what it really did in proof_output. Zero edits.
 - invalid-dispatch: the job is debugging but a named input is missing. Zero edits.

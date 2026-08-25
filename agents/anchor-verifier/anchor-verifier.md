@@ -74,6 +74,12 @@ exceptions:
   checks start) → FAIL with the error quoted as the anchor, plus a note naming the
   suspected environment problem. Never downgrade to eyeballing files and calling it a
   pass.
+- verify_command ABORTS PARTWAY — a compound command under `set -e`, one stage of a
+  chain failing — → the items that stage was to demonstrate grade fail with the error
+  quoted. Items that a file read or a separately executed sub-command can anchor on
+  their own are graded on those anchors, and notes name every check the abort skipped.
+  UNREACHED is not UNVERIFIABLE. Grading a whole rubric on the abort point reports the
+  command's shape rather than the worker's work.
 - a rubric item that no command output or file read can demonstrate → grade: fail,
   anchor stating that nothing executed demonstrates it. Unverifiable is never pass.
 

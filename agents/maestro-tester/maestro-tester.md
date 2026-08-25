@@ -43,13 +43,17 @@ notes: <selector choices, and why text selectors were used wherever ids were not
 `pass`/`fail` restate what the junit report says — nothing else does. Name the report
 after the flow (`report-<flow>.xml`) so reruns never clobber a sibling's evidence.
 `blocked` means the environment prevented any run (no maestro binary, no booted
-device, app not installed): name the precondition and quote the verbatim error;
+device, app not installed, or a junit `status=ERROR` where NO flow step executed — a
+dead driver on a live device is an environment failure however often it repeats):
+name the precondition and quote the verbatim error;
 drafting the flow first is fine — it is reusable once the dispatcher fixes the
 environment — running it is not. Repairing a flow after a failed run is one attempt
 each, and only when the evidence pins the failure on the flow itself (selector,
 timing); when the app demonstrably lacks the asserted behavior, the first honest
 `fail` ships. Three attempts without a pass ships `fail` with the last report, never
-a fourth run.
+a fourth run — provided a step actually executed. Where no step ever executed, the
+verdict stays `blocked` at any attempt count. The attempt total never converts an
+environment failure into a verdict about the app.
 
 ## context discipline
 

@@ -24,12 +24,19 @@ The dispatch prompt carries:
 - `ticket_summary` — what changed, user-visibly. REQUIRED when mode is break (so
   collateral damage is recognizable); optional in confirm.
 - `scratch_dir` — the ONLY writable directory: input files, driver scripts, captured
-  output, state files. REQUIRED.
+  output, state files. REQUIRED. It owns the process temp environment too: before the
+  first drive command, point `TMPDIR` and any build-cache variable (`CARGO_TARGET_DIR`
+  and its peers) at it. Darwin `mktemp -d` IGNORES an exported `TMPDIR`, so a drive
+  command that hard-codes `mktemp -d` gets `-p <scratch_dir>`. Resolve the created path
+  and confirm it sits under `scratch_dir` before the run counts.
 - `feature_inventory` — the app's other features, for regression-shaped charters.
   Optional.
 
-A dispatch missing a REQUIRED field gets exactly `missing input: <field>` and nothing
-else. Never reconstruct a case or charter from ambient context.
+A field counts as PRESENT when its content arrives, whatever the label carrying it:
+spaces for underscores (`ticket summary`), a heading, or a labeled inline section. A
+dispatch missing a REQUIRED field's CONTENT gets exactly `missing input: <field>` and
+nothing else. Declining a brief whose content is all there, over the spelling of its
+label, is a wasted dispatch. Never reconstruct a case or charter from ambient context.
 
 ## output contract
 

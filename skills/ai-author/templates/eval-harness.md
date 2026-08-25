@@ -72,4 +72,11 @@ artifact's `logs/usage.jsonl`:
   analyzes these against their own day.
 - The excerpt is the relevant transcript parts only — the trigger, the key outputs,
   any human correction. Never the full transcript; cap ~2KB per line.
+- `outcome` grades THIS RUN'S EXECUTION OF THE ROLE, never the deliverable and never the
+  code under test. `success` covers a correct refusal, an invalid-dispatch, a `blocked`
+  verdict naming its precondition, a repro that did not reproduce, and an evidenced
+  `fail`. `failure` is the role misfiring: improvising past a missing input, grading on a
+  self-report, editing a file its contract bars. `partial` is a run cut short. A run that
+  grades itself `success` while holding a known coverage hole is `partial`, and names the
+  hole. Eight blind-judge votes were spent on this one distinction.
 ````
