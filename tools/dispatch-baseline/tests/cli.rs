@@ -138,3 +138,28 @@ fn clean_repo_with_no_activity_is_empty_delta() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("\"moved_refs\": []"), "{out}");
 }
+
+// The 2026-08-25 hole: a status code alone cannot see an edit to a file that was already
+// dirty, and an untracked work product is the normal case this tool exists for. Without a
+// content hash the verifier's own fix reflex reports a clean delta.
+#[test]
+fn edit_to_an_already_untracked_file_is_delta() {
+    let fixture = Fixture::new("edit-untracked");
+    fixture.write("product.json", "{\"tasks\":[]}\n");
+    let stamp = fixture.stamp();
+    fixture.write("product.json", "{\"tasks\":[],\"fixed\":true}\n");
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "an edit to an untracked file must be a delta: {out}");
+    assert!(out.contains("product.json"), "the delta must name the file: {out}");
+}
+
+#[test]
+fn edit_to_an_already_modified_tracked_file_is_delta() {
+    let fixture = Fixture::new("edit-modified");
+    fixture.write("tracked.txt", "a sibling's uncommitted edit\n");
+    let stamp = fixture.stamp();
+    fixture.write("tracked.txt", "a sibling's edit, then ours on top\n");
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "a second edit to the same file must be a delta: {out}");
+    assert!(out.contains("tracked.txt"), "the delta must name the file: {out}");
+}

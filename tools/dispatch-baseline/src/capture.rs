@@ -4,7 +4,7 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Baseline {
@@ -18,8 +18,14 @@ pub struct Baseline {
 /// Captures the porcelain status and the ref hashes of a repository.
 ///
 /// Takes the path of the repository to stamp. Returns the baseline, whose entries map
-/// each dirty path to its two-character status code and whose refs map `HEAD`, the
-/// current branch ref, and `merge-base` to their hashes.
+/// each dirty path to its two-character status code followed by the content hash of the
+/// file, and whose refs map `HEAD`, the current branch ref, and `merge-base` to their
+/// hashes.
+///
+/// The content hash is what makes an edit to an ALREADY-DIRTY file visible. Git reports
+/// the same `??` for an untracked file whatever its bytes, and untracked is the normal
+/// state of a work product, so a status code alone lets a verifier rewrite the very file
+/// it was sent to grade and report a clean delta.
 ///
 /// # Errors
 ///
@@ -48,12 +54,29 @@ fn status_entries(repo: &Path) -> Result<BTreeMap<String, String>, String> {
         let is_rename = code.starts_with('R') || code.starts_with('C');
         if is_rename {
             if let Some(origin) = fields.next() {
-                entries.insert(origin.to_string(), code.clone());
+                let stamp = format!("{code} {}", content_hash(repo, origin));
+                entries.insert(origin.to_string(), stamp);
             }
         }
-        entries.insert(path, code);
+        let stamp = format!("{code} {}", content_hash(repo, &path));
+        entries.insert(path, stamp);
     }
     Ok(entries)
+}
+
+fn content_hash(repo: &Path, path: &str) -> String {
+    let full = repo.join(path);
+    match std::fs::read(&full) {
+        Ok(bytes) => {
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for byte in bytes {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x1000_0000_01b3);
+            }
+            format!("{hash:016x}")
+        }
+        Err(_) => "absent".to_string(),
+    }
 }
 
 fn refs(repo: &Path) -> Result<BTreeMap<String, String>, String> {

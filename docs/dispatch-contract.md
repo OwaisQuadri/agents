@@ -20,10 +20,15 @@ retraction.
 
 So:
 
-- THE DISPATCHER STAMPS THE BASELINE into the brief: `git -C <repo_path> status
-  --porcelain` and the ref hashes the run depends on, captured before the agent starts.
-- A BRIEF WITH NO STAMP is not invalid. The agent captures the same two commands as its
-  own first act and prints them, and that capture becomes the baseline.
+- THE DISPATCHER STAMPS THE BASELINE into the brief with `dispatch-baseline stamp --repo
+  <path> --out <file>`, captured before the agent starts. Write the stamp OUTSIDE the
+  repository, or it becomes a delta against itself. The tool owns what a baseline holds;
+  never restate its fields here.
+- A BRIEF WITH NO STAMP is not invalid. The agent runs the same command as its own first
+  act and prints the result, and that capture becomes the baseline.
+- THE AGENT PROVES ITS OWN DELTA with `dispatch-baseline check --repo <path> --stamp
+  <file>`, which exits 0 on an empty delta and 1 on a real one. That exit code is the
+  anchor, and no prose claim of "I changed nothing" substitutes for it.
 - THE AGENT REPORTS AGAINST THE STAMP. Only a delta from the baseline belongs to the
   agent. A path already dirty in the baseline is reported in notes and never graded as
   the agent's own write.
