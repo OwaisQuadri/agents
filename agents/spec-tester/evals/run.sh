@@ -145,6 +145,12 @@ done 3< cases.jsonl
 
 if [[ $total -gt 0 ]]; then
   awk "BEGIN{printf \"mean %.2f over $total cases, $ungraded ungraded ($slice slice)\n\", $sumscore/$total}" >&2
+elif [[ $ungraded -gt 0 ]]; then
+  echo "no graded cases, $ungraded ungraded ($slice slice)" >&2
 else
   echo "no cases in $slice slice" >&2
+fi
+
+if [[ $ungraded -gt 0 ]]; then
+  exit 2
 fi

@@ -44,11 +44,12 @@ pub fn diff(stamp: &Baseline, fresh: &Baseline) -> Delta {
         if before == after {
             continue;
         }
+        let status = after.and_then(|entry| entry.get(..2)).unwrap_or_default();
         match after {
             None => delta.modified.push(path.clone()),
-            Some(code) if code == "??" => delta.untracked.push(path.clone()),
-            Some(code) if code.contains('D') => delta.deleted.push(path.clone()),
-            Some(code) if code.contains('A') => delta.added.push(path.clone()),
+            Some(_) if status == "??" => delta.untracked.push(path.clone()),
+            Some(_) if status.contains('D') => delta.deleted.push(path.clone()),
+            Some(_) if status.contains('A') => delta.added.push(path.clone()),
             Some(_) => delta.modified.push(path.clone()),
         }
     }

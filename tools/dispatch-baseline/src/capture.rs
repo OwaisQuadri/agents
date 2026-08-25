@@ -33,12 +33,15 @@ pub struct Baseline {
 /// command fails.
 pub fn capture(repo: &Path) -> Result<Baseline, String> {
     let root = git(repo, &["rev-parse", "--show-toplevel"])?;
+    let root_path = Path::new(&root);
+    let entries = status_entries(root_path)?;
+    let refs = refs(root_path)?;
     Ok(Baseline {
         schema_version: SCHEMA_VERSION,
         captured_at: local_timestamp()?,
         repo: root,
-        entries: status_entries(repo)?,
-        refs: refs(repo)?,
+        entries,
+        refs,
     })
 }
 
@@ -98,7 +101,10 @@ fn refs(repo: &Path) -> Result<BTreeMap<String, String>, String> {
 }
 
 fn default_branch(repo: &Path) -> Option<String> {
-    if let Ok(head) = git(repo, &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]) {
+    if let Ok(head) = git(
+        repo,
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+    ) {
         return Some(head);
     }
     ["refs/heads/main", "refs/heads/master"]

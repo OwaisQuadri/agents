@@ -31,7 +31,11 @@ impl Fixture {
             .current_dir(&self.dir)
             .output()
             .unwrap();
-        assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
@@ -40,22 +44,34 @@ impl Fixture {
     }
 
     fn stamp(&self) -> PathBuf {
+        self.stamp_from(&self.dir)
+    }
+
+    fn stamp_from(&self, repo: &Path) -> PathBuf {
         let path = self.root.join("stamp.json");
         let output = Command::new(BIN)
             .args(["stamp", "--repo"])
-            .arg(&self.dir)
+            .arg(repo)
             .arg("--out")
             .arg(&path)
             .output()
             .unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         path
     }
 
     fn check(&self, stamp: &Path) -> (i32, String) {
+        self.check_from(&self.dir, stamp)
+    }
+
+    fn check_from(&self, repo: &Path, stamp: &Path) -> (i32, String) {
         let output = Command::new(BIN)
             .args(["check", "--repo"])
-            .arg(&self.dir)
+            .arg(repo)
             .arg("--stamp")
             .arg(stamp)
             .arg("--json")
@@ -111,7 +127,32 @@ fn untracked_file_created_after_stamp_is_delta() {
     fixture.write("new.txt", "fresh\n");
     let (code, out) = fixture.check(&stamp);
     assert_eq!(code, 1, "{out}");
-    assert!(out.contains("new.txt"), "{out}");
+    assert!(
+        out.contains("\"untracked\": [\n    \"new.txt\"\n  ]"),
+        "{out}"
+    );
+}
+
+#[test]
+fn repository_subdirectory_uses_root_relative_hashes() {
+    let fixture = Fixture::new("subdirectory");
+    let subdirectory = fixture.dir.join("sub");
+    std::fs::create_dir(&subdirectory).unwrap();
+    fixture.write("sub/file.txt", "committed\n");
+    fixture.git(&["add", "."]);
+    fixture.git(&["commit", "-m", "subdirectory file"]);
+    fixture.write("sub/file.txt", "dirty before stamp\n");
+    let stamp = fixture.stamp_from(&subdirectory);
+    fixture.write("sub/file.txt", "changed after stamp\n");
+    let (code, out) = fixture.check_from(&subdirectory, &stamp);
+    assert_eq!(
+        code, 1,
+        "an edit through a subdirectory must be a delta: {out}"
+    );
+    assert!(
+        out.contains("sub/file.txt"),
+        "the path must stay root-relative: {out}"
+    );
 }
 
 #[test]
@@ -149,8 +190,14 @@ fn edit_to_an_already_untracked_file_is_delta() {
     let stamp = fixture.stamp();
     fixture.write("product.json", "{\"tasks\":[],\"fixed\":true}\n");
     let (code, out) = fixture.check(&stamp);
-    assert_eq!(code, 1, "an edit to an untracked file must be a delta: {out}");
-    assert!(out.contains("product.json"), "the delta must name the file: {out}");
+    assert_eq!(
+        code, 1,
+        "an edit to an untracked file must be a delta: {out}"
+    );
+    assert!(
+        out.contains("product.json"),
+        "the delta must name the file: {out}"
+    );
 }
 
 #[test]
@@ -160,6 +207,12 @@ fn edit_to_an_already_modified_tracked_file_is_delta() {
     let stamp = fixture.stamp();
     fixture.write("tracked.txt", "a sibling's edit, then ours on top\n");
     let (code, out) = fixture.check(&stamp);
-    assert_eq!(code, 1, "a second edit to the same file must be a delta: {out}");
-    assert!(out.contains("tracked.txt"), "the delta must name the file: {out}");
+    assert_eq!(
+        code, 1,
+        "a second edit to the same file must be a delta: {out}"
+    );
+    assert!(
+        out.contains("tracked.txt"),
+        "the delta must name the file: {out}"
+    );
 }
