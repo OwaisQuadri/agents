@@ -24,12 +24,19 @@ import shutil
 import subprocess
 import sys
 
-# The CHECKOUT's build wins over the installed one. A branch that changes a rule must
-# be graded by that branch's checker: on 2026-08-25 this harness capped three cases on
-# a character rule the branch had already deleted, because PATH still held main's
-# binary. PATH is the fallback, for a checkout with nothing built.
+# A branch must be graded by a checker built from that branch. Merely preferring an
+# existing target/release binary is not enough: it can predate the source change. Build
+# once before the cases; PATH remains the fallback for an installed artifact checkout.
+REPO_MANIFEST = os.path.abspath("../../../tools/ste-check/Cargo.toml")
 REPO_CHECKER = os.path.abspath("../../../tools/ste-check/target/release/ste-check")
-CHECKER = REPO_CHECKER if os.path.exists(REPO_CHECKER) else shutil.which("ste-check")
+if os.path.exists(REPO_MANIFEST):
+    subprocess.run(
+        ["cargo", "build", "--release", "--quiet", "--manifest-path", REPO_MANIFEST],
+        check=True,
+    )
+    CHECKER = REPO_CHECKER
+else:
+    CHECKER = shutil.which("ste-check")
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]
 is_holdout_slice = slice_name == "holdout"

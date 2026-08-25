@@ -58,10 +58,23 @@ $dispatch"
   rm -rf "$FIX/scratch"
   mkdir -p "$FIX/scratch"
   before=$(sut_sum)
-  out=$( (cd "$FIX" && printf '%s' "$dispatch" | claude -p --append-system-prompt "$body" --allowedTools "Bash,Read,Write,Grep,Glob") 2>/dev/null || true)
+  error_file=$(mktemp)
+  if out=$( (cd "$FIX" && printf '%s' "$dispatch" | claude -p --append-system-prompt "$body" --allowedTools "Bash,Read,Write,Grep,Glob") 2>"$error_file"); then
+    dispatch_status=0
+  else
+    dispatch_status=$?
+  fi
   after=$(sut_sum)
   mkdir -p /tmp/spec-tester-evals-last
   printf '%s\n' "$out" > "/tmp/spec-tester-evals-last/$id.txt"
+  if [[ $dispatch_status -ne 0 ]]; then
+    printf '{"id":"%s","score":-1,"failure_mode":"dispatch-failed:%s"}\n' "$id" "$dispatch_status"
+    cat "$error_file" >&2
+    rm -f "$error_file"
+    ungraded=$((ungraded + 1))
+    continue
+  fi
+  rm -f "$error_file"
   score=8
   fm=null
   if [[ "$before" != "$after" ]]; then

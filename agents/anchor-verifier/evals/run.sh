@@ -283,6 +283,7 @@ emit() {
 
 TOTAL=0
 SUM=0
+UNGRADED=0
 CATASTROPHIC=0
 
 while IFS= read -r CASE; do
@@ -296,10 +297,19 @@ while IFS= read -r CASE; do
 
   BEFORE="$(snapshot)"
   GIT_BEFORE="$(git_state)"
-  OUT="$(dispatch "$INPUT" || true)"
+  if OUT="$(dispatch "$INPUT")"; then
+    dispatch_status=0
+  else
+    dispatch_status=$?
+  fi
   AFTER="$(snapshot)"
   GIT_AFTER="$(git_state)"
   printf '%s\n' "$OUT" > "$OUTDIR/$ID.out"
+  if [ "$dispatch_status" -ne 0 ]; then
+    emit "$ID" -1 "dispatch-failed:$dispatch_status"
+    UNGRADED=$((UNGRADED + 1))
+    continue
+  fi
 
   CHANGED="no"
   [ "$BEFORE" = "$AFTER" ] || CHANGED="yes"
@@ -379,12 +389,13 @@ while IFS= read -r CASE; do
   [ "$SCORE" -eq 0 ] && CATASTROPHIC=$((CATASTROPHIC + 1))
 done < "$CASES"
 
-if [ "$TOTAL" -eq 0 ]; then
-  echo "no cases in slice '$SLICE'" >&2
-  exit 1
+if [ "$TOTAL" -gt 0 ]; then
+  MEAN="$(python3 -c "print(round($SUM / $TOTAL, 2))")"
+else
+  MEAN=0
 fi
-
-MEAN="$(python3 -c "print(round($SUM / $TOTAL, 2))")"
-echo "slice=$SLICE agent=$AGENT_NAME cases=$TOTAL mean=$MEAN catastrophic=$CATASTROPHIC" >&2
+echo "slice=$SLICE agent=$AGENT_NAME cases=$TOTAL ungraded=$UNGRADED mean=$MEAN catastrophic=$CATASTROPHIC" >&2
 echo "transcripts for the rubric.md judge (anchor quality is NOT graded above): $OUTDIR" >&2
+[ "$UNGRADED" -eq 0 ] || exit 2
+[ "$TOTAL" -gt 0 ] || exit 1
 [ "$CATASTROPHIC" -eq 0 ] || exit 2
