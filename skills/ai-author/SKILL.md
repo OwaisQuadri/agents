@@ -66,6 +66,17 @@ destinations, same test, different trigger:
   change, a render. TypeScript, in `pi/extensions/`. Reach for this when the thing must not
   depend on an agent remembering to run it.
 
+DECIDABLE IS NOT THE SAME AS RIGHT. Before building a checker, say which quantity it
+measures and which quantity you actually care about, and check they are the same one. A
+checker that is deterministic about the wrong quantity is worse than no checker, because it
+carries authority and it fires on every run. Cyclomatic complexity is the worked example: a
+program computes it exactly, and it still does not measure whether the code is clear — a
+flat match over twelve variants is the clearest shape available and scores badly, and the
+repair the number rewards is extracting a helper, which this repo's own rule against
+abstraction forbids. Clippy says the same about its own lint, which is allow-by-default and
+carries a note recommending `excessive_nesting` and `too_many_lines` instead. Where the
+quantity does not match, the thing is a REVIEW SIGNAL, never a gate.
+
 Three rules once a program owns it:
 
 - Most rules SPLIT rather than fall one way. Take the mechanizable core into the tool and
