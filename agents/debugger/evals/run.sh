@@ -334,7 +334,17 @@ while IFS= read -r case_json; do
 done < <(jq -c "$FILTER" cases.jsonl)
 
 cat "$results"
-jq -s --arg slice "$SLICE" --arg agent "$AGENT_FILE" \
+summary=$(jq -s --arg slice "$SLICE" --arg agent "$AGENT_FILE" \
   '{slice: $slice, agent: $agent, cases: [.[] | select(.score >= 0)] | length, ungraded: [.[] | select(.score < 0)] | length, mean: ([.[] | select(.score >= 0) | .score] | if length == 0 then 0 else add / length end), catastrophic: [.[] | select(.score == 0)] | length}' \
-  "$results" >&2
+  "$results")
+printf '%s\n' "$summary" >&2
+ungraded_count=$(jq -r '.ungraded' <<<"$summary")
+catastrophic_count=$(jq -r '.catastrophic' <<<"$summary")
 rm -f "$results"
+
+if [[ $ungraded_count -gt 0 ]]; then
+  exit 2
+fi
+if [[ $catastrophic_count -gt 0 ]]; then
+  exit 1
+fi

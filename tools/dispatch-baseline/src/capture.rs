@@ -46,7 +46,10 @@ pub fn capture(repo: &Path) -> Result<Baseline, String> {
 }
 
 fn status_entries(repo: &Path) -> Result<BTreeMap<String, String>, String> {
-    let raw = git(repo, &["status", "--porcelain", "-z"])?;
+    let raw = git(
+        repo,
+        &["status", "--porcelain", "-z", "--untracked-files=all"],
+    )?;
     let mut fields = raw.split('\0').filter(|field| !field.is_empty());
     let mut entries = BTreeMap::new();
     while let Some(field) = fields.next() {

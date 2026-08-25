@@ -74,5 +74,5 @@ UTC (Coordinated Universal Time).
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  loads: `git log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
   Reflect pass drops lines written against a prompt that no longer exists.

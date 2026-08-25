@@ -116,7 +116,7 @@ thing in your output, ts omitted:
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  loads: `git log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
   Reflect pass drops lines written against a prompt that no longer exists.
 The DISPATCHER stamps `ts` (machine's current local timezone with offset, via
 `date +%Y-%m-%dT%H:%M:%S%z`, never UTC(Coordinated Universal Time)) and appends the line

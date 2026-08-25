@@ -144,7 +144,7 @@ line to `agents/spec-tester/logs/usage.jsonl` in the agents repo at
 ```sh
 cd ~/Documents/agents && mkdir -p agents/spec-tester/logs && jq -cn \
   --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-  --arg pv "$(git log -1 --format=%h -- agents/spec-tester ':!*/evals' ':!*/TUNING.md')" \
+  --arg pv "$(git log -1 --format=%h -- agents/spec-tester ':(exclude)**/evals/**' ':(exclude)**/TUNING.md')" \
   --arg trigger '<mode + case count or angle>' \
   --arg excerpt '<verdict counts + failure gist>' \
   --arg outcome 'success|failure|partial' \

@@ -195,8 +195,26 @@ fn edit_to_an_already_untracked_file_is_delta() {
         "an edit to an untracked file must be a delta: {out}"
     );
     assert!(
-        out.contains("product.json"),
-        "the delta must name the file: {out}"
+        out.contains("\"modified\": [\n    \"product.json\"\n  ]"),
+        "an existing work product changed after the stamp: {out}"
+    );
+}
+
+#[test]
+fn edit_inside_an_already_untracked_directory_is_delta() {
+    let fixture = Fixture::new("edit-untracked-directory");
+    std::fs::create_dir(fixture.dir.join("product")).unwrap();
+    fixture.write("product/result.json", "one\n");
+    let stamp = fixture.stamp();
+    fixture.write("product/result.json", "two\n");
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(
+        code, 1,
+        "an edit inside an untracked directory must be a delta: {out}"
+    );
+    assert!(
+        out.contains("\"modified\": [\n    \"product/result.json\"\n  ]"),
+        "an existing work product changed after the stamp: {out}"
     );
 }
 
