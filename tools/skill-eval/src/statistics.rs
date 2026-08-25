@@ -333,6 +333,7 @@ pub(crate) fn rank_pool(
         Vec::new()
     };
 
+    // TODO(AGNT-0032.T103): Initialize empty thinking selections before adaptive ranking.
     Ok(RankedPool {
         tier,
         calibration: calibration.to_vec(),

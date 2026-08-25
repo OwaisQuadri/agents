@@ -371,6 +371,7 @@ macro_rules! pool_report_tests {
                 }
             }
 
+            // TODO(AGNT-0032.T103): Add neutral thinking fields to report fixtures.
             fn entrant(model: ModelIdentity, observed: &str) -> PoolEntrant {
                 PoolEntrant {
                     model,

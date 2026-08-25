@@ -192,7 +192,7 @@ pub(crate) enum PoolStage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct PoolEntrant {
     pub(crate) model: ModelIdentity,
-    // TODO(AGNT-0032.T103): Freeze each model's bounded ordered thinking levels.
+    // TODO(AGNT-0032.T103): Preserve bounded thinking levels while migrating every constructor.
     pub(crate) thinking_levels: Vec<String>,
     pub(crate) catalog_observed_at: Timestamp,
 }

@@ -10,7 +10,9 @@ use crate::model::{
 use crate::ports::PoolPlanSource;
 
 const ENTRANTS_PER_TIER: usize = 3;
+const MAXIMUM_THINKING_LEVELS: usize = 3;
 const PROMOTION_COUNT: u8 = 2;
+const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// Loads frozen model-pool plans from one repository root.
 ///
@@ -136,9 +138,9 @@ struct RawEntrants {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-// TODO(AGNT-0032.T103): Load and validate model-specific thinking levels plus start.
 struct RawEntrant {
     model: RawModelIdentity,
+    thinking_levels: Vec<String>,
     catalog_observed_at: String,
 }
 
@@ -225,8 +227,10 @@ fn normalize(raw: RawPoolPlan) -> Result<PoolPlan, SkillEvalError> {
                     model.provider, model.model
                 )));
             }
+            let thinking_levels = normalize_thinking_levels(&model, entrant.thinking_levels)?;
             normalized.push(PoolEntrant {
                 model,
+                thinking_levels,
                 catalog_observed_at: Timestamp(entrant.catalog_observed_at),
             });
         }
@@ -266,8 +270,7 @@ fn normalize_model(tier: Tier, raw: RawModelIdentity) -> Result<ModelIdentity, S
             raw.provider, raw.model
         )));
     }
-    if !["off", "minimal", "low", "medium", "high", "xhigh", "max"].contains(&raw.thinking.as_str())
-    {
+    if !THINKING_LEVELS.contains(&raw.thinking.as_str()) {
         return Err(invalid(format!(
             "pool plan model {}/{} has invalid thinking value {:?}",
             raw.provider, raw.model, raw.thinking
@@ -279,6 +282,58 @@ fn normalize_model(tier: Tier, raw: RawModelIdentity) -> Result<ModelIdentity, S
         model: raw.model,
         thinking: raw.thinking,
     })
+}
+
+// TODO(AGNT-0032.T103): Validate and preserve one to three ordered model-specific levels.
+fn normalize_thinking_levels(
+    model: &ModelIdentity,
+    levels: Vec<String>,
+) -> Result<Vec<String>, SkillEvalError> {
+    if levels.is_empty() || levels.len() > MAXIMUM_THINKING_LEVELS {
+        return Err(invalid(format!(
+            "pool plan model {}/{} must declare one to {MAXIMUM_THINKING_LEVELS} thinking levels",
+            model.provider, model.model
+        )));
+    }
+
+    let mut previous_rank = None;
+    let mut start_count = 0;
+    for level in &levels {
+        let rank = THINKING_LEVELS
+            .iter()
+            .position(|supported| *supported == level.as_str())
+            .ok_or_else(|| {
+                invalid(format!(
+                    "pool plan model {}/{} has unsupported thinking level {level:?}",
+                    model.provider, model.model
+                ))
+            })?;
+        if let Some(previous_rank) = previous_rank {
+            if rank == previous_rank {
+                return Err(invalid(format!(
+                    "pool plan model {}/{} contains duplicate thinking level {level:?}",
+                    model.provider, model.model
+                )));
+            }
+            if rank < previous_rank {
+                return Err(invalid(format!(
+                    "pool plan model {}/{} thinking levels must be ordered cheapest to strongest",
+                    model.provider, model.model
+                )));
+            }
+        }
+        start_count += usize::from(level == &model.thinking);
+        previous_rank = Some(rank);
+    }
+
+    if start_count != 1 {
+        return Err(invalid(format!(
+            "pool plan model {}/{} starting thinking {:?} must appear exactly once",
+            model.provider, model.model, model.thinking
+        )));
+    }
+
+    Ok(levels)
 }
 
 fn normalize_policy(raw: RawPoolPolicy) -> Result<PoolPolicy, SkillEvalError> {

@@ -1,4 +1,3 @@
-// TODO(AGNT-0032.T88): Prove frozen exam persistence before exact child execution.
 #[macro_export]
 macro_rules! pool_start_tests {
     () => {
@@ -44,6 +43,18 @@ macro_rules! pool_start_tests {
 
                 assert_eq!(state.status, PoolRunStatus::Pending);
                 assert_eq!(state.selected_tiers, vec![Tier::T2, Tier::T5]);
+                assert_eq!(state.configuration.artifacts.len(), 1);
+                assert_eq!(state.configuration.artifacts[0].revision, "exam-revision");
+                assert_eq!(state.configuration.artifacts[0].root, PathBuf::from("exam"));
+                assert_eq!(state.configuration.artifacts[0].cases.len(), 2);
+                assert_eq!(
+                    state.configuration.artifacts[0]
+                        .cases
+                        .iter()
+                        .filter(|case| !case.is_holdout)
+                        .count(),
+                    1
+                );
                 assert_eq!(state.child_runs.len(), 12);
                 assert!(state
                     .child_runs
@@ -384,6 +395,7 @@ macro_rules! pool_start_tests {
                             (
                                 tier,
                                 (0..3)
+                                    // TODO(AGNT-0032.T103): Add neutral one-level thinking lists to start fixtures.
                                     .map(|index| PoolEntrant {
                                         model: pool_model(tier, index),
                                         catalog_observed_at: Timestamp(

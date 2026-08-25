@@ -1380,6 +1380,7 @@ fn test_pool_plan() -> crate::model::PoolPlan {
         entrants.insert(
             tier,
             (0..3)
+                // TODO(AGNT-0032.T103): Add the neutral one-level thinking list to CLI fixtures.
                 .map(|index| PoolEntrant {
                     model: ModelIdentity {
                         tier,

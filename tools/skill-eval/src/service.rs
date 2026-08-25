@@ -245,6 +245,7 @@ fn preallocate_pool_children(
                         "pool child entrant index is out of range".to_owned(),
                     ));
                 }
+                // TODO(AGNT-0032.T103): Add neutral thinking index zero before adaptive preallocation.
                 child_runs.push(PoolChildRun {
                     tier: *tier,
                     entrant_index,
@@ -1180,6 +1181,7 @@ fn persist_completed_pool_child_evidence(
     let pool_index = match state.pools.iter().position(|pool| pool.tier == child.tier) {
         Some(index) => index,
         None => {
+            // TODO(AGNT-0032.T103): Initialize empty thinking selections before adaptive integration.
             state.pools.push(crate::model::RankedPool {
                 tier: child.tier,
                 calibration: Vec::new(),
