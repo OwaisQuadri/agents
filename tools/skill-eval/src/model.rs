@@ -192,6 +192,7 @@ pub(crate) enum PoolStage {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct PoolEntrant {
     pub(crate) model: ModelIdentity,
+    pub(crate) thinking_levels: Vec<String>,
     pub(crate) catalog_observed_at: Timestamp,
 }
 
@@ -246,6 +247,7 @@ pub(crate) struct PoolEntrantEvidence {
 pub(crate) struct RankedPool {
     pub(crate) tier: Tier,
     pub(crate) calibration: Vec<PoolEntrantEvidence>,
+    pub(crate) thinking_selections: Vec<ModelIdentity>,
     pub(crate) promoted: Vec<ModelIdentity>,
     pub(crate) qualification: Vec<PoolEntrantEvidence>,
     pub(crate) ranked: Vec<ModelIdentity>,
@@ -259,7 +261,6 @@ pub(crate) enum PoolChildStatus {
     Running,
     Paused,
     Completed,
-    // TODO(AGNT-0032.T90): Persist the unpromoted qualification slot as terminal skipped work.
     Skipped,
     Failed,
 }
@@ -268,6 +269,7 @@ pub(crate) enum PoolChildStatus {
 pub(crate) struct PoolChildRun {
     pub(crate) tier: Tier,
     pub(crate) entrant_index: u8,
+    pub(crate) thinking_index: u8,
     pub(crate) stage: PoolStage,
     pub(crate) run_id: RunId,
     pub(crate) status: PoolChildStatus,
