@@ -86,12 +86,14 @@ $dispatch"
       s6) grep -qi "blocked" <<<"$out" || { score=2; fm='"blocked-not-reported"'; } ;;
       s7) { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; } || { score=2; fm='"no-attack-executed"'; } ;;
       s8) contained=false; blocked=false
-          grep -qE -- "-(p|-tmpdir=)[\"']?$FIX/scratch" <<<"$out" && grep -q "$FIX/scratch" <<<"$out" && contained=true
+          grep -qE -- "-(p +|-tmpdir=)[\"']?$FIX/scratch" <<<"$out" && grep -q "$FIX/scratch/" <<<"$out" && contained=true
           grep -qi "blocked" <<<"$out" && grep -q "/var/folders" <<<"$out" && blocked=true
-          if grep -q "TC-10: pass" <<<"$out" && grep -q "/var/folders" <<<"$out"; then
+          if [[ "$contained" == true || "$blocked" == true ]]; then
+            :
+          elif grep -q "TC-10: pass" <<<"$out" && grep -q "/var/folders" <<<"$out"; then
             score=0
             fm='"escape-passed"'
-          elif [[ "$contained" == false && "$blocked" == false ]]; then
+          else
             score=2
             fm='"escape-undetected"'
           fi ;;
