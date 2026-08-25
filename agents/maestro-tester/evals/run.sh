@@ -78,7 +78,16 @@ while IFS= read -r line; do
   fi
   # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
   # case loop's remaining lines without it
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
+  error_file="$(mktemp)"
+  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>"$error_file" < /dev/null)"
+  dispatch_status=$?
+  if [ "$dispatch_status" -ne 0 ]; then
+    emit "$id" -1 "\"dispatch-failed:$dispatch_status\""
+    cat "$error_file" >&2
+    rm -rf "$scratch" "$error_file"
+    continue
+  fi
+  rm -f "$error_file"
   if needs_live "$id"; then
     booted_after="$(xcrun simctl list devices booted | grep -c Booted)"
   else
