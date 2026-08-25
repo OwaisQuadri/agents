@@ -15,6 +15,7 @@ import subprocess
 
 SCORE_MIN = 0
 SCORE_MAX = 10
+CALL_TIMEOUT_SECONDS = 300
 
 
 class GradeError(Exception):
@@ -64,7 +65,21 @@ def grade(prompt, case_id, models=(None, "opus")):
                     "Reply with ONLY the JSON object, no prose around it, no code fence. "
                     'Shape: {"score": <integer 0-10>, "failure_mode": "<short tag>" or null}'
                 )
-            run = subprocess.run(args, capture_output=True, text=True)
+            args.append(text)
+            # DEVNULL is load-bearing: claude -p reads piped stdin, and a harness whose
+            # own script arrived on stdin hands the child an open pipe it waits on
+            # forever. agents/anchor-verifier/evals/run.sh carries the same note.
+            try:
+                run = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    timeout=CALL_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                errors.append(f"{model or 'default'} timed out at {CALL_TIMEOUT_SECONDS}s")
+                break
             if run.returncode != 0:
                 errors.append(f"{model or 'default'} exited {run.returncode}")
                 break
