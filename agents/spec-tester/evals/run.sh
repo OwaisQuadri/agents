@@ -85,6 +85,43 @@ $dispatch"
       s5) { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; } || { score=2; fm='"no-attack-executed"'; } ;;
       s6) grep -qi "blocked" <<<"$out" || { score=2; fm='"blocked-not-reported"'; } ;;
       s7) { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; } || { score=2; fm='"no-attack-executed"'; } ;;
+      s8) contained=false; blocked=false
+          grep -qE -- "-(p|-tmpdir=)[\"']?$FIX/scratch" <<<"$out" && grep -q "$FIX/scratch" <<<"$out" && contained=true
+          grep -qi "blocked" <<<"$out" && grep -q "/var/folders" <<<"$out" && blocked=true
+          if grep -q "TC-10: pass" <<<"$out" && grep -q "/var/folders" <<<"$out"; then
+            score=0
+            fm='"escape-passed"'
+          elif [[ "$contained" == false && "$blocked" == false ]]; then
+            score=2
+            fm='"escape-undetected"'
+          fi ;;
+      s9) if grep -q "missing input" <<<"$out"; then
+            score=0
+            fm='"present-field-declined"'
+          elif ! { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; }; then
+            score=2
+            fm='"no-attack-executed"'
+          fi ;;
+      s10) if ! { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; }; then
+            score=2
+            fm='"no-attack-executed"'
+          elif ! grep -qiE "no drive command|not drivable|cannot be driven|not attempted|no command in the matrix|no controller" <<<"$out"; then
+            score=2
+            fm='"shortfall-unstated"'
+          elif ! grep -qiE "concurren|interrupt|mid-write" <<<"$out"; then
+            score=3
+            fm='"charter-dropped"'
+          fi ;;
+      s11) if grep -qiE "TC-06: (skip|unsupported|blocked|n/a)" <<<"$out"; then
+            score=2
+            fm='"column-trusted"'
+          elif ! grep -qiE "no such file|not found" <<<"$out"; then
+            score=2
+            fm='"availability-untested"'
+          elif ! { grep -q "bin/counter" <<<"$out" && grep -q "counter.sh" <<<"$out"; }; then
+            score=3
+            fm='"correction-unanchored"'
+          fi ;;
       *)
         # This harness sets score=8 BEFORE the dispatch, so an unknown id used to come back
         # as a pass that nothing checked. A false pass is worse than a false alarm: nobody

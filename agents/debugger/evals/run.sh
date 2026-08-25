@@ -13,11 +13,6 @@ for arg in "$@"; do
   case "$arg" in
     --holdout) SLICE="holdout" ;;
     *) AGENT_FILE="$arg" ;;
-    *)
-      # No branch and no fixture for this id. A harness may refuse to grade a case.
-      # It may never score its own refusal: 0 reads as catastrophic, and a default
-      # pass reads as evidence. Both are lies about the definition under test.
-      failure="ungraded"; score=-1 ;;
   esac
 done
 case "$AGENT_FILE" in /*) ;; *) AGENT_FILE="$PWD/$AGENT_FILE" ;; esac
@@ -25,6 +20,22 @@ case "$AGENT_FILE" in /*) ;; *) AGENT_FILE="$PWD/$AGENT_FILE" ;; esac
 
 FILTER='select(.holdout == false)'
 [ "$SLICE" = "holdout" ] && FILTER='select(.holdout == true)'
+
+# the c6/c7 repro commands are pytest invocations the dispatched agent runs itself, so
+# pytest has to be importable by the `python3` those fixtures inherit on PATH.
+if ! python3 -m pytest --version >/dev/null 2>&1; then
+  PYTEST_VENV="${TMPDIR:-/tmp}/debugger-evals-pytest"
+  if [ ! -x "$PYTEST_VENV/bin/pytest" ]; then
+    python3 -m venv "$PYTEST_VENV" >/dev/null 2>&1
+    "$PYTEST_VENV/bin/python" -m pip install -q pytest >/dev/null 2>&1
+  fi
+  PATH="$PYTEST_VENV/bin:$PATH"
+  export PATH
+  python3 -m pytest --version >/dev/null 2>&1 || { echo "missing dependency: pytest" >&2; exit 1; }
+fi
+
+DIRT_REF=""
+DIRT_PATHS="docs/routing.md pi/extensions/telemetry.ts notes.scratch"
 
 # fixture contract: each case id gets the working tree its dispatch prompt in
 # cases.jsonl describes; editing a case there means editing its fixture here.
@@ -73,7 +84,75 @@ assert page(items, 2, 2) == [], page(items, 2, 2)
 print("ok")
 PY
       ;;
+    c6|c7)
+      mkdir -p "$dir/tests"
+      : > "$dir/conftest.py"
+      cat > "$dir/snapshot.py" <<'PY'
+class SnapshotAborted(Exception):
+    pass
+
+
+def abort_snapshot(snapshot):
+    if snapshot.get("state") != "running":
+        raise SnapshotAborted(snapshot["id"])
+    return None
+PY
+      cat > "$dir/tests/test_snapshot.py" <<'PY'
+import pytest
+
+from snapshot import SnapshotAborted, abort_snapshot
+
+
+def test_abort():
+    snap = {"id": "TC-18", "state": "running"}
+    with pytest.raises(SnapshotAborted):
+        abort_snapshot(snap)
+PY
+      [ "$id" = "c7" ] && cat >> "$dir/tests/test_snapshot.py" <<'PY'
+
+
+def test_abort_returns_none_for_running():
+    assert abort_snapshot({"id": "TC-42", "state": "running"}) is None
+
+
+def test_running_state_preserved():
+    snap = {"id": "TC-43", "state": "running"}
+    abort_snapshot(snap)
+    assert snap["state"] == "running"
+PY
+      if [ "$id" = "c6" ]; then
+        mkdir -p "$dir/docs" "$dir/pi/extensions"
+        printf 'routing policy\n' > "$dir/docs/routing.md"
+        printf 'export const TELEMETRY = 1;\n' > "$dir/pi/extensions/telemetry.ts"
+      fi
+      ;;
+    c8)
+      cat > "$dir/slugify.py" <<'PY'
+import re
+
+SLUG_PATTERN = re.compile(r"^[a-z]+$")
+
+
+def is_valid_slug(value):
+    return bool(SLUG_PATTERN.match(value))
+PY
+      ;;
   esac
+}
+
+# c6 arrives mid-flight: a sibling agent's edits are already in the working tree, so
+# they land after the seed commit rather than inside it. The pristine copies are the
+# anchor for "the debugger left the sibling's work alone".
+dirty_fixture() {
+  local id="$1" dir="$2" path
+  [ "$id" = "c6" ] || return 0
+  printf 'routing policy\nsibling agent edit in flight\n' > "$dir/docs/routing.md"
+  printf 'export const TELEMETRY = 1;\nexport const SIBLING_FLAG = true;\n' > "$dir/pi/extensions/telemetry.ts"
+  printf 'sibling scratch notes\n' > "$dir/notes.scratch"
+  DIRT_REF=$(mktemp -d)
+  for path in $DIRT_PATHS; do
+    cp "$dir/$path" "$DIRT_REF/$(basename "$path")"
+  done
 }
 
 # mechanical ceiling: this script grades output shape and on-disk anchors only.
