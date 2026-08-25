@@ -27,9 +27,8 @@ fn run() -> Result<ExitCode, String> {
     match subcommand {
         "stamp" => {
             let baseline = capture::capture(&repo)?;
-            let json = serde_json::to_string_pretty(&baseline)
-                .map_err(|error| error.to_string())?
-                + "\n";
+            let json =
+                serde_json::to_string_pretty(&baseline).map_err(|error| error.to_string())? + "\n";
             match options.out {
                 Some(path) => std::fs::write(&path, json)
                     .map_err(|error| format!("{}: {error}", path.display()))?,
@@ -41,8 +40,8 @@ fn run() -> Result<ExitCode, String> {
             let path = options.stamp.ok_or("--stamp is required")?;
             let raw = std::fs::read_to_string(&path)
                 .map_err(|error| format!("{}: {error}", path.display()))?;
-            let stamp: capture::Baseline =
-                serde_json::from_str(&raw).map_err(|error| format!("{}: {error}", path.display()))?;
+            let stamp: capture::Baseline = serde_json::from_str(&raw)
+                .map_err(|error| format!("{}: {error}", path.display()))?;
             if stamp.schema_version != capture::SCHEMA_VERSION {
                 return Err(format!(
                     "stamp schema version {} is not {}",
