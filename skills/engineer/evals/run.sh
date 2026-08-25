@@ -12,7 +12,6 @@ skill="${1:-../SKILL.md}"
 python3 - "$skill" "$slice" <<'PY'
 import json
 import os
-import subprocess
 import sys
 
 skill_path, slice_name = sys.argv[1], sys.argv[2]

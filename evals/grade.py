@@ -85,6 +85,6 @@ def grade(prompt, case_id, models=(None, "opus")):
                 break
             try:
                 return _validate(_extract(run.stdout))
-            except (ValueError, json.JSONDecodeError) as err:
+            except ValueError as err:
                 errors.append(f"{model or 'default'} attempt {attempt}: {err}")
     raise GradeError(f"case {case_id}: " + "; ".join(errors))
