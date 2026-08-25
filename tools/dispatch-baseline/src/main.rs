@@ -1,6 +1,7 @@
 mod capture;
 mod delta;
 
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -38,7 +39,12 @@ fn run() -> Result<ExitCode, String> {
                             baseline.repo
                         ));
                     }
-                    std::fs::write(&path, json)
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&path)
+                        .map_err(|error| format!("{}: {error}", path.display()))?;
+                    file.write_all(json.as_bytes())
                         .map_err(|error| format!("{}: {error}", path.display()))?;
                 }
                 None => print!("{json}"),

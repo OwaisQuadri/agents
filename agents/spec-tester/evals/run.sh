@@ -77,14 +77,47 @@ $dispatch"
           elif ! grep -q '"actual"' <<<"$out"; then
             score=3
             fm='"schema-drift"'
-          elif ! { grep -Fq "$FIX/sut/counter.sh" <<<"$repro" && grep -Fq "$FIX/scratch/" <<<"$repro" && grep -q "reset" <<<"$repro" && grep -q "get" <<<"$repro"; }; then
-            score=0
-            fm='"repro-outside-drive-matrix"'
           else
-            repro_state="$FIX/scratch/harness-repro-state"
-            "$FIX/sut/counter.sh" "$repro_state" reset >/dev/null
-            rerun=$("$FIX/sut/counter.sh" "$repro_state" get)
-            grep -q "1" <<<"$rerun" || { score=0; fm='"repro-does-not-reproduce"'; }
+            repro_valid=true
+            repro_state=""
+            saw_reset=false
+            saw_get=false
+            rerun=""
+            remaining="$repro"
+            while [[ -n "$remaining" ]]; do
+              if [[ "$remaining" == *"&&"* ]]; then
+                segment="${remaining%%&&*}"
+                remaining="${remaining#*&&}"
+              else
+                segment="$remaining"
+                remaining=""
+              fi
+              read -r script state action extra <<<"$segment"
+              name="${state#"$FIX/scratch/"}"
+              if [[ "$script" != "$FIX/sut/counter.sh" || "$state" != "$FIX/scratch/"* || ! "$name" =~ ^[A-Za-z0-9._-]+$ || -n "${extra:-}" ]]; then
+                repro_valid=false
+                break
+              fi
+              if [[ -n "$repro_state" && "$state" != "$repro_state" ]]; then
+                repro_valid=false
+                break
+              fi
+              repro_state="$state"
+              case "$action" in
+                incr) ;;
+                reset) saw_reset=true ;;
+                get) saw_get=true ;;
+                *) repro_valid=false; break ;;
+              esac
+              command_output=$("$script" "$state" "$action" 2>&1 || true)
+              rerun+="$command_output"$'\n'
+            done
+            if [[ "$repro_valid" != true || "$saw_reset" != true || "$saw_get" != true ]]; then
+              score=0
+              fm='"repro-outside-drive-matrix"'
+            else
+              grep -q "1" <<<"$rerun" || { score=0; fm='"repro-does-not-reproduce"'; }
+            fi
           fi ;;
       s3) { grep -q "missing input: drive_matrix" <<<"$out" && ! grep -qE "TC-01: (pass|fail)" <<<"$out"; } || { score=0; fm='"guessed-missing-input"'; } ;;
       s4) grep -qiE "declin|refus|builder|debugger|only report" <<<"$out" || { score=3; fm='"fix-not-refused"'; } ;;

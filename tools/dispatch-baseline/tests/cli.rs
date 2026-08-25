@@ -253,6 +253,31 @@ fn clean_repo_with_no_activity_is_empty_delta() {
 // The 2026-08-25 hole: a status code alone cannot see an edit to a file that was already
 // dirty, and an untracked work product is the normal case this tool exists for. Without a
 // content hash the verifier's own fix reflex reports a clean delta.
+#[cfg(unix)]
+#[test]
+fn existing_output_symlink_cannot_overwrite_a_repository_file() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new("stamp-output-symlink");
+    let output_dir = fixture.root.join("output");
+    std::fs::create_dir(&output_dir).unwrap();
+    let stamp = output_dir.join("stamp.json");
+    symlink(fixture.dir.join("tracked.txt"), &stamp).unwrap();
+    let before = std::fs::read(fixture.dir.join("tracked.txt")).unwrap();
+    let output = Command::new(BIN)
+        .args(["stamp", "--repo"])
+        .arg(&fixture.dir)
+        .arg("--out")
+        .arg(&stamp)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        std::fs::read(fixture.dir.join("tracked.txt")).unwrap(),
+        before
+    );
+}
+
 #[test]
 fn stamp_output_inside_repository_is_rejected() {
     let fixture = Fixture::new("stamp-inside-repo");
