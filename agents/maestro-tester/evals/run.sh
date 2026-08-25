@@ -48,9 +48,12 @@ ungraded=0
 
 emit() {
   printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$1" "$2" "$3"
+  if [ "$2" -lt 0 ]; then
+    ungraded=$((ungraded + 1))
+    return
+  fi
   total=$((total + 1))
   sum=$((sum + $2))
-  [ "$2" -lt 0 ] && { ungraded=$((ungraded + 1)); return; }
   [ "$2" -eq 0 ] && catastrophic=$((catastrophic + 1))
 }
 
@@ -163,3 +166,7 @@ slice="non-holdout"
 [ "$WANT_HOLDOUT" = "true" ] && slice="holdout"
 printf 'slice=%s cases=%d ungraded=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
   "$slice" "$total" "$ungraded" "$mean" "$catastrophic" >&2
+
+if [ "$ungraded" -gt 0 ]; then
+  exit 2
+fi

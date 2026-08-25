@@ -1,8 +1,8 @@
 """One grader call, parsed against the shape it must return.
 
-Every artifact's evals/run.sh imports this. The alternative is 24 copies of the
-same 15 lines, which is the duplication that let mouthpiece's list cap say 3
-while its checker enforced 5 for weeks.
+Harnesses opt into this helper instead of copying the parsing logic. Engineer
+and mouthpiece currently import it; the remaining harnesses keep their own
+specialized graders until a parse failure gives a measured reason to migrate.
 
 The parse is the interesting part. A grader is a language model asked for JSON,
 and the old code took the span between the first and last brace and hoped. That
