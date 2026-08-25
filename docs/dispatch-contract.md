@@ -53,9 +53,27 @@ distinction.
 
 ## logging hygiene
 
-Build the `logs/usage.jsonl` line as a FILE WRITE. Never as a shell string that
-interpolates the excerpt. Strip backticks and newlines from `excerpt` before it is
-written.
+Build the `logs/usage.jsonl` line with `jq -cn --arg`, never with a shell string that
+interpolates the excerpt. jq escapes the value, so a backtick, a quote, a newline, or a
+`$(...)` inside the excerpt survives intact and the line still parses.
+
+Every line carries `prompt_version`: the short commit of the last change to the files the
+artifact LOADS.
+
+```sh
+git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'
+```
+
+The exclusions matter both ways. `evals/` is excluded because a new test case changes no
+behaviour, and a version that moved on test edits would discard log lines that are still
+valid. `TUNING.md` is excluded because it is written after a change, only sometimes, and it
+never loads into the body — commit ec7ca48 changed `skills/byline/SKILL.md` and wrote no
+byline TUNING entry, so a TUNING-watching stamp would have called that prompt unchanged.
+
+A Reflect pass drops every line whose `prompt_version` no longer describes the artifact it
+is about to tune. Without it a stale line and a fresh one look identical, which is the hole
+the 2026-08-24 sweep sat in: 88 engineer lines with no way to tell which predated the rules
+being judged.
 
 The fleet lost 19 log lines to this: 16 anchor-verifier lines truncated or blanked by
 backtick interpolation, and 3 debugger lines, two of which carry a literal unexpanded

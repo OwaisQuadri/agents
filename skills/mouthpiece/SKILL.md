@@ -128,8 +128,21 @@ runs read the mean and use the failure modes as feedback.
 
 ## logging
 
-At the end of a use, append one bounded JSON (JavaScript Object Notation) line to this
-skill's `logs/usage.jsonl`. It holds the relevant transcript excerpt only, under a 2KB cap.
-Timestamp it with `date +%Y-%m-%dT%H:%M:%S%z` in the machine's current local timezone with
-its offset, and never in UTC (Coordinated Universal Time). The logs get analyzed against
-the user's own day.
+At the end of a use, append ONE bounded JSON (JavaScript Object Notation) line to this
+skill's `logs/usage.jsonl`, in exactly this shape and with exactly these keys:
+
+```json
+{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"mouthpiece","prompt_version":"<short sha>","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+```
+
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
+- `ts` is the machine's current local timezone with offset
+  (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC (Coordinated Universal Time): the user
+  analyzes these against their own day.
+- The excerpt is the relevant transcript parts only — the trigger, the message that
+  shipped, any human correction. Never the full transcript; cap ~2KB per line.
+- The keys are not optional and not renameable. The old free-form instruction cost this
+  skill 99 lines with no `outcome`, 38 using `timestamp` instead of `ts`, and 33 more
+  inventing `context`, `reply_gist`, `task` or `response`.

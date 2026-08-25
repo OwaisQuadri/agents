@@ -135,10 +135,20 @@ line to `agents/spec-tester/logs/usage.jsonl` in the agents repo at
 `~/Documents/agents`, `mkdir -p` on the logs dir first:
 
 ```sh
-mkdir -p ~/Documents/agents/agents/spec-tester/logs
-printf '%s\n' "{\"ts\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"artifact\":\"spec-tester\",\"trigger\":\"<mode + case count or angle>\",\"excerpt\":\"<verdict counts + failure gist>\",\"outcome\":\"success|failure|partial\",\"notes\":\"<harness gaps, flakiness, surprises>\"}" \
-  >> ~/Documents/agents/agents/spec-tester/logs/usage.jsonl
+cd ~/Documents/agents && mkdir -p agents/spec-tester/logs && jq -cn \
+  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+  --arg pv "$(git log -1 --format=%h -- agents/spec-tester ':!*/evals' ':!*/TUNING.md')" \
+  --arg trigger '<mode + case count or angle>' \
+  --arg excerpt '<verdict counts + failure gist>' \
+  --arg outcome 'success|failure|partial' \
+  --arg notes '<harness gaps, flakiness, surprises>' \
+  '{ts:$ts,artifact:"spec-tester",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
+  >> agents/spec-tester/logs/usage.jsonl
 ```
+
+jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
+excerpt cannot break it. Never hand-build this line with printf: that is what cost
+the fleet 19 unreadable log lines.
 
 `ts` is the machine's current local timezone with offset, never UTC(Coordinated
 Universal Time). The excerpt is the relevant parts only, ~2KB cap. `outcome` grades

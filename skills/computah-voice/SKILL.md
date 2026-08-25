@@ -77,5 +77,9 @@ it with `date +%Y-%m-%dT%H:%M:%S%z` in the machine's current local timezone, and
 UTC (Coordinated Universal Time).
 
 ```json
-{"ts":"2026-08-04T20:50:12-0400","artifact":"computah-voice","trigger":"<what fired it>","excerpt":"<bounded>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"2026-08-04T20:50:12-0400","artifact":"computah-voice","trigger":"<what fired it>","excerpt":"<bounded>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
+
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.

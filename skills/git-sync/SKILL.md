@@ -64,8 +64,11 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
 At the end of a use, append ONE JSON line to this artifact's `logs/usage.jsonl`:
 
 ```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"git-sync","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"git-sync","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 - `ts` uses the machine's current local timezone with offset. Get it with `date +%Y-%m-%dT%H:%M:%S%z`. Never use UTC(Coordinated Universal Time).
 - The excerpt contains only the trigger, key outputs, and human corrections. Never include the full transcript. Keep each line under 2KB.

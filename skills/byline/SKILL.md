@@ -68,8 +68,11 @@ At the end of a use, append ONE JSON (JavaScript Object Notation) line to this s
 `logs/usage.jsonl`:
 
 ```json
-{"ts":"<local iso with offset>","artifact":"byline","trigger":"<what was edited>","excerpt":"<the flags ste-check raised + what was cut>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<local iso with offset>","artifact":"byline","trigger":"<what was edited>","excerpt":"<the flags ste-check raised + what was cut>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 `ts` comes from `date +%Y-%m-%dT%H:%M:%S%z` in local time with its offset, and never in
 UTC (Coordinated Universal Time). Cap the line at ~2KB.

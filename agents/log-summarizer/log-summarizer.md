@@ -112,9 +112,12 @@ Your tool grant cannot write files, so you do not append your own log line. END 
 thing in your output, ts omitted:
 
 ```log
-{"artifact":"log-summarizer","trigger":"<what fired it>","excerpt":"<log_path + the verdict, or the decline reason>","outcome":"success|failure|partial","notes":"<reads used, anything surprising>"}
+{"artifact":"log-summarizer","trigger":"<what fired it>","excerpt":"<log_path + the verdict, or the decline reason>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<reads used, anything surprising>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 The DISPATCHER stamps `ts` (machine's current local timezone with offset, via
 `date +%Y-%m-%dT%H:%M:%S%z`, never UTC(Coordinated Universal Time)) and appends the line
 to `agents/log-summarizer/logs/usage.jsonl` in the agents repo at `~/Documents/agents`,

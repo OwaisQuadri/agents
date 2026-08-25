@@ -120,8 +120,11 @@ The test for any gate added later, both arms required. ONE: does the action bind
 At the end of a work session under this skill, append ONE JSON line to this artifact's `logs/usage.jsonl`:
 
 ```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"engineer","trigger":"<entry point + ticket>","excerpt":"<phase span covered + gates passed + walk-backs>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"engineer","trigger":"<entry point + ticket>","excerpt":"<phase span covered + gates passed + walk-backs>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 - `ts` is the machine's current local timezone with offset (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user analyzes these against their own day.
 - The excerpt is the relevant transcript parts only: the trigger, the key outputs, any human correction. Never the full transcript; cap ~2KB per line.

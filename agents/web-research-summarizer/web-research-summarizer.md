@@ -117,9 +117,12 @@ findings, decline, or invalid-dispatch alike — with one fenced `log` block as 
 last thing in your output, ts omitted:
 
 ```log
-{"artifact":"web-research-summarizer","trigger":"<what fired it>","excerpt":"<objective + key findings, or the decline reason>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+{"artifact":"web-research-summarizer","trigger":"<what fired it>","excerpt":"<objective + key findings, or the decline reason>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
 ```
 
+- `prompt_version` is the short commit of the last change to the files this artifact
+  loads: `git log -1 --format=%h -- <artifact dir> ':!*/evals' ':!*/TUNING.md'`. A
+  Reflect pass drops lines written against a prompt that no longer exists.
 The DISPATCHER stamps `ts` (machine's current local timezone with offset, via
 `date +%Y-%m-%dT%H:%M:%S%z`, never UTC(Coordinated Universal Time)) and appends the
 line to `agents/web-research-summarizer/logs/usage.jsonl` in the agents repo at

@@ -117,10 +117,20 @@ END every run — result, decline, or invalid-dispatch alike — by appending ON
 agents repo at `~/Documents/agents`, `mkdir -p` on the logs dir first:
 
 ```sh
-mkdir -p ~/Documents/agents/agents/maestro-tester/logs
-printf '%s\n' "{\"ts\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"artifact\":\"maestro-tester\",\"trigger\":\"<the dispatched objective>\",\"excerpt\":\"<verdict + flow path + report path + evidence gist>\",\"outcome\":\"success|failure|partial\",\"notes\":\"<selector tradeoffs, flakiness, surprises>\"}" \
-  >> ~/Documents/agents/agents/maestro-tester/logs/usage.jsonl
+cd ~/Documents/agents && mkdir -p agents/maestro-tester/logs && jq -cn \
+  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
+  --arg pv "$(git log -1 --format=%h -- agents/maestro-tester ':!*/evals' ':!*/TUNING.md')" \
+  --arg trigger '<the dispatched objective>' \
+  --arg excerpt '<verdict + flow path + report path + evidence gist>' \
+  --arg outcome 'success|failure|partial' \
+  --arg notes '<selector tradeoffs, flakiness, surprises>' \
+  '{ts:$ts,artifact:"maestro-tester",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
+  >> agents/maestro-tester/logs/usage.jsonl
 ```
+
+jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
+excerpt cannot break it. Never hand-build this line with printf: that is what cost
+the fleet 19 unreadable log lines.
 
 `ts` is the machine's current local timezone with offset, never UTC(Coordinated
 Universal Time). The excerpt is the relevant parts only, ~2KB cap, never the full
