@@ -12,8 +12,7 @@ name = "pi-subagents"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
-skills = ["skills/pi-subagents"]
-source = { url = "https://github.com/nicobailon/pi-subagents.git", revision = "c20f49ef951ca523e09e24d1da8eb1598a1c7cec" }
+source = { url = "https://github.com/tintinweb/pi-subagents.git", revision = "3f9d35cd078d18a141eb5a6d8f4fc5010d756280" }
 installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
@@ -127,3 +126,11 @@ commands = []
 pi_extension = "pi/extensions/live-diff"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "donsetch"
+platforms = ["macos", "linux"]
+commands = ["target/release/donsetch"]
+pi_package = "npm"
+source = { url = "https://github.com/dondai44423/donsetch.git", revision = "8ee8e1a5325432ef74c7e7db38f3b8448a7d2d81" }
+installer = { command = "/bin/zsh", args = ["-lc", "cargo build --release && mkdir -p npm/binaries && cp target/release/donsetch npm/binaries/donsetch"], preview_args = ["-lc", "cargo --version"] }

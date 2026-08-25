@@ -95,7 +95,9 @@ The `herdr-state` extension gives Pi a read-only view into the running Herdr ses
 
 The managed upstream stack pins these immutable revisions:
 
-- `nicobailon/pi-subagents` at `27784eed57dd62021a7add4990ac2dada6690baa`.
+- `tintinweb/pi-subagents` at `3f9d35cd078d18a141eb5a6d8f4fc5010d756280`.
+
+`pi-subagents` provides a live subagent viewer and inline steering.
 - `backnotprop/plannotator` at `e1ce7dabe10474b3a653bef9ed5134b73e0b5336`.
 - `humanlayer/skills` at `3c2629142c5d437428269b1b722b08c0b87f574d`.
 - `mattpocock/skills` at `068b6e0c62393147daf03530149cdce209c93da8`.
@@ -261,7 +263,7 @@ The read-only window shows one file's diff with line numbers:
 j k         scroll a line
 d u         page down and up
 g G         jump to the top and the bottom
-] [         next and previous file, wrapping at both ends
+h l         previous and next file, wrapping at both ends
 enter       open this file in nvim
 q or esc    back to the list
 ```

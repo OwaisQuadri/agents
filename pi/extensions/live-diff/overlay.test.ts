@@ -1438,7 +1438,7 @@ test("W9 viewer: the key hint names scroll, page, file-switch and back", () => {
 	const hint = rowText(rows[rows.length - 1]).trim();
 	assert.match(hint, /scroll/);
 	assert.match(hint, /page/);
-	assert.match(hint, /file/);
+	assert.match(hint, /h l file/);
 	assert.match(hint, /back/);
 });
 

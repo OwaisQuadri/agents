@@ -216,6 +216,15 @@ function installFakeSetInterval(): {
 	};
 }
 
+function installTerminalColumns(columns: number): () => void {
+	const descriptor = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+	Object.defineProperty(process.stdout, "columns", { configurable: true, value: columns });
+	return () => {
+		if (descriptor) Object.defineProperty(process.stdout, "columns", descriptor);
+		else delete (process.stdout as { columns?: number }).columns;
+	};
+}
+
 async function captureUnhandled<T>(run: () => Promise<T>): Promise<{ result: T; rejections: unknown[] }> {
 	const rejections: unknown[] = [];
 	const listener = (reason: unknown) => {
@@ -271,6 +280,12 @@ function extractPercent(line: string): number {
 	const match = line.match(/(\d+)%/);
 	assert.ok(match);
 	return Number.parseInt(match[1] ?? "0", 10);
+}
+
+function extractBarWidth(line: string): number {
+	const match = line.match(/[█░│]+/);
+	assert.ok(match);
+	return match[0].length;
 }
 
 test("TC-01 render() no-ops silently on stale ctx", async () => {
@@ -395,7 +410,8 @@ test("TC-04 setInterval poll tick no-ops after context invalidation", async () =
 	assert.equal(rejections.length, 0);
 });
 
-test("TC-05 live ctx still renders usage bar unchanged", async () => {
+test("TC-05 Anthropic bar uses half the viewport width", async () => {
+	const restoreColumns = installTerminalColumns(100);
 	const api = createFakeExtensionAPI();
 	const context = createMockContext({ provider: "anthropic" });
 	context.setProviderAuth("anthropic", "sk-ant-oat-usage-token");
@@ -403,10 +419,10 @@ test("TC-05 live ctx still renders usage bar unchanged", async () => {
 	const fetchGate = new Promise<void>((resolve) => {
 		releaseFetch = () => resolve();
 	});
-	let called = false;
+	let isCalled = false;
 
 	const restoreFetch = installMockFetch(async () => {
-		called = true;
+		isCalled = true;
 		await fetchGate;
 		return jsonResponse({
 			five_hour: { utilization: 90, resets_at: toIsoOffset(3000) },
@@ -420,13 +436,46 @@ test("TC-05 live ctx still renders usage bar unchanged", async () => {
 	await waitForStatusCount(context.recording, 1);
 
 	restoreFetch();
+	restoreColumns();
 
-	assert.equal(called, true);
+	assert.equal(isCalled, true);
 	assert.equal(context.recording.statuses.length, 1);
 	const status = context.recording.statuses.at(-1);
 	assert.equal(status?.key, "statusline");
 	assert.equal(typeof status?.text, "string");
-	assert.notEqual(status?.text, "");
+	assert.equal(extractBarWidth(status?.text ?? ""), 50);
+});
+
+test("TC-06 Codex primary window renders below 90 percent at half the viewport width", async () => {
+	const restoreColumns = installTerminalColumns(100);
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "openai-codex" });
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-openai-1"));
+	const restoreFetch = installMockFetch(async () => {
+		const now = Math.floor(Date.now() / 1000);
+		return jsonResponse({
+			rate_limit: {
+				primary_window: {
+					used_percent: 30,
+					limit_window_seconds: 18000,
+					reset_at: now + 1800,
+				},
+			},
+		});
+	});
+
+	statusline(api.api);
+	await invoke(api.handler("model_select"), context.ctx);
+	await waitForStatusCount(context.recording, 1);
+
+	restoreFetch();
+	restoreColumns();
+
+	const status = context.recording.statuses.at(-1);
+	assert.equal(status?.key, "statusline");
+	assert.match(status?.text ?? "", /^5h /);
+	assert.equal(extractPercent(status?.text ?? ""), 30);
+	assert.equal(extractBarWidth(status?.text ?? ""), 50);
 });
 
 test("TC-07 provider switch does not render stale session A usage", async () => {
@@ -486,4 +535,31 @@ test("TC-07 provider switch does not render stale session A usage", async () => 
 	assert.equal(typeof openaiText, "string");
 	assert.notEqual(openaiText, anthropicText);
 	assert.notEqual(extractPercent(openaiText), extractPercent(anthropicText));
+});
+
+test("TC-08 terminal resize updates the bar to half the new viewport width", async () => {
+	const restoreColumns = installTerminalColumns(80);
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-resize-token");
+	const restoreFetch = installMockFetch(async () =>
+		jsonResponse({
+			five_hour: { utilization: 95, resets_at: toIsoOffset(600) },
+			seven_day: { utilization: 20, resets_at: toIsoOffset(86400) },
+		}),
+	);
+
+	statusline(api.api);
+	await invoke(api.handler("session_start"), context.ctx);
+	await waitForStatusCount(context.recording, 1);
+	assert.equal(extractBarWidth(context.recording.statuses.at(-1)?.text ?? ""), 40);
+
+	Object.defineProperty(process.stdout, "columns", { configurable: true, value: 120 });
+	process.stdout.emit("resize");
+	await waitForStatusCount(context.recording, 2);
+	assert.equal(extractBarWidth(context.recording.statuses.at(-1)?.text ?? ""), 60);
+
+	await invoke(api.handler("session_shutdown"), context.ctx);
+	restoreFetch();
+	restoreColumns();
 });
