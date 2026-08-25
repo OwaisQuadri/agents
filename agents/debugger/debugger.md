@@ -127,7 +127,7 @@ until the first log:
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git log -1 --format=%h -- <artifact dir> docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
   Reflect pass drops lines written against a prompt that no longer exists.
 - `ts` is the machine's current local timezone with offset
   (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user

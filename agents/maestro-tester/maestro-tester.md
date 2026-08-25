@@ -123,7 +123,7 @@ agents repo at `~/Documents/agents`, `mkdir -p` on the logs dir first:
 ```sh
 cd ~/Documents/agents && mkdir -p agents/maestro-tester/logs && jq -cn \
   --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-  --arg pv "$(git log -1 --format=%h -- agents/maestro-tester docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md')" \
+  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- agents/maestro-tester docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md')" \
   --arg trigger '<the dispatched objective>' \
   --arg excerpt '<verdict + flow path + report path + evidence gist>' \
   --arg outcome 'success|failure|partial' \

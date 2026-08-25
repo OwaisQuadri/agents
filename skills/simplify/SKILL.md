@@ -83,7 +83,7 @@ At the end of a use, append one JSON(JavaScript Object Notation) line to this ar
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
   Reflect pass drops lines written against a prompt that no longer exists.
 Use the machine's current local timezone with its offset. Get it with `date +%Y-%m-%dT%H:%M:%S%z`.
 Never use UTC(Coordinated Universal Time). Keep the excerpt under 2KB and never include the full transcript.
