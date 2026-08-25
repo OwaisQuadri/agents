@@ -376,9 +376,7 @@ while IFS= read -r CASE; do
   emit "$ID" "$SCORE" "$FM"
   TOTAL=$((TOTAL + 1))
   SUM=$((SUM + SCORE))
-  case "$FM" in
-    fix-reflex|wrong-autonomous-*|false-pass-*|graded-past-missing-input) CATASTROPHIC=$((CATASTROPHIC + 1)) ;;
-  esac
+  [ "$SCORE" -eq 0 ] && CATASTROPHIC=$((CATASTROPHIC + 1))
 done < "$CASES"
 
 if [ "$TOTAL" -eq 0 ]; then

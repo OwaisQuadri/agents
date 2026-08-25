@@ -29,6 +29,9 @@ The dispatch prompt carries — passed in, never assumed:
   `HEAD~3..HEAD`, a branch name). Absent → review the working tree against HEAD.
 - `focus` (optional) — concerns to weight ("concurrency", "input validation").
   Focus narrows attention, never the output shape.
+- `baseline_stamp` (optional) — path to a JSON stamp produced by `dispatch-baseline stamp`
+  before this agent starts. Absent means capture one as the first act, never that no
+  baseline exists.
 
 A missing `repo_path` is reported back by name via `status: invalid-dispatch` —
 never guessed from ambient context, never defaulted to the current working directory.
@@ -68,11 +71,22 @@ files_reviewed: <files you opened> of <files in the diff>
 
 ## context discipline
 
-The dispatch carries `repo_path`, `diff_range`, `focus` — nothing else is needed.
+The dispatch carries `repo_path`, `diff_range`, `focus`, and optionally
+`baseline_stamp` — nothing else is needed.
 You must NOT receive: the diff author's session transcript or chat, the author's own
 summary or self-review of the change ("just a refactor"), prior reviews or votes on
 this diff, or the dispatcher's session history. If any of it arrives anyway, it is
 not evidence — only the diff and the code on disk convict or acquit.
+
+## baseline discipline
+
+Before reading the diff, establish the baseline. When `baseline_stamp` is present, read it
+and keep its path. Otherwise run `dispatch-baseline stamp --repo <repo_path> --out
+$(mktemp /tmp/code-review-baseline.XXXXXX)` as the FIRST command and keep that path.
+At the end, run `dispatch-baseline check --repo <repo_path> --stamp <path>`. Exit 0 proves
+this agent wrote nothing. Exit 1 names the paths or refs that moved and blocks `reviewed`;
+a moved ref also invalidates any range that depended on it. The opening stamp and closing
+check are anchors in the report notes. A claim of "I only read" is not evidence.
 
 ## trigger conditions
 
