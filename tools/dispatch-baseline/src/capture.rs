@@ -162,6 +162,9 @@ fn refs(repo: &Path) -> Result<BTreeMap<String, String>, String> {
         }
     }
     if let Some(default_branch) = default_branch(repo) {
+        if let Ok(tip) = git(repo, &["rev-parse", &default_branch]) {
+            refs.insert(default_branch.clone(), tip);
+        }
         if let Ok(base) = git(repo, &["merge-base", "HEAD", &default_branch]) {
             refs.insert(format!("merge-base:{default_branch}"), base);
         }

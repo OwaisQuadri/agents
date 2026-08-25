@@ -218,6 +218,30 @@ fn non_utf8_path_rejects_the_stamp() {
 }
 
 #[test]
+fn default_branch_move_is_reported_while_feature_head_stays_fixed() {
+    let fixture = Fixture::new("default-branch-move");
+    fixture.git(&["checkout", "-b", "feature"]);
+    let stamp = fixture.stamp();
+    let old_main = fixture.git(&["rev-parse", "main"]);
+    fixture.git(&["checkout", "main"]);
+    fixture.write("tracked.txt", "main advance\n");
+    fixture.git(&["add", "."]);
+    fixture.git(&["commit", "-m", "advance main"]);
+    let new_main = fixture.git(&["rev-parse", "main"]);
+    fixture.git(&["checkout", "feature"]);
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "moving main must be a ref delta: {out}");
+    assert!(
+        out.contains("refs/heads/main"),
+        "the moved ref must be named: {out}"
+    );
+    assert!(
+        out.contains(&old_main) && out.contains(&new_main),
+        "both tips are required: {out}"
+    );
+}
+
+#[test]
 fn clean_repo_with_no_activity_is_empty_delta() {
     let fixture = Fixture::new("clean");
     let stamp = fixture.stamp();
