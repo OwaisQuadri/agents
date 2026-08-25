@@ -384,6 +384,22 @@ fn staged_index_change_with_same_worktree_bytes_is_delta() {
 }
 
 #[test]
+fn generated_ignored_artifact_is_not_an_agent_delta() {
+    let fixture = Fixture::new("ignored-generated-artifact");
+    fixture.write(".gitignore", "target/\n");
+    fixture.git(&["add", ".gitignore"]);
+    fixture.git(&["commit", "-m", "ignore build output"]);
+    let stamp = fixture.stamp();
+    std::fs::create_dir(fixture.dir.join("target")).unwrap();
+    fixture.write("target/cache", "generated\n");
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(
+        code, 0,
+        "generated build output must not be an agent delta: {out}"
+    );
+}
+
+#[test]
 fn edit_to_an_existing_ignored_work_product_is_delta() {
     let fixture = Fixture::new("ignored-work-product");
     fixture.write(".gitignore", "scratch/\n");

@@ -110,7 +110,20 @@ fn ignored_files(repo: &Path) -> Result<Vec<String>, String> {
     raw.split(|byte| *byte == 0)
         .filter(|field| !field.is_empty())
         .map(|path| git_path(path).map(str::to_string))
+        .filter(|path| {
+            path.as_ref()
+                .map_or(true, |path| !is_generated_ignored_path(path))
+        })
         .collect()
+}
+
+fn is_generated_ignored_path(path: &str) -> bool {
+    path.split('/').any(|component| {
+        matches!(
+            component,
+            "target" | "node_modules" | "__pycache__" | ".pytest_cache"
+        ) || component.ends_with(".pyc")
+    })
 }
 
 fn index_hash(repo: &Path, path: &str) -> String {
