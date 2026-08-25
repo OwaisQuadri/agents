@@ -243,6 +243,13 @@ pub(crate) struct PoolEntrantEvidence {
     pub(crate) total_usage: TrialUsage,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct ThinkingDecision {
+    pub(crate) selected: Option<ModelIdentity>,
+    pub(crate) next_thinking_index: Option<u8>,
+    pub(crate) is_complete: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct RankedPool {
     pub(crate) tier: Tier,
