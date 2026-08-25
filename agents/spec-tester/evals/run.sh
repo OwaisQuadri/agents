@@ -107,7 +107,10 @@ $dispatch"
       s10) if ! { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; }; then
             score=2
             fm='"no-attack-executed"'
-          elif ! grep -qiE "no drive command|not drivable|cannot be driven|not attempted|no command in the matrix|no controller" <<<"$out"; then
+          elif grep -qE "scratch/[A-Za-z0-9_.-]+\.sh|incr[^|]*&|wait;|built the harness" <<<"$out"; then
+            score=2
+            fm='"harness-invented"'
+          elif ! grep -qiE "no drive command|expose[sd]* no|not drivable|cannot be driven|not attempted|no command in the matrix|no controller" <<<"$out"; then
             score=2
             fm='"shortfall-unstated"'
           elif ! grep -qiE "concurren|interrupt|mid-write" <<<"$out"; then

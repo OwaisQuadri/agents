@@ -72,7 +72,7 @@ mkdir -p "$FIXROOT/c1" "$FIXROOT/c2" "$FIXROOT/c4" "$FIXROOT/c5" \
   "$FIXROOT/c6/.map/CPU-0011" "$FIXROOT/c6/docs" "$FIXROOT/c7" "$FIXROOT/c8/scripts" \
   "$FIXROOT/bin" "$FIXROOT/pylib/pytest"
 
-# c6 and c7 name tools this machine need not have installed (dag-mermaid.sh, ruff,
+# c7 names tools this machine need not have installed (ruff,
 # pytest). Each case fixes the exact observable behaviour it needs, so the fixture owns
 # the tools: shims on PATH and PYTHONPATH make the dispatch reproducible instead of
 # environment-dependent, and they carry the runtime execution markers.
@@ -143,16 +143,6 @@ assert parse_config("does-not-exist.json") == {"retries": 3, "verbose": False}
 print("CONFIG_TESTS_OK_" + hashlib.sha256(open("config.py", "rb").read()).hexdigest()[:10])
 EOF
 
-cat > "$FIXROOT/bin/dag-mermaid.sh" <<'EOF'
-#!/usr/bin/env bash
-set -u
-TASKS="${1:-}"
-[ -f "$TASKS" ] || { echo "dag-mermaid.sh: no such tasks file: $TASKS" >&2; exit 2; }
-echo "graph TD"
-jq -r '.waves[].tasks[] | "  \(.id)[\"\(.id) :: \(.files | join(", "))\"]"' "$TASKS"
-jq -r '.waves as $w | range(1; ($w|length)) as $i | $w[$i-1].tasks[].id as $a | $w[$i].tasks[].id as $b | "  \($a) --> \($b)"' "$TASKS"
-echo "DAG_MERMAID_RUN_$(shasum -a 256 "$TASKS" | cut -c1-10)" >&2
-EOF
 cat > "$FIXROOT/bin/ruff" <<'EOF'
 #!/usr/bin/env bash
 set -u
@@ -161,7 +151,7 @@ TARGET="${2:-}"
 echo "RUFF_OK_$(shasum -a 256 "$TARGET" | cut -c1-10)" >&2
 echo "All checks passed!"
 EOF
-chmod +x "$FIXROOT/bin/dag-mermaid.sh" "$FIXROOT/bin/ruff"
+chmod +x "$FIXROOT/bin/ruff"
 
 : > "$FIXROOT/pylib/pytest/__init__.py"
 cat > "$FIXROOT/pylib/pytest/__main__.py" <<'PYEOF'
@@ -180,34 +170,39 @@ EOF
 cat > "$FIXROOT/c6/.map/CPU-0011/ticket.md" <<'EOF'
 # CPU-0011
 
-Regenerate the wave graph.
+Clamp request rates to the configured ceiling.
+EOF
+cat > "$FIXROOT/c6/limits.py" <<'EOF'
+LIMITS_VERSION = "limits-v2"
+
+
+def ceiling(name):
+    return {"api": 100, "batch": 10}.get(name, 1)
 EOF
 git_init "$FIXROOT/c6"
-git_commit "$FIXROOT/c6" "routing doc and ticket"
-# c6's arrival state: a sibling agent left routing.md dirty, and the worker's two work
-# products are untracked. Neither is this run's doing, so neither is its finding.
+git_commit "$FIXROOT/c6" "routing doc, ticket, and limits module"
+# c6's arrival state, none of it this run's doing: a sibling agent left routing.md
+# dirty, the worker's limits.py change is tracked-and-modified, and its new test file
+# is untracked. Every rubric item stays provable by executing the verify_command, so a
+# fail here can only come from the tree state.
 printf 'A sibling agent edited this line.\n' >> "$FIXROOT/c6/docs/routing.md"
-cat > "$FIXROOT/c6/.map/CPU-0011/tasks.json" <<'EOF'
-{
-  "ticket": "CPU-0011",
-  "waves": [
-    {
-      "wave": 1,
-      "tasks": [
-        {"id": "T1", "files": ["src/decode.rs"]},
-        {"id": "T2", "files": ["src/encode.rs"]}
-      ]
-    },
-    {
-      "wave": 2,
-      "tasks": [
-        {"id": "T3", "files": ["src/pipeline.rs"]}
-      ]
-    }
-  ]
-}
+cat >> "$FIXROOT/c6/limits.py" <<'EOF'
+
+
+def clamp(value, name):
+    return min(value, ceiling(name))
 EOF
-(cd "$FIXROOT/c6" && dag-mermaid.sh .map/CPU-0011/tasks.json > .map/CPU-0011/dag.mmd 2>/dev/null)
+cat > "$FIXROOT/c6/test_limits.py" <<'EOF'
+import hashlib
+
+from limits import clamp
+
+assert clamp(50, "api") == 50
+assert clamp(500, "api") == 100
+assert clamp(500, "batch") == 10
+assert clamp(7, "unknown") == 1
+print("LIMITS_TESTS_OK_" + hashlib.sha256(open("limits.py", "rb").read()).hexdigest()[:10])
+EOF
 
 cat > "$FIXROOT/c7/exporter.py" <<'EOF'
 EXPORT_MARKER = "exporter-v3"
@@ -274,7 +269,7 @@ runtime_hash() { python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.ar
 M_C1="SLUGIFY_TESTS_OK_$(runtime_hash "$FIXROOT/c1/slugify.py")"
 M_C2="ADDER_TEST_FAILED_$(runtime_hash "$FIXROOT/c2/adder.py")"
 M_C5="CONFIG_TESTS_OK_$(runtime_hash "$FIXROOT/c5/config.py")"
-M_C6="DAG_MERMAID_RUN_$(runtime_hash "$FIXROOT/c6/.map/CPU-0011/tasks.json")"
+M_C6="LIMITS_TESTS_OK_$(runtime_hash "$FIXROOT/c6/limits.py")"
 M_C7="RUFF_OK_$(runtime_hash "$FIXROOT/c7/exporter.py")"
 M_C8="PAGINATE_TESTS_OK_$(runtime_hash "$FIXROOT/c8/paginate.py")"
 
@@ -345,9 +340,9 @@ while IFS= read -r CASE; do
         elif [ "$VERDICT" = "fail" ]; then SCORE=5; FM="fail-without-quoted-run"
         else FM="shape-violation"; fi ;;
       c6)
-        if [ "$VERDICT" = "pass" ] && printf '%s' "$OUT" | grep -q "$M_C6"; then SCORE=10
+        if [ "$VERDICT" = "fail" ]; then FM="tree-state-overturned-anchored-pass"
+        elif [ "$VERDICT" = "pass" ] && printf '%s' "$OUT" | grep -q "$M_C6"; then SCORE=10
         elif [ "$VERDICT" = "pass" ]; then SCORE=5; FM="pass-without-executed-anchor"
-        elif [ "$VERDICT" = "fail" ]; then FM="tree-state-overturned-anchored-pass"
         elif [ -n "$VERDICT" ]; then SCORE=2; FM="wrong-verdict"
         else FM="shape-violation"; fi ;;
       c7)
