@@ -266,6 +266,35 @@ fn edit_inside_an_already_untracked_directory_is_delta() {
 
 #[cfg(unix)]
 #[test]
+fn executable_bit_change_on_an_already_dirty_file_is_delta() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = Fixture::new("executable-bit");
+    fixture.write("run.sh", "#!/bin/sh\necho one\n");
+    let mut permissions = std::fs::metadata(fixture.dir.join("run.sh"))
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o644);
+    std::fs::set_permissions(fixture.dir.join("run.sh"), permissions).unwrap();
+    fixture.git(&["add", "."]);
+    fixture.git(&["commit", "-m", "script"]);
+    fixture.write("run.sh", "#!/bin/sh\necho two\n");
+    let stamp = fixture.stamp();
+    let mut permissions = std::fs::metadata(fixture.dir.join("run.sh"))
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(fixture.dir.join("run.sh"), permissions).unwrap();
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "an executable-bit change must be a delta: {out}");
+    assert!(
+        out.contains("run.sh"),
+        "the delta must name the file: {out}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn dirty_symlink_target_change_is_delta_even_when_target_contents_match() {
     use std::os::unix::fs::symlink;
 

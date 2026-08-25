@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
@@ -85,14 +87,14 @@ fn content_hash(repo: &Path, path: &str) -> String {
     let full = repo.join(path);
     let content = match std::fs::symlink_metadata(&full) {
         Ok(metadata) if metadata.file_type().is_symlink() => std::fs::read_link(&full)
-            .map(|target| (b'L', target.as_os_str().as_encoded_bytes().to_vec())),
-        Ok(_) => std::fs::read(&full).map(|bytes| (b'F', bytes)),
+            .map(|target| (b'L', 0, target.as_os_str().as_encoded_bytes().to_vec())),
+        Ok(metadata) => std::fs::read(&full).map(|bytes| (b'F', file_mode(&metadata), bytes)),
         Err(error) => return format!("absent:{error}"),
     };
     match content {
-        Ok((kind, bytes)) => {
+        Ok((kind, mode, bytes)) => {
             let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-            for byte in std::iter::once(kind).chain(bytes) {
+            for byte in std::iter::once(kind).chain(mode.to_le_bytes()).chain(bytes) {
                 hash ^= u64::from(byte);
                 hash = hash.wrapping_mul(0x1000_0000_01b3);
             }
@@ -100,6 +102,16 @@ fn content_hash(repo: &Path, path: &str) -> String {
         }
         Err(error) => format!("unreadable:{error}"),
     }
+}
+
+#[cfg(unix)]
+fn file_mode(metadata: &std::fs::Metadata) -> u32 {
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn file_mode(metadata: &std::fs::Metadata) -> u32 {
+    u32::from(metadata.permissions().readonly())
 }
 
 fn refs(repo: &Path) -> Result<BTreeMap<String, String>, String> {
