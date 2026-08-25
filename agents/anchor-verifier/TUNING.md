@@ -37,3 +37,26 @@ Also recorded, and NOT caused by these mutations: holdout case c5 scores 0
 `false-pass-unverifiable-claim` on BOTH definitions. The agent writes its own 50-thread
 stress test to anchor a rubric item the case calls unverifiable. Pre-existing, in the
 artifact's own catastrophic list, and owed its own ticket.
+
+## 2026-08-25 — final decision: reverted after the rebuilt case still tied
+
+A fenced author rebuilt c6 from the 21 production failures, not from either definition. The
+new fixture contains a tracked-and-modified work product, an untracked test, and unrelated
+sibling dirt. Every dispatched rubric item is fully provable by an executed command and a
+file read. A deliberately defective stub that applies an empty-tree safeguard scores 0, so
+the case is capable of detecting the named failure.
+
+The actual result still tied:
+
+    incumbent (pre-change)  c6 10  c7 4   mean 9.00 over 6 cases
+    candidate (mutated)     c6 10  c7 4   mean 9.00 over 6 cases
+
+The unchanged definition would not reproduce the 21 production failures even in a fixture
+built to elicit them. Therefore the definition text was not sufficient cause. The open
+question moves upstream: inspect the live dispatch briefs from those 21 runs for an explicit
+cleanliness rubric or other condition absent from the fixture.
+
+DECISION: REVERT both definition mutations. This follows the recorded status above ("revert
+both mutations if [the replacement c6] still shows nothing") and the GEPA rule that ties go
+to the incumbent. The fixtures and harness fixes stay: they are real test infrastructure,
+and c6 proved it can score a guard-applying stub 0.

@@ -74,12 +74,6 @@ exceptions:
   checks start) → FAIL with the error quoted as the anchor, plus a note naming the
   suspected environment problem. Never downgrade to eyeballing files and calling it a
   pass.
-- verify_command ABORTS PARTWAY — a compound command under `set -e`, one stage of a
-  chain failing — → the items that stage was to demonstrate grade fail with the error
-  quoted. Items that a file read or a separately executed sub-command can anchor on
-  their own are graded on those anchors, and notes name every check the abort skipped.
-  UNREACHED is not UNVERIFIABLE. Grading a whole rubric on the abort point reports the
-  command's shape rather than the worker's work.
 - a rubric item that no command output or file read can demonstrate → grade: fail,
   anchor stating that nothing executed demonstrates it. Unverifiable is never pass.
 
@@ -110,11 +104,7 @@ The dispatcher checks, without redoing the work:
   output.
 - every anchor is either a command run this session with output quoted, or a
   file:line that exists on disk with the line quoted.
-- files_modified reads 0, measured as a DELTA from the baseline stamp
-  (docs/dispatch-contract.md): `git status --porcelain` over work_product_paths plus
-  content hashes, captured before verify_command and compared after. A work product that
-  arrived dirty or untracked is the normal received state, it goes in notes, and it never
-  fails this run on its own.
+- files_modified reads 0 and `git status` over work_product_paths agrees.
 
 ## failure-mode watch-list
 
@@ -124,8 +114,8 @@ The dispatcher checks, without redoing the work:
   14/14 green"). Check: anchors containing "should", "reportedly", "per the worker",
   or any unexecuted claim score zero and the run is regraded.
 - fix reflex: any file modified — even a "harmless" formatting touch-up. Check:
-  files_modified must read 0, meaning the closing snapshot equals the opening one over
-  work_product_paths; one edit is an automatic failed run.
+  files_modified must read 0 and `git status -s` over work_product_paths must be
+  empty; one edit is an automatic failed run.
 - scope grab: grading criteria the dispatch never named, or a verdict resting on
   reads far outside work_product_paths. Check: extra observations live in notes only;
   a grade anchored outside scope is suspect and gets spot-audited.
