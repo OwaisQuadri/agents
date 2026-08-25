@@ -182,9 +182,12 @@ construction. Aggregation across votes is a separate later pass; no judge ever s
 
 Run per artifact, on demand or once logs/votes accumulate:
 
-1. **Reflect**: read `logs/usage.jsonl` + `votes/votes.jsonl`, AND the artifact's own
-   `TUNING.md` if it has one, whose open list is the standing input. Build a failure histogram — which
-   criteria fail most, which complaints repeat — and record it in the usage line with the vote
+1. **Reflect**: compute the artifact's current `prompt_version` with the command in its
+   logging section. Read only lines in `logs/usage.jsonl` whose `prompt_version` equals that
+   value; a missing or different value is stale evidence, counted and dropped. Then read the
+   surviving lines + `votes/votes.jsonl`, AND the artifact's own `TUNING.md` if it has one,
+   whose open list is the standing input. Build a failure histogram — which criteria fail
+   most, which complaints repeat — and record it in the usage line with the vote
    indices it came from, so the next pass can recompute it from `votes.jsonl` instead of
    trusting this one. A blind judge cannot open `votes/`, so an asserted count is unverifiable
    by the only fresh reader the pass gets. An open list nothing re-reads is a dead letter, which
