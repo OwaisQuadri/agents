@@ -44,8 +44,10 @@ pub fn diff(stamp: &Baseline, fresh: &Baseline) -> Delta {
         if before == after {
             continue;
         }
+        let before_status = before.and_then(|entry| entry.get(..2)).unwrap_or_default();
         let status = after.and_then(|entry| entry.get(..2)).unwrap_or_default();
         match after {
+            None if before_status == "??" => delta.deleted.push(path.clone()),
             None => delta.modified.push(path.clone()),
             Some(_) if status == "??" && before.is_none() => delta.untracked.push(path.clone()),
             Some(_) if status == "??" => delta.modified.push(path.clone()),

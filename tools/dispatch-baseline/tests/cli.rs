@@ -230,6 +230,20 @@ fn clean_repo_with_no_activity_is_empty_delta() {
 // dirty, and an untracked work product is the normal case this tool exists for. Without a
 // content hash the verifier's own fix reflex reports a clean delta.
 #[test]
+fn deleting_an_already_untracked_file_is_deleted() {
+    let fixture = Fixture::new("delete-untracked");
+    fixture.write("product.json", "{\"tasks\":[]}\n");
+    let stamp = fixture.stamp();
+    std::fs::remove_file(fixture.dir.join("product.json")).unwrap();
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "deleting an untracked file must be a delta: {out}");
+    assert!(
+        out.contains("\"deleted\": [\n    \"product.json\"\n  ]"),
+        "the removed work product must be classified as deleted: {out}"
+    );
+}
+
+#[test]
 fn edit_to_an_already_untracked_file_is_delta() {
     let fixture = Fixture::new("edit-untracked");
     fixture.write("product.json", "{\"tasks\":[]}\n");
