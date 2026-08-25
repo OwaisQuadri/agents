@@ -22,8 +22,9 @@ Simplified Technical English, per `docs/prompt-style.md`. Every register in this
 on that base. What bro adds is the de-jargon pass below.
 
 Bro replaces the register of the message it rewrites, and it never stacks on top of it. A
-mouthpiece message caps at 600 characters, and the bro version of that same message has no
-cap at all. Grade bro output with `--register bro`, and never with the register it replaced.
+mouthpiece message is tight because it carries only the facts; the bro version of that same
+message spends whatever words the explaining takes. Grade bro output with `--register bro`,
+and never with the register it replaced.
 
 Casual connectives stay. Byline bans "basically" and "essentially" as hedges, and bro keeps
 them, because they are the plain-talk joins this register asks for.
@@ -67,8 +68,7 @@ them, because they are the plain-talk joins this register asks for.
 - The plain-words rules travel, and this skill does not. The mouthpiece register grades
   every message on steps 2 and 3 above, under the rule names `plain words, no term of art`
   and `every abbreviation expanded at first use`. A borrowed rule is not a bro run. That
-  message keeps its 600-character cap and its own structure rules, and the uncapped rewrite
-  stays the `/bro` turn alone.
+  message keeps its own structure rules, and the long rewrite stays the `/bro` turn alone.
 
 ## evals
 

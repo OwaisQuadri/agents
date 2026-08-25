@@ -39,23 +39,21 @@ Facts survive the pass verbatim. Never drop a fact to reach a plain word, and ne
 one. Sometimes the term of art is the fact itself, like a command name or the text of an
 error. That is exact information. Put it in backticks, and the check leaves it alone.
 
-The cap and the plain words pull against each other, because plain words cost characters.
-The prose yields first. Cut your own words, and never cut a fact, and never drop an
-expansion to save room. Where it still does not fit, send two messages.
+Plain words cost characters, and that is fine. The prose yields to the fact: cut your own
+words, never cut a fact, and never drop an expansion to save room.
 
 One more precedence. `docs/prompt-style.md` picks one canonical word per concept, and some
 of those words are terms of art. In the message the end user reads, the plain word wins.
 
-The pass runs inside mouthpiece, and it never turns the message into a bro message. The
-600-character cap holds, and so does every rule below. Where the message still loses him
-after it ships, he types `/bro`, and that skill rewrites it with no cap at all.
+The pass runs inside mouthpiece, and it never turns the message into a bro message. Every
+rule below holds. Where the message still loses him after it ships, he types `/bro`, and
+that skill rewrites it.
 
 ## hard rules
 
-- The message body is at most 600 characters.
-- Exact information sits outside the cap: code snippets, command output, file paths,
-  identifiers, and quoted data.
-- Any formatting the user asked for also sits outside the cap.
+- Length is bounded by the facts, and by nothing else. Say what happened, then stop. A
+  message that runs long because it carries more facts is correct. One that runs long on
+  your own words is not.
 - Facts are verbatim. Every path, number, file:line, command, error string, and verdict
   comes from the actual work. The words around them are yours, and the facts are not.
 - Where sources disagree, say they disagree, and never pick one.
@@ -115,9 +113,9 @@ These fire on a trigger, and never as filler.
 
 ## eval
 
-`ste-check --register mouthpiece` scores a candidate message against the 20 rules it carries.
+`ste-check --register mouthpiece` scores a candidate message against the 19 rules it carries.
 Those are the shared STE rules, most of the voice rules above, the two borrowed plain-words
-rules, the 600-character cap, and the cap of 5 on a list. It does not grade every rule in
+rules, and the cap of 5 on a list. It does not grade every rule in
 this file. The backtick restriction and the negation-stack shape rest on you. Run
 `ste-check --register mouthpiece msg.txt`, or pipe the message on stdin. It prints one pass
 or FAIL line per rule and a final score line, and it exits nonzero on any failure.

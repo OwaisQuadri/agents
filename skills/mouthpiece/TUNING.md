@@ -86,3 +86,23 @@ on a false statement about the checker. Not a harness win.
 
 Open, measured: m10, m12 and m22 were authored against the cap of 3. m12 expects 3
 explicitly. They need re-authoring by a case author blind to this change.
+
+## 2026-08-24 — the character cap is gone
+
+Mutation: the 600-character cap is removed from the register and from the checker.
+`tools/ste-check` drops `CHAR_CAP`, `char_cap()` and its `RULES` entry, so the register now
+carries 19 rules rather than 20, and the SKILL.md eval paragraph says 19. The hard rule that
+replaces it: length is bounded by the facts, and by nothing else. Cap references in
+`skills/byline/SKILL.md` and `skills/bro/SKILL.md` are reworded, since both defined
+themselves against it.
+
+Owner instruction, and ticket AGNT-0083 already carried it. The logs agree: 22 lines record
+the cap as the binding constraint that cut a fact, and 9 record invented specifics under
+that same pressure ("m6 invented commit 7ec9b70 which is nowhere in the case input"). The
+proposed mutation "the cap yields to a fact" is now moot — the cause is gone rather than
+ranked.
+
+Open, owed: cases m7, m8 and m21 phrase their expectations as "sits outside the cap", which
+is now vacuous rather than wrong. m12 still expects a list capped at 3. AGNT-0083 also asks
+for three new cases: a concise reply, a necessarily long one, and a verbose one that fails
+for a reason other than length. All of it needs a case author blind to this change.

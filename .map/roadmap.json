@@ -153,7 +153,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Prove tool sync on real Linux.",
-      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository’s continuous integration output.",
+      "long": "Run the top-level installer and the network-free tool-sync integration suite on a real Linux runner. Verify dry-run immutability, pinned local Git installation, and repeated installation. Verify command links and Pi extension links without relying only on the platform override. Keep macOS checks active. Publish both results in the repository\u2019s continuous integration output.",
       "deps": [
         "AGNT-0008"
       ],
@@ -451,7 +451,7 @@
       "kind": "ticket",
       "status": "done",
       "short": "Auto-continue agents when a usage limit resets (5h/7d)",
-      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) — usage-limit-watch covers only redirected/logged output for those two tools.",
+      "long": "A Pi extension (pi/extensions/usage-limit-continue.ts) watches after_provider_response for a 429 and message_end for an assistant stopReason=\"error\" whose errorMessage names a usage or rate limit. It resolves a reset instant from response headers (retry-after, *-reset), from reset phrasing in the error text (\"resets at\", \"resets in\"), or, failing both, from the 5-hour session window or 7-day weekly window the text names. Local models (ollama/lmstudio/localhost baseUrl) are exempt. On a resolved instant it spawns a detached sleep-then-resume shell job (sleep <wait>, then pi --session <file> --print continue), recorded under ~/.pi/agent/usage-limit-continue/pending.json to avoid a duplicate schedule, and exposes /usage-limit-status. A secondary Rust tool, tools/usage-limit-watch, tails a plain-text log (for headless codex/claude runs whose output is redirected to a file) for the same phrasing and schedules a caller-supplied resume command the same way; it has no access to HTTP headers or model metadata, so a caller passes --local for a log known to be a local model. Both are wired into config/tools.toml and install.sh respectively. Executed directly rather than through the full engineer 23-phase spine, given turn budget; verification: 23 TS unit tests (node --test) and a strict tsc --noEmit pass against both the installed and the latest published @earendil-works/pi-coding-agent types, 7 Rust unit tests plus a real end-to-end run (cargo clippy -D warnings clean), and an install.sh --dry-run/live run against a scratch REPO_TARGET/HOME confirming the new step wires correctly. Not done: an interactive Codex/Claude TUI wrapper (would need PTY passthrough, a materially larger effort) \u2014 usage-limit-watch covers only redirected/logged output for those two tools.",
       "deps": [],
       "files": [
         "pi/extensions/usage-limit-continue.ts",
@@ -557,7 +557,7 @@
       "status": "todo",
       "priority": "med",
       "short": "phase 16's stash check must name the ticket run dir, not all of .map",
-      "long": "AGNT-0015 deviation D-09: phase 16's check reads 'the stash names no .map/ path', but the repo-level map files (roadmap.json, invariants.md, inspiration.md, ideation/) are tracked on purpose and are legitimately part of a change, so the check fires on a correct state. It should read '.map/<TICKET-ID>/' — the gitignored run dir is the thing that must never be stashed. One line of wording; the current text teaches the reader to wave a real check through.",
+      "long": "AGNT-0015 deviation D-09: phase 16's check reads 'the stash names no .map/ path', but the repo-level map files (roadmap.json, invariants.md, inspiration.md, ideation/) are tracked on purpose and are legitimately part of a change, so the check fires on a correct state. It should read '.map/<TICKET-ID>/' \u2014 the gitignored run dir is the thing that must never be stashed. One line of wording; the current text teaches the reader to wave a real check through.",
       "deps": [],
       "files": [
         "skills/engineer/phases/16-stash.md"
@@ -571,7 +571,7 @@
       "status": "todo",
       "priority": "high",
       "short": "every fix must ship a repo test, or it can vanish silently",
-      "long": "AGNT-0015 failure F-08: two verified fixes (bidi stripping and row dedup) were lost before ever reaching a commit, and the suite stayed green throughout because both had been proven only by scratch probes, never encoded as repo tests. git log -S showed the code had never existed in any commit. The break panel found the regression rounds later. The engineer map should require that every fix ship a test inside the repo suite — which is exactly what task T15 had to enforce by hand on this run — so that losing the fix turns the suite red.",
+      "long": "AGNT-0015 failure F-08: two verified fixes (bidi stripping and row dedup) were lost before ever reaching a commit, and the suite stayed green throughout because both had been proven only by scratch probes, never encoded as repo tests. git log -S showed the code had never existed in any commit. The break panel found the regression rounds later. The engineer map should require that every fix ship a test inside the repo suite \u2014 which is exactly what task T15 had to enforce by hand on this run \u2014 so that losing the fix turns the suite red.",
       "deps": [],
       "files": [
         "skills/engineer/phases/13-implement.md",
@@ -586,7 +586,7 @@
       "status": "todo",
       "priority": "high",
       "short": "gate C needs rendered visual evidence before it is presented",
-      "long": "On AGNT-0015 the owner found five defects that four full break-panel rounds missed: the selection highlight was invisible, chat text bled through the panel edges, one key was advertised for two jobs, an empty column trapped the user with no way out, and the list had no viewport so anything past the panel height was unreachable. Every one is about what the surface looks like and feels like; none is computable from the code, which is why testers driving the renderer as a function proved it correct while it was unusable. The map should require a rendered artifact — a captured frame or screenshot — as part of preparing gate C, so those defects reach the human before the gate rather than after it.",
+      "long": "On AGNT-0015 the owner found five defects that four full break-panel rounds missed: the selection highlight was invisible, chat text bled through the panel edges, one key was advertised for two jobs, an empty column trapped the user with no way out, and the list had no viewport so anything past the panel height was unreachable. Every one is about what the surface looks like and feels like; none is computable from the code, which is why testers driving the renderer as a function proved it correct while it was unusable. The map should require a rendered artifact \u2014 a captured frame or screenshot \u2014 as part of preparing gate C, so those defects reach the human before the gate rather than after it.",
       "deps": [],
       "files": [
         "skills/engineer/phases/20-signoff.md",
@@ -601,7 +601,7 @@
       "status": "todo",
       "priority": "high",
       "short": "tool-sync's apply and check disagree about Pi agent destinations",
-      "long": "tool-sync --check fails with 'Pi agent destination ~/.pi/agent/agents/anchor-verifier.md collides with a non-symlink', but those files are precisely what tool-sync's own apply step renders: 'render Pi agent <repo>/agents/X/X.md -> ~/.pi/agent/agents/X.md'. Rendering writes a real file; the check demands a symlink. Confirmed not caused by AGNT-0015 — the same failure reproduces with the pre-ticket manifest from commit e2e9de6. The consequence is worse than the bug: any run whose verification includes a tool-sync check now reports a red it cannot fix, which teaches everyone to ignore that check.",
+      "long": "tool-sync --check fails with 'Pi agent destination ~/.pi/agent/agents/anchor-verifier.md collides with a non-symlink', but those files are precisely what tool-sync's own apply step renders: 'render Pi agent <repo>/agents/X/X.md -> ~/.pi/agent/agents/X.md'. Rendering writes a real file; the check demands a symlink. Confirmed not caused by AGNT-0015 \u2014 the same failure reproduces with the pre-ticket manifest from commit e2e9de6. The consequence is worse than the bug: any run whose verification includes a tool-sync check now reports a red it cannot fix, which teaches everyone to ignore that check.",
       "deps": [],
       "files": [
         "tools/tool-sync/"
@@ -1126,7 +1126,7 @@
       "id": "AGNT-0071",
       "kind": "ticket",
       "status": "todo",
-      "short": "Replace statusline’s 10-minute poll with event-driven refresh",
+      "short": "Replace statusline\u2019s 10-minute poll with event-driven refresh",
       "long": "The constants POLL_INTERVAL_MS (10 minutes) and MIN_FETCH_INTERVAL_MS (60 seconds) live in pi/extensions/statusline.ts, from before AGNT-0028. That fix left them untouched.\n\nReplace the fixed poll with a refresh triggered by a provider or model-change event. Keep a longer background poll only as a backstop. This needs a testability pass first: confirm the event surface fires often enough to drop the poll frequency. This ticket stays speculative until that check runs. From AGNT-0028's phase-21 roadmap exploration.",
       "deps": [],
       "files": [
@@ -1254,7 +1254,7 @@
       "id": "AGNT-0079",
       "kind": "ticket",
       "status": "todo",
-      "short": "Quick-scroll between the owner’s messages in Pi",
+      "short": "Quick-scroll between the owner\u2019s messages in Pi",
       "long": "Add keyboard actions that move the conversation viewport to the previous or next user-authored message without leaving the active session. Repeated use traverses only user messages in chronological order, keeps the selected message visible, and stops at the first or last message. Test long conversations, adjacent user messages, mixed tool and assistant output, both boundaries, and remapped keys.",
       "deps": [],
       "files": [
@@ -1327,7 +1327,8 @@
       ],
       "blame_phase": null,
       "created": "2026-08-24T09:20:12-0400",
-      "priority": "med"
+      "priority": "med",
+      "note": "2026-08-24, out-of-map: enforcement removed. ste-check dropped CHAR_CAP, char_cap() and its RULES entry (19 rules now, 19 tests green); mouthpiece, byline and bro SKILL.md drop every cap reference and mouthpiece gains 'length is bounded by the facts'. OUTSTANDING, and the only reason this stays todo: the three eval cases this ticket asks for (concise, necessarily long, verbose-for-other-reasons) are unwritten. The GEPA fence bars the agent that made the change from authoring them."
     },
     {
       "id": "AGNT-0084",
@@ -1350,7 +1351,7 @@
       "kind": "ticket",
       "status": "todo",
       "short": "Build a Herdr agent control tower",
-      "long": "Compose the AGNT-0066 read-only state model and AGNT-0017 cockpit restoration into one inspectable agent control tower. Show wide agent events, snapshot recovery, attention order, visible artifacts, and owner-message navigation without duplicating restoration state. Keep reads separate from explicit focus writes. Use the project’s adopted Honeycomb wide-event and tmux snapshot-recovery patterns. Test cold restoration, stale events, partial workspaces, attention transitions, missing artifacts, repeated navigation, and read/write authority boundaries.",
+      "long": "Compose the AGNT-0066 read-only state model and AGNT-0017 cockpit restoration into one inspectable agent control tower. Show wide agent events, snapshot recovery, attention order, visible artifacts, and owner-message navigation without duplicating restoration state. Keep reads separate from explicit focus writes. Use the project\u2019s adopted Honeycomb wide-event and tmux snapshot-recovery patterns. Test cold restoration, stale events, partial workspaces, attention transitions, missing artifacts, repeated navigation, and read/write authority boundaries.",
       "deps": [
         "AGNT-0017",
         "AGNT-0077",

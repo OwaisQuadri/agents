@@ -1,11 +1,7 @@
 use crate::bro::{bare_acronym, jargon};
 use crate::ste::Rule;
-use crate::text::{dashes, find_words, is_emoji, MASK};
+use crate::text::{dashes, find_words, is_emoji};
 
-/// 600, not 500. STE keeps the articles and spells every word out, so the same status
-/// runs longer than the texting register it replaced. Two eval cases came back as clean
-/// STE at 511 and 586 characters.
-const CHAR_CAP: usize = 600;
 const LIST_CAP: usize = 5;
 
 const JOINERS: &[&str] = &["however", "moreover", "furthermore", "in conclusion"];
@@ -139,15 +135,6 @@ pub fn list_cap(text: &str) -> Vec<String> {
     }
 }
 
-pub fn char_cap(text: &str) -> Vec<String> {
-    let count = text.chars().filter(|c| *c != MASK).count();
-    if count > CHAR_CAP {
-        vec![format!("{count} chars over a {CHAR_CAP} cap")]
-    } else {
-        Vec::new()
-    }
-}
-
 pub const RULES: &[Rule] = &[
     ("no dash between clauses", r_dashes),
     ("no however/moreover/furthermore/in conclusion", r_joiners),
@@ -156,7 +143,6 @@ pub const RULES: &[Rule] = &[
     ("plain text: no emoji/bold/italics/headings", plain_text),
     ("relative time, no timestamps", timestamps),
     ("numbered lists capped at 5", list_cap),
-    ("body <= 600 chars excluding exact info", char_cap),
     // Borrowed from the bro register: the end-user message is graded on them as well.
     ("plain words, no term of art", jargon),
     ("every abbreviation expanded at first use", bare_acronym),

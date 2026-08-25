@@ -221,7 +221,6 @@ mod tests {
         check(mouthpiece::not_just_but, "The cap is 500 characters.", "not just a cap, but a rule.");
         check(mouthpiece::timestamps, "The backfill ends at 5pm.", "The backfill ends at 14:32.");
         check(mouthpiece::plain_text, "The sweep is done.", "The **sweep** is done.");
-        check(mouthpiece::char_cap, "Short.", &"word ".repeat(140));
         check(
             mouthpiece::list_cap,
             "1. one\n2. two\n3. three",
@@ -272,7 +271,6 @@ mod tests {
         assert!(ste::texting_shortforms(&spoken(text)).is_empty());
         assert!(ste::contraction_apostrophes(&spoken(text)).is_empty());
         assert!(ste::simple_word(&spoken(text)).is_empty());
-        assert!(mouthpiece::char_cap(&spoken(&format!("{}{text}", "x".repeat(460)))).is_empty());
     }
 
     #[test]
