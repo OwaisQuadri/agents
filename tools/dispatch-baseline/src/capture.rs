@@ -166,6 +166,13 @@ fn file_mode(metadata: &std::fs::Metadata) -> u32 {
 
 fn refs(repo: &Path) -> Result<BTreeMap<String, String>, String> {
     let mut refs = BTreeMap::new();
+    if let Ok(all_refs) = git(repo, &["for-each-ref", "--format=%(refname) %(objectname)"]) {
+        for line in all_refs.lines() {
+            if let Some((name, hash)) = line.split_once(' ') {
+                refs.insert(name.to_string(), hash.to_string());
+            }
+        }
+    }
     if let Ok(head) = git(repo, &["rev-parse", "HEAD"]) {
         refs.insert("HEAD".to_string(), head);
     }

@@ -218,6 +218,30 @@ fn non_utf8_path_rejects_the_stamp() {
 }
 
 #[test]
+fn nondefault_named_ref_move_is_reported() {
+    let fixture = Fixture::new("named-ref-move");
+    fixture.git(&["branch", "review-tip"]);
+    let stamp = fixture.stamp();
+    let old_tip = fixture.git(&["rev-parse", "review-tip"]);
+    fixture.git(&["checkout", "review-tip"]);
+    fixture.write("tracked.txt", "review advance\n");
+    fixture.git(&["add", "."]);
+    fixture.git(&["commit", "-m", "move review tip"]);
+    let new_tip = fixture.git(&["rev-parse", "review-tip"]);
+    fixture.git(&["checkout", "main"]);
+    let (code, out) = fixture.check(&stamp);
+    assert_eq!(code, 1, "moving a named ref must be a delta: {out}");
+    assert!(
+        out.contains("refs/heads/review-tip"),
+        "the moved ref must be named: {out}"
+    );
+    assert!(
+        out.contains(&old_tip) && out.contains(&new_tip),
+        "both tips are required: {out}"
+    );
+}
+
+#[test]
 fn default_branch_move_is_reported_while_feature_head_stays_fixed() {
     let fixture = Fixture::new("default-branch-move");
     fixture.git(&["checkout", "-b", "feature"]);
