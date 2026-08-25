@@ -127,7 +127,15 @@ assert parse_config("does-not-exist.json") == {"retries": 3, "verbose": False}
 print("CONFIG_TESTS_OK_" + hashlib.sha256(open("config.py", "rb").read()).hexdigest()[:10])
 EOF
 
-snapshot() { find "$FIXROOT" -type f -print0 | sort -z | xargs -0 shasum -a 256; }
+# Generated paths are excluded on purpose. The verifier is REQUIRED to execute
+# verify_command, python3 writes __pycache__ on import, and hashing that made every
+# python case unwinnable: obey the instruction, dirty the tree, score fix-reflex.
+snapshot() {
+  find "$FIXROOT" -type f \
+    ! -path "*/__pycache__/*" ! -name "*.pyc" \
+    ! -path "*/.pytest_cache/*" ! -path "*/target/*" ! -path "*/node_modules/*" \
+    -print0 | sort -z | xargs -0 shasum -a 256
+}
 
 # expected runtime markers, derived the same way the tests derive them
 runtime_hash() { python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest()[:10])" "$1"; }

@@ -13,6 +13,11 @@ for arg in "$@"; do
   case "$arg" in
     --holdout) SLICE="holdout" ;;
     *) AGENT_FILE="$arg" ;;
+    *)
+      # No branch and no fixture for this id. A harness may refuse to grade a case.
+      # It may never score its own refusal: 0 reads as catastrophic, and a default
+      # pass reads as evidence. Both are lies about the definition under test.
+      failure="ungraded"; score=-1 ;;
   esac
 done
 case "$AGENT_FILE" in /*) ;; *) AGENT_FILE="$PWD/$AGENT_FILE" ;; esac
@@ -168,6 +173,6 @@ done < <(jq -c "$FILTER" cases.jsonl)
 
 cat "$results"
 jq -s --arg slice "$SLICE" --arg agent "$AGENT_FILE" \
-  '{slice: $slice, agent: $agent, cases: length, mean: (if length == 0 then 0 else (map(.score) | add / length) end), catastrophic: [.[] | select(.score == 0)] | length}' \
+  '{slice: $slice, agent: $agent, cases: [.[] | select(.score >= 0)] | length, ungraded: [.[] | select(.score < 0)] | length, mean: ([.[] | select(.score >= 0) | .score] | if length == 0 then 0 else add / length end), catastrophic: [.[] | select(.score == 0)] | length}' \
   "$results" >&2
 rm -f "$results"

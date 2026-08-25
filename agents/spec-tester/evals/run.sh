@@ -40,6 +40,7 @@ chmod +x "$FIX/sut/counter.sh"
 body=$(awk 'c>=2{print} /^---$/{c++}' "$def")
 sut_sum() { find "$FIX/sut" -type f -exec shasum {} + | shasum; }
 
+ungraded=0
 total=0
 sumscore=0
 while IFS= read -r line <&3; do
@@ -84,15 +85,24 @@ $dispatch"
       s5) { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; } || { score=2; fm='"no-attack-executed"'; } ;;
       s6) grep -qi "blocked" <<<"$out" || { score=2; fm='"blocked-not-reported"'; } ;;
       s7) { grep -q "spec-result" <<<"$out" && grep -q "counter.sh" <<<"$out"; } || { score=2; fm='"no-attack-executed"'; } ;;
+      *)
+        # This harness sets score=8 BEFORE the dispatch, so an unknown id used to come back
+        # as a pass that nothing checked. A false pass is worse than a false alarm: nobody
+        # investigates it. s8 scored 8 on 2026-08-25 having tested nothing at all.
+        score=-1; fm='"ungraded"' ;;
     esac
   fi
   printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$id" "$score" "$fm"
-  total=$((total + 1))
-  sumscore=$((sumscore + score))
+  if [[ $score -lt 0 ]]; then
+    ungraded=$((ungraded + 1))
+  else
+    total=$((total + 1))
+    sumscore=$((sumscore + score))
+  fi
 done 3< cases.jsonl
 
 if [[ $total -gt 0 ]]; then
-  awk "BEGIN{printf \"mean %.2f over $total cases ($slice slice)\n\", $sumscore/$total}" >&2
+  awk "BEGIN{printf \"mean %.2f over $total cases, $ungraded ungraded ($slice slice)\n\", $sumscore/$total}" >&2
 else
   echo "no cases in $slice slice" >&2
 fi

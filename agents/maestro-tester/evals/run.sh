@@ -44,11 +44,13 @@ live_ready() {
 total=0
 sum=0
 catastrophic=0
+ungraded=0
 
 emit() {
   printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$1" "$2" "$3"
   total=$((total + 1))
   sum=$((sum + $2))
+  [ "$2" -lt 0 ] && { ungraded=$((ungraded + 1)); return; }
   [ "$2" -eq 0 ] && catastrophic=$((catastrophic + 1))
 }
 
@@ -146,7 +148,7 @@ while IFS= read -r line; do
       fi
       ;;
     *)
-      emit "$id" 1 '"unknown-case"'
+      emit "$id" -1 '"ungraded"'
       ;;
   esac
   rm -rf "$scratch"
@@ -159,5 +161,5 @@ else
 fi
 slice="non-holdout"
 [ "$WANT_HOLDOUT" = "true" ] && slice="holdout"
-printf 'slice=%s cases=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
-  "$slice" "$total" "$mean" "$catastrophic" >&2
+printf 'slice=%s cases=%d ungraded=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
+  "$slice" "$total" "$ungraded" "$mean" "$catastrophic" >&2
