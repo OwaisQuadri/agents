@@ -146,7 +146,7 @@ transcript excerpt only, ~2KB cap — to `skills/agent-author/logs/usage.jsonl`:
 ```sh
 cd ~/Documents/agents && mkdir -p skills/agent-author/logs && jq -cn \
   --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- skills/agent-author ':(exclude)**/evals/**' ':(exclude)**/TUNING.md')" \
+  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- skills/agent-author ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
   --arg trigger '<what fired it>' \
   --arg excerpt '<trigger + key outputs + any correction>' \
   --arg outcome 'success|failure|partial' \

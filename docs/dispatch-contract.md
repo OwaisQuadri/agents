@@ -66,7 +66,7 @@ Every line carries `prompt_version`: the short commit of the last change to the 
 artifact LOADS.
 
 ```sh
-git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'
+git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'
 ```
 
 The exclusions matter both ways. `evals/` is excluded because a new test case changes no

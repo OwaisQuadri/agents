@@ -134,7 +134,7 @@ date +%Y-%m-%dT%H:%M:%S%z   # 2026-07-31T02:45:10-0400
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
   Reflect pass drops lines written against a prompt that no longer exists.
 ## 5. Failure modes and drift signals
 

@@ -125,7 +125,7 @@ last thing in your output, `ts` and `prompt_version` omitted:
 ```
 
 The DISPATCHER stamps `prompt_version` with `git -C ~/Documents/agents log -1 --format=%h --
-agents/web-research-summarizer ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`; a Reflect
+agents/web-research-summarizer ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`; a Reflect
 pass drops lines written against a prompt that no longer exists. The dispatcher also stamps `ts` (machine's current local timezone with offset, via
 `date +%Y-%m-%dT%H:%M:%S%z`, never UTC(Coordinated Universal Time)) and appends the
 line to `agents/web-research-summarizer/logs/usage.jsonl` in the agents repo at

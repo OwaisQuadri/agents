@@ -36,7 +36,7 @@ At the end of a use, append one bounded JSON (JavaScript Object Notation) line t
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
   Reflect pass drops lines written against a prompt that no longer exists.
 Use the machine's current timezone with `date +%Y-%m-%dT%H:%M:%S%z`. Never use Coordinated Universal Time.
 Keep the excerpt under 2KB. Include only the trigger, key output, and any human correction.

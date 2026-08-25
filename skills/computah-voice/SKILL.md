@@ -74,5 +74,5 @@ UTC (Coordinated Universal Time).
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/prompt-style.md tools/ste-check/src ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/prompt-style.md tools/ste-check/src ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
   Reflect pass drops lines written against a prompt that no longer exists.

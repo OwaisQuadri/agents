@@ -68,7 +68,7 @@ At the end of a use, append ONE JSON line to this artifact's `logs/usage.jsonl`:
 ```
 
 - `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md'`. A
+  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
   Reflect pass drops lines written against a prompt that no longer exists.
 - `ts` uses the machine's current local timezone with offset. Get it with `date +%Y-%m-%dT%H:%M:%S%z`. Never use UTC(Coordinated Universal Time).
 - The excerpt contains only the trigger, key outputs, and human corrections. Never include the full transcript. Keep each line under 2KB.
