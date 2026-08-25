@@ -1406,6 +1406,21 @@
         "ts": "2026-08-25T00:00:00-0400",
         "verdict": "a"
       }
+    },
+    {
+      "id": "AGNT-0088",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "statusline: quarter-width bar, on-pace mark at minute resolution",
+      "long": "Owner's words: 'status bar progress bar should be 25% width. the on-pace mark should be based on time remaining, not which day I'm on. it should be which minute im on.'\n\nWIDTH. pi/extensions/statusline.ts barWidthForViewport returns Math.floor(width / 2), so the bar takes half the viewport. Make it a quarter.\n\nON-PACE MARK. Read the code before designing: renderBar already computes pace from the reset stamp in seconds, `(window.windowSeconds - diff) / window.windowSeconds * 100`, so the INPUT is already minute-accurate and is not day-based. What quantises it is the render: `mark = Math.floor((pace * barWidth) / 100)` snaps the mark to a whole cell. At the current half width that is roughly 2% of the window per cell, about 3.4 hours of a seven-day window. At a quarter width each cell covers about 4%, near 6.7 hours, so narrowing the bar makes the mark COARSER, not finer, and the two halves of this ticket pull against each other. Landing minute-level movement needs sub-cell rendering, for example partial block glyphs or a fractional mark position, not a change to the pace maths. Confirm the owner's intent at the UX gate before building.\n\nformatReset also prints day granularity ('3d 4h') for anything past a day, which may be the source of the day-based impression. Worth checking with him.",
+      "deps": [],
+      "files": [
+        "pi/extensions/statusline.ts",
+        "pi/extensions/statusline.test.ts"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-25T00:00:00-0400",
+      "priority": "med"
     }
   ]
 }
