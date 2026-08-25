@@ -18,7 +18,8 @@ use ste::Rule;
 use std::io::Read;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: ste-check --register <mouthpiece|computah|byline|bro|agent> [file]";
+const USAGE: &str =
+    "usage: ste-check --register <mouthpiece|computah|byline|bro|agent> [--quiet] [file]";
 
 fn register_rules(name: &str) -> Option<(&'static [Rule], Profile)> {
     match name {
@@ -42,9 +43,11 @@ fn read_input(path: Option<String>) -> std::io::Result<String> {
     }
 }
 
-fn report(name: &str, offenders: &[String]) {
+fn report(name: &str, offenders: &[String], is_quiet: bool) {
     if offenders.is_empty() {
-        println!("pass  {name}");
+        if !is_quiet {
+            println!("pass  {name}");
+        }
         return;
     }
     let shown: Vec<String> = offenders
@@ -64,9 +67,11 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let mut register = None;
     let mut path = None;
+    let mut is_quiet = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--register" | "-r" => register = args.next(),
+            "--quiet" | "-q" => is_quiet = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
@@ -100,7 +105,7 @@ fn main() -> ExitCode {
         if offenders.is_empty() {
             passed += 1;
         }
-        report(name, &offenders);
+        report(name, &offenders, is_quiet);
     }
     println!("score: {passed}/{total} ({:.3})", passed as f64 / total as f64);
 

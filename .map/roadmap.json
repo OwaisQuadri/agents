@@ -1367,6 +1367,37 @@
       "blame_phase": null,
       "created": "2026-08-24T09:20:12-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0086",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "map-check: verify an engineer run's spine from its own artifacts",
+      "long": "The engineer skill declares mechanical exit gates whose evidence is 'files and exit codes, never self-report', and no binary implements one of them. Build tools/map-check (Rust) to read .map/<TICKET>/ and assert: every walk-back range in walkback.jsonl is consecutive with no gaps; every empty-changed visit carries its note; at most one walk is open; every phase in the spine has its map(<ID>): phase NN commit in git log; every human gate reached has a gates.<letter> entry with a snapshot; zero TODO(<TICKET>) markers survive phase 18; the phase_commits anchor matches the stash state. Fixtures already exist: four real ledgers under ~/.herdr/worktrees/agents/*/.map/, carrying 49 walk-back opens and 479 visits between them. Sized as its own session: this encodes the whole spine and needs real fixture tests.",
+      "deps": [],
+      "files": [
+        "tools/map-check/",
+        "skills/engineer/SKILL.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-25T00:00:00-0400",
+      "priority": "med"
+    },
+    {
+      "id": "AGNT-0087",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "rubric-run: one exit code per rubric item, so unreached is never unverifiable",
+      "long": "33 logged anchor-verifier runs graded rubric items 'fail, not reached' because a compound verify_command died partway under set -e. The prose fix shipped 2026-08-24; the mechanical fix has not. Build tools/rubric-run (Rust) to take a list of (rubric item, command) pairs, execute each independently, and emit one JSON line per item with its exit code and captured output, so an abort in item 2 cannot decide item 5. This changes the anchor-verifier dispatch contract shape (items must map to commands), so it needs a design pass before code.",
+      "deps": [],
+      "files": [
+        "tools/rubric-run/",
+        "agents/anchor-verifier/anchor-verifier.md",
+        "docs/dispatch-contract.md"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-25T00:00:00-0400",
+      "priority": "med"
     }
   ]
 }

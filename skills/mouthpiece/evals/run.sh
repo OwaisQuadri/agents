@@ -41,6 +41,9 @@ prose_style = ""
 if os.path.exists("../../../docs/prompt-style.md"):
     prose_style = "\n\nPROSE STYLE (the base every register runs on):\n" + open(
         "../../../docs/prompt-style.md", encoding="utf-8").read()
+sys.path.insert(0, "../../..")
+from evals.grade import grade  # noqa: E402
+
 cases = [json.loads(line) for line in open("cases.jsonl", encoding="utf-8") if line.strip()]
 cases = [c for c in cases if bool(c.get("holdout")) == is_holdout_slice]
 
@@ -76,8 +79,7 @@ for case in cases:
         "\n\nCANDIDATE MESSAGE:\n" + candidate +
         "\n\nGrade the candidate against EXPECT per the rubric."
     )
-    out = ask(judge_prompt)
-    verdict = json.loads(out[out.find("{"):out.rfind("}") + 1])
+    verdict = grade(judge_prompt, case["id"])
 
     score = verdict["score"]
     failure_mode = verdict.get("failure_mode")
