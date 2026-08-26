@@ -81,7 +81,9 @@ impl Fixture {
     // a root pi_package (".") with no skills field, matching the candidate's layout
     // (github.com/tintinweb/pi-subagents has no skills/ directory).
     fn candidate_manifest(&self, revision: &str, platforms: &str) -> PathBuf {
-        let manifest = self.root.join(format!("manifest-candidate-{platforms}.toml"));
+        let manifest = self
+            .root
+            .join(format!("manifest-candidate-{platforms}.toml"));
         let remote = self.remote_path();
         fs::write(
             &manifest,
@@ -829,7 +831,11 @@ fn previews_the_candidate_subagent_package_without_mutating_home() {
         "the candidate ships no skills directory, so preview must not plan a skill link: {report}"
     );
     assert!(!fixture.record().exists());
-    assert_eq!(tree_snapshot(&home), before, "a dry-run preview must leave the home tree byte-identical");
+    assert_eq!(
+        tree_snapshot(&home),
+        before,
+        "a dry-run preview must leave the home tree byte-identical"
+    );
 }
 
 // AGNT-0063.T04: proves the candidate package links and re-links deterministically,
@@ -881,7 +887,10 @@ fn applies_and_repeats_the_candidate_subagent_package_link_without_skills() {
     );
     let repeated_checkout_metadata = fs::metadata(&checkout).expect("repeated checkout metadata");
     assert_eq!(
-        (repeated_checkout_metadata.dev(), repeated_checkout_metadata.ino()),
+        (
+            repeated_checkout_metadata.dev(),
+            repeated_checkout_metadata.ino()
+        ),
         (checkout_metadata.dev(), checkout_metadata.ino()),
         "the existing checkout directory must be reused, not re-cloned"
     );

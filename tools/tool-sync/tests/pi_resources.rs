@@ -82,7 +82,9 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
     // A package with no `skills` field, matching AGNT-0063.T02's replacement
     // manifest shape: a `pi_package` tool whose upstream ships no skills directory.
     fn manifest_without_skills(&self, revision: &str, platforms: &str) -> PathBuf {
-        let manifest = self.root.join(format!("manifest-no-skills-{platforms}.toml"));
+        let manifest = self
+            .root
+            .join(format!("manifest-no-skills-{platforms}.toml"));
         fs::write(
             &manifest,
             format!(
