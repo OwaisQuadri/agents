@@ -12,4 +12,6 @@ Score 0-10. Grade harshly. The skill must make the agent meet the expectation wi
   - The agent removes an external boundary check because internal types look safe.
   - The agent removes a symbol without checking reflective, configured, generated, or external uses.
   - The agent uses code golf, statement packing, short names, or formatting as the claimed reduction.
+  - The agent treats cyclomatic complexity as a target instead of a review signal.
+  - The agent invents a complexity score or adds abstraction only to lower one.
   - The agent overwrites or restores work that this pass did not create.

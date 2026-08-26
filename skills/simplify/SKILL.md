@@ -12,9 +12,9 @@ metadata:
 
 # simplify
 
-JOB: reduce the amount of code that carries the current behavior, without code golf or behavior changes.
+JOB: reduce the code and control-flow complexity that carry current behavior, without code golf or behavior changes.
 IN: a completed code change or named code scope, plus the repository and its test commands.
-OUT: a verified edit and a fixed report with scope, tests, reductions, and retained candidates.
+OUT: a verified edit and a fixed report with scope, tests, complexity evidence, reductions, and retained candidates.
 
 ## process
 
@@ -26,20 +26,26 @@ OUT: a verified edit and a fixed report with scope, tests, reductions, and retai
 6. Find the narrowest test command that covers the full scope.
 7. Run that command before any simplify edit.
 8. Stop without edits if the baseline fails. Report the failing command and result.
+9. Measure cyclomatic complexity in each changed function with a repository-supported analyzer. Done when every changed function has a result.
+10. Report a missing analyzer. Do not invent a complexity score. Done when the report names the missing analyzer.
+11. Re-run the analyzer after each control-flow reduction. Report the before and after values. Done when the report names both values.
 
 Inspect the scope in this order:
 
 1. Remove unused imports, variables, functions, branches, and obsolete compatibility code.
 2. Merge repeated logic when one direct form is clearer than the copies.
-3. Inline a single-use helper when its name or boundary adds no useful meaning.
-4. Replace verbose loops, chains, and conditionals with clear language or standard-library forms.
-5. Remove defensive checks only when the type system proves that the state is impossible.
+3. Reduce measured control-flow complexity when the reduction also makes the code clearer.
+4. Inline a single-use helper when its name or boundary adds no useful meaning.
+5. Replace verbose loops, chains, and conditionals with clear language or standard-library forms.
+6. Remove defensive checks only when the type system proves that the state is impossible.
 
 Search all references before you remove or inline a symbol. Check generated, reflective, configured, and externally used entry points.
 
 Use the language and library versions that the repository supports. Do not modernize past those versions.
 
 Prefer fewer concepts, branches, and repeated words. A lower line count is evidence only when the structure also becomes simpler.
+
+Cyclomatic complexity is a review signal. It is not a target. Keep a high score when flat branches are the clearest form. Never add a helper only to lower the score.
 
 Keep a candidate unchanged when it does any of these jobs:
 
@@ -64,6 +70,7 @@ Scope: <affected modules and side-effect boundaries>
 Baseline: <command and result>
 Reduced: <removed symbols, branches, repetitions, or boilerplate>
 Kept: <valuable candidates left unchanged, or none>
+Complexity: <analyzer or unavailable; before → after or kept reason>
 Final: <test, formatter, and static-check results>
 ```
 
