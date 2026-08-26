@@ -53,7 +53,7 @@ export function pullRequestTone(pullRequest: PullRequest): "success" | "warning"
 }
 
 function osc8(url: string, text: string): string {
-	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+	return `\x1b]8;;${url}\x1b\\\x1b[4m${text}\x1b[24m\x1b]8;;\x1b\\`;
 }
 
 const BRANCH_COLORS = ["#82b8ff", "#8ee7f5", "#a6dca8", "#c7b5ff", "#d394ff"];
@@ -315,7 +315,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						}
 						const segments: PreInputSegment[] = [location];
 						const activePullRequest = pullRequest;
-						if (!isWorking && activePullRequest) {
+						if (activePullRequest) {
 							const tone = pullRequestTone(activePullRequest);
 							const { number, url } = activePullRequest;
 							segments.push({

@@ -110,17 +110,15 @@ test("renders the compact Git label and linked pull request", async () => {
 
 		assert.match(line, /agents > /);
 		assert.match(line, /add-to-pi-config/);
-		assert.match(line, /\x1b]8;;https:\/\/github\.com\/owner\/repository\/pull\/42\x1b\\PR #42\x1b]8;;\x1b\\/);
+		assert.match(line, /\x1b]8;;https:\/\/github\.com\/owner\/repository\/pull\/42\x1b\\\x1b\[4mPR #42\x1b\[24m\x1b]8;;\x1b\\/);
 		await handlers.get("agent_start")?.({}, ctx);
 		const activeLine = widget?.render(160)[1] ?? "";
 		assert.match(activeLine, /agents > /);
 		assert.match(activeLine, /add-to-pi-config/);
 		assert.match(activeLine.replace(/\x1b\[[0-9;]*m/g, ""), /· [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d{2}:\d{2}\.\d/);
-		assert.match(activeLine, /test\/model \(off\)/);
-		assert.doesNotMatch(activeLine, /PR #42/);
-		assert.match(widget?.render(50)[1] ?? "", /model \(off\)/);
-		assert.match(widget?.render(42)[1] ?? "", /model/);
-		assert.doesNotMatch(widget?.render(42)[1] ?? "", /model \(off\)/);
+		assert.match(activeLine, /PR #42/);
+		assert.match(widget?.render(50)[1] ?? "", /PR #42/);
+		assert.match(widget?.render(42)[1] ?? "", /PR #42/);
 		assert.ok(calls.some((call) => call.command === "gh" && call.args.join(" ") === "pr view --json url,number,state,isDraft,mergeStateStatus"));
 	} finally {
 		widget?.dispose?.();
