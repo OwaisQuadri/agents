@@ -199,30 +199,6 @@ function formatCalendarReset(epochSeconds: number): string {
 	return `${day} at ${reset.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 
-function renderBar(
-	usage: ProviderUsage,
-	theme: { fg: (color: string, text: string) => string },
-): string | null {
-	const selected = selectWindow(usage);
-	if (!selected) return null;
-	const { window, label } = selected;
-
-	const nowSeconds = Math.round(Date.now() / 1000);
-	const percent = Math.floor(window.usedPercent);
-	const diff = Math.max(0, (window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
-
-	// On-pace is the share of the window already spent, read from its own reset stamp.
-	const pace = clampPercent(((window.windowSeconds - diff) / window.windowSeconds) * 100);
-	const isOverCap = (usage.fiveHour?.usedPercent ?? 0) >= 100 || (usage.sevenDay?.usedPercent ?? 0) >= 100;
-	const percentText = isOverCap
-		? theme.fg("error", `${percent}%`)
-		: percent > pace
-			? theme.fg("warning", `${percent}%`)
-			: `${percent}%`;
-
-	return `${percentText}/${Math.floor(pace)}% ${theme.fg("dim", `${label} Quota (reset: ${formatReset(diff)})`)}`;
-}
-
 export default function statusline(pi: ExtensionAPI) {
 	const usageByProvider = new Map<string, ProviderUsage>();
 	const lastFetchAtByProvider = new Map<string, number>();
