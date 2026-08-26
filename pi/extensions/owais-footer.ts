@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, relative } from "node:path";
 
 const HERDR_WORKTREE_MARKER = "/.herdr/worktrees/";
-const PR_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const PR_POLL_INTERVAL_MS = 15 * 1000;
 const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 type RepositoryState =
@@ -210,8 +210,8 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 
 	async function refreshRepository(cwd: string | undefined): Promise<void> {
 		const generation = ++refreshGeneration;
-		pullRequest = undefined;
 		if (!cwd) {
+			pullRequest = undefined;
 			repository = { isGit: false, path: "unknown" };
 			requestRender?.();
 			return;
@@ -220,6 +220,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const root = await pi.exec("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: 5_000 });
 			if (generation !== refreshGeneration) return;
 			if (root.code !== 0 || root.stdout.trim() === "") {
+				pullRequest = undefined;
 				repository = { isGit: false, path: compactPath(cwd) };
 				requestRender?.();
 				return;
@@ -227,7 +228,9 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const branchResult = await pi.exec("git", ["branch", "--show-current"], { cwd, timeout: 5_000 });
 			if (generation !== refreshGeneration) return;
 			const branch = branchResult.code === 0 ? branchResult.stdout.trim() || undefined : undefined;
+			const isBranchChanged = !repository.isGit || repository.branch !== branch;
 			repository = { isGit: true, project: projectName(cwd, root.stdout.trim()), branch };
+			if (isBranchChanged || !branch) pullRequest = undefined;
 			requestRender?.();
 			if (branch) await refreshPullRequest(cwd, generation);
 		} catch {
