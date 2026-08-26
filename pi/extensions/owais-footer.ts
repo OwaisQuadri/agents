@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { basename, relative } from "node:path";
 
 const HERDR_WORKTREE_MARKER = "/.herdr/worktrees/";
-const PR_POLL_INTERVAL_MS = 5 * 60 * 1000;
+const PR_POLL_INTERVAL_MS = 15 * 1000;
 const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 type RepositoryState =
