@@ -56,6 +56,7 @@ test("renders the compact Git label and linked pull request", async () => {
 	const calls: Array<{ command: string; args: string[] }> = [];
 	let widget: { dispose?(): void; render(width: number): string[] } | undefined;
 	let footer: { dispose?(): void } | undefined;
+	let refreshBranch: (() => void) | undefined;
 	const theme = {
 		fg(_color: string, text: string) {
 			return text;
@@ -95,7 +96,12 @@ test("renders the compact Git label and linked pull request", async () => {
 		},
 		ui: {
 			setFooter(factory: (tui: unknown, theme: typeof theme, footerData: { onBranchChange(callback: () => void): () => void }) => { dispose?(): void }) {
-				footer = factory({ requestRender() {} }, theme, { onBranchChange: () => () => {} });
+				footer = factory({ requestRender() {} }, theme, {
+					onBranchChange(callback) {
+						refreshBranch = callback;
+						return () => {};
+					},
+				});
 			},
 			setWidget(_key: string, factory: (tui: unknown, theme: typeof theme) => { dispose?(): void; render(width: number): string[] }) {
 				widget = factory({ requestRender() {} }, theme);
@@ -111,6 +117,8 @@ test("renders the compact Git label and linked pull request", async () => {
 		assert.match(line, /agents > /);
 		assert.match(line, /add-to-pi-config/);
 		assert.match(line, /\x1b]8;;https:\/\/github\.com\/owner\/repository\/pull\/42\x1b\\\x1b\[4mPR #42\x1b\[24m\x1b]8;;\x1b\\/);
+		refreshBranch?.();
+		assert.match(widget?.render(160)[1] ?? "", /PR #42/);
 		await handlers.get("agent_start")?.({}, ctx);
 		const activeLine = widget?.render(160)[1] ?? "";
 		assert.match(activeLine, /agents > /);
