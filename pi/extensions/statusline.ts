@@ -19,7 +19,7 @@ type AnthropicUsageResponse = {
 type CodexWindow = {
 	used_percent?: number;
 	limit_window_seconds?: number;
-	reset_at?: number;
+	reset_at?: number | string;
 	reset_after_seconds?: number;
 };
 
@@ -30,7 +30,6 @@ type CodexUsageResponse = {
 	};
 };
 
-const DEFAULT_VIEWPORT_WIDTH = 80;
 const POLL_INTERVAL_MS = 10 * 60 * 1000;
 const MIN_FETCH_INTERVAL_MS = 60 * 1000;
 const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
@@ -134,12 +133,17 @@ async function fetchCodexUsage(ctx: ExtensionContext): Promise<ProviderUsage | n
 				? raw.limit_window_seconds!
 				: fallbackSeconds;
 		const nowSeconds = Math.round(Date.now() / 1000);
+		const rawReset = raw.reset_at;
+		const numericReset = typeof rawReset === "number" ? rawReset : typeof rawReset === "string" ? Number(rawReset) : Number.NaN;
+		const datedReset = typeof rawReset === "string" ? Math.round(new Date(rawReset).getTime() / 1000) : Number.NaN;
 		const resetAt =
-			Number.isFinite(raw.reset_at) && raw.reset_at! > 0
-				? Math.round(raw.reset_at!)
-				: Number.isFinite(raw.reset_after_seconds) && raw.reset_after_seconds! > 0
-					? nowSeconds + Math.round(raw.reset_after_seconds!)
-					: 0;
+			Number.isFinite(numericReset) && numericReset > 0
+				? Math.round(numericReset > 10_000_000_000 ? numericReset / 1000 : numericReset)
+				: Number.isFinite(datedReset) && datedReset > 0
+					? datedReset
+					: Number.isFinite(raw.reset_after_seconds) && raw.reset_after_seconds! > 0
+						? nowSeconds + Math.round(raw.reset_after_seconds!)
+						: 0;
 		return {
 			usedPercent: clampPercent(Number(raw.used_percent ?? 0)),
 			resetAtEpochSeconds: resetAt,
@@ -147,9 +151,13 @@ async function fetchCodexUsage(ctx: ExtensionContext): Promise<ProviderUsage | n
 		};
 	};
 
+	const windows = [
+		toWindow(data.rate_limit?.primary_window, FIVE_HOUR_SECONDS),
+		toWindow(data.rate_limit?.secondary_window, SEVEN_DAY_SECONDS),
+	].filter((window): window is UsageWindow => window !== null);
 	return {
-		fiveHour: toWindow(data.rate_limit?.primary_window, FIVE_HOUR_SECONDS),
-		sevenDay: toWindow(data.rate_limit?.secondary_window, SEVEN_DAY_SECONDS),
+		fiveHour: windows.find((window) => window.windowSeconds < 24 * 3600) ?? null,
+		sevenDay: windows.find((window) => window.windowSeconds >= 24 * 3600) ?? null,
 	};
 }
 
@@ -159,8 +167,8 @@ function selectWindow(usage: ProviderUsage): { window: UsageWindow; label: strin
 	if (!five && !week) return null;
 	if (!week) return five ? { window: five, label: "5h" } : null;
 	if (!five) return { window: week, label: "7d" };
-	if (five.usedPercent > 90 && five.usedPercent > week.usedPercent) {
-		return { window: five, label: "5h" };
+	if (five.usedPercent >= 77 || week.usedPercent >= 77) {
+		return five.usedPercent > week.usedPercent ? { window: five, label: "5h" } : { window: week, label: "7d" };
 	}
 	return { window: week, label: "7d" };
 }
@@ -174,45 +182,21 @@ function formatReset(diffSeconds: number): string {
 	return `${Math.floor(diffSeconds / 60)}m`;
 }
 
-function barWidthForViewport(viewportWidth: number | undefined): number {
-	const width = viewportWidth && viewportWidth > 0 ? viewportWidth : DEFAULT_VIEWPORT_WIDTH;
-	return Math.max(1, Math.floor(width / 2));
+function pacePercent(window: UsageWindow, label: string, nowSeconds: number, resetDiffSeconds: number): number {
+	if (label !== "7d") return clampPercent(((window.windowSeconds - resetDiffSeconds) / window.windowSeconds) * 100);
+	const resetAt = window.resetAtEpochSeconds || nowSeconds;
+	const windowDays = Math.max(1, Math.round(window.windowSeconds / 86400));
+	const daysSinceLastReset = Math.max(0, Math.floor((nowSeconds - (resetAt - window.windowSeconds)) / 86400));
+	return clampPercent(((daysSinceLastReset + 1) / windowDays) * 100);
 }
 
-function renderBar(
-	usage: ProviderUsage,
-	theme: { fg: (color: string, text: string) => string },
-	viewportWidth: number | undefined,
-): string | null {
-	const selected = selectWindow(usage);
-	if (!selected) return null;
-	const { window, label } = selected;
-
-	const nowSeconds = Math.round(Date.now() / 1000);
-	const percent = Math.floor(window.usedPercent);
-	const diff = Math.max(0, (window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
-
-	// On-pace is the share of the window already spent, read from its own reset stamp.
-	const pace = clampPercent(((window.windowSeconds - diff) / window.windowSeconds) * 100);
-	const barWidth = barWidthForViewport(viewportWidth);
-	const fill = Math.floor((percent * barWidth) / 100);
-	const mark = Math.min(barWidth - 1, Math.max(0, Math.floor((pace * barWidth) / 100)));
-
-	let bar = "";
-	for (let i = 0; i < barWidth; i++) {
-		if (i === mark) bar += theme.fg("warning", "│");
-		else if (i < fill) bar += "█";
-		else bar += theme.fg("dim", "░");
-	}
-
-	const isOverCap = (usage.fiveHour?.usedPercent ?? 0) >= 100 || (usage.sevenDay?.usedPercent ?? 0) >= 100;
-	const percentText = isOverCap
-		? theme.fg("error", `${percent}%`)
-		: percent > pace
-			? theme.fg("warning", `${percent}%`)
-			: `${percent}%`;
-
-	return `${theme.fg("dim", label)} ${bar} ${percentText} ${theme.fg("dim", `(resets in ${formatReset(diff)})`)}`;
+function formatCalendarReset(epochSeconds: number): string {
+	const reset = new Date(epochSeconds * 1000);
+	const now = new Date();
+	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+	const resetDay = new Date(reset.getFullYear(), reset.getMonth(), reset.getDate()).getTime();
+	const day = resetDay === today ? "today" : resetDay === today + 86_400_000 ? "tomorrow" : reset.toLocaleDateString(undefined, { weekday: "short" });
+	return `${day} at ${reset.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 
 export default function statusline(pi: ExtensionAPI) {
@@ -228,11 +212,22 @@ export default function statusline(pi: ExtensionAPI) {
 
 	function render(ctx: ExtensionContext) {
 		if (!isCtxActive(ctx)) return;
-		if (!ctx.hasUI) return;
 		const provider = activeProvider(ctx);
 		const usage = provider ? usageByProvider.get(provider) : undefined;
-		const line = usage ? renderBar(usage, ctx.ui.theme, process.stdout.columns) : null;
-		ctx.ui.setStatus("statusline", line ?? undefined);
+		const selected = usage ? selectWindow(usage) : null;
+		if (!provider || !selected) {
+			(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = undefined;
+			return;
+		}
+		const nowSeconds = Math.round(Date.now() / 1000);
+		const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
+		(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = {
+			provider,
+			usedPercent: Math.floor(selected.window.usedPercent),
+			pacePercent: Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)),
+			label: selected.label,
+			reset: selected.label === "5h" ? formatCalendarReset(selected.window.resetAtEpochSeconds || nowSeconds) : `in ${formatReset(diff)}`,
+		};
 	}
 
 	const onResize = () => {

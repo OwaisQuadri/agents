@@ -18,6 +18,8 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - the mutation-proposer writing `evals/` cases, the rubric, or `votes/`
   - a judge that read `votes/`, another vote, or prior `logs/` history before grading
   - a vote written by editing `votes/votes.jsonl` instead of `scripts/submit_vote.py`
+  - a session-evidence sweep that reads outside its bounded parent-session set, dumps a
+    transcript, or exposes a secret
 
   Silent omissions are catastrophic here too, not partial credit — this skill's dominant
   failure is a thing that never happens and leaves no trace. Each is graded on a MISSING
@@ -28,3 +30,6 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
     to execution, and no explicit written drop
   - an artifact declared done or live with no `evals/` dir, or whose definition does not
     end in its own `## logging` section
+  - a session-evidence candidate that omits its observed task shape and measured cost, skips
+    the checker and Pi-extension routing, recommends an agent without a distinct model, tool
+    grant, or isolation ground, or treats zero candidates as failure

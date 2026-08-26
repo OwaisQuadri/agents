@@ -81,7 +81,9 @@ impl Fixture {
     // a root pi_package (".") with no skills field, matching the candidate's layout
     // (github.com/tintinweb/pi-subagents has no skills/ directory).
     fn candidate_manifest(&self, revision: &str, platforms: &str) -> PathBuf {
-        let manifest = self.root.join(format!("manifest-candidate-{platforms}.toml"));
+        let manifest = self
+            .root
+            .join(format!("manifest-candidate-{platforms}.toml"));
         let remote = self.remote_path();
         fs::write(
             &manifest,
@@ -707,6 +709,74 @@ installer = { command = "./install.sh", args = ["apply"], preview_args = ["previ
     );
 }
 
+#[test]
+fn installs_an_embedded_extension_with_companion_directory_offline() {
+    let fixture = Fixture::new();
+    let home = fixture.home("companion-home");
+    fs::create_dir_all(&home).expect("companion home");
+    let source_directory = fixture.repository.join("pi/extensions/config-write-guard");
+    fs::create_dir_all(&source_directory).expect("companion source directory");
+    fs::write(
+        fixture
+            .repository
+            .join("pi/extensions/config-write-guard.ts"),
+        "import './config-write-guard/policy.ts';\n",
+    )
+    .expect("extension source");
+    fs::write(
+        source_directory.join("policy.ts"),
+        "export const policy = true;\n",
+    )
+    .expect("policy source");
+    fs::write(
+        source_directory.join("paths.ts"),
+        "export const paths = true;\n",
+    )
+    .expect("paths source");
+    let production_manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
+    let mut selected_manifest = fs::read_to_string(production_manifest)
+        .expect("production manifest")
+        .parse::<toml::Value>()
+        .expect("parse production manifest");
+    let selected_tools = selected_manifest
+        .get_mut("tools")
+        .and_then(toml::Value::as_array_mut)
+        .expect("production tools");
+    selected_tools.retain(|tool| {
+        matches!(
+            tool.get("name").and_then(toml::Value::as_str),
+            Some("config-write-guard" | "config-write-guard-lib")
+        )
+    });
+    assert_eq!(selected_tools.len(), 2, "managed extension entries");
+    let manifest = fixture.root.join("companion.toml");
+    fs::write(
+        &manifest,
+        toml::to_string(&selected_manifest).expect("serialize selected manifest"),
+    )
+    .expect("companion manifest");
+
+    let output = fixture.run(&home, &manifest, "linux", false);
+
+    assert!(output.status.success(), "{}", error_text(&output));
+    assert!(!home.join(".cache/tool-sync").exists());
+    let destination = home.join(".pi/agent/extensions");
+    assert_same_link_target(
+        &destination.join("config-write-guard.ts"),
+        &fixture
+            .repository
+            .join("pi/extensions/config-write-guard.ts"),
+    );
+    assert_same_link_target(&destination.join("config-write-guard"), &source_directory);
+    for companion in ["policy.ts", "paths.ts"] {
+        assert_eq!(
+            fs::canonicalize(destination.join("config-write-guard").join(companion))
+                .expect("resolve installed companion"),
+            fs::canonicalize(source_directory.join(companion)).expect("resolve source companion")
+        );
+    }
+}
+
 // AGNT-0063.T04: proves the candidate replacement package (root pi_package, no
 // skills) previews cleanly against an isolated home with a local fixture remote
 // standing in for github.com/tintinweb/pi-subagents, without touching real $HOME
@@ -761,7 +831,11 @@ fn previews_the_candidate_subagent_package_without_mutating_home() {
         "the candidate ships no skills directory, so preview must not plan a skill link: {report}"
     );
     assert!(!fixture.record().exists());
-    assert_eq!(tree_snapshot(&home), before, "a dry-run preview must leave the home tree byte-identical");
+    assert_eq!(
+        tree_snapshot(&home),
+        before,
+        "a dry-run preview must leave the home tree byte-identical"
+    );
 }
 
 // AGNT-0063.T04: proves the candidate package links and re-links deterministically,
@@ -813,7 +887,10 @@ fn applies_and_repeats_the_candidate_subagent_package_link_without_skills() {
     );
     let repeated_checkout_metadata = fs::metadata(&checkout).expect("repeated checkout metadata");
     assert_eq!(
-        (repeated_checkout_metadata.dev(), repeated_checkout_metadata.ino()),
+        (
+            repeated_checkout_metadata.dev(),
+            repeated_checkout_metadata.ino()
+        ),
         (checkout_metadata.dev(), checkout_metadata.ino()),
         "the existing checkout directory must be reused, not re-cloned"
     );
@@ -826,6 +903,57 @@ fn applies_and_repeats_the_candidate_subagent_package_link_without_skills() {
     assert!(report.contains("fetch repository"), "{report}");
     assert!(!report.contains("clone "), "{report}");
     assert!(!report.contains("create directory"), "{report}");
+}
+
+#[test]
+fn top_level_installer_preserves_model_overrides_while_adding_managed_compatibility() {
+    let root = fixture_root("tool-sync-top-level-model-overrides");
+    let repository = root.join("repository");
+    let home = root.join("home");
+    fs::create_dir_all(repository.join("agents")).expect("agents fixture");
+    fs::create_dir_all(repository.join("config")).expect("config fixture");
+    fs::create_dir_all(repository.join("skills/fixture")).expect("skill fixture");
+    fs::create_dir_all(home.join(".pi/agent")).expect("Pi home fixture");
+    fs::write(repository.join("CLAUDE.md"), "fixture").expect("instructions fixture");
+    fs::write(
+        repository.join("config/model-tiers.json"),
+        r#"{"tiers":{"T1":{"pi":"openrouter/test","thinking":"off","fallbacks":["openrouter/fallback"]}},"agents":{},"orchestrator":"T1"}"#,
+    )
+    .expect("model tiers fixture");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/models.json"),
+        repository.join("config/models.json"),
+    )
+    .expect("managed models fixture");
+    fs::write(
+        home.join(".pi/agent/models.json"),
+        r#"{"providers":{"openrouter":{"modelOverrides":{"anthropic/claude-sonnet-4":{"name":"Unchanged model"}}}}}"#,
+    )
+    .expect("existing models fixture");
+    let installer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
+
+    let output = Command::new("bash")
+        .arg(installer)
+        .env("HOME", &home)
+        .env("REPO_TARGET", &repository)
+        .output()
+        .expect("run top-level installer");
+
+    assert!(output.status.success(), "{}", error_text(&output));
+    let installed = home.join(".pi/agent/models.json");
+    for filter in [
+        r#".providers.openrouter.modelOverrides["dots-studio/dots-3-note-preview:free"] == {"compat":{"maxTokensField":"max_tokens"}}"#,
+        r#".providers.openrouter | has("compat") | not"#,
+        r#".providers.openrouter.modelOverrides["anthropic/claude-sonnet-4"] == {"name":"Unchanged model"}"#,
+    ] {
+        let assertion = Command::new("jq")
+            .args(["-e", filter])
+            .arg(&installed)
+            .output()
+            .expect("run model override assertion");
+        assert!(assertion.status.success(), "{}", error_text(&assertion));
+    }
+    fs::remove_dir_all(root).expect("model override fixture cleanup");
 }
 
 #[test]

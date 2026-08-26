@@ -106,6 +106,19 @@ The managed upstream stack pins these immutable revisions:
 
 Package extensions execute with full user permissions. Review every pinned update before installation.
 
+### Managed Pi configuration
+
+Pi configuration sources live in this repository. `tool-sync` links the extensions into `~/.pi/agent/extensions`; do not edit those links or any managed skill, agent, or instruction destination directly. Edit the source here, then run:
+
+```sh
+cargo build --release --manifest-path tools/tool-sync/Cargo.toml
+REPO_TARGET="$PWD" ./install.sh
+```
+
+The `config-write-guard` extension blocks Pi `edit` and `write` calls that target managed destinations. It also blocks shell commands that name a managed destination, because a shell command cannot prove that it only reads the path. The guarded paths are `~/.agents/skills`, the managed `~/.claude` and `~/.codex` files, plus Pi's managed agents, extensions, and settings.
+
+The source extensions provide `ask_user_question`, the `owais` theme, a custom header, and prompt snippets. Press `Alt+S` or run `/snippets` to choose snippets for the next message.
+
 ### Private telemetry
 
 Telemetry uses the private local JavaScript Object Notation (JSON) Lines store at `${PI_CODING_AGENT_DIR:-~/.pi/agent}/telemetry.jsonl`. No prompts, outputs, tool arguments, tool results, file paths, or free-text feedback enter the closed schema.

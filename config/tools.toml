@@ -8,11 +8,18 @@ source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "e3fa88d5d
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
 
 [[tools]]
+name = "rust-code-analysis-cli"
+platforms = ["macos", "linux"]
+commands = ["target/release/rust-code-analysis-cli"]
+source = { url = "https://github.com/mozilla/rust-code-analysis.git", revision = "37e5d83c056c8cbf827223d5814a93c5218df1a9" }
+installer = { command = "cargo", args = ["build", "--release", "--package", "rust-code-analysis-cli"], preview_args = ["metadata", "--no-deps", "--format-version", "1"] }
+
+[[tools]]
 name = "pi-subagents"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
-source = { url = "https://github.com/tintinweb/pi-subagents.git", revision = "3f9d35cd078d18a141eb5a6d8f4fc5010d756280" }
+source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "8302d1062f6a13a8c08a09f7463637eebe326d8b" }
 installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
@@ -38,6 +45,14 @@ commands = []
 skills = ["skills/engineering/wayfinder", "skills/productivity/grilling"]
 source = { url = "https://github.com/mattpocock/skills.git", revision = "068b6e0c62393147daf03530149cdce209c93da8" }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "pi-transcribe"
+platforms = ["macos"]
+commands = []
+pi_package = "."
+source = { url = "https://github.com/OwaisQuadri/pi-transcribe.git", revision = "a38435433ce00caf232798fa9dce2a58750ee007" }
+installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
 name = "telemetry"
@@ -96,6 +111,22 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "herdr-activity"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/herdr-activity.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "herdr-activity-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/herdr-activity"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "herdr-state"
 platforms = ["macos", "linux"]
 commands = []
@@ -132,5 +163,77 @@ name = "donsetch"
 platforms = ["macos", "linux"]
 commands = ["target/release/donsetch"]
 pi_package = "npm"
-source = { url = "https://github.com/dondai44423/donsetch.git", revision = "8ee8e1a5325432ef74c7e7db38f3b8448a7d2d81" }
-installer = { command = "/bin/zsh", args = ["-lc", "cargo build --release && mkdir -p npm/binaries && cp target/release/donsetch npm/binaries/donsetch"], preview_args = ["-lc", "cargo --version"] }
+source = { url = "https://github.com/dondai44423/donsetch.git", revision = "fa240b10eaea8cf16bcc5844e0879c709c3b68db" }
+installer = { command = "/bin/zsh", args = ["-lc", "cargo build --release && mkdir -p npm/binaries && cp target/release/donsetch npm/binaries/donsetch.tmp && mv npm/binaries/donsetch.tmp npm/binaries/donsetch"], preview_args = ["-lc", "cargo --version"] }
+
+[[tools]]
+name = "ask-user-question"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/ask-user-question.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "custom-header"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/custom-header.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "config-write-guard"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/config-write-guard.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "config-write-guard-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/config-write-guard"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "prompt-snippets"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "pi/extensions/prompt-snippets"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "om-always-on"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/om-always-on.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "observational-memory"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "pi/extensions/observational-memory"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "owais-footer"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/owais-footer.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "world-clock"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/world-clock.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }

@@ -41,6 +41,8 @@ tree never sanctioned. Route first, and stop at the first match:
   artifact is not authoring it and not tuning it. Do the task. Only fold it back as an eval
   case or a log line if that was asked for — burning someone's live request as harness fodder
   is the failure this branch exists to prevent.
+- **A request to mine recent sessions for reusable capability candidates.** Run the bounded
+  evidence sweep below. It proposes candidates from evidence and does not author them.
 - **Anything else** falls through to the tree.
 
 A verdict this skill reaches but does not execute this turn is tracked to execution or
@@ -49,6 +51,29 @@ one — so name the destination: the artifact's `TUNING.md` under its deferred h
 in the relevant project's roadmap when the verdict is project work. Either one is somewhere a
 later pass reads without being told to look, which is the whole property. Sweep every verdict the
 pass reached, not only the most recent.
+
+## bounded session evidence sweep
+
+Run this only when the user asks to mine recent sessions for reusable improvements.
+
+1. Set the window before reading. Use the user's limit, or the ten newest parent Pi sessions.
+   Exclude child-agent transcripts. Read only the excerpts needed to identify a task shape.
+2. Read no more than ten artifacts named in the session excerpts. For each artifact, read at
+   most its 20 newest `logs/usage.jsonl` or `run-history.jsonl` records when the file exists.
+   Report how many artifacts or records the cap skipped. Keep only repetition, elapsed time,
+   exposed token or dollar cost, result, and correction. Never report a prompt, transcript,
+   file content, secret, or opaque identifier.
+3. Group the evidence into task shapes. State the observed repetition and measured cost before
+   any proposal. Say that cost is unavailable when the records do not expose it. Do not estimate.
+4. Reject an isolated, ambiguous, or unmeasured shape. Zero candidates is a valid result.
+5. For every surviving candidate, ask whether a program owns it first. Use a checker for a
+   deliberate deterministic check, or a Pi extension for a runtime event. Split a mechanizable
+   core from its judgment residue. Only then use the existing type tree: update an owner when
+   one exists, otherwise prefer a skill. Recommend an agent only when the evidence shows a
+   distinct model or a tool grant that the parent must not hold. It may show noisy work that
+   needs isolation. Name that ground.
+6. Present candidates, not new artifacts. Each candidate names its evidence, routing verdict,
+   and a destination for implementation or an explicit written drop.
 
 ## should it exist?
 

@@ -1,0 +1,55 @@
+{
+  "is12Hour": true,
+  "zones": [
+    {
+      "name": "Local",
+      "zone": "local",
+      "color": "#82b8ff"
+    },
+    {
+      "name": "London",
+      "zone": "Europe/London",
+      "color": "#8ee7f5"
+    },
+    {
+      "name": "San Francisco",
+      "zone": "America/Los_Angeles",
+      "color": "#a6dca8"
+    },
+    {
+      "name": "Mecca",
+      "zone": "Asia/Riyadh",
+      "color": "#c7b5ff"
+    },
+    {
+      "name": "Madinah",
+      "zone": "Asia/Riyadh",
+      "color": "#d394ff"
+    },
+    {
+      "name": "Toronto",
+      "zone": "America/Toronto",
+      "color": "#c7b5ff"
+    },
+    {
+      "name": "New York",
+      "zone": "America/New_York",
+      "color": "#82b8ff"
+    },
+    {
+      "name": "Chicago",
+      "zone": "America/Chicago",
+      "color": "#8ee7f5"
+    },
+    {
+      "name": "Seattle",
+      "zone": "America/Los_Angeles",
+      "color": "#a6dca8"
+    },
+    {
+      "name": "Madrid",
+      "zone": "Europe/Madrid",
+      "color": "#c7b5ff"
+    }
+  ]
+}
