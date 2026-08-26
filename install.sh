@@ -72,6 +72,32 @@ link() {
   run ln -sfn "$target" "$lnk"
 }
 
+retire_pi_extension() {
+  local src="$1" retired_root dest
+  [[ -e "$src" || -L "$src" ]] || return 0
+  retired_root="$HOME_TARGET/.pi/agent/retired-extensions"
+  dest="$retired_root/$(basename "$src").retired-$STAMP"
+  [[ -e "$dest" || -L "$dest" ]] && dest="$dest.$(date +%H%M%S)"
+  run mkdir -p "$retired_root"
+  plan "retire $src -> $dest"
+  run mv "$src" "$dest"
+  (( IS_DRY )) || [[ -e "$dest" || -L "$dest" ]] || { echo "FATAL: retired Pi extension missing at $dest" >&2; exit 1; }
+}
+
+retire_to_trash() {
+  local src="$1" dest expected_count actual_count
+  [[ -e "$src" || -L "$src" ]] || return 0
+  expected_count="$(find "$src" -xdev -print | wc -l | tr -d " ")"
+  dest="$HOME_TARGET/.Trash/$(basename "$src").retired-$STAMP"
+  [[ -e "$dest" || -L "$dest" ]] && dest="$dest.$(date +%H%M%S)"
+  run mkdir -p "$HOME_TARGET/.Trash"
+  plan "retire $src -> $dest"
+  run mv "$src" "$dest"
+  (( IS_DRY )) && return 0
+  actual_count="$(find "$dest" -xdev -print | wc -l | tr -d " ")"
+  [[ "$actual_count" == "$expected_count" ]] || { echo "FATAL: retired path count mismatch for $src" >&2; exit 1; }
+}
+
 [[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
 (( IS_DRY )) && plan "dry run — printing, not executing"
 
@@ -276,7 +302,7 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
     --manifest "$REPO_TARGET/config/tools.toml"
     --home "$HOME_TARGET"
   )
-  (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
+  (( IS_DRY || IS_TEST )) && TOOL_SYNC_ARGS+=(--dry-run)
   plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
   "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
 fi
@@ -401,6 +427,93 @@ else
   fi
 fi
 
+PI_THEME_SOURCE="$REPO_TARGET/pi/themes/owais.json"
+PI_THEME_DESTINATION="$HOME_TARGET/.pi/agent/themes/owais.json"
+if [[ ! -f "$PI_THEME_SOURCE" ]]; then
+  echo "warn: $PI_THEME_SOURCE not found, skipping Pi theme link" >&2
+else
+  run mkdir -p "$HOME_TARGET/.pi/agent/themes"
+  link "$PI_THEME_DESTINATION" "$PI_THEME_SOURCE"
+fi
+
+PI_TRANSCRIBE_SOURCE="$REPO_TARGET/config/pi-transcribe.json"
+PI_TRANSCRIBE_DESTINATION="$HOME_TARGET/.pi/agent/pi-transcribe.json"
+if [[ ! -f "$PI_TRANSCRIBE_SOURCE" ]]; then
+  echo "warn: $PI_TRANSCRIBE_SOURCE not found, skipping Pi transcription configuration link" >&2
+else
+  run mkdir -p "$HOME_TARGET/.pi/agent"
+  link "$PI_TRANSCRIBE_DESTINATION" "$PI_TRANSCRIBE_SOURCE"
+fi
+
+if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 && "$(uname -s)" == "Darwin" ]]; then
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "FATAL: uv is required for local transcription. Install uv, then rerun install.sh." >&2
+    exit 1
+  fi
+  plan "install pinned parakeet-mlx 0.5.2"
+  uv tool install --reinstall "parakeet-mlx==0.5.2"
+else
+  plan "skip local transcription setup (dry run or sandbox install)"
+fi
+
+for obsolete in \
+  "$HOME_TARGET/.pi/agent/extensions/pi-voice-stt" \
+  "$HOME_TARGET/.pi/agent/extensions/voice.ts" \
+  "$HOME_TARGET"/.pi/agent/extensions/pi-voice-stt.pre-reset-* \
+  "$HOME_TARGET"/.pi/agent/extensions/voice.ts.pre-reset-*; do
+  retire_pi_extension "$obsolete"
+done
+if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 ]]; then
+  retire_to_trash "$HOME_TARGET/.pi/agent/pi-voice-server"
+  retire_to_trash "$HOME_TARGET/.local/bin/pi-voice-server"
+  retire_to_trash "$HOME_TARGET/.pi/agent/stt.json"
+fi
+
+WORLD_CLOCK_SOURCE="$REPO_TARGET/config/world-clock.json"
+WORLD_CLOCK_DESTINATION="$HOME_TARGET/.pi/agent/world-clock.json"
+if [[ ! -f "$WORLD_CLOCK_SOURCE" ]]; then
+  echo "warn: $WORLD_CLOCK_SOURCE not found, skipping world-clock configuration link" >&2
+else
+  run mkdir -p "$HOME_TARGET/.pi/agent"
+  link "$WORLD_CLOCK_DESTINATION" "$WORLD_CLOCK_SOURCE"
+fi
+
+PI_LEGACY_COMPACT_PATH="$HOME_TARGET/.pi/agent/extensions/compact-path.ts"
+if [[ -L "$PI_LEGACY_COMPACT_PATH" && "$(readlink "$PI_LEGACY_COMPACT_PATH")" == "$REPO_TARGET/pi/extensions/compact-path.ts" ]]; then
+  plan "unlink retired $PI_LEGACY_COMPACT_PATH"
+  run rm "$PI_LEGACY_COMPACT_PATH"
+fi
+
+GHOSTTY_CONFIG_SOURCE="$REPO_TARGET/config/ghostty.config"
+GHOSTTY_CONFIG_DESTINATION="$HOME_TARGET/Library/Application Support/com.mitchellh.ghostty/config"
+if [[ ! -f "$GHOSTTY_CONFIG_SOURCE" ]]; then
+  echo "warn: $GHOSTTY_CONFIG_SOURCE not found, skipping Ghostty configuration link" >&2
+else
+  run mkdir -p "$(dirname "$GHOSTTY_CONFIG_DESTINATION")"
+  link "$GHOSTTY_CONFIG_DESTINATION" "$GHOSTTY_CONFIG_SOURCE"
+fi
+
+PI_MANAGED_SETTINGS="$REPO_TARGET/config/pi-settings.json"
+PI_SETTINGS="$HOME_TARGET/.pi/agent/settings.json"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping managed Pi settings" >&2
+elif [[ ! -f "$PI_MANAGED_SETTINGS" ]]; then
+  echo "warn: $PI_MANAGED_SETTINGS not found, skipping managed Pi settings" >&2
+else
+  run mkdir -p "$HOME_TARGET/.pi/agent"
+  CURRENT='{}'
+  [[ -f "$PI_SETTINGS" ]] && CURRENT="$(cat "$PI_SETTINGS")"
+  UPDATED="$(jq -s '.[0] * .[1]' <(printf '%s' "$CURRENT") "$PI_MANAGED_SETTINGS")" \
+    || { echo "FATAL: Pi settings are not valid JSON" >&2; exit 1; }
+  if [[ "$(printf '%s' "$UPDATED" | jq -S .)" == "$(jq -S . "$PI_SETTINGS" 2>/dev/null)" ]]; then
+    plan "ok   $PI_SETTINGS managed Pi settings"
+  else
+    backup "$PI_SETTINGS"
+    plan "merge $PI_MANAGED_SETTINGS -> $PI_SETTINGS"
+    (( IS_DRY )) || printf '%s\n' "$UPDATED" > "$PI_SETTINGS"
+  fi
+fi
+
 # web_search curator: never open the browser. workflow=none skips the curator entirely and
 # returns raw results; autoOpenBrowser=false keeps the window shut even if the curator runs.
 # Config lives in its own file, separate from ~/.pi/agent/settings.json.
@@ -453,40 +566,14 @@ else
   fi
 fi
 
-# 14. cld: claude with permission prompts off, reaching every shell. the .zshrc alias
-#     covers interactive sessions; the ~/.local/bin shim covers scripts, git hooks, and
-#     an agent's own Bash tool, none of which source .zshrc. where both apply zsh expands
-#     the alias first. AGNT-0009 replaces the block with the rendered managed shell file.
+# 14. cld: claude with permission prompts off for scripts, hooks, and agent shells.
+#     The shell repository owns interactive shell aliases.
 CLD_SRC="$REPO_TARGET/config/cld"
 if [[ -f "$CLD_SRC" ]]; then
   run chmod +x "$CLD_SRC"
   plan "ensure $HOME_TARGET/.local/bin"
   run mkdir -p "$HOME_TARGET/.local/bin"
   link "$HOME_TARGET/.local/bin/cld" "$CLD_SRC"
-fi
-
-ZSHRC="$HOME_TARGET/.zshrc"
-CLD_BEGIN="# >>> agents managed (cld) >>>"
-CLD_END="# <<< agents managed (cld) <<<"
-CLD_BLOCK="$CLD_BEGIN
-alias cld='claude --dangerously-skip-permissions'
-$CLD_END"
-CURRENT=""
-[[ -f "$ZSHRC" ]] && CURRENT="$(cat "$ZSHRC")"
-# drop any previous block, then re-append: an edit to the alias lands on the next run
-STRIPPED="$(printf '%s\n' "$CURRENT" | awk -v b="$CLD_BEGIN" -v e="$CLD_END" '
-  $0 == b { skip = 1 }
-  !skip   { print }
-  $0 == e { skip = 0 }' | sed -e :a -e '/^$/{$d;N;ba' -e '}')"
-DESIRED="$STRIPPED
-
-$CLD_BLOCK"
-if [[ "$CURRENT" == "$DESIRED" ]]; then
-  plan "ok   $ZSHRC alias cld"
-else
-  backup "$ZSHRC"
-  plan "set  $ZSHRC alias cld -> claude --dangerously-skip-permissions"
-  (( IS_DRY )) || printf '%s\n' "$DESIRED" > "$ZSHRC"
 fi
 
 # 15. prune the Codex import residue. the ChatGPT app mirrors ~/.codex/config.toml's

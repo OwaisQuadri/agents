@@ -16,6 +16,15 @@
         }
       }
     },
+    "openrouter": {
+      "modelOverrides": {
+        "dots-studio/dots-3-note-preview:free": {
+          "compat": {
+            "maxTokensField": "max_tokens"
+          }
+        }
+      }
+    },
     "openai-codex": {
       "modelOverrides": {
         "gpt-5.3-codex-spark": {

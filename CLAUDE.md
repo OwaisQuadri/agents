@@ -87,6 +87,10 @@ Cross-project asks — status across agents, workspaces, or this machine's autom
 dispatching work into another project; digging into a project agent — route through the
 /hq skill.
 
+## change isolation
+
+Before a file change on the main branch, state the current branch and ask whether to use a worktree. Default autonomous changes to an isolated worktree. Do not write to main until the user explicitly chooses it.
+
 ## model tiers
 
 Work routes by TIER, never by model name. `config/model-tiers.json` maps each tier to a

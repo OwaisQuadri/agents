@@ -589,6 +589,36 @@ installer = { command = "/usr/bin/true", args = [], preview_args = [] }
     }
 
     #[test]
+    fn repository_manifest_declares_pi_transcribe_package() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
+        let manifest = load(&path).expect("repository manifest loads");
+        let tool = manifest
+            .tools
+            .iter()
+            .find(|tool| tool.name == "pi-transcribe")
+            .expect("pi-transcribe exists");
+        assert_eq!(tool.platforms, [Platform::Macos]);
+        assert!(tool.commands.is_empty());
+        assert_eq!(tool.pi_package.as_deref(), Some(Path::new(".")));
+        assert_eq!(tool.installer.command, "npm");
+        assert_eq!(tool.installer.args, ["ci", "--omit=dev"]);
+        assert_eq!(
+            tool.installer.preview_args,
+            ["ci", "--omit=dev", "--dry-run"]
+        );
+        assert!(matches!(
+            &tool.source,
+            ToolSource::Git { url, revision }
+                if url == "https://github.com/OwaisQuadri/pi-transcribe.git"
+                    && revision == "a38435433ce00caf232798fa9dce2a58750ee007"
+        ));
+        assert!(!manifest
+            .tools
+            .iter()
+            .any(|tool| tool.name == "pi-voice-stt" || tool.name == "voice"));
+    }
+
+    #[test]
     fn repository_manifest_declares_rag() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
         let manifest = load(&path).expect("repository manifest loads");
