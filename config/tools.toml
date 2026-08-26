@@ -237,3 +237,11 @@ commands = []
 pi_extension = "pi/extensions/world-clock.ts"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "chrome-devtools"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "packages/pi-chrome-devtools"
+source = { url = "https://github.com/narumiruna/pi-extensions.git", revision = "efc0c56e20f9ad9092d803904783b3d1cd9e1b7d" }
+installer = { command = "/bin/sh", args = ["-c", "npm ci && npm run build --workspace=packages/pi-chrome-devtools"], preview_args = ["-c", "npm --version"] }
