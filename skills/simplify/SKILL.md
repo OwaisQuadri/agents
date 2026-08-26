@@ -26,9 +26,10 @@ OUT: a verified edit and a fixed report with scope, tests, complexity evidence, 
 6. Find the narrowest test command that covers the full scope.
 7. Run that command before any simplify edit.
 8. Stop without edits if the baseline fails. Report the failing command and result.
-9. Measure cyclomatic complexity in each changed function with a repository-supported analyzer. Done when every changed function has a result.
-10. Report a missing analyzer. Do not invent a complexity score. Done when the report names the missing analyzer.
+9. Run `rust-code-analysis-cli --metrics --output-format json --paths <file>` once for each changed Rust, TypeScript, JavaScript, or Python file. Done when every supported changed file has JSON output.
+10. Walk each JSON `spaces` tree. Keep records where `kind` is `function`. Report each function name, line range, and cyclomatic metrics.
 11. Re-run the analyzer after each control-flow reduction. Report the before and after values. Done when the report names both values.
+12. Stop if `rust-code-analysis-cli` is absent. Run the managed agents installer before the next simplify pass. Do not invent a complexity score.
 
 Inspect the scope in this order:
 
@@ -70,7 +71,7 @@ Scope: <affected modules and side-effect boundaries>
 Baseline: <command and result>
 Reduced: <removed symbols, branches, repetitions, or boilerplate>
 Kept: <valuable candidates left unchanged, or none>
-Complexity: <analyzer or unavailable; before → after or kept reason>
+Complexity: <function records from rust-code-analysis-cli; before → after or kept reason>
 Final: <test, formatter, and static-check results>
 ```
 

@@ -589,6 +589,37 @@ installer = { command = "/usr/bin/true", args = [], preview_args = [] }
     }
 
     #[test]
+    fn repository_manifest_declares_complexity_analyzer() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
+        let manifest = load(&path).expect("repository manifest loads");
+        let tool = manifest
+            .tools
+            .iter()
+            .find(|tool| tool.name == "rust-code-analysis-cli")
+            .expect("complexity analyzer exists");
+        assert_eq!(tool.platforms, [Platform::Macos, Platform::Linux]);
+        assert_eq!(
+            tool.commands,
+            [PathBuf::from("target/release/rust-code-analysis-cli")]
+        );
+        assert_eq!(tool.installer.command, "cargo");
+        assert_eq!(
+            tool.installer.args,
+            ["build", "--release", "--package", "rust-code-analysis-cli"]
+        );
+        assert_eq!(
+            tool.installer.preview_args,
+            ["metadata", "--no-deps", "--format-version", "1"]
+        );
+        assert!(matches!(
+            &tool.source,
+            ToolSource::Git { url, revision }
+                if url == "https://github.com/mozilla/rust-code-analysis.git"
+                    && revision == "37e5d83c056c8cbf827223d5814a93c5218df1a9"
+        ));
+    }
+
+    #[test]
     fn repository_manifest_declares_pi_transcribe_package() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
         let manifest = load(&path).expect("repository manifest loads");
