@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { registerConsolidatorTools } from "../agent/consolidator/tools.js";
+import { durableMemoryFingerprint } from "../src/hooks/consolidator-trigger.js";
 import { buildWorkerEnv } from "../src/spawn/launch.js";
 
 describe("buildWorkerEnv(consolidator)", () => {
@@ -12,6 +13,29 @@ describe("buildWorkerEnv(consolidator)", () => {
 		expect(env.OM_WORKER).toBe("consolidator");
 		expect(env.OM_RUN_ID).toBe("c1");
 		expect(env.OM_MEMORY_DIR).toBe("/proj/.memory/sess-1");
+	});
+});
+
+describe("durableMemoryFingerprint", () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = mkdtempSync(join(tmpdir(), "om-cons-fingerprint-"));
+	});
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("changes only when a journey or topic file changes", () => {
+		const before = durableMemoryFingerprint(root);
+		expect(durableMemoryFingerprint(root)).toBe(before);
+
+		writeFileSync(join(root, "JOURNEY.md"), "Started the project.\n");
+		const afterJourney = durableMemoryFingerprint(root);
+		expect(afterJourney).not.toBe(before);
+
+		writeFileSync(join(root, "topic.md"), "---\nid: topic\n---\nCurrent state.\n");
+		expect(durableMemoryFingerprint(root)).not.toBe(afterJourney);
 	});
 });
 

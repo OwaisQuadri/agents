@@ -1,21 +1,21 @@
 /**
  * Phase B consolidator clock. When the active observation pool crosses
  * `consolidateAtPoolTokens`, promote the oldest observations (above `poolTargetTokens`) into
- * durable `.memory/` topic files via a subprocess consolidator, then tombstone exactly the
- * timestamps it reports back.
+ * durable `.memory/` topic files via a subprocess consolidator, then tombstone the batch only
+ * after a durable memory change.
  *
  * Runs in the BACKGROUND, mirroring the observer trigger (turn_end / agent_start), strictly
  * one at a time (design risk 4). Compaction does not wait for it (R5).
  *
  * Tombstone safety (design risk 4): the orchestrator tombstones the batch it handed the
  * consolidator, intersected with what is STILL active at exit — never an observation an
- * observer committed during the run (those are not in the handed batch). The consolidator does
- * not report back: it must consolidate everything it was given (filing or discarding junk is a
- * valid outcome), so on clean exit we trust it and drop the whole batch. This guarantees the
- * buffer always drains; a flaked-out partial run is recoverable from the worker's global session
- * recording (the standing safety net for lossy rewrites) and is the critic tier's job to catch.
+ * observer committed during the run (those are not in the handed batch). A clean worker must
+ * also change durable memory before any observation is dropped.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
 	OM_OBSERVATIONS_DROPPED,
 	foldLedger,
@@ -67,6 +67,24 @@ function nextRunId(): string {
  * overflow lines. The journey is included verbatim so the consolidator updates it in place
  * (append a segment for this batch; compress the old tail only if over `journeyTargetTokens`).
  */
+/**
+ * Returns a content hash for the durable memory files under a session root.
+ *
+ * @param memoryRoot The session memory root to inspect.
+ * @returns A stable hash of the journey and topic-file contents.
+ * @throws {Error} When a listed topic file cannot be read.
+ */
+export function durableMemoryFingerprint(memoryRoot: string): string {
+	const digest = createHash("sha256");
+	const topics = listTopics(memoryRoot);
+	const journey = readJourney(memoryRoot) ?? "";
+	digest.update(`JOURNEY.md\0${journey}\0`);
+	for (const topic of topics) {
+		digest.update(`${topic.filename}\0${readFileSync(join(memoryRoot, topic.filename), "utf-8")}\0`);
+	}
+	return digest.digest("hex");
+}
+
 function buildConsolidatorPrompt(memoryRoot: string, promote: Observation[], journeyTargetTokens: number): string {
 	const indexText = renderIndexFile(listTopics(memoryRoot));
 	const journeyText = readJourney(memoryRoot);
@@ -130,6 +148,7 @@ async function dispatchConsolidator(
 			kickoffPrompt: prompt,
 		});
 		const env = buildWorkerEnv("consolidator", { memoryRoot: runtime.memoryRoot, runId });
+		const before = durableMemoryFingerprint(runtime.memoryRoot);
 		const exit = await spawnWorker({ argv, cwd: runtime.memoryRoot, env, signal: controller.signal });
 		if (runtime.consolidatorController !== controller || !isContextActive(ctx)) return;
 		// Capture cost before the exit-code check so a partial run's spend is still recorded.
@@ -137,10 +156,10 @@ async function dispatchConsolidator(
 		if (exit.code !== 0) {
 			throw new Error(`consolidator exited with code ${exit.code}${exit.stderr ? `: ${exit.stderr.trim().slice(0, 200)}` : ""}`);
 		}
+		if (durableMemoryFingerprint(runtime.memoryRoot) === before) {
+			throw new Error("consolidator exited without changing durable memory");
+		}
 
-		// Trust the consolidator: on clean exit it has folded (or discarded) everything we handed it.
-		// Re-fold against the CURRENT branch so we never tombstone something already dropped or an
-		// observation an observer committed during this run (those are not in the handed batch).
 		const branch = ctx.sessionManager.getBranch();
 		const stillActive = new Set(foldLedger(branch).activeObservations.map((o) => o.timestamp));
 		const toDrop = promote.map((o) => o.timestamp).filter((t) => stillActive.has(t));
