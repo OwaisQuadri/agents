@@ -467,6 +467,8 @@ if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 ]]; then
   retire_to_trash "$HOME_TARGET/.pi/agent/pi-voice-server"
   retire_to_trash "$HOME_TARGET/.local/bin/pi-voice-server"
   retire_to_trash "$HOME_TARGET/.pi/agent/stt.json"
+  retire_to_trash "$HOME_TARGET/.pi/agent/extensions/theme-preview.ts"
+  retire_to_trash "$HOME_TARGET/.pi/agent/extensions/spinner-preview.ts"
 fi
 
 WORLD_CLOCK_SOURCE="$REPO_TARGET/config/world-clock.json"

@@ -30,6 +30,10 @@ loads it. Open it when you tune this skill, and not when you run it.
 - 2026-08-10, the answer-key fence. The judge's own fix, taken over banning self-tuning,
   because the weaker rule catches more. Cases written with sight of the candidate were the
   failure, and every author can write those.
+- 2026-08-26, the bounded session-evidence sweep for AGNT-0030. A fenced case author saw the
+  demonstrated gap and requirements, but not the candidate text. The incumbent scored 7.09
+  over 11 non-holdout cases and 7.17 over 6 holdout cases. The candidate scored 7.27 and 8.50.
+  The added cases distinguish the missing sweep from a bounded, redacted, zero-valid procedure.
 
 ## deferred verdicts
 

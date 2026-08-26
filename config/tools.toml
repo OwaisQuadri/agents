@@ -237,19 +237,3 @@ commands = []
 pi_extension = "pi/extensions/world-clock.ts"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
-
-[[tools]]
-name = "theme-preview"
-platforms = ["macos", "linux"]
-commands = []
-pi_extension = "pi/extensions/theme-preview.ts"
-source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
-
-[[tools]]
-name = "spinner-preview"
-platforms = ["macos", "linux"]
-commands = []
-pi_extension = "pi/extensions/spinner-preview.ts"
-source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
