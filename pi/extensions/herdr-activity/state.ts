@@ -79,9 +79,14 @@ export async function startHerdrAgent(pi: ExtensionAPI, ctx: HerdrContext): Prom
 }
 
 export async function settleHerdrAgent(pi: ExtensionAPI, ctx: HerdrContext): Promise<void> {
+	// agent_settled fires once per agent run after every automatic retry, compaction,
+	// and queued continuation has finished, but agent_start can fire more than once
+	// during that same run (once per retry/continuation). Decrementing by one would
+	// leave activeAgentCount stuck above zero whenever a run retried or continued,
+	// pinning the reported status on "working" forever. Settled always means done.
 	const current = state();
-	current.activeAgentCount = Math.max(0, current.activeAgentCount - 1);
-	await report(pi, ctx, current.activeAgentCount === 0);
+	current.activeAgentCount = 0;
+	await report(pi, ctx, true);
 }
 
 export async function setHerdrBlocked(pi: ExtensionAPI, ctx: HerdrContext, isBlocked: boolean): Promise<void> {
