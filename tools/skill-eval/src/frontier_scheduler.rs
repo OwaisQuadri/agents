@@ -1,10 +1,9 @@
-// TODO(AGNT-0032.T145): Return explicit actions and reserve trial cost before dispatch.
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
     ArtifactName, FrontierCellEvidence, FrontierCellStatus, FrontierEntrant, FrontierPlan,
-    FrontierRunState, FrontierRunStatus, FrontierSuite, ModelIdentity, SkillEvalError, TrialKey,
-    TrialRecord,
+    FrontierRunState, FrontierRunStatus, FrontierScheduleAction, FrontierSuite, ModelIdentity,
+    PoolPauseReason, SkillEvalError, TrialKey, TrialRecord,
 };
 use crate::statistics::{advance_frontier_model, evaluate_frontier_cell};
 
@@ -13,15 +12,26 @@ pub(crate) fn next_frontier_trial(
     suite: &FrontierSuite,
     state: &FrontierRunState,
     trials: &[TrialRecord],
-) -> Result<crate::model::FrontierScheduleAction, SkillEvalError> {
+) -> Result<FrontierScheduleAction, SkillEvalError> {
     validate_inputs(plan, suite, state, trials)?;
-    if !matches!(
-        state.status,
-        FrontierRunStatus::Pending | FrontierRunStatus::Running
-    ) || state.pause.is_some()
-        || state.spent_millionths_of_dollar >= plan.policy.spending_limit_millionths_of_dollar
-    {
-        return Ok(None);
+    if let Some(reason) = &state.pause {
+        return Ok(FrontierScheduleAction::Pause {
+            reason: reason.clone(),
+        });
+    }
+    match state.status {
+        FrontierRunStatus::Pending | FrontierRunStatus::Running => {}
+        FrontierRunStatus::AwaitingDecision
+        | FrontierRunStatus::Accepted
+        | FrontierRunStatus::Rejected
+        | FrontierRunStatus::Failed => {
+            return Ok(FrontierScheduleAction::Terminal {
+                status: state.status,
+            });
+        }
+        FrontierRunStatus::Paused => {
+            return Err(invalid("paused frontier run has no pause reason"));
+        }
     }
 
     let mut entrants = plan.entrants.iter().collect::<Vec<_>>();
@@ -120,7 +130,7 @@ pub(crate) fn next_frontier_trial(
     }
 
     ensure_no_unconsumed_trials(trials, &consumed)?;
-    Ok(None)
+    Ok(FrontierScheduleAction::Complete)
 }
 
 fn schedule_or_stop(
@@ -130,9 +140,9 @@ fn schedule_or_stop(
     consumed: BTreeSet<TrialKey>,
     model: ModelIdentity,
     key: TrialKey,
-) -> Result<Option<TrialKey>, SkillEvalError> {
+) -> Result<FrontierScheduleAction, SkillEvalError> {
     ensure_no_unconsumed_trials(trials, &consumed)?;
-    let mut attempts = state
+    let mut events = state
         .infrastructure_events
         .iter()
         .filter(|event| {
@@ -141,12 +151,18 @@ fn schedule_or_stop(
                 && event.case == key.case
                 && event.attempt == key.attempt
         })
-        .map(|event| event.infrastructure_attempt)
         .collect::<Vec<_>>();
-    attempts.sort_unstable();
-    if attempts.windows(2).any(|window| window[0] == window[1]) {
+    events.sort_by_key(|event| event.infrastructure_attempt);
+    if events
+        .windows(2)
+        .any(|window| window[0].infrastructure_attempt == window[1].infrastructure_attempt)
+    {
         return Err(invalid("frontier infrastructure attempt is duplicated"));
     }
+    let attempts = events
+        .iter()
+        .map(|event| event.infrastructure_attempt)
+        .collect::<Vec<_>>();
     let expected = (1..=u8::try_from(attempts.len())
         .map_err(|_| invalid("frontier infrastructure attempt count overflow"))?)
         .collect::<Vec<_>>();
@@ -155,11 +171,42 @@ fn schedule_or_stop(
             "frontier infrastructure attempts are not contiguous",
         ));
     }
-    if attempts.len() >= usize::from(plan.policy.maximum_infrastructure_attempts) {
-        Ok(None)
-    } else {
-        Ok(Some(key))
+    if events.len() >= usize::from(plan.policy.maximum_infrastructure_attempts) {
+        let message = events
+            .last()
+            .ok_or_else(|| invalid("frontier infrastructure pause has no event"))?
+            .message
+            .clone();
+        return Ok(FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::Infrastructure { message },
+        });
     }
+    let reserved_cost_millionths_of_dollar = plan.policy.maximum_trial_cost_millionths_of_dollar;
+    if reserved_cost_millionths_of_dollar == 0 {
+        return Err(invalid("frontier trial cost reservation is zero"));
+    }
+    let projected_spend = state
+        .spent_millionths_of_dollar
+        .checked_add(reserved_cost_millionths_of_dollar)
+        .ok_or_else(|| invalid("frontier projected spend overflow"))?;
+    if projected_spend > plan.policy.spending_limit_millionths_of_dollar {
+        return Ok(FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::SpendingLimit {
+                spent_millionths_of_dollar: state.spent_millionths_of_dollar,
+                limit_millionths_of_dollar: plan.policy.spending_limit_millionths_of_dollar,
+            },
+        });
+    }
+    let infrastructure_attempt = u8::try_from(events.len())
+        .map_err(|_| invalid("frontier infrastructure attempt count overflow"))?
+        .checked_add(1)
+        .ok_or_else(|| invalid("frontier infrastructure attempt overflow"))?;
+    Ok(FrontierScheduleAction::Dispatch {
+        model,
+        key,
+        infrastructure_attempt,
+        reserved_cost_millionths_of_dollar,
+    })
 }
 
 fn validate_inputs(

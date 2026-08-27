@@ -1,4 +1,3 @@
-// TODO(AGNT-0032.T145): Verify every action, lifecycle state, and spending boundary.
 #![expect(
     dead_code,
     reason = "the test imports private production modules to exercise the crate-private scheduler"
@@ -23,9 +22,9 @@ use model::{
     ArtifactName, CaseId, FrontierCaseGroup, FrontierCaseReference, FrontierConfidenceMethod,
     FrontierEntrant, FrontierInfrastructureEvent, FrontierModelProgress, FrontierPlan,
     FrontierPolicy, FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
-    FrontierSuite, FrontierSuiteIdentity, FrontierTierSuite, HarnessIdentity, ModelIdentity,
-    PoolPauseReason, T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey, TrialRecord, TrialUsage,
-    TrialVerdict,
+    FrontierScheduleAction, FrontierSuite, FrontierSuiteIdentity, FrontierTierSuite,
+    HarnessIdentity, ModelIdentity, PoolPauseReason, SkillEvalError, T1ScreenSnapshotIdentity,
+    Tier, Timestamp, TrialKey, TrialRecord, TrialUsage, TrialVerdict,
 };
 
 #[test]
@@ -42,10 +41,16 @@ fn every_entrant_starts_at_its_entry_tier_and_weakest_level() {
     ];
     for expected in &entrants {
         let (plan, suite, state) = fixture(vec![expected.clone()]);
-        let key = next_frontier_trial(&plan, &suite, &state, &[])
-            .unwrap()
-            .unwrap();
+        let (model, key, infrastructure_attempt, reservation) =
+            dispatch(next_frontier_trial(&plan, &suite, &state, &[]).unwrap());
+        assert_eq!(model.tier, expected.entry_tier);
+        assert_eq!(model.thinking, expected.thinking_levels[0]);
         assert_eq!(key.tier, expected.entry_tier);
+        assert_eq!(infrastructure_attempt, 1);
+        assert_eq!(
+            reservation,
+            plan.policy.maximum_trial_cost_millionths_of_dollar
+        );
         assert_eq!(state.models[0].next_thinking_index, Some(0));
     }
 }
@@ -55,15 +60,13 @@ fn promising_screen_expands_to_three_and_pass_stops_before_attempt_four() {
     let (plan, suite, state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
     let model = route("luna", Tier::T1, "off");
     let screening = trials_for(&suite, &model, 0, 1, 10);
-    let next = next_frontier_trial(&plan, &suite, &state, &screening)
-        .unwrap()
-        .unwrap();
+    let (_, next, _, _) = dispatch(next_frontier_trial(&plan, &suite, &state, &screening).unwrap());
     assert_eq!(next.attempt, 2);
 
     let confirmation = trials_for(&suite, &model, 0, 3, 10);
     assert_eq!(
         next_frontier_trial(&plan, &suite, &state, &confirmation).unwrap(),
-        None
+        FrontierScheduleAction::Complete
     );
 }
 
@@ -73,15 +76,14 @@ fn uncertain_confirmation_expands_to_five_and_never_schedules_six() {
     make_uncertain_suite(&mut suite);
     let model = route("luna", Tier::T1, "off");
     let confirmation = uncertain_trials(&suite, &model, 0, 3);
-    let next = next_frontier_trial(&plan, &suite, &state, &confirmation)
-        .unwrap()
-        .unwrap();
+    let (_, next, _, _) =
+        dispatch(next_frontier_trial(&plan, &suite, &state, &confirmation).unwrap());
     assert_eq!(next.attempt, 4);
 
     let maximum = uncertain_trials(&suite, &model, 0, 5);
     assert_eq!(
         next_frontier_trial(&plan, &suite, &state, &maximum).unwrap(),
-        None
+        FrontierScheduleAction::Complete
     );
 }
 
@@ -89,9 +91,7 @@ fn uncertain_confirmation_expands_to_five_and_never_schedules_six() {
 fn failed_screen_advances_without_confirmation() {
     let (plan, suite, state) = fixture(vec![entrant("luna", Tier::T1, &["off", "minimal"])]);
     let failed = trials_for(&suite, &route("luna", Tier::T1, "off"), 0, 1, 0);
-    let next = next_frontier_trial(&plan, &suite, &state, &failed)
-        .unwrap()
-        .unwrap();
+    let (_, next, _, _) = dispatch(next_frontier_trial(&plan, &suite, &state, &failed).unwrap());
     assert_eq!(next.tier, Tier::T1);
     assert_eq!(next.attempt, 1);
     assert_eq!(next.route_index, 0);
@@ -101,9 +101,7 @@ fn failed_screen_advances_without_confirmation() {
 fn passing_route_uses_statistics_to_select_stronger_cross_tier_level() {
     let (plan, suite, state) = fixture(vec![entrant("luna", Tier::T1, &["off", "minimal", "low"])]);
     let mut evidence = trials_for(&suite, &route("luna", Tier::T1, "off"), 0, 3, 10);
-    let next = next_frontier_trial(&plan, &suite, &state, &evidence)
-        .unwrap()
-        .unwrap();
+    let (_, next, _, _) = dispatch(next_frontier_trial(&plan, &suite, &state, &evidence).unwrap());
     assert_eq!(next.tier, Tier::T2);
     evidence.extend(trials_for(
         &suite,
@@ -112,9 +110,7 @@ fn passing_route_uses_statistics_to_select_stronger_cross_tier_level() {
         3,
         10,
     ));
-    let next = next_frontier_trial(&plan, &suite, &state, &evidence)
-        .unwrap()
-        .unwrap();
+    let (_, next, _, _) = dispatch(next_frontier_trial(&plan, &suite, &state, &evidence).unwrap());
     assert_eq!(next.tier, Tier::T3);
 }
 
@@ -132,55 +128,86 @@ fn resume_reuses_terminal_trials_and_selects_the_first_missing_key() {
             .into_iter()
             .filter(|trial| trial.key.attempt > 1 && trial.key != missing),
     );
-    let next = next_frontier_trial(&plan, &suite, &state, &evidence)
-        .unwrap()
-        .unwrap();
+    let (_, next, _, _) = dispatch(next_frontier_trial(&plan, &suite, &state, &evidence).unwrap());
     assert_eq!(next, missing);
 }
 
 #[test]
-fn one_infrastructure_failure_retries_once_and_second_failure_stops() {
+fn infrastructure_failures_retry_once_then_pause_without_performance_evidence() {
     let (plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
-    let key = next_frontier_trial(&plan, &suite, &state, &[])
-        .unwrap()
-        .unwrap();
+    let (_, key, first_attempt, reservation) =
+        dispatch(next_frontier_trial(&plan, &suite, &state, &[]).unwrap());
+    assert_eq!(first_attempt, 1);
     state
         .infrastructure_events
         .push(infrastructure(&key, 1, "first"));
-    assert_eq!(
-        next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
-        Some(key.clone())
-    );
+    let (retry_model, retry_key, retry_attempt, retry_reservation) =
+        dispatch(next_frontier_trial(&plan, &suite, &state, &[]).unwrap());
+    assert_eq!(retry_model, route("luna", key.tier, "off"));
+    assert_eq!(retry_key, key);
+    assert_eq!(retry_attempt, 2);
+    assert_eq!(retry_reservation, reservation);
     state
         .infrastructure_events
         .push(infrastructure(&key, 2, "second"));
     assert_eq!(
         next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
-        None
+        FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::Infrastructure {
+                message: "second".to_string(),
+            },
+        }
     );
 }
 
 #[test]
-fn spending_pauses_at_the_exact_cap_before_dispatch() {
+fn projected_spend_equal_to_the_limit_dispatches() {
     let (plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
-    state.spent_millionths_of_dollar = plan.policy.spending_limit_millionths_of_dollar;
+    state.spent_millionths_of_dollar = plan.policy.spending_limit_millionths_of_dollar
+        - plan.policy.maximum_trial_cost_millionths_of_dollar;
+    let (_, _, _, reservation) = dispatch(next_frontier_trial(&plan, &suite, &state, &[]).unwrap());
+    assert_eq!(
+        reservation,
+        plan.policy.maximum_trial_cost_millionths_of_dollar
+    );
+}
+
+#[test]
+fn projected_spend_over_the_limit_returns_a_typed_pause() {
+    let (plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    state.spent_millionths_of_dollar = plan.policy.spending_limit_millionths_of_dollar
+        - plan.policy.maximum_trial_cost_millionths_of_dollar
+        + 1;
     assert_eq!(
         next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
-        None
-    );
-    state.spent_millionths_of_dollar -= 1;
-    assert!(
-        next_frontier_trial(&plan, &suite, &state, &[])
-            .unwrap()
-            .is_some()
+        FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::SpendingLimit {
+                spent_millionths_of_dollar: state.spent_millionths_of_dollar,
+                limit_millionths_of_dollar: plan.policy.spending_limit_millionths_of_dollar,
+            },
+        }
     );
 }
 
 #[test]
-fn every_pause_and_terminal_state_schedules_nothing() {
+fn persisted_pause_returns_the_same_typed_pause() {
+    let (plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    let reason = PoolPauseReason::Quota {
+        model: route("luna", Tier::T1, "off"),
+        reset_at: Some(timestamp()),
+    };
+    state.status = FrontierRunStatus::Paused;
+    state.pause = Some(reason.clone());
+    assert_eq!(
+        next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
+        FrontierScheduleAction::Pause { reason }
+    );
+}
+
+#[test]
+fn each_terminal_status_returns_its_exact_status() {
     let (plan, suite, state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
     for status in [
-        FrontierRunStatus::Paused,
         FrontierRunStatus::AwaitingDecision,
         FrontierRunStatus::Accepted,
         FrontierRunStatus::Rejected,
@@ -190,17 +217,9 @@ fn every_pause_and_terminal_state_schedules_nothing() {
         candidate.status = status;
         assert_eq!(
             next_frontier_trial(&plan, &suite, &candidate, &[]).unwrap(),
-            None
+            FrontierScheduleAction::Terminal { status }
         );
     }
-    let mut paused = state;
-    paused.pause = Some(PoolPauseReason::Infrastructure {
-        message: "stopped".to_string(),
-    });
-    assert_eq!(
-        next_frontier_trial(&plan, &suite, &paused, &[]).unwrap(),
-        None
-    );
 }
 
 #[test]
@@ -210,9 +229,7 @@ fn selection_is_stable_under_entrant_case_and_evidence_reordering() {
         entrant("alpha", Tier::T1, &["off"]),
     ];
     let (plan, suite, state) = fixture(entrants.clone());
-    let first = next_frontier_trial(&plan, &suite, &state, &[])
-        .unwrap()
-        .unwrap();
+    let first = next_frontier_trial(&plan, &suite, &state, &[]).unwrap();
     let (mut reordered_plan, mut reordered_suite, mut reordered_state) = fixture(entrants);
     reordered_plan.entrants.reverse();
     reordered_state.configuration.plan.entrants.reverse();
@@ -220,9 +237,8 @@ fn selection_is_stable_under_entrant_case_and_evidence_reordering() {
     for tier_suite in reordered_suite.tiers.values_mut() {
         tier_suite.cases.reverse();
     }
-    let second = next_frontier_trial(&reordered_plan, &reordered_suite, &reordered_state, &[])
-        .unwrap()
-        .unwrap();
+    let second =
+        next_frontier_trial(&reordered_plan, &reordered_suite, &reordered_state, &[]).unwrap();
     assert_eq!(first, second);
 
     let (plan, suite, state) = fixture(vec![entrant("alpha", Tier::T1, &["off"])]);
@@ -231,6 +247,87 @@ fn selection_is_stable_under_entrant_case_and_evidence_reordering() {
     evidence.reverse();
     let reversed = next_frontier_trial(&plan, &suite, &state, &evidence).unwrap();
     assert_eq!(ordered, reversed);
+}
+
+#[test]
+fn dispatch_contains_the_exact_model_key_attempt_and_reservation() {
+    let (plan, suite, state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    assert_eq!(
+        next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
+        FrontierScheduleAction::Dispatch {
+            model: route("luna", Tier::T1, "off"),
+            key: TrialKey {
+                artifact: ArtifactName("artifact".to_string()),
+                tier: Tier::T1,
+                route_index: 0,
+                case: CaseId("adversarial".to_string()),
+                attempt: 1,
+            },
+            infrastructure_attempt: 1,
+            reserved_cost_millionths_of_dollar: 10,
+        }
+    );
+}
+
+#[test]
+fn pending_state_computes_the_same_dispatch_as_running() {
+    let (plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    let running = next_frontier_trial(&plan, &suite, &state, &[]).unwrap();
+    state.status = FrontierRunStatus::Pending;
+    let pending = next_frontier_trial(&plan, &suite, &state, &[]).unwrap();
+    assert_eq!(pending, running);
+}
+
+#[test]
+fn zero_spending_limit_returns_a_typed_pause() {
+    let (mut plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    plan.policy.spending_limit_millionths_of_dollar = 0;
+    state.configuration.plan = plan.clone();
+    assert_eq!(
+        next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
+        FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::SpendingLimit {
+                spent_millionths_of_dollar: 0,
+                limit_millionths_of_dollar: 0,
+            },
+        }
+    );
+}
+
+#[test]
+fn zero_trial_cost_reservation_is_rejected() {
+    let (mut plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    plan.policy.maximum_trial_cost_millionths_of_dollar = 0;
+    state.configuration.plan = plan.clone();
+    assert_eq!(
+        next_frontier_trial(&plan, &suite, &state, &[]),
+        Err(SkillEvalError::InvalidConfiguration(
+            "frontier trial cost reservation is zero".to_string()
+        ))
+    );
+}
+
+#[test]
+fn projected_spend_overflow_is_rejected() {
+    let (mut plan, suite, mut state) = fixture(vec![entrant("luna", Tier::T1, &["off"])]);
+    plan.policy.spending_limit_millionths_of_dollar = u64::MAX;
+    state.configuration.plan = plan.clone();
+    state.spent_millionths_of_dollar = u64::MAX - 5;
+    assert_eq!(
+        next_frontier_trial(&plan, &suite, &state, &[]),
+        Err(SkillEvalError::InvalidConfiguration(
+            "frontier projected spend overflow".to_string()
+        ))
+    );
+}
+
+#[test]
+fn exhausted_entrants_return_complete() {
+    let (plan, suite, state) = fixture(Vec::new());
+    assert_eq!(
+        next_frontier_trial(&plan, &suite, &state, &[]).unwrap(),
+        FrontierScheduleAction::Complete
+    );
 }
 
 fn fixture(entrants: Vec<FrontierEntrant>) -> (FrontierPlan, FrontierSuite, FrontierRunState) {
@@ -289,6 +386,23 @@ fn fixture(entrants: Vec<FrontierEntrant>) -> (FrontierPlan, FrontierSuite, Fron
         spent_millionths_of_dollar: 0,
     };
     (plan, suite, state)
+}
+
+fn dispatch(action: FrontierScheduleAction) -> (ModelIdentity, TrialKey, u8, u64) {
+    match action {
+        FrontierScheduleAction::Dispatch {
+            model,
+            key,
+            infrastructure_attempt,
+            reserved_cost_millionths_of_dollar,
+        } => (
+            model,
+            key,
+            infrastructure_attempt,
+            reserved_cost_millionths_of_dollar,
+        ),
+        other => panic!("expected dispatch, got {other:?}"),
+    }
 }
 
 fn tier_suite() -> FrontierTierSuite {
@@ -367,6 +481,7 @@ fn policy() -> FrontierPolicy {
         maximum_infrastructure_attempts: 2,
         maximum_catalog_age_seconds: 3_600,
         active_pool_size: 5,
+        maximum_trial_cost_millionths_of_dollar: 10,
         spending_limit_millionths_of_dollar: 100,
         is_provider_limit_enforced: true,
         is_first_party_only: true,
