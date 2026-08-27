@@ -171,7 +171,6 @@ pub(crate) trait T1ScreenProgressSink {
     fn emit_t1_screen(&mut self, state: &T1ScreenRunState) -> Result<(), SkillEvalError>;
 }
 
-// TODO(AGNT-0032.T150): Connect concrete frontier runtime and progress adapters.
 pub(crate) trait FrontierProgressSink {
     /// Emits one cumulative frontier state update.
     ///

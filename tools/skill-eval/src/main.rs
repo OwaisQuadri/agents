@@ -1,10 +1,13 @@
 #![forbid(unsafe_code)]
 
-// TODO(AGNT-0032.T150): Expose frontier source and store modules to the production runtime.
 #[cfg(not(test))]
 mod audit;
 #[cfg(not(test))]
 mod cli;
+#[cfg(not(test))]
+mod frontier_source;
+#[cfg(not(test))]
+mod frontier_store;
 #[cfg(not(test))]
 mod judge;
 #[cfg(not(test))]

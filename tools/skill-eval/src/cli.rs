@@ -9,15 +9,18 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 
+use crate::frontier_store::FileFrontierStore;
 use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
     CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
-    FrontierCaseGroup, FrontierInspection, FrontierPreviewReport, FrontierReport,
-    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication, HarnessIdentity,
+    FrontierBaselineLedger, FrontierCaseGroup, FrontierInspection, FrontierPlan,
+    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite,
+    FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
+    FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialSelector, HarnessIdentity,
     ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant,
     PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
     PromptJudgeRequest, QualificationPolicy, QualificationPurpose, QualificationReport,
@@ -35,10 +38,10 @@ use crate::pi_runner::PiCandidateRunner;
 use crate::pool_source::FilePoolPlanSource;
 use crate::pool_store::FilePoolStore;
 use crate::ports::{
-    ArtifactSource, CandidateRunner, Clock, FrontierSuiteRuntime, HarnessResolver, Judge,
-    ModelResolver, PoolPlanSource, PoolProgressSink, PoolRunIdSource, PoolRuntime, PoolStore,
-    ProgressSink, QualificationRuntime, RunIdSource, RunStore, T1ScreenProgressSink,
-    T1ScreenRuntime, T1ScreenStore, TierWriter, Verifier,
+    ArtifactSource, CandidateRunner, Clock, FrontierProgressSink, FrontierRuntime,
+    FrontierSuiteRuntime, HarnessResolver, Judge, ModelResolver, PoolPlanSource, PoolProgressSink,
+    PoolRunIdSource, PoolRuntime, PoolStore, ProgressSink, QualificationRuntime, RunIdSource,
+    RunStore, T1ScreenProgressSink, T1ScreenRuntime, T1ScreenStore, TierWriter, Verifier,
 };
 use crate::service::{
     apply_frontier_suite, apply_tier_assignments, build_pool_report, build_report,
@@ -2068,6 +2071,25 @@ impl ProgressSink for RenderProgress<'_> {
     }
 }
 
+struct RenderFrontierProgress<'a> {
+    format: OutputFormat,
+    output: &'a mut dyn Write,
+}
+
+impl FrontierProgressSink for RenderFrontierProgress<'_> {
+    fn emit_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
+        match self.format {
+            OutputFormat::JsonLines => write_json_line(state, self.output),
+            OutputFormat::Text => writeln!(
+                self.output,
+                "frontier {}: {:?}, spent {} millionths",
+                state.configuration.run_id.0, state.status, state.spent_millionths_of_dollar,
+            )
+            .map_err(output_error),
+        }
+    }
+}
+
 struct RenderPoolProgress<'a> {
     format: OutputFormat,
     output: &'a mut dyn Write,
@@ -2383,7 +2405,163 @@ fn io_path_error(path: PathBuf, error: std::io::Error) -> SkillEvalError {
     }
 }
 
-// TODO(AGNT-0032.T150): Delegate cumulative frontier ports to concrete adapters.
+struct FileSuiteRuntime<S = FileArtifactSource> {
+    source: S,
+    store: FileFrontierStore,
+}
+
+impl FileSuiteRuntime<FileArtifactSource> {
+    fn new(repository_root: &Path) -> Result<Self, SkillEvalError> {
+        Ok(Self {
+            source: FileArtifactSource,
+            store: FileFrontierStore::new(repository_root)?,
+        })
+    }
+}
+
+impl<S: ArtifactSource> ArtifactSource for FileSuiteRuntime<S> {
+    fn load(&self, root: &Path) -> Result<ArtifactDefinition, SkillEvalError> {
+        self.source.load(root)
+    }
+}
+
+impl<S> Clock for FileSuiteRuntime<S> {
+    fn now(&self) -> Timestamp {
+        local_timestamp()
+    }
+}
+
+fn proposal_artifact_revisions(
+    proposal: &FrontierSuiteProposal,
+) -> Result<BTreeMap<PathBuf, String>, SkillEvalError> {
+    let mut revisions = BTreeMap::new();
+    let keys = proposal
+        .proposed_tiers
+        .values()
+        .flat_map(|tier| {
+            tier.cases
+                .iter()
+                .map(|case| (&case.artifact_path, &case.artifact_revision))
+        })
+        .chain(
+            proposal
+                .calibration_anchors
+                .iter()
+                .map(|case| (&case.artifact_path, &case.artifact_revision)),
+        )
+        .chain(
+            proposal
+                .holdout_cases
+                .iter()
+                .map(|case| (&case.artifact_path, &case.artifact_revision)),
+        );
+    for (path, revision) in keys {
+        match revisions.get(path) {
+            Some(frozen) if frozen != revision => {
+                return Err(SkillEvalError::InvalidConfiguration(format!(
+                    "frontier proposal has conflicting revisions for artifact {}",
+                    path.display()
+                )));
+            }
+            Some(_) => {}
+            None => {
+                revisions.insert(path.clone(), revision.clone());
+            }
+        }
+    }
+    Ok(revisions)
+}
+
+fn validate_proposal_sources(
+    source: &dyn ArtifactSource,
+    proposal: &FrontierSuiteProposal,
+) -> Result<(), SkillEvalError> {
+    for (path, frozen_revision) in proposal_artifact_revisions(proposal)? {
+        let current = source.load(&path)?;
+        if current.revision != frozen_revision {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "frontier proposal artifact {} revision changed from {} to {}",
+                path.display(),
+                frozen_revision,
+                current.revision
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn apply_current_frontier_suite(
+    source: &dyn ArtifactSource,
+    store: &mut FileFrontierStore,
+    proposal: &FrontierSuiteProposal,
+    output: &Path,
+    published_at: &Timestamp,
+) -> Result<FrontierSuitePublication, SkillEvalError> {
+    validate_proposal_sources(source, proposal)?;
+    store.apply_frontier_suite_proposal(proposal, output, published_at)
+}
+
+impl<S: ArtifactSource> FrontierSuiteRuntime for FileSuiteRuntime<S> {
+    fn load_frontier_suite_construction_plan(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteConstructionPlan, SkillEvalError> {
+        self.store.load_frontier_suite_construction_plan(path)
+    }
+
+    fn load_frontier_suite_inventory(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteInventory, SkillEvalError> {
+        self.store.load_frontier_suite_inventory(path)
+    }
+
+    fn load_frontier_suite_review_set(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteReviewSet, SkillEvalError> {
+        self.store.load_frontier_suite_review_set(path)
+    }
+
+    fn load_frontier_suite_proposal(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteProposal, SkillEvalError> {
+        self.store.load_frontier_suite_proposal(path)
+    }
+
+    fn save_frontier_suite_inventory(
+        &mut self,
+        path: &Path,
+        inventory: &FrontierSuiteInventory,
+    ) -> Result<(), SkillEvalError> {
+        self.store.save_frontier_suite_inventory(path, inventory)
+    }
+
+    fn save_frontier_suite_proposal(
+        &mut self,
+        path: &Path,
+        proposal: &FrontierSuiteProposal,
+    ) -> Result<(), SkillEvalError> {
+        self.store.save_frontier_suite_proposal(path, proposal)
+    }
+
+    fn apply_frontier_suite_proposal(
+        &mut self,
+        proposal: &FrontierSuiteProposal,
+        output: &Path,
+        published_at: &Timestamp,
+    ) -> Result<FrontierSuitePublication, SkillEvalError> {
+        apply_current_frontier_suite(
+            &self.source,
+            &mut self.store,
+            proposal,
+            output,
+            published_at,
+        )
+    }
+}
+
 pub(crate) struct ConcreteRuntime {
     source: FileArtifactSource,
     models: ConfiguredModelResolver,
@@ -2393,6 +2571,7 @@ pub(crate) struct ConcreteRuntime {
     store: FileRunStore,
     pool_source: FilePoolPlanSource,
     pool_store: FilePoolStore,
+    frontier_store: FileFrontierStore,
     t1_screen_store: FileT1ScreenStore,
     writer: FileTierWriter,
     run_ids: PathRunIdSource,
@@ -2426,6 +2605,7 @@ impl ConcreteRuntime {
             store: FileRunStore::new(runs_root)?,
             pool_source: FilePoolPlanSource::new(&repository_root)?,
             pool_store: FilePoolStore::new(runs_root)?,
+            frontier_store: FileFrontierStore::new(&repository_root)?,
             t1_screen_store: FileT1ScreenStore::new(&repository_root)?,
             writer: FileTierWriter,
             run_ids: PathRunIdSource::new(runs_root)?,
@@ -2768,6 +2948,152 @@ fn local_timestamp() -> Timestamp {
     Timestamp(value)
 }
 
+fn load_frontier_plan_files(
+    repository_root: &Path,
+    source: &dyn ArtifactSource,
+    path: &Path,
+) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError> {
+    let plan: FrontierPlan = read_repository_json(repository_root, path, "frontier plan")?;
+    if plan.version != 1 {
+        return Err(invalid("frontier plan version must be 1"));
+    }
+    let suite_path = repository_file(repository_root, &plan.suite.path)?;
+    let suite_bytes = fs::read(&suite_path).map_err(|error| SkillEvalError::Io {
+        path: suite_path.clone(),
+        message: error.to_string(),
+    })?;
+    if sha256_digest(&suite_bytes) != plan.suite.sha256 {
+        return Err(invalid("frontier suite digest changed"));
+    }
+    let suite: FrontierSuite = strict_json(&suite_bytes, &suite_path, "frontier suite")?;
+    if suite.version != plan.suite.version || suite.version != 1 {
+        return Err(invalid("frontier suite version changed"));
+    }
+    validate_suite_sources(source, &suite)?;
+
+    if plan.capabilities.version != 1 {
+        return Err(invalid("frontier capability snapshot version must be 1"));
+    }
+    let capability_path = repository_file(repository_root, &plan.capabilities.path)?;
+    let capability_bytes = fs::read(&capability_path).map_err(|error| SkillEvalError::Io {
+        path: capability_path.clone(),
+        message: error.to_string(),
+    })?;
+    if sha256_digest(&capability_bytes) != plan.capabilities.sha256 {
+        return Err(invalid("frontier capability snapshot digest changed"));
+    }
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| invalid(format!("system clock is invalid: {error}")))?
+        .as_secs();
+    let expires_at = plan
+        .capabilities
+        .observed_at_unix_seconds
+        .checked_add(u64::from(plan.policy.maximum_catalog_age_seconds))
+        .ok_or_else(|| invalid("frontier capability freshness overflowed"))?;
+    if now > expires_at {
+        return Err(invalid("frontier capability snapshot is stale"));
+    }
+    Ok((plan, suite))
+}
+
+fn validate_suite_sources(
+    source: &dyn ArtifactSource,
+    suite: &FrontierSuite,
+) -> Result<(), SkillEvalError> {
+    let mut revisions = BTreeMap::new();
+    for case in suite.tiers.values().flat_map(|tier| &tier.cases) {
+        match revisions.get(&case.artifact_path) {
+            Some(revision) if revision != &case.artifact_revision => {
+                return Err(invalid(format!(
+                    "frontier suite has conflicting revisions for artifact {}",
+                    case.artifact_path.display()
+                )));
+            }
+            Some(_) => {}
+            None => {
+                revisions.insert(case.artifact_path.clone(), case.artifact_revision.clone());
+            }
+        }
+    }
+    for (path, revision) in revisions {
+        let current = source.load(&path)?;
+        if current.revision != revision {
+            return Err(invalid(format!(
+                "frontier suite artifact {} revision changed from {} to {}",
+                path.display(),
+                revision,
+                current.revision
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_repository_json<T: DeserializeOwned + Serialize>(
+    repository_root: &Path,
+    relative: &Path,
+    kind: &str,
+) -> Result<T, SkillEvalError> {
+    let path = repository_file(repository_root, relative)?;
+    let bytes = fs::read(&path).map_err(|error| SkillEvalError::Io {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    strict_json(&bytes, &path, kind)
+}
+
+fn strict_json<T: DeserializeOwned + Serialize>(
+    bytes: &[u8],
+    path: &Path,
+    kind: &str,
+) -> Result<T, SkillEvalError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|error| invalid(format!("{kind} {} is malformed: {error}", path.display())))?;
+    let parsed: T = serde_json::from_value(value.clone())
+        .map_err(|error| invalid(format!("{kind} {} is malformed: {error}", path.display())))?;
+    if serde_json::to_value(&parsed)
+        .map_err(|error| invalid(format!("{kind} validation failed: {error}")))?
+        != value
+    {
+        return Err(invalid(format!(
+            "{kind} {} contains unknown data",
+            path.display()
+        )));
+    }
+    Ok(parsed)
+}
+
+fn repository_file(repository_root: &Path, relative: &Path) -> Result<PathBuf, SkillEvalError> {
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(invalid("frontier repository path is unsafe"));
+    }
+    let path = repository_root.join(relative);
+    let canonical = fs::canonicalize(&path).map_err(|error| SkillEvalError::Io {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    if !canonical.starts_with(repository_root) || !canonical.is_file() {
+        return Err(invalid("frontier repository file escapes its root"));
+    }
+    Ok(canonical)
+}
+
+fn require_first_party_provider(provider: &str) -> Result<(), SkillEvalError> {
+    if matches!(provider, "anthropic" | "openai-codex") {
+        Ok(())
+    } else {
+        Err(invalid(format!(
+            "frontier provider {provider:?} is not an approved first-party route"
+        )))
+    }
+}
+
 impl TierWriter for ConcreteRuntime {
     fn write(
         &mut self,
@@ -2775,6 +3101,163 @@ impl TierWriter for ConcreteRuntime {
         assignments: &[TierAssignment],
     ) -> Result<(), SkillEvalError> {
         self.writer.write(artifact, assignments)
+    }
+}
+
+impl FrontierSuiteRuntime for ConcreteRuntime {
+    fn load_frontier_suite_construction_plan(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteConstructionPlan, SkillEvalError> {
+        self.frontier_store
+            .load_frontier_suite_construction_plan(path)
+    }
+
+    fn load_frontier_suite_inventory(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteInventory, SkillEvalError> {
+        self.frontier_store.load_frontier_suite_inventory(path)
+    }
+
+    fn load_frontier_suite_review_set(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteReviewSet, SkillEvalError> {
+        self.frontier_store.load_frontier_suite_review_set(path)
+    }
+
+    fn load_frontier_suite_proposal(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteProposal, SkillEvalError> {
+        self.frontier_store.load_frontier_suite_proposal(path)
+    }
+
+    fn save_frontier_suite_inventory(
+        &mut self,
+        path: &Path,
+        inventory: &FrontierSuiteInventory,
+    ) -> Result<(), SkillEvalError> {
+        self.frontier_store
+            .save_frontier_suite_inventory(path, inventory)
+    }
+
+    fn save_frontier_suite_proposal(
+        &mut self,
+        path: &Path,
+        proposal: &FrontierSuiteProposal,
+    ) -> Result<(), SkillEvalError> {
+        self.frontier_store
+            .save_frontier_suite_proposal(path, proposal)
+    }
+
+    fn apply_frontier_suite_proposal(
+        &mut self,
+        proposal: &FrontierSuiteProposal,
+        output: &Path,
+        published_at: &Timestamp,
+    ) -> Result<FrontierSuitePublication, SkillEvalError> {
+        apply_current_frontier_suite(
+            &self.source,
+            &mut self.frontier_store,
+            proposal,
+            output,
+            published_at,
+        )
+    }
+}
+
+impl FrontierRuntime for ConcreteRuntime {
+    fn load_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError> {
+        let (plan, suite) = load_frontier_plan_files(&self.repository_root, &self.source, path)?;
+        if plan.capabilities.pi_version != self.pi_version {
+            return Err(invalid("frontier capability Pi version changed"));
+        }
+        if !plan.policy.is_first_party_only {
+            return Err(invalid("frontier plan must require first-party routes"));
+        }
+        for entrant in &plan.entrants {
+            require_first_party_provider(&entrant.provider)?;
+            for thinking in &entrant.thinking_levels {
+                let requested = ModelIdentity {
+                    tier: entrant.entry_tier,
+                    provider: entrant.provider.clone(),
+                    model: entrant.model.clone(),
+                    thinking: thinking.clone(),
+                };
+                if self.models.exact_candidate(&requested)? != requested {
+                    return Err(invalid(
+                        "frontier entrant identity changed during resolution",
+                    ));
+                }
+            }
+        }
+        require_first_party_provider(&plan.judge.provider)?;
+        if self.models.judge(plan.judge.tier, None)? != plan.judge {
+            return Err(invalid("frontier judge identity changed during resolution"));
+        }
+        Ok((plan, suite))
+    }
+
+    fn next_frontier_run_id(&mut self) -> Result<FrontierRunId, SkillEvalError> {
+        next_frontier_run_id(&mut self.run_ids)
+    }
+
+    fn create_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
+        self.frontier_store.create_frontier(state)
+    }
+
+    fn load_frontier(&self, run_id: &FrontierRunId) -> Result<FrontierRunState, SkillEvalError> {
+        self.frontier_store.load_frontier(run_id)
+    }
+
+    fn save_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
+        self.frontier_store.save_frontier(state)
+    }
+
+    fn save_frontier_trial(
+        &mut self,
+        run_id: &FrontierRunId,
+        trial: &TrialRecord,
+    ) -> Result<(), SkillEvalError> {
+        self.frontier_store.save_frontier_trial(run_id, trial)
+    }
+
+    fn inspect_frontier(
+        &self,
+        selector: &FrontierTrialSelector,
+    ) -> Result<FrontierInspection, SkillEvalError> {
+        self.frontier_store.inspect_frontier(selector)
+    }
+
+    fn load_frontier_baselines(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierBaselineLedger, SkillEvalError> {
+        self.frontier_store.load_frontier_baselines(path)
+    }
+
+    fn accept_frontier_baseline(
+        &mut self,
+        state: &FrontierRunState,
+        path: &Path,
+        ledger: &FrontierBaselineLedger,
+    ) -> Result<(), SkillEvalError> {
+        self.frontier_store
+            .accept_frontier_baseline(state, path, ledger)
+    }
+
+    fn apply_frontier_routes(
+        &mut self,
+        _state: &FrontierRunState,
+    ) -> Result<FrontierApplyReport, SkillEvalError> {
+        Err(SkillEvalError::InvalidConfiguration(
+            "frontier route publication requires AGNT-0032.T159".to_owned(),
+        ))
     }
 }
 
@@ -2899,6 +3382,10 @@ impl PathRunIdSource {
     }
 }
 
+fn next_frontier_run_id(source: &mut dyn RunIdSource) -> Result<FrontierRunId, SkillEvalError> {
+    Ok(FrontierRunId(format!("frontier-{}", source.next()?.0)))
+}
+
 impl RunIdSource for PathRunIdSource {
     fn next(&mut self) -> Result<RunId, SkillEvalError> {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -3005,6 +3492,18 @@ pub(crate) fn run_main() -> Result<(), SkillEvalError> {
                 run_id,
                 &request.runs_root,
                 *format,
+                &mut std::io::stdout(),
+            );
+        }
+        CliCommand::FrontierSuiteInventory { .. }
+        | CliCommand::FrontierSuitePropose { .. }
+        | CliCommand::FrontierSuiteCheck { .. }
+        | CliCommand::FrontierSuiteApply { .. } => {
+            let mut runtime = FileSuiteRuntime::new(&repository_root()?)?;
+            return execute_frontier_suite_command(
+                &request.command,
+                request.output_format,
+                &mut runtime,
                 &mut std::io::stdout(),
             );
         }
@@ -4664,7 +5163,14 @@ fn write_json_line<T: Serialize + ?Sized>(
     output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
     serde_json::to_writer(&mut *output, value).map_err(|error| {
-        SkillEvalError::InvalidConfiguration(format!("output serialization failed: {error}"))
+        if error.is_io() {
+            SkillEvalError::Io {
+                path: PathBuf::from("<stdout>"),
+                message: error.to_string(),
+            }
+        } else {
+            SkillEvalError::InvalidConfiguration(format!("output serialization failed: {error}"))
+        }
     })?;
     output.write_all(b"\n").map_err(output_error)
 }
@@ -5186,6 +5692,8 @@ include!("../tests/cli.rs");
 include!("../tests/pool_report.rs");
 #[cfg(test)]
 include!("../tests/frontier_suite_cli.rs");
+#[cfg(test)]
+include!("../tests/frontier_runtime.rs");
 
 #[cfg(test)]
 cli_tests!();
@@ -5193,3 +5701,5 @@ cli_tests!();
 pool_report_tests!();
 #[cfg(test)]
 frontier_suite_cli_tests!();
+#[cfg(test)]
+frontier_runtime_tests!();
