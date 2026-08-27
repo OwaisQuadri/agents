@@ -3,11 +3,12 @@ use std::path::Path;
 use crate::model::{
     ArtifactDefinition, CandidateArtifact, CandidateEnvironmentEntry, CaseDefinition, CheckResult,
     ExecutionDefinition, FrontierApplyReport, FrontierBaselineLedger, FrontierInspection,
-    FrontierPlan, FrontierRunId, FrontierRunState, FrontierSuite, HarnessIdentity, JudgeInput,
-    JudgeResult, ModelIdentity, PoolPlan, PoolRunId, PoolRunState, PromptJudgeRequest,
-    PromptJudgeResult, RunEvent, RunId, SkillEvalError, T1ScreenCampaignId, T1ScreenCampaignState,
-    T1ScreenRunId, T1ScreenRunState, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord,
-    TrialSelector,
+    FrontierPlan, FrontierRunId, FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan,
+    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication,
+    FrontierSuiteReviewSet, HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolPlan,
+    PoolRunId, PoolRunState, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId,
+    SkillEvalError, T1ScreenCampaignId, T1ScreenCampaignState, T1ScreenRunId, T1ScreenRunState,
+    Tier, TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
 };
 
 pub(crate) trait ArtifactSource {
@@ -180,6 +181,101 @@ pub(crate) trait FrontierProgressSink {
     ///
     /// Returns an error when the sink cannot serialize or write the update.
     fn emit_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError>;
+}
+
+pub(crate) trait FrontierSuiteRuntime: ArtifactSource + Clock {
+    /// Loads one frozen complete-bank construction plan.
+    ///
+    /// The input is a repository-relative path. The output is the validated plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe path, malformed version, invalid tier set, invalid weights,
+    /// weak reviewer policy, or a policy that counts cross-tier reuse.
+    fn load_frontier_suite_construction_plan(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteConstructionPlan, SkillEvalError>;
+
+    /// Loads one frozen complete-bank inventory.
+    ///
+    /// The input is a repository-relative path. The output is the validated inventory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe path, malformed version, duplicate identity, or source drift.
+    fn load_frontier_suite_inventory(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteInventory, SkillEvalError>;
+
+    /// Loads one immutable set of offline case reviews.
+    ///
+    /// The input is a repository-relative path. The output is the parsed review set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe path, malformed version, duplicate record, or invalid field.
+    fn load_frontier_suite_review_set(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteReviewSet, SkillEvalError>;
+
+    /// Loads one ready or blocked all-tier proposal.
+    ///
+    /// The input is a repository-relative path. The output is the validated proposal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe path, malformed version, broken digest, or invalid capacity.
+    fn load_frontier_suite_proposal(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteProposal, SkillEvalError>;
+
+    /// Atomically writes one complete-bank inventory.
+    ///
+    /// The inputs are a repository-relative destination and validated inventory. The method
+    /// produces no value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe path, existing conflicting bytes, or failed atomic write.
+    fn save_frontier_suite_inventory(
+        &mut self,
+        path: &Path,
+        inventory: &FrontierSuiteInventory,
+    ) -> Result<(), SkillEvalError>;
+
+    /// Atomically writes one ready or blocked all-tier proposal.
+    ///
+    /// The inputs are a repository-relative destination and validated proposal. The method
+    /// produces no value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsafe path, existing conflicting bytes, or failed atomic write.
+    fn save_frontier_suite_proposal(
+        &mut self,
+        path: &Path,
+        proposal: &FrontierSuiteProposal,
+    ) -> Result<(), SkillEvalError>;
+
+    /// Publishes the suite from one ready proposal in one atomic replacement.
+    ///
+    /// The inputs are a validated ready proposal, suite destination, and publication time. The
+    /// output freezes proposal and suite digests in a publication receipt.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a blocked or stale proposal, unsafe path, incomplete tier, duplicate
+    /// case, changed authority, or failed atomic replacement.
+    fn apply_frontier_suite_proposal(
+        &mut self,
+        proposal: &FrontierSuiteProposal,
+        output: &Path,
+        published_at: &Timestamp,
+    ) -> Result<FrontierSuitePublication, SkillEvalError>;
 }
 
 pub(crate) trait FrontierRuntime: QualificationRuntime {

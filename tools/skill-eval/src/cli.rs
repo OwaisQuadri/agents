@@ -16,17 +16,18 @@ use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
     CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
-    FrontierInspection, FrontierPreviewReport, FrontierReport, HarnessIdentity, ModelIdentity,
-    OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence,
-    PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest,
-    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest, RunEvent,
-    RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest,
-    T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment,
-    T1ScreenCandidatePrice, T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat,
-    T1ScreenModelState, T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport,
-    T1ScreenRouteFailureRequest, T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState,
-    T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp,
-    TrialRecord, TrialSelector, TrialUsage,
+    FrontierInspection, FrontierPreviewReport, FrontierReport, FrontierSuiteInventory,
+    FrontierSuiteProposal, FrontierSuitePublication, HarnessIdentity, ModelIdentity, OutputFormat,
+    OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence, PoolQualifyRequest,
+    PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest, QualificationPolicy,
+    QualificationPurpose, QualificationReport, QualifyRequest, RunEvent, RunId, SkillEvalError,
+    T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest, T1ScreenCampaignId,
+    T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment, T1ScreenCandidatePrice,
+    T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState,
+    T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest,
+    T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus,
+    T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp, TrialRecord,
+    TrialSelector, TrialUsage,
 };
 use crate::model_capabilities;
 use crate::models::{ConfiguredModelResolver, validate_rpc_models_data};
@@ -34,10 +35,10 @@ use crate::pi_runner::PiCandidateRunner;
 use crate::pool_source::FilePoolPlanSource;
 use crate::pool_store::FilePoolStore;
 use crate::ports::{
-    ArtifactSource, CandidateRunner, Clock, HarnessResolver, Judge, ModelResolver, PoolPlanSource,
-    PoolProgressSink, PoolRunIdSource, PoolRuntime, PoolStore, ProgressSink, QualificationRuntime,
-    RunIdSource, RunStore, T1ScreenProgressSink, T1ScreenRuntime, T1ScreenStore, TierWriter,
-    Verifier,
+    ArtifactSource, CandidateRunner, Clock, FrontierSuiteRuntime, HarnessResolver, Judge,
+    ModelResolver, PoolPlanSource, PoolProgressSink, PoolRunIdSource, PoolRuntime, PoolStore,
+    ProgressSink, QualificationRuntime, RunIdSource, RunStore, T1ScreenProgressSink,
+    T1ScreenRuntime, T1ScreenStore, TierWriter, Verifier,
 };
 use crate::service::{
     apply_tier_assignments, build_pool_report, build_report, build_t1_screen_report,
@@ -4740,6 +4741,72 @@ fn ensure_unique_assignments(assignments: &[TierAssignment]) -> Result<(), Skill
         return Err(invalid("tier assignment destinations must be unique"));
     }
     Ok(())
+}
+
+fn parse_frontier_suite_inventory(
+    _parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_suite_propose(
+    _parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_suite_check(
+    _parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_suite_apply(
+    _parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Dispatches one complete-bank suite command without candidate, judge, or Pi execution.
+///
+/// The inputs are a parsed command, output format, suite runtime, and output writer. The function
+/// produces the selected inventory, proposal, capacity report, or publication rendering.
+///
+/// # Errors
+///
+/// Returns an error for a non-suite command, invalid input, source or digest drift, incomplete
+/// review, blocked publication, unsafe path, or failed read, write, or rendering operation.
+pub(crate) fn execute_frontier_suite_command(
+    _command: &CliCommand,
+    _format: OutputFormat,
+    _runtime: &mut dyn FrontierSuiteRuntime,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+fn render_frontier_suite_inventory(
+    _inventory: &FrontierSuiteInventory,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+fn render_frontier_suite_proposal(
+    _proposal: &FrontierSuiteProposal,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+fn render_frontier_suite_publication(
+    _publication: &FrontierSuitePublication,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
 }
 
 // TODO(AGNT-0032.T151): Parse and dispatch strict cumulative frontier commands.

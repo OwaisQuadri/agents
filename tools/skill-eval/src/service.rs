@@ -8,14 +8,15 @@ use crate::model::{
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
     CandidateArtifact, CandidateEnvironmentEntry, CaseDiscovery, CaseId, Decision, DecisionRecord,
     EvidenceRole, FrontierApplyReport, FrontierDecisionRequest, FrontierInspection,
-    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, JudgeInput,
-    ModelIdentity, ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant,
-    PoolPauseReason, PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState,
-    PoolRunStatus, PoolStage, PromptJudgeRequest, PromptJudgeResult, PublicationGate,
-    PublicationStatus, QualificationBoundary, QualificationPolicy, QualificationPurpose,
-    QualificationReport, QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState,
-    RunStatus, SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence,
-    T1ScreenAttemptReport, T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
+    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuiteInventory,
+    FrontierSuiteProposal, FrontierSuitePublication, JudgeInput, ModelIdentity,
+    ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant, PoolPauseReason,
+    PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage,
+    PromptJudgeRequest, PromptJudgeResult, PublicationGate, PublicationStatus,
+    QualificationBoundary, QualificationPolicy, QualificationPurpose, QualificationReport,
+    QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus,
+    SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence, T1ScreenAttemptReport,
+    T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
     T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun, T1ScreenChildStatus,
     T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason, T1ScreenRankedRoute,
     T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport, T1ScreenRouteFailure,
@@ -24,8 +25,9 @@ use crate::model::{
     TrialSelector, TrialUsage,
 };
 use crate::ports::{
-    Clock, FrontierProgressSink, FrontierRuntime, PoolProgressSink, PoolRuntime, ProgressSink,
-    QualificationRuntime, RunStore, T1ScreenProgressSink, T1ScreenRuntime, TierWriter,
+    Clock, FrontierProgressSink, FrontierRuntime, FrontierSuiteRuntime, PoolProgressSink,
+    PoolRuntime, ProgressSink, QualificationRuntime, RunStore, T1ScreenProgressSink,
+    T1ScreenRuntime, TierWriter,
 };
 use crate::statistics::{
     evaluate_calibration, evaluate_qualification, qualification_start_index, rank_pool,
@@ -6173,6 +6175,75 @@ pub(crate) fn find_boundary(
     policy: &QualificationPolicy,
 ) -> Result<Option<QualificationBoundary>, SkillEvalError> {
     crate::statistics::find_boundary(evidence, policy)
+}
+
+/// Inventories the complete executable case bank for offline review.
+///
+/// The inputs are construction-plan and output paths plus a suite runtime. The output is the saved
+/// source-revision-bound inventory.
+///
+/// # Errors
+///
+/// Returns an error for invalid policy, unsafe paths, source drift, duplicate identity, missing
+/// fixture, unsupported drive, or failed atomic write.
+pub(crate) fn inventory_frontier_suite(
+    _plan_path: &Path,
+    _output_path: &Path,
+    _runtime: &mut dyn FrontierSuiteRuntime,
+) -> Result<FrontierSuiteInventory, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Builds and saves one all-tier proposal from complete offline reviews.
+///
+/// The inputs are plan, inventory, review-set, and output paths plus a suite runtime. The output is
+/// a saved ready or blocked proposal with exact capacity evidence.
+///
+/// # Errors
+///
+/// Returns an error for unsafe paths, digest or source drift, incomplete reviews, invalid policy,
+/// reviewer disagreement, cross-tier reuse, invalid weights, or failed atomic write.
+pub(crate) fn propose_frontier_suite(
+    _plan_path: &Path,
+    _inventory_path: &Path,
+    _review_set_path: &Path,
+    _output_path: &Path,
+    _runtime: &mut dyn FrontierSuiteRuntime,
+) -> Result<FrontierSuiteProposal, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Loads and revalidates one proposal for capacity reporting.
+///
+/// The inputs are a proposal path and suite runtime. The output is the unchanged ready or blocked
+/// proposal for deterministic rendering.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe path, malformed proposal, broken digest, stale source, invalid
+/// capacity arithmetic, or policy drift.
+pub(crate) fn check_frontier_suite(
+    _proposal_path: &Path,
+    _runtime: &dyn FrontierSuiteRuntime,
+) -> Result<FrontierSuiteProposal, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Atomically publishes the complete suite from one ready proposal.
+///
+/// The inputs are proposal and suite-output paths plus a suite runtime. The output is a publication
+/// receipt with frozen proposal and suite digests.
+///
+/// # Errors
+///
+/// Returns an error for a blocked or stale proposal, unsafe path, short tier, duplicate case,
+/// changed source, invalid weights, or failed atomic replacement.
+pub(crate) fn apply_frontier_suite(
+    _proposal_path: &Path,
+    _output_path: &Path,
+    _runtime: &mut dyn FrontierSuiteRuntime,
+) -> Result<FrontierSuitePublication, SkillEvalError> {
+    unimplemented!()
 }
 
 // TODO(AGNT-0032.T146): Build the guarded no-call frontier preview.
