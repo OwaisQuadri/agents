@@ -1020,6 +1020,7 @@ pub(crate) fn execute_command(
         | CliCommand::T1ScreenReport { .. } => Err(invalid(
             "T1 screening commands require the dedicated T1 runtime",
         )),
+        // TODO(AGNT-0032.T169): Reject complete-bank commands from the general runtime.
         CliCommand::FrontierPreview { .. }
         | CliCommand::FrontierStart { .. }
         | CliCommand::FrontierResume { .. }
