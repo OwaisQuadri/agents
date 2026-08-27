@@ -6177,6 +6177,7 @@ pub(crate) fn find_boundary(
     crate::statistics::find_boundary(evidence, policy)
 }
 
+// TODO(AGNT-0032.T162): Order complete-bank inventory, proposal, checks, and ready publication.
 /// Inventories the complete executable case bank for offline review.
 ///
 /// The inputs are construction-plan and output paths plus a suite runtime. The output is the saved

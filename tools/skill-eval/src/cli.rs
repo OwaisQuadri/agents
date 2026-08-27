@@ -4743,6 +4743,7 @@ fn ensure_unique_assignments(assignments: &[TierAssignment]) -> Result<(), Skill
     Ok(())
 }
 
+// TODO(AGNT-0032.T162): Parse, dispatch, and render all no-call suite-construction commands.
 fn parse_frontier_suite_inventory(
     _parser: &mut ArgumentParser<'_>,
 ) -> Result<CliCommand, SkillEvalError> {

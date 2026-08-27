@@ -21,6 +21,7 @@ const TRANSACTION_NAME: &str = ".baseline-transaction.json";
 const LEDGER_VERSION: u64 = 1;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+// TODO(AGNT-0032.T161): Add atomic complete-bank inventory, proposal, and ready-suite storage.
 pub(crate) struct FileFrontierStore {
     repository_root: PathBuf,
     frontier_root: PathBuf,
