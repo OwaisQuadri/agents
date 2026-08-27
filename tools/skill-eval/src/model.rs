@@ -331,6 +331,108 @@ pub(crate) enum PoolPauseReason {
     },
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub(crate) struct FrontierCaseKey {
+    pub(crate) artifact_path: PathBuf,
+    pub(crate) artifact_revision: String,
+    pub(crate) case: CaseId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierCaseInventoryEntry {
+    pub(crate) key: FrontierCaseKey,
+    pub(crate) drive: CaseDrive,
+    pub(crate) is_holdout: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierSuiteInventory {
+    pub(crate) version: u64,
+    pub(crate) generated_at: Timestamp,
+    pub(crate) cases: Vec<FrontierCaseInventoryEntry>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FrontierCaseRejectionReason {
+    ResponseOnly,
+    RoutingOnly,
+    MissingInput,
+    ProseOnly,
+    Blocked,
+    SourceDrift,
+    DuplicateLowerTier,
+    AtOrBelowTier,
+    Unreviewed,
+    ReviewerDisagreement,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "decision", rename_all = "snake_case")]
+pub(crate) enum FrontierCaseReviewDecision {
+    Eligible {
+        relative_difficulty_basis_points: u16,
+        group: FrontierCaseGroup,
+        is_confirmation: bool,
+        evidence: Vec<String>,
+    },
+    Rejected {
+        reason: FrontierCaseRejectionReason,
+        evidence: Vec<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierCaseReviewRecord {
+    pub(crate) key: FrontierCaseKey,
+    pub(crate) reviewer: String,
+    pub(crate) reviewed_at: Timestamp,
+    pub(crate) decision: FrontierCaseReviewDecision,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierSuiteReviewSet {
+    pub(crate) version: u64,
+    pub(crate) inventory_sha256: String,
+    pub(crate) records: Vec<FrontierCaseReviewRecord>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FrontierSuiteProposalStatus {
+    Ready,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierTierCapacity {
+    pub(crate) required_unique_cases: u16,
+    pub(crate) accepted_unique_cases: u16,
+    pub(crate) shortfall: u16,
+    pub(crate) duplicate_cases: u16,
+    pub(crate) rejected_cases: u16,
+    pub(crate) is_complete: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierSuiteProposal {
+    pub(crate) version: u64,
+    pub(crate) inventory_sha256: String,
+    pub(crate) review_set_sha256: String,
+    pub(crate) proposed_tiers: BTreeMap<Tier, FrontierTierSuite>,
+    pub(crate) calibration_anchors: Vec<FrontierCaseKey>,
+    pub(crate) tier_capacity: BTreeMap<Tier, FrontierTierCapacity>,
+    pub(crate) status: FrontierSuiteProposalStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierSuitePublication {
+    pub(crate) proposal_sha256: String,
+    pub(crate) suite_path: PathBuf,
+    pub(crate) suite_sha256: String,
+    pub(crate) published_at: Timestamp,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FrontierCaseGroup {
