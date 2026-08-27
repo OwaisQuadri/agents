@@ -1,0 +1,16 @@
+{
+  "at": "2026-08-04T11:30:00-0400",
+  "sessions": [],
+  "workspaces": [],
+  "jobs": [
+    {
+      "id": "j1",
+      "state": "running",
+      "detail": "suite",
+      "stateMtime": "2026-08-04T08:58:00-0400",
+      "timelineMtime": "2026-08-04T08:58:00-0400"
+    }
+  ],
+  "daemonWorkerCount": 0,
+  "launchd": []
+}

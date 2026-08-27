@@ -1,4 +1,3 @@
-// TODO(AGNT-0032.T106): Prove per-model thinking selection before cross-model promotion.
 #[macro_export]
 macro_rules! pool_qualification_tests {
     () => {
@@ -12,9 +11,9 @@ macro_rules! pool_qualification_tests {
                 CaseDrive, CaseId, CheckResult, ExecutionDefinition, HarnessIdentity, JudgeInput,
                 JudgeResult, ModelIdentity, PoolChildStatus, PoolEntrant, PoolPauseReason,
                 PoolPlan, PoolPolicy, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
-                PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError, Tier,
-                TierAssignment, TierDestination, Timestamp, TrialKey, TrialRecord, TrialSelector,
-                TrialUsage, TrialVerdict,
+                PoolStage, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError,
+                Tier, TierAssignment, TierDestination, Timestamp, TrialKey, TrialRecord,
+                TrialSelector, TrialUsage, TrialVerdict,
             };
             use $crate::ports::{
                 ArtifactSource, CandidateRunner, Clock, HarnessResolver, Judge, ModelResolver,
@@ -22,10 +21,13 @@ macro_rules! pool_qualification_tests {
                 QualificationRuntime, RunIdSource, RunStore, TierWriter, Verifier,
             };
 
-            use super::{resume_pool_qualification, start_pool_qualification};
+            use super::{
+                SilentProgress, resume_pool_qualification, start_pool_qualification,
+                start_pool_replacement_qualification,
+            };
 
             #[test]
-            fn one_tier_progresses_three_to_two_with_stable_ids_and_terminal_skip() {
+            fn one_tier_qualifies_every_calibration_passer_with_stable_ids() {
                 let mut runtime = FakeRuntime::new();
                 let mut progress = FakeProgress::default();
                 let state = run_to_review(&mut runtime, vec![Tier::T2], &mut progress);
@@ -33,21 +35,24 @@ macro_rules! pool_qualification_tests {
                 assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
                 assert_eq!(state.pools.len(), 1);
                 assert_eq!(state.pools[0].calibration.len(), 3);
+                assert_eq!(state.pools[0].thinking_selections.len(), 3);
                 assert_eq!(
                     state.pools[0].promoted,
-                    vec![model(Tier::T2, 0), model(Tier::T2, 1)]
+                    vec![model(Tier::T2, 0), model(Tier::T2, 1), model(Tier::T2, 2),]
                 );
-                assert_eq!(state.pools[0].qualification.len(), 2);
+                assert_eq!(state.pools[0].qualification.len(), 3);
                 assert_eq!(
                     state.pools[0].ranked,
-                    vec![model(Tier::T2, 0), model(Tier::T2, 1)]
+                    vec![model(Tier::T2, 0), model(Tier::T2, 1), model(Tier::T2, 2),]
                 );
                 assert!(state.pools[0].is_complete);
                 assert_eq!(
                     runtime.started,
-                    vec!["child-0", "child-2", "child-4", "child-1", "child-3"]
+                    vec![
+                        "child-0", "child-2", "child-4", "child-1", "child-3", "child-5"
+                    ]
                 );
-                assert_eq!(state.child_runs[5].status, PoolChildStatus::Skipped);
+                assert_eq!(state.child_runs[5].status, PoolChildStatus::Completed);
                 assert!(runtime.is_unpromoted_skipped_before_full_call);
                 assert_eq!(runtime.next_sequence, 6);
                 assert!(progress.is_monotonic());
@@ -55,8 +60,279 @@ macro_rules! pool_qualification_tests {
                     state.pools[0]
                         .qualification
                         .iter()
-                        .all(|evidence| evidence.completed_trials == 3)
+                        .all(|evidence| evidence.completed_trials == 15)
                 );
+            }
+
+            #[test]
+            fn accepts_four_entrants() {
+                let mut runtime = FakeRuntime::new();
+                let fourth = model(Tier::T2, 3);
+                runtime
+                    .plan
+                    .entrants
+                    .get_mut(&Tier::T2)
+                    .unwrap()
+                    .push(PoolEntrant {
+                        thinking_levels: vec![fourth.thinking.clone()],
+                        retained_lower_thinking_level: None,
+                        model: fourth.clone(),
+                        candidate_timeout_seconds: None,
+                        catalog_observed_at: now(),
+                    });
+                let mut progress = FakeProgress::default();
+                let mut state =
+                    start_pool_qualification(request(vec![Tier::T2]), &mut runtime, &mut progress)
+                        .unwrap();
+
+                for _ in 0..6 {
+                    state = resume_pool_qualification(
+                        &state.configuration.run_id,
+                        &mut runtime,
+                        &mut progress,
+                    )
+                    .unwrap();
+                }
+
+                assert_eq!(state.status, PoolRunStatus::Running);
+                assert_eq!(state.pools[0].qualification.len(), 3);
+                assert_eq!(state.child_runs[7].status, PoolChildStatus::Pending);
+                assert!(!state.pools[0].is_complete);
+                assert!(state.pools[0].ranked.is_empty());
+
+                state = resume_pool_qualification(
+                    &state.configuration.run_id,
+                    &mut runtime,
+                    &mut progress,
+                )
+                .unwrap();
+
+                assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
+                assert_eq!(state.pools[0].calibration.len(), 4);
+                assert_eq!(state.pools[0].qualification.len(), 4);
+                assert_eq!(
+                    state.pools[0]
+                        .qualification
+                        .iter()
+                        .map(|evidence| evidence.requested_model.clone())
+                        .collect::<Vec<_>>(),
+                    (0..4)
+                        .map(|index| model(Tier::T2, index))
+                        .collect::<Vec<_>>()
+                );
+                assert_eq!(
+                    state.pools[0].ranked,
+                    (0..4)
+                        .map(|index| model(Tier::T2, index))
+                        .collect::<Vec<_>>()
+                );
+                assert!(state.pools[0].is_complete);
+                assert_eq!(
+                    runtime.started,
+                    vec![
+                        "child-0", "child-2", "child-4", "child-6", "child-1", "child-3",
+                        "child-5", "child-7"
+                    ]
+                );
+            }
+
+            #[test]
+            fn screens_every_supported_thinking_level_pool_thinking() {
+                let mut runtime = FakeRuntime::new();
+                configure_adaptive_tier(&mut runtime, Tier::T2);
+                runtime.low_models.push(thinking_model(Tier::T2, 0, "low"));
+                runtime
+                    .low_models
+                    .push(thinking_model(Tier::T2, 1, "medium"));
+                let mut progress = FakeProgress::default();
+
+                let mut state =
+                    start_pool_qualification(request(vec![Tier::T2]), &mut runtime, &mut progress)
+                        .unwrap();
+                let expected_starts = [
+                    "child-0", "child-2", "child-4", "child-6", "child-8", "child-10", "child-12",
+                    "child-3", "child-7", "child-13",
+                ];
+                while state.status == PoolRunStatus::Running {
+                    let prior_calls = runtime.started.len();
+                    state = resume_pool_qualification(
+                        &state.configuration.run_id,
+                        &mut runtime,
+                        &mut progress,
+                    )
+                    .unwrap();
+                    assert!(runtime.started.len() <= prior_calls + 1);
+                    assert_eq!(runtime.started, expected_starts[..runtime.started.len()]);
+                }
+
+                let pool = &state.pools[0];
+                assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
+                assert_eq!(pool.calibration.len(), 7);
+                assert_eq!(
+                    pool.calibration
+                        .iter()
+                        .map(|evidence| evidence.requested_model.clone())
+                        .collect::<Vec<_>>(),
+                    vec![
+                        thinking_model(Tier::T2, 0, "low"),
+                        thinking_model(Tier::T2, 0, "medium"),
+                        thinking_model(Tier::T2, 0, "high"),
+                        thinking_model(Tier::T2, 1, "low"),
+                        thinking_model(Tier::T2, 1, "medium"),
+                        thinking_model(Tier::T2, 1, "high"),
+                        thinking_model(Tier::T2, 2, "medium"),
+                    ]
+                );
+                assert_eq!(
+                    pool.thinking_selections,
+                    vec![
+                        thinking_model(Tier::T2, 0, "medium"),
+                        thinking_model(Tier::T2, 1, "low"),
+                        thinking_model(Tier::T2, 2, "medium"),
+                    ]
+                );
+                assert_eq!(pool.promoted, pool.thinking_selections);
+                assert_eq!(
+                    pool.qualification
+                        .iter()
+                        .map(|evidence| evidence.requested_model.clone())
+                        .collect::<Vec<_>>(),
+                    pool.promoted
+                );
+                assert_eq!(runtime.started, expected_starts);
+                assert!(runtime.is_unpromoted_skipped_before_full_call);
+                assert!(state.child_runs.iter().all(|child| {
+                    let requested = requested_child(&state, child);
+                    match child.stage {
+                        PoolStage::Calibration => child.status == PoolChildStatus::Completed,
+                        PoolStage::Qualification
+                            if pool
+                                .qualification
+                                .iter()
+                                .any(|evidence| evidence.requested_model == requested) =>
+                        {
+                            child.status == PoolChildStatus::Completed
+                        }
+                        PoolStage::Qualification => child.status == PoolChildStatus::Skipped,
+                    }
+                }));
+                assert!(progress.is_monotonic());
+            }
+
+            #[test]
+            fn retained_lower_route_continues_stronger() {
+                let mut runtime = FakeRuntime::new();
+                let entrant = &mut runtime.plan.entrants.get_mut(&Tier::T2).unwrap()[0];
+                entrant.thinking_levels =
+                    vec!["off".to_owned(), "medium".to_owned(), "high".to_owned()];
+                entrant.model.thinking = "medium".to_owned();
+                entrant.retained_lower_thinking_level = Some("off".to_owned());
+                runtime.failed_full_runs.insert("child-3".to_owned());
+
+                let state =
+                    run_to_review(&mut runtime, vec![Tier::T2], &mut FakeProgress::default());
+                let pool = &state.pools[0];
+
+                assert_eq!(
+                    runtime.started,
+                    vec![
+                        "child-0", "child-2", "child-4", "child-6", "child-8", "child-1",
+                        "child-3", "child-5", "child-7", "child-9",
+                    ]
+                );
+                assert_eq!(
+                    pool.retained_lower_routes,
+                    vec![thinking_model(Tier::T2, 0, "off")]
+                );
+                assert_eq!(
+                    pool.ranked,
+                    vec![
+                        thinking_model(Tier::T2, 0, "high"),
+                        model(Tier::T2, 1),
+                        model(Tier::T2, 2),
+                    ]
+                );
+                assert!(pool.is_complete);
+            }
+
+            #[test]
+            fn an_all_fail_thinking_model_stops_with_every_attempt_for_review() {
+                let mut runtime = FakeRuntime::new();
+                configure_adaptive_tier(&mut runtime, Tier::T2);
+                runtime.low_models.extend([
+                    thinking_model(Tier::T2, 0, "low"),
+                    thinking_model(Tier::T2, 1, "low"),
+                    thinking_model(Tier::T2, 1, "medium"),
+                    thinking_model(Tier::T2, 1, "high"),
+                ]);
+
+                let state =
+                    run_to_review(&mut runtime, vec![Tier::T2], &mut FakeProgress::default());
+
+                assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
+                assert_eq!(state.pools[0].calibration.len(), 7);
+                assert_eq!(state.pools[0].thinking_selections.len(), 2);
+                assert_eq!(
+                    state.pools[0].promoted,
+                    vec![
+                        thinking_model(Tier::T2, 0, "medium"),
+                        thinking_model(Tier::T2, 2, "medium"),
+                    ]
+                );
+                assert_eq!(state.pools[0].qualification.len(), 2);
+                assert_eq!(
+                    runtime.started,
+                    vec![
+                        "child-0", "child-2", "child-4", "child-6", "child-8", "child-10",
+                        "child-12", "child-3", "child-13",
+                    ]
+                );
+                assert!(state.child_runs.iter().all(|child| match child.stage {
+                    PoolStage::Calibration => child.status == PoolChildStatus::Completed,
+                    PoolStage::Qualification => {
+                        matches!(
+                            child.status,
+                            PoolChildStatus::Completed | PoolChildStatus::Skipped
+                        )
+                    }
+                }));
+            }
+
+            #[test]
+            fn all_three_models_failing_every_thinking_level_stop_for_review() {
+                let mut runtime = FakeRuntime::new();
+                configure_adaptive_tier(&mut runtime, Tier::T2);
+                runtime.low_models.extend([
+                    thinking_model(Tier::T2, 0, "low"),
+                    thinking_model(Tier::T2, 0, "medium"),
+                    thinking_model(Tier::T2, 0, "high"),
+                    thinking_model(Tier::T2, 1, "low"),
+                    thinking_model(Tier::T2, 1, "medium"),
+                    thinking_model(Tier::T2, 1, "high"),
+                    thinking_model(Tier::T2, 2, "medium"),
+                ]);
+
+                let state =
+                    run_to_review(&mut runtime, vec![Tier::T2], &mut FakeProgress::default());
+
+                assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
+                assert_eq!(state.pools[0].calibration.len(), 7);
+                assert!(state.pools[0].thinking_selections.is_empty());
+                assert!(state.pools[0].promoted.is_empty());
+                assert!(state.pools[0].qualification.is_empty());
+
+                let mut interrupted = state.clone();
+                interrupted.status = PoolRunStatus::Running;
+                interrupted.pools[0].calibration.pop();
+                runtime.state.replace(Some(interrupted));
+                let recovered = resume_pool_qualification(
+                    &state.configuration.run_id,
+                    &mut runtime,
+                    &mut FakeProgress::default(),
+                )
+                .unwrap();
+                assert_eq!(recovered.status, PoolRunStatus::AwaitingDecision);
+                assert_eq!(recovered.pools[0].calibration.len(), 7);
             }
 
             #[test]
@@ -79,24 +355,47 @@ macro_rules! pool_qualification_tests {
                         .iter()
                         .all(|model| *model != runtime.plan.control)
                 );
-                assert_eq!(runtime.started.len(), 25);
+                assert_eq!(runtime.started.len(), 30);
                 assert_eq!(runtime.next_sequence, 30);
                 assert!(progress.is_monotonic());
             }
 
             #[test]
-            fn a_failed_finalist_stops_for_review_without_backfill() {
+            fn a_failed_model_is_preserved_while_other_reliable_models_complete_the_pool() {
                 let mut runtime = FakeRuntime::new();
                 runtime.failed_full_runs.insert("child-3".to_owned());
                 let state =
                     run_to_review(&mut runtime, vec![Tier::T2], &mut FakeProgress::default());
 
                 assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
-                assert_eq!(state.pools[0].qualification.len(), 2);
-                assert!(!state.pools[0].is_complete);
-                assert!(state.pools[0].ranked.is_empty());
-                assert_eq!(state.child_runs[5].status, PoolChildStatus::Skipped);
-                assert_eq!(runtime.started.last().map(String::as_str), Some("child-3"));
+                assert_eq!(state.pools[0].qualification.len(), 3);
+                assert!(state.pools[0].is_complete);
+                assert_eq!(
+                    state.pools[0].ranked,
+                    vec![model(Tier::T2, 0), model(Tier::T2, 2)]
+                );
+                assert_eq!(state.child_runs[5].status, PoolChildStatus::Completed);
+                assert_eq!(runtime.started.last().map(String::as_str), Some("child-5"));
+            }
+
+            #[test]
+            fn replacement_is_rejected_after_every_calibration_passer_was_tested() {
+                let mut runtime = FakeRuntime::new();
+                runtime.failed_full_runs.insert("child-3".to_owned());
+                let state =
+                    run_to_review(&mut runtime, vec![Tier::T2], &mut FakeProgress::default());
+                let calls = runtime.executed_models.len();
+
+                assert!(
+                    start_pool_replacement_qualification(
+                        &state.configuration.run_id,
+                        2,
+                        &mut runtime,
+                        &mut SilentProgress,
+                    )
+                    .is_err()
+                );
+                assert_eq!(runtime.executed_models.len(), calls);
             }
 
             #[test]
@@ -110,19 +409,25 @@ macro_rules! pool_qualification_tests {
                 assert_eq!(state.status, PoolRunStatus::AwaitingDecision);
                 assert_eq!(state.pools[0].calibration.len(), 3);
                 assert_eq!(state.pools[0].promoted, vec![model(Tier::T2, 0)]);
-                assert!(state.pools[0].qualification.is_empty());
-                assert_eq!(runtime.started, vec!["child-0", "child-2", "child-4"]);
+                assert_eq!(state.pools[0].thinking_selections.len(), 1);
+                assert_eq!(state.pools[0].qualification.len(), 1);
+                assert_eq!(state.pools[0].ranked, vec![model(Tier::T2, 0)]);
+                assert!(!state.pools[0].is_complete);
+                assert_eq!(
+                    runtime.started,
+                    vec!["child-0", "child-2", "child-4", "child-1"]
+                );
             }
 
             #[test]
             fn spending_limit_pauses_before_the_next_child_call() {
                 let mut runtime = FakeRuntime::new();
-                runtime.plan.policy.spending_limit_millionths_of_dollar = 1;
+                runtime.plan.policy.spending_limit_millionths_of_dollar = 5;
                 let mut progress = FakeProgress::default();
                 let first =
                     start_pool_qualification(request(vec![Tier::T2]), &mut runtime, &mut progress)
                         .unwrap();
-                assert_eq!(first.spent_millionths_of_dollar, 1);
+                assert_eq!(first.spent_millionths_of_dollar, 5);
                 let calls = runtime.executed_models.len();
 
                 let paused = resume_pool_qualification(
@@ -136,8 +441,8 @@ macro_rules! pool_qualification_tests {
                 assert!(matches!(
                     paused.pause,
                     Some(PoolPauseReason::SpendingLimit {
-                        spent_millionths_of_dollar: 1,
-                        limit_millionths_of_dollar: 1
+                        spent_millionths_of_dollar: 5,
+                        limit_millionths_of_dollar: 5
                     })
                 ));
                 assert_eq!(runtime.executed_models.len(), calls);
@@ -234,6 +539,15 @@ macro_rules! pool_qualification_tests {
                     unreachable!()
                 }
 
+                fn qualification_routes(
+                    &self,
+                    _tier: Tier,
+                ) -> Result<Vec<ModelIdentity>, SkillEvalError> {
+                    Err(SkillEvalError::InvalidConfiguration(
+                        "artifact qualification routes are unavailable in pool tests".to_owned(),
+                    ))
+                }
+
                 fn exact_candidate(
                     &self,
                     requested: &ModelIdentity,
@@ -299,18 +613,30 @@ macro_rules! pool_qualification_tests {
                     _case: &CaseDefinition,
                     model: &ModelIdentity,
                     harness: &HarnessIdentity,
+                    _candidate_timeout_seconds: Option<u32>,
                 ) -> Result<CandidateArtifact, SkillEvalError> {
                     self.executed_models.push(model.clone());
-                    if run_id.0.ends_with('1') || run_id.0.ends_with('3') {
-                        self.is_unpromoted_skipped_before_full_call |=
-                            self.state.borrow().as_ref().is_some_and(|state| {
-                                state.child_runs.iter().any(|child| {
-                                    child.tier == key.tier
-                                        && child.entrant_index == 2
-                                        && child.status == PoolChildStatus::Skipped
-                                })
-                            });
-                    }
+                    self.is_unpromoted_skipped_before_full_call |=
+                        self.state.borrow().as_ref().is_some_and(|state| {
+                            let current = state
+                                .child_runs
+                                .iter()
+                                .find(|child| child.run_id == *run_id);
+                            let pool = state.pools.iter().find(|pool| pool.tier == key.tier);
+                            current.is_some_and(|child| {
+                                child.stage == PoolStage::Qualification
+                                    && pool.is_some_and(|pool| {
+                                        state.child_runs.iter().all(|candidate| {
+                                            candidate.tier != key.tier
+                                                || candidate.stage != PoolStage::Qualification
+                                                || pool
+                                                    .promoted
+                                                    .contains(&requested_child(state, candidate))
+                                                || candidate.status == PoolChildStatus::Skipped
+                                        })
+                                    })
+                            })
+                        });
                     let cost = model
                         .model
                         .rsplit('-')
@@ -499,9 +825,15 @@ macro_rules! pool_qualification_tests {
                         (
                             tier,
                             (0..3)
-                                .map(|index| PoolEntrant {
-                                    model: model(tier, index),
-                                    catalog_observed_at: now(),
+                                .map(|index| {
+                                    let model = model(tier, index);
+                                    PoolEntrant {
+                                        thinking_levels: vec![model.thinking.clone()],
+                                        retained_lower_thinking_level: None,
+                                        model,
+                                        candidate_timeout_seconds: None,
+                                        catalog_observed_at: now(),
+                                    }
                                 })
                                 .collect(),
                         )
@@ -520,12 +852,35 @@ macro_rules! pool_qualification_tests {
                         qualification_repeats_per_case: 3,
                         promotion_count: 2,
                         minimum_score: 7,
-                        minimum_reliability_basis_points: 10_000,
+                        calibration_minimum_reliability_basis_points: 8_000,
+                        qualification_minimum_reliability_basis_points: 10_000,
                         maximum_catalog_age_seconds: 3_600,
                         spending_limit_millionths_of_dollar: 1_000_000,
                         is_provider_limit_enforced: true,
                     },
                 }
+            }
+
+            fn configure_adaptive_tier(runtime: &mut FakeRuntime, tier: Tier) {
+                let entrants = runtime.plan.entrants.get_mut(&tier).unwrap();
+                for entrant in &mut entrants[..2] {
+                    entrant.thinking_levels =
+                        vec!["low".to_owned(), "medium".to_owned(), "high".to_owned()];
+                    entrant.model.thinking = "medium".to_owned();
+                }
+            }
+
+            fn requested_child(
+                state: &PoolRunState,
+                child: &$crate::model::PoolChildRun,
+            ) -> ModelIdentity {
+                let entrant =
+                    &state.configuration.entrants[&child.tier][usize::from(child.entrant_index)];
+                thinking_model(
+                    child.tier,
+                    usize::from(child.entrant_index),
+                    &entrant.thinking_levels[usize::from(child.thinking_index)],
+                )
             }
 
             fn artifact() -> ArtifactDefinition {
@@ -536,19 +891,21 @@ macro_rules! pool_qualification_tests {
                     revision: "revision-1".to_owned(),
                     required_destinations: vec![TierDestination::SkillMinimum],
                     current_tiers: Vec::new(),
-                    cases: vec![CaseDefinition {
-                        id: CaseId("case-1".to_owned()),
-                        input: "input".to_owned(),
-                        expect: "expect".to_owned(),
-                        source: "fixture".to_owned(),
-                        is_holdout: false,
-                        support_files: Vec::new(),
-                        execution: ExecutionDefinition {
-                            drive: CaseDrive::Response,
-                            allowed_tools: Vec::new(),
-                            timeout_seconds: 10,
-                        },
-                    }],
+                    cases: (1..=5)
+                        .map(|index| CaseDefinition {
+                            id: CaseId(format!("case-{index}")),
+                            input: "input".to_owned(),
+                            expect: "expect".to_owned(),
+                            source: "fixture".to_owned(),
+                            is_holdout: false,
+                            support_files: Vec::new(),
+                            execution: ExecutionDefinition {
+                                drive: CaseDrive::Response,
+                                allowed_tools: Vec::new(),
+                                timeout_seconds: 10,
+                            },
+                        })
+                        .collect(),
                 }
             }
 
@@ -559,6 +916,12 @@ macro_rules! pool_qualification_tests {
                     model: format!("model-{tier:?}-{index}"),
                     thinking: "medium".to_owned(),
                 }
+            }
+
+            fn thinking_model(tier: Tier, index: usize, thinking: &str) -> ModelIdentity {
+                let mut model = model(tier, index);
+                model.thinking = thinking.to_owned();
+                model
             }
 
             fn judge() -> ModelIdentity {

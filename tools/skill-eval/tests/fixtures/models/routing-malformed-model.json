@@ -1,0 +1,10 @@
+{
+  "tiers": {
+    "T1": {
+      "pi": "missing-provider-separator",
+      "fallbacks": [],
+      "thinking": "low"
+    }
+  },
+  "judge": "T1"
+}

@@ -1,0 +1,1 @@
+renderChoice(selected: Choice): View

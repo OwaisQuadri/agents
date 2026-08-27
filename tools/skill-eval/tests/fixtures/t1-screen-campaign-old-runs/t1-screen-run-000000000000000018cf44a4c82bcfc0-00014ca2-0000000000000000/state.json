@@ -1,0 +1,5449 @@
+{
+  "configuration": {
+    "run_id": "t1-screen-run-000000000000000018cf44a4c82bcfc0-00014ca2-0000000000000000",
+    "created_at": "2026-08-26T01:44:11-0400",
+    "capability_snapshot": {
+      "path": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/research/model-routing/pi-model-capabilities.json",
+      "sha256": "e5468b06869c18b91385ddf1783495217577849002f64d1cc2350893c011d0b9",
+      "version": 1,
+      "observed_at_unix_seconds": 1787707885,
+      "pi_version": "0.84.2"
+    },
+    "classification_sha256": "de7e0b8718fe16fca8346a1bc93f08b2ff613e7df5c514efc1180605e4e92810",
+    "eligible": [
+      {
+        "provider": "openrouter",
+        "model": "cohere/north-mini-code:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": true
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "liquid/lfm-2.5-2.6b:free",
+        "supported_pi_thinking_levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.7:free",
+        "supported_pi_thinking_levels": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "low",
+          "medium"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "stealth/ox-alpha",
+        "supported_pi_thinking_levels": [
+          "low",
+          "high",
+          "max"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "max"
+        ],
+        "is_preview": false
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.2:free",
+        "supported_pi_thinking_levels": [
+          "off",
+          "high",
+          "xhigh"
+        ],
+        "is_preview": false
+      }
+    ],
+    "excluded": [
+      {
+        "provider": "anthropic",
+        "model": "claude-fable-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5-20251001",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-4-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-4-5-20251101",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-4-6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-4-7",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-4-8",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-opus-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-5-20250929",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.3-codex-spark",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.4",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.4-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.6-luna",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.6-sol",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openai-codex",
+        "model": "gpt-5.6-terra",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "ai21/jamba-large-1.7",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "aion-labs/aion-2.0",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "aion-labs/aion-3.0",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "aion-labs/aion-3.0-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "amazon/nova-2-lite-v1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "amazon/nova-lite-v1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "amazon/nova-micro-v1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "amazon/nova-premier-v1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "amazon/nova-pro-v1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-3-haiku",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-fable-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-fable-5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-fable-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-haiku-4.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-haiku-4.5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-haiku-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.1:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.6:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.7",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.7-fast",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.7:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.8",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.8-fast",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-4.8:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-5-fast",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-opus-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-4",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-4.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-4.5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-4.6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-4.6:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "anthropic/claude-sonnet-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "arcee-ai/trinity-large-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "arcee-ai/virtuoso-large",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "auto",
+        "is_preview": false,
+        "reasons": [
+          "moving_router_or_control"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "bytedance-seed/seed-1.6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "bytedance-seed/seed-1.6-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "bytedance-seed/seed-2-1-turbo",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "bytedance-seed/seed-2.0-code",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "bytedance-seed/seed-2.0-lite",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "bytedance-seed/seed-2.0-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "cohere/command-r-08-2024",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "cohere/command-r-plus-08-2024",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-chat",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-chat-v3-0324",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-chat-v3.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-r1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-r1-0528",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v3.1-terminus",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v3.2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v3.2-exp",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash-0731",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-flash-vision-exp",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "deepseek/deepseek-v4-pro-0813",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-flash-lite",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-flash-lite:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-flash:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-pro-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-pro-preview-05-06",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-2.5-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3-flash-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3-flash-preview:batch",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3-pro-image",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-flash-lite:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-pro-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-pro-preview-customtools",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.1-pro-preview:batch",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.5-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.5-flash-lite",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.5-flash-lite:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.5-flash:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.6-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.6-flash:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.7-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-3.7-flash:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-flash-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemini-pro-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-3-12b-it",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-3-27b-it",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "ibm-granite/granite-4.1-8b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "inception/mercury-2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "inclusionai/ling-2.6-1t",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "inclusionai/ling-2.6-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "inclusionai/ling-3.0-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "inclusionai/ring-2.6-1t",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "kwaipilot/kat-coder-air-v2.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "kwaipilot/kat-coder-pro-v2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "kwaipilot/kat-coder-pro-v2.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meituan/longcat-2.0",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.1-70b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.1-8b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta-llama/llama-3.3-70b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta-llama/llama-4-maverick",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta-llama/llama-4-scout",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta/muse-glimmer-30b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "meta/muse-spark-1.2-contributor",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.7",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/codestral-2508",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/devstral-2512",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/ministral-14b-2512",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/ministral-3b-2512",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/ministral-8b-2512",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-large",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-large-2407",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-large-2512",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-medium-3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-medium-3-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-medium-3.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-nemo",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-saba",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-small-2603",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mistral-small-3.2-24b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/mixtral-8x22b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "mistralai/voxtral-small-24b-2507",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2-0905",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2.6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2.7-code",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k2.7-code:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-k3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "moonshotai/kimi-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nex-agi/nex-n2-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nex-agi/nex-n2-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-super-120b-a12b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-3.5-turbo",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-3.5-turbo-0613",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-3.5-turbo-16k",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-3.5-turbo:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4-turbo",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4-turbo-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4-turbo:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4.1-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4.1-mini:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4.1-nano",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4.1-nano:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4.1:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-2024-05-13",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-2024-08-06",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-2024-11-20",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini-2024-07-18",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-4o:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-codex:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-mini:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-nano",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-nano:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.1-codex",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.1-codex-max",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.1-codex-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.1:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.2-chat",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.2-codex",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.2-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.2-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.2:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.3-codex",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-mini:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-nano",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-nano:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.4:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.5-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.5-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-luna",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-luna-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-luna-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-luna:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-sol",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-sol-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-sol-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-sol:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-terra",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-terra-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-terra-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5.6-terra:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-5:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-audio",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-audio-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-chat-latest",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-mini-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-120b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-safeguard-20b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o1:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3-mini-high",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3-mini-high:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3-mini:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3-pro:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o3:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o4-mini",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o4-mini-high",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o4-mini-high:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openai/o4-mini:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openrouter/auto",
+        "is_preview": false,
+        "reasons": [
+          "missing_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openrouter/auto-beta",
+        "is_preview": false,
+        "reasons": [
+          "missing_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openrouter/free",
+        "is_preview": false,
+        "reasons": [
+          "moving_router_or_control"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "openrouter/fusion",
+        "is_preview": false,
+        "reasons": [
+          "moving_router_or_control"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen-2.5-72b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen-2.5-7b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen-plus",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen-plus-2025-07-28",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen-plus-2025-07-28:thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-14b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-235b-a22b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-235b-a22b-2507",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-235b-a22b-thinking-2507",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-30b-a3b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-30b-a3b-instruct-2507",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-30b-a3b-thinking-2507",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-32b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-8b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-coder",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-coder-30b-a3b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-coder-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-coder-next",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-coder-plus",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-max",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-max-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-next-80b-a3b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-next-80b-a3b-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-235b-a22b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-235b-a22b-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-30b-a3b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-30b-a3b-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-32b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-8b-instruct",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3-vl-8b-thinking",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-122b-a10b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-27b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-35b-a3b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-397b-a17b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-9b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-flash-02-23",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-plus-02-15",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.5-plus-20260420",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-27b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-35b-a3b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-max-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.6-plus",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.7-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.7-max",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.7-plus",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.8-2.4t-a95b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.8-27b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "qwen/qwen3.8-max",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "rekaai/reka-edge",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "relace/relace-search",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "sakana/fugu-ultra",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "sakana/sakana-namazu",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "sao10k/l3.1-euryale-70b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "stepfun/step-3.5-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "stepfun/step-3.7-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "tencent/hy3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "tencent/hy3-preview",
+        "is_preview": true,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "thedrummer/unslopnemo-12b",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "upstage/solar-pro-3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "upstage/solar-pro4",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "x-ai/grok-4.20",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "x-ai/grok-4.3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "x-ai/grok-4.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "x-ai/grok-4.6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "x-ai/grok-build-0.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "x-ai/grok-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "xiaomi/mimo-v2.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "xiaomi/mimo-v2.5-pro",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.5-air",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.5v",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.6",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.6v",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.7",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-4.7-flash",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5-turbo",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.1",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.2",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.2:batch",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.3",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-5v-turbo",
+        "is_preview": false,
+        "reasons": [
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      },
+      {
+        "provider": "openrouter",
+        "model": "z-ai/glm-latest",
+        "is_preview": false,
+        "reasons": [
+          "moving_alias",
+          "not_exact_evidence",
+          "nonzero_input_price",
+          "nonzero_output_price"
+        ]
+      }
+    ],
+    "exam": {
+      "name": "model-calibration",
+      "kind": "skill",
+      "root": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration",
+      "revision": "fnv1a64:9a69391e71549f79",
+      "required_destinations": [
+        {
+          "kind": "skill_minimum"
+        }
+      ],
+      "current_tiers": [],
+      "cases": [
+        {
+          "id": "bounded-analysis",
+          "input": "Read observations.csv. Exclude rows with fewer than 10 samples. Write answer.json with a highest array containing the two units with the largest errors divided by samples, in descending order. Each item must have only unit and rate fields; rate must be a string rounded to two decimal places.",
+          "expect": "The local answer is complete and arithmetically correct, with no unnecessary work.",
+          "source": "fixed-local-exam",
+          "is_holdout": false,
+          "support_files": [
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/checks.json",
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/rubric.md"
+          ],
+          "execution": {
+            "drive": {
+              "kind": "fixture",
+              "source": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/bounded-analysis",
+              "verify_commands": [
+                {
+                  "program": "jq",
+                  "arguments": [
+                    "-e",
+                    ". == {\"highest\":[{\"unit\":\"maple\",\"rate\":\"0.25\"},{\"unit\":\"ash\",\"rate\":\"0.20\"}]}",
+                    "answer.json"
+                  ],
+                  "working_directory": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/bounded-analysis"
+                }
+              ]
+            },
+            "allowed_tools": [
+              "read",
+              "write"
+            ],
+            "timeout_seconds": 90
+          }
+        },
+        {
+          "id": "code-repair",
+          "input": "Read widget.rs and repair bounded_add. It must add left and right, then cap the result at limit. Change only the faulty expression and keep the public signature unchanged.",
+          "expect": "The repaired local source has the required behavior and minimal change.",
+          "source": "fixed-local-exam",
+          "is_holdout": false,
+          "support_files": [
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/checks.json",
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/rubric.md"
+          ],
+          "execution": {
+            "drive": {
+              "kind": "fixture",
+              "source": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/code-repair",
+              "verify_commands": [
+                {
+                  "program": "jq",
+                  "arguments": [
+                    "-e",
+                    "-Rs",
+                    ". == \"pub fn bounded_add(left: i32, right: i32, limit: i32) -> i32 {\\n    (left + right).min(limit)\\n}\\n\"",
+                    "widget.rs"
+                  ],
+                  "working_directory": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/code-repair"
+                }
+              ]
+            },
+            "allowed_tools": [
+              "read",
+              "edit"
+            ],
+            "timeout_seconds": 90
+          }
+        },
+        {
+          "id": "instruction-following",
+          "input": "Read rules.txt and apply every numbered rule once. Write only the resulting single line to answer.txt.",
+          "expect": "The local answer follows all listed transformations and contains no extra text.",
+          "source": "fixed-local-exam",
+          "is_holdout": false,
+          "support_files": [
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/checks.json",
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/rubric.md"
+          ],
+          "execution": {
+            "drive": {
+              "kind": "fixture",
+              "source": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/instruction-following",
+              "verify_commands": [
+                {
+                  "program": "jq",
+                  "arguments": [
+                    "-e",
+                    "-Rs",
+                    ". == \"RIDGE-42-violet\\n\"",
+                    "answer.txt"
+                  ],
+                  "working_directory": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/instruction-following"
+                }
+              ]
+            },
+            "allowed_tools": [
+              "read",
+              "write"
+            ],
+            "timeout_seconds": 90
+          }
+        },
+        {
+          "id": "tool-use",
+          "input": "Read each file in inbox. Write selected.txt with the identifier from the one record whose state is ready and whose count is greatest. The file must contain only that identifier and a newline.",
+          "expect": "The selected local identifier is correct, all three inputs were read, and exactly one output was written.",
+          "source": "fixed-local-exam",
+          "is_holdout": false,
+          "support_files": [
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/checks.json",
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/rubric.md"
+          ],
+          "execution": {
+            "drive": {
+              "kind": "fixture",
+              "source": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/tool-use",
+              "verify_commands": [
+                {
+                  "program": "jq",
+                  "arguments": [
+                    "-e",
+                    "-Rs",
+                    ". == \"moss\\n\"",
+                    "selected.txt"
+                  ],
+                  "working_directory": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/tool-use"
+                }
+              ]
+            },
+            "allowed_tools": [
+              "read",
+              "write"
+            ],
+            "timeout_seconds": 90
+          }
+        },
+        {
+          "id": "structured-output",
+          "input": "Read events.json. Write summary.json as one object with exactly these fields: accepted, rejected, and total. accepted and rejected are counts by result; total is their sum. All values must be non-negative integers.",
+          "expect": "The local object has the exact field set, integer types, and correct counts.",
+          "source": "fixed-local-exam",
+          "is_holdout": false,
+          "support_files": [
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/checks.json",
+            "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/evals/rubric.md"
+          ],
+          "execution": {
+            "drive": {
+              "kind": "fixture",
+              "source": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/structured-output",
+              "verify_commands": [
+                {
+                  "program": "jq",
+                  "arguments": [
+                    "-e",
+                    ". == {\"accepted\":3,\"rejected\":2,\"total\":5}",
+                    "summary.json"
+                  ],
+                  "working_directory": "/Users/owaisquadri/.herdr/worktrees/agents/routing-optimizations/tools/skill-eval/tests/fixtures/model-calibration/fixtures/structured-output"
+                }
+              ]
+            },
+            "allowed_tools": [
+              "read",
+              "write"
+            ],
+            "timeout_seconds": 90
+          }
+        }
+      ]
+    },
+    "judge": {
+      "tier": "t5",
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "thinking": "medium"
+    },
+    "candidate_environment": {
+      "harnesses": [
+        {
+          "runner_version": "0.3.2",
+          "pi_version": "0.84.2",
+          "artifact_revision": "fnv1a64:9a69391e71549f79",
+          "tool_policy_digest": "fnv1a64:7346811a42e8f16c"
+        },
+        {
+          "runner_version": "0.3.2",
+          "pi_version": "0.84.2",
+          "artifact_revision": "fnv1a64:9a69391e71549f79",
+          "tool_policy_digest": "fnv1a64:ab05f5464dd27bc5"
+        },
+        {
+          "runner_version": "0.3.2",
+          "pi_version": "0.84.2",
+          "artifact_revision": "fnv1a64:9a69391e71549f79",
+          "tool_policy_digest": "fnv1a64:64f4fb0f59cfc05c"
+        },
+        {
+          "runner_version": "0.3.2",
+          "pi_version": "0.84.2",
+          "artifact_revision": "fnv1a64:9a69391e71549f79",
+          "tool_policy_digest": "fnv1a64:4e672670c97c4389"
+        },
+        {
+          "runner_version": "0.3.2",
+          "pi_version": "0.84.2",
+          "artifact_revision": "fnv1a64:9a69391e71549f79",
+          "tool_policy_digest": "fnv1a64:8e7c215784600345"
+        }
+      ],
+      "digest": "917f1c8a67ce14c3062c4a7674ba4338361eedb1e3762f26b4409d09f06232dd"
+    },
+    "policy": {
+      "minimum_score": 8,
+      "calibration_minimum_reliability_basis_points": 8000,
+      "maximum_catastrophic_trials": 0,
+      "repeats_per_case": 1
+    },
+    "candidate_calls": {
+      "minimum": 105,
+      "maximum": 485
+    },
+    "judge_calls": {
+      "minimum": 105,
+      "maximum": 485
+    },
+    "candidate_price": {
+      "input_per_million_tokens": 0,
+      "output_per_million_tokens": 0
+    },
+    "owner_approved_judge_cap_millionths_of_dollar": 20000000,
+    "provider_enforced_judge_cap_millionths_of_dollar": 20000000
+  },
+  "cap_extensions": [],
+  "status": "running",
+  "child_runs": [
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "cohere/north-mini-code:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c82d5e30-00014ca2-0000000000000001",
+      "model_index": 0,
+      "thinking_index": 0,
+      "status": "completed"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "cohere/north-mini-code:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c82e15c8-00014ca2-0000000000000002",
+      "model_index": 0,
+      "thinking_index": 1,
+      "status": "completed"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "cohere/north-mini-code:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c82eaa38-00014ca2-0000000000000003",
+      "model_index": 0,
+      "thinking_index": 2,
+      "status": "completed"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "cohere/north-mini-code:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c82f3ac0-00014ca2-0000000000000004",
+      "model_index": 0,
+      "thinking_index": 3,
+      "status": "completed"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "cohere/north-mini-code:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c82fcb48-00014ca2-0000000000000005",
+      "model_index": 0,
+      "thinking_index": 4,
+      "status": "running"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c830a220-00014ca2-0000000000000006",
+      "model_index": 1,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c8312308-00014ca2-0000000000000007",
+      "model_index": 1,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c831a7d8-00014ca2-0000000000000008",
+      "model_index": 1,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c8323c48-00014ca2-0000000000000009",
+      "model_index": 1,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "dots-studio/dots-3-note-preview:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c832d0b8-00014ca2-000000000000000a",
+      "model_index": 1,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8335d58-00014ca2-000000000000000b",
+      "model_index": 2,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c833f1c8-00014ca2-000000000000000c",
+      "model_index": 2,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8347e68-00014ca2-000000000000000d",
+      "model_index": 2,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c8350720-00014ca2-000000000000000e",
+      "model_index": 2,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c8359f78-00014ca2-000000000000000f",
+      "model_index": 2,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8363000-00014ca2-0000000000000010",
+      "model_index": 3,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c836c470-00014ca2-0000000000000011",
+      "model_index": 3,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8375cc8-00014ca2-0000000000000012",
+      "model_index": 3,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c837f908-00014ca2-0000000000000013",
+      "model_index": 3,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "google/gemma-4-31b-it:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c838a100-00014ca2-0000000000000014",
+      "model_index": 3,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "liquid/lfm-2.5-2.6b:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c8395898-00014ca2-0000000000000015",
+      "model_index": 4,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "liquid/lfm-2.5-2.6b:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c839f0f0-00014ca2-0000000000000016",
+      "model_index": 4,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "liquid/lfm-2.5-2.6b:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c83a8948-00014ca2-0000000000000017",
+      "model_index": 4,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "liquid/lfm-2.5-2.6b:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c83b2588-00014ca2-0000000000000018",
+      "model_index": 4,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.7:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c83bb610-00014ca2-0000000000000019",
+      "model_index": 5,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.7:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c83c4698-00014ca2-000000000000001a",
+      "model_index": 5,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.7:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c83cd338-00014ca2-000000000000001b",
+      "model_index": 5,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m2.7:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c83d6f78-00014ca2-000000000000001c",
+      "model_index": 5,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c83e07d0-00014ca2-000000000000001d",
+      "model_index": 6,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c83ea028-00014ca2-000000000000001e",
+      "model_index": 6,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c83f4438-00014ca2-000000000000001f",
+      "model_index": 6,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c83fec30-00014ca2-0000000000000020",
+      "model_index": 6,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "minimax/minimax-m3:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c8408870-00014ca2-0000000000000021",
+      "model_index": 6,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8412c80-00014ca2-0000000000000022",
+      "model_index": 7,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c841cca8-00014ca2-0000000000000023",
+      "model_index": 7,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8426500-00014ca2-0000000000000024",
+      "model_index": 7,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c8430cf8-00014ca2-0000000000000025",
+      "model_index": 7,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c843ad20-00014ca2-0000000000000026",
+      "model_index": 7,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8443da8-00014ca2-0000000000000027",
+      "model_index": 8,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c844d218-00014ca2-0000000000000028",
+      "model_index": 8,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8456a70-00014ca2-0000000000000029",
+      "model_index": 8,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c845fee0-00014ca2-000000000000002a",
+      "model_index": 8,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c8468b80-00014ca2-000000000000002b",
+      "model_index": 8,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8471820-00014ca2-000000000000002c",
+      "model_index": 9,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c847bc30-00014ca2-000000000000002d",
+      "model_index": 9,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-super-120b-a12b:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c8485870-00014ca2-000000000000002e",
+      "model_index": 9,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c848ece0-00014ca2-000000000000002f",
+      "model_index": 10,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c8497d68-00014ca2-0000000000000030",
+      "model_index": 10,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c84a0df0-00014ca2-0000000000000031",
+      "model_index": 10,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c84a9e78-00014ca2-0000000000000032",
+      "model_index": 11,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c84b36d0-00014ca2-0000000000000033",
+      "model_index": 11,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c84bcf28-00014ca2-0000000000000034",
+      "model_index": 11,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c84c57e0-00014ca2-0000000000000035",
+      "model_index": 11,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-3.5-lightning:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c84ce098-00014ca2-0000000000000036",
+      "model_index": 11,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c84d78f0-00014ca2-0000000000000037",
+      "model_index": 12,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c84e0590-00014ca2-0000000000000038",
+      "model_index": 12,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c84e9618-00014ca2-0000000000000039",
+      "model_index": 12,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c84f26a0-00014ca2-000000000000003a",
+      "model_index": 12,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c84fb728-00014ca2-000000000000003b",
+      "model_index": 12,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8504b98-00014ca2-000000000000003c",
+      "model_index": 13,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c850e7d8-00014ca2-000000000000003d",
+      "model_index": 13,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8518030-00014ca2-000000000000003e",
+      "model_index": 13,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c85210b8-00014ca2-000000000000003f",
+      "model_index": 13,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "nvidia/nemotron-nano-9b-v2:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c852a528-00014ca2-0000000000000040",
+      "model_index": 13,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8533998-00014ca2-0000000000000041",
+      "model_index": 14,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c853ca20-00014ca2-0000000000000042",
+      "model_index": 14,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c85452d8-00014ca2-0000000000000043",
+      "model_index": 14,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c854db90-00014ca2-0000000000000044",
+      "model_index": 14,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "openai/gpt-oss-20b:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c8556830-00014ca2-0000000000000045",
+      "model_index": 14,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c855f4d0-00014ca2-0000000000000046",
+      "model_index": 15,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c8568170-00014ca2-0000000000000047",
+      "model_index": 15,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8570e10-00014ca2-0000000000000048",
+      "model_index": 15,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c85796c8-00014ca2-0000000000000049",
+      "model_index": 15,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-s-2.1:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c8582368-00014ca2-000000000000004a",
+      "model_index": 15,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c858a838-00014ca2-000000000000004b",
+      "model_index": 16,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c8592538-00014ca2-000000000000004c",
+      "model_index": 16,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8599e50-00014ca2-000000000000004d",
+      "model_index": 16,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c85a1768-00014ca2-000000000000004e",
+      "model_index": 16,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "poolside/laguna-xs-2.1:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c85aa020-00014ca2-000000000000004f",
+      "model_index": 16,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "stealth/ox-alpha",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c85b3490-00014ca2-0000000000000050",
+      "model_index": 17,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "stealth/ox-alpha",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c85bc518-00014ca2-0000000000000051",
+      "model_index": 17,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "stealth/ox-alpha",
+        "thinking": "max"
+      },
+      "run_id": "run-000000000000000018cf44a4c85c51b8-00014ca2-0000000000000052",
+      "model_index": 17,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c85cda70-00014ca2-0000000000000053",
+      "model_index": 18,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c85d6710-00014ca2-0000000000000054",
+      "model_index": 18,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c85defc8-00014ca2-0000000000000055",
+      "model_index": 18,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c85e7880-00014ca2-0000000000000056",
+      "model_index": 18,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c85f10d8-00014ca2-0000000000000057",
+      "model_index": 18,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling-small:free",
+        "thinking": "max"
+      },
+      "run_id": "run-000000000000000018cf44a4c85f9d78-00014ca2-0000000000000058",
+      "model_index": 18,
+      "thinking_index": 5,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c8601e60-00014ca2-0000000000000059",
+      "model_index": 19,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "thinking": "minimal"
+      },
+      "run_id": "run-000000000000000018cf44a4c8610ca8-00014ca2-000000000000005a",
+      "model_index": 19,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "thinking": "low"
+      },
+      "run_id": "run-000000000000000018cf44a4c8619560-00014ca2-000000000000005b",
+      "model_index": 19,
+      "thinking_index": 2,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "thinking": "medium"
+      },
+      "run_id": "run-000000000000000018cf44a4c8622db8-00014ca2-000000000000005c",
+      "model_index": 19,
+      "thinking_index": 3,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c862b670-00014ca2-000000000000005d",
+      "model_index": 19,
+      "thinking_index": 4,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "thinkingmachines/inkling:free",
+        "thinking": "max"
+      },
+      "run_id": "run-000000000000000018cf44a4c8634ae0-00014ca2-000000000000005e",
+      "model_index": 19,
+      "thinking_index": 5,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.2:free",
+        "thinking": "off"
+      },
+      "run_id": "run-000000000000000018cf44a4c863eef0-00014ca2-000000000000005f",
+      "model_index": 20,
+      "thinking_index": 0,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.2:free",
+        "thinking": "high"
+      },
+      "run_id": "run-000000000000000018cf44a4c86477a8-00014ca2-0000000000000060",
+      "model_index": 20,
+      "thinking_index": 1,
+      "status": "pending"
+    },
+    {
+      "model": {
+        "tier": "t1",
+        "provider": "openrouter",
+        "model": "z-ai/glm-5.2:free",
+        "thinking": "xhigh"
+      },
+      "run_id": "run-000000000000000018cf44a4c8650060-00014ca2-0000000000000061",
+      "model_index": 20,
+      "thinking_index": 2,
+      "status": "pending"
+    }
+  ],
+  "models": [
+    {
+      "provider": "openrouter",
+      "model": "cohere/north-mini-code:free",
+      "attempts": [
+        {
+          "child_run_id": "run-000000000000000018cf44a4c82d5e30-00014ca2-0000000000000001",
+          "evidence": {
+            "stage": "calibration",
+            "requested_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "off"
+            },
+            "effective_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "off"
+            },
+            "judge_model": {
+              "tier": "t5",
+              "provider": "anthropic",
+              "model": "claude-opus-5",
+              "thinking": "medium"
+            },
+            "harnesses": [
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:7346811a42e8f16c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:ab05f5464dd27bc5"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:64f4fb0f59cfc05c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:4e672670c97c4389"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:8e7c215784600345"
+              }
+            ],
+            "is_passing": false,
+            "completed_trials": 5,
+            "expected_trials": 5,
+            "failed_trials": 2,
+            "catastrophic_trials": 1,
+            "score": {
+              "lower": 0.58,
+              "estimate": 0.58,
+              "upper": 0.58
+            },
+            "candidate_usage": {
+              "input_tokens": 321930,
+              "output_tokens": 1521,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "turns": 34,
+              "tool_calls": 28,
+              "elapsed_milliseconds": 58031,
+              "cost_millionths_of_dollar": 0
+            },
+            "judge_usage": {
+              "input_tokens": 42,
+              "output_tokens": 4531,
+              "cache_read_tokens": 52920,
+              "cache_write_tokens": 152542,
+              "turns": 21,
+              "tool_calls": 44,
+              "elapsed_milliseconds": 77762,
+              "cost_millionths_of_dollar": 1093334
+            },
+            "total_usage": {
+              "input_tokens": 321972,
+              "output_tokens": 6052,
+              "cache_read_tokens": 52920,
+              "cache_write_tokens": 152542,
+              "turns": 55,
+              "tool_calls": 72,
+              "elapsed_milliseconds": 135793,
+              "cost_millionths_of_dollar": 1093334
+            }
+          }
+        },
+        {
+          "child_run_id": "run-000000000000000018cf44a4c82e15c8-00014ca2-0000000000000002",
+          "evidence": {
+            "stage": "calibration",
+            "requested_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "minimal"
+            },
+            "effective_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "minimal"
+            },
+            "judge_model": {
+              "tier": "t5",
+              "provider": "anthropic",
+              "model": "claude-opus-5",
+              "thinking": "medium"
+            },
+            "harnesses": [
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:7346811a42e8f16c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:ab05f5464dd27bc5"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:64f4fb0f59cfc05c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:4e672670c97c4389"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:8e7c215784600345"
+              }
+            ],
+            "is_passing": false,
+            "completed_trials": 5,
+            "expected_trials": 5,
+            "failed_trials": 2,
+            "catastrophic_trials": 0,
+            "score": {
+              "lower": 0.6799999999999999,
+              "estimate": 0.6799999999999999,
+              "upper": 0.6799999999999999
+            },
+            "candidate_usage": {
+              "input_tokens": 175315,
+              "output_tokens": 3333,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "turns": 17,
+              "tool_calls": 14,
+              "elapsed_milliseconds": 61622,
+              "cost_millionths_of_dollar": 0
+            },
+            "judge_usage": {
+              "input_tokens": 50,
+              "output_tokens": 4980,
+              "cache_read_tokens": 191203,
+              "cache_write_tokens": 213507,
+              "turns": 26,
+              "tool_calls": 51,
+              "elapsed_milliseconds": 91892,
+              "cost_millionths_of_dollar": 1554773
+            },
+            "total_usage": {
+              "input_tokens": 175365,
+              "output_tokens": 8313,
+              "cache_read_tokens": 191203,
+              "cache_write_tokens": 213507,
+              "turns": 43,
+              "tool_calls": 65,
+              "elapsed_milliseconds": 153514,
+              "cost_millionths_of_dollar": 1554773
+            }
+          }
+        },
+        {
+          "child_run_id": "run-000000000000000018cf44a4c82eaa38-00014ca2-0000000000000003",
+          "evidence": {
+            "stage": "calibration",
+            "requested_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "low"
+            },
+            "effective_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "low"
+            },
+            "judge_model": {
+              "tier": "t5",
+              "provider": "anthropic",
+              "model": "claude-opus-5",
+              "thinking": "medium"
+            },
+            "harnesses": [
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:7346811a42e8f16c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:ab05f5464dd27bc5"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:64f4fb0f59cfc05c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:4e672670c97c4389"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:8e7c215784600345"
+              }
+            ],
+            "is_passing": false,
+            "completed_trials": 5,
+            "expected_trials": 5,
+            "failed_trials": 2,
+            "catastrophic_trials": 0,
+            "score": {
+              "lower": 0.78,
+              "estimate": 0.78,
+              "upper": 0.78
+            },
+            "candidate_usage": {
+              "input_tokens": 227192,
+              "output_tokens": 3955,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "turns": 22,
+              "tool_calls": 19,
+              "elapsed_milliseconds": 55491,
+              "cost_millionths_of_dollar": 0
+            },
+            "judge_usage": {
+              "input_tokens": 50,
+              "output_tokens": 5088,
+              "cache_read_tokens": 267732,
+              "cache_write_tokens": 282188,
+              "turns": 25,
+              "tool_calls": 52,
+              "elapsed_milliseconds": 106815,
+              "cost_millionths_of_dollar": 2024992
+            },
+            "total_usage": {
+              "input_tokens": 227242,
+              "output_tokens": 9043,
+              "cache_read_tokens": 267732,
+              "cache_write_tokens": 282188,
+              "turns": 47,
+              "tool_calls": 71,
+              "elapsed_milliseconds": 162306,
+              "cost_millionths_of_dollar": 2024992
+            }
+          }
+        },
+        {
+          "child_run_id": "run-000000000000000018cf44a4c82f3ac0-00014ca2-0000000000000004",
+          "evidence": {
+            "stage": "calibration",
+            "requested_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "medium"
+            },
+            "effective_model": {
+              "tier": "t1",
+              "provider": "openrouter",
+              "model": "cohere/north-mini-code:free",
+              "thinking": "medium"
+            },
+            "judge_model": {
+              "tier": "t5",
+              "provider": "anthropic",
+              "model": "claude-opus-5",
+              "thinking": "medium"
+            },
+            "harnesses": [
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:7346811a42e8f16c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:ab05f5464dd27bc5"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:64f4fb0f59cfc05c"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:4e672670c97c4389"
+              },
+              {
+                "runner_version": "0.3.2",
+                "pi_version": "0.84.2",
+                "artifact_revision": "fnv1a64:9a69391e71549f79",
+                "tool_policy_digest": "fnv1a64:8e7c215784600345"
+              }
+            ],
+            "is_passing": false,
+            "completed_trials": 5,
+            "expected_trials": 5,
+            "failed_trials": 3,
+            "catastrophic_trials": 0,
+            "score": {
+              "lower": 0.5599999999999999,
+              "estimate": 0.5599999999999999,
+              "upper": 0.5599999999999999
+            },
+            "candidate_usage": {
+              "input_tokens": 206917,
+              "output_tokens": 4150,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "turns": 20,
+              "tool_calls": 17,
+              "elapsed_milliseconds": 60460,
+              "cost_millionths_of_dollar": 0
+            },
+            "judge_usage": {
+              "input_tokens": 44,
+              "output_tokens": 3978,
+              "cache_read_tokens": 80003,
+              "cache_write_tokens": 188365,
+              "turns": 22,
+              "tool_calls": 46,
+              "elapsed_milliseconds": 74941,
+              "cost_millionths_of_dollar": 1316955
+            },
+            "total_usage": {
+              "input_tokens": 206961,
+              "output_tokens": 8128,
+              "cache_read_tokens": 80003,
+              "cache_write_tokens": 188365,
+              "turns": 42,
+              "tool_calls": 63,
+              "elapsed_milliseconds": 135401,
+              "cost_millionths_of_dollar": 1316955
+            }
+          }
+        }
+      ],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "dots-studio/dots-3-note-preview:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "google/gemma-4-26b-a4b-it:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "google/gemma-4-31b-it:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "liquid/lfm-2.5-2.6b:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m2.7:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "minimax/minimax-m3:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-nano-30b-a3b:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-3.5-lightning:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-nano-12b-v2-vl:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "nvidia/nemotron-nano-9b-v2:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "openai/gpt-oss-20b:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "poolside/laguna-s-2.1:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "poolside/laguna-xs-2.1:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "stealth/ox-alpha",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "thinkingmachines/inkling-small:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "thinkingmachines/inkling:free",
+      "attempts": [],
+      "outcome": null
+    },
+    {
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.2:free",
+      "attempts": [],
+      "outcome": null
+    }
+  ],
+  "candidate_usage": {
+    "input_tokens": 931354,
+    "output_tokens": 12959,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "turns": 93,
+    "tool_calls": 78,
+    "elapsed_milliseconds": 235604,
+    "cost_millionths_of_dollar": 0
+  },
+  "judge_usage": {
+    "input_tokens": 186,
+    "output_tokens": 18577,
+    "cache_read_tokens": 591858,
+    "cache_write_tokens": 836602,
+    "turns": 94,
+    "tool_calls": 193,
+    "elapsed_milliseconds": 351410,
+    "cost_millionths_of_dollar": 5990054
+  },
+  "spent_judge_millionths_of_dollar": 5990054,
+  "pause": null
+}

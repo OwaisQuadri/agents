@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
+use std::env;
 use std::fs;
 use std::io::{self, Read};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -15,13 +18,15 @@ use crate::model::{
 use crate::ports::CandidateRunner;
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const ANTHROPIC_AUTH_REVISION: &str = "c6605e2db9ad3e783c3fe8b23d269848e0981d26";
+const MAX_PI_EVENT_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProcessRequest {
     program: String,
     arguments: Vec<String>,
     working_directory: PathBuf,
-    timeout: Duration,
+    timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,13 +45,16 @@ pub(crate) struct SystemProcess;
 
 impl Process for SystemProcess {
     fn run(&mut self, request: &ProcessRequest) -> io::Result<ProcessOutput> {
-        let mut child = Command::new(&request.program)
+        let mut command = Command::new(&request.program);
+        command
             .args(&request.arguments)
             .current_dir(&request.working_directory)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .process_group(0);
+        let mut child = command.spawn()?;
+        let process_group = child.id();
         let stdout = child
             .stdout
             .take()
@@ -58,17 +66,26 @@ impl Process for SystemProcess {
         let stdout_reader = thread::spawn(move || read_all(stdout));
         let stderr_reader = thread::spawn(move || read_all(stderr));
         let started_at = Instant::now();
-        let (exit_code, is_timed_out) = loop {
-            if let Some(status) = child.try_wait()? {
-                break (status.code(), false);
+        let mut descendants = BTreeSet::new();
+        let wait_result = (|| -> io::Result<(Option<i32>, bool)> {
+            loop {
+                track_descendants(process_group, &mut descendants);
+                if let Some(status) = child.try_wait()? {
+                    break Ok((status.code(), false));
+                }
+                if request
+                    .timeout
+                    .is_some_and(|timeout| started_at.elapsed() >= timeout)
+                {
+                    child.kill()?;
+                    let status = child.wait()?;
+                    break Ok((status.code(), true));
+                }
+                thread::sleep(PROCESS_POLL_INTERVAL);
             }
-            if started_at.elapsed() >= request.timeout {
-                child.kill()?;
-                let status = child.wait()?;
-                break (status.code(), true);
-            }
-            thread::sleep(PROCESS_POLL_INTERVAL);
-        };
+        })();
+        stop_process_group(process_group, &descendants);
+        let (exit_code, is_timed_out) = wait_result?;
 
         Ok(ProcessOutput {
             exit_code,
@@ -79,9 +96,62 @@ impl Process for SystemProcess {
     }
 }
 
-fn read_all(mut reader: impl Read) -> io::Result<Vec<u8>> {
+fn track_descendants(parent: u32, descendants: &mut BTreeSet<u32>) {
+    let Ok(output) = Command::new("/bin/ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+    else {
+        return;
+    };
+    let processes = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect::<Vec<(u32, u32)>>();
+    loop {
+        let before = descendants.len();
+        for (process, process_parent) in &processes {
+            if *process_parent == parent || descendants.contains(process_parent) {
+                descendants.insert(*process);
+            }
+        }
+        if descendants.len() == before {
+            break;
+        }
+    }
+}
+
+fn stop_process_group(process_group: u32, descendants: &BTreeSet<u32>) {
+    let group = format!("-{process_group}");
+    for signal in ["-TERM", "-KILL"] {
+        for process in descendants.iter().rev() {
+            let _ = Command::new("/bin/kill")
+                .args([signal, &process.to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        let _ = Command::new("/bin/kill")
+            .args([signal, group.as_str()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn read_all(reader: impl Read) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
-    reader.read_to_end(&mut bytes)?;
+    reader
+        .take((MAX_PI_EVENT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_PI_EVENT_BYTES {
+        return Err(io::Error::other("Pi event output exceeded the size limit"));
+    }
     Ok(bytes)
 }
 
@@ -114,6 +184,7 @@ impl<P> PiCandidateRunner<P> {
     }
 }
 
+// TODO(AGNT-0032.T154): Guard first-party frontier execution before launching Pi.
 impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
     fn execute(
         &mut self,
@@ -123,9 +194,13 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
         case: &CaseDefinition,
         model: &ModelIdentity,
         harness: &HarnessIdentity,
+        candidate_timeout_seconds: Option<u32>,
     ) -> Result<CandidateArtifact, SkillEvalError> {
         validate_component(&run_id.0, "run")?;
         validate_trial(key, artifact, case, model, harness)?;
+        if candidate_timeout_seconds == Some(0) {
+            return Err(invalid("candidate timeout must be greater than zero"));
+        }
         let output_root = fs::canonicalize(&self.output_root)
             .map_err(|error| io_error(&self.output_root, error))?;
         let trial_directory = trial_directory(&output_root, run_id, key)?;
@@ -133,12 +208,20 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
         let working_directory = prepare_working_directory(&trial_directory, case)?;
         let transcript_path = trial_directory.join("transcript.jsonl");
         let response_path = trial_directory.join("response.txt");
-        let arguments = pi_arguments(artifact, case, model)?;
+        let all_tools_extension = trial_directory.join("all-tools.ts");
+        write_bytes(
+            &all_tools_extension,
+            all_tools_extension_source().as_bytes(),
+        )?;
+        fs::set_permissions(&all_tools_extension, fs::Permissions::from_mode(0o600))
+            .map_err(|error| io_error(&all_tools_extension, error))?;
+        let arguments = pi_arguments(artifact, case, model, &all_tools_extension)?;
         let request = ProcessRequest {
             program: "pi".to_owned(),
             arguments,
             working_directory: working_directory.clone(),
-            timeout: Duration::from_secs(u64::from(case.execution.timeout_seconds)),
+            timeout: candidate_timeout_seconds
+                .map(|seconds| Duration::from_secs(u64::from(seconds))),
         };
         let started_at = Instant::now();
         let output = self
@@ -150,8 +233,30 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
                 standard_error: error.to_string(),
             })?;
         let elapsed_milliseconds = milliseconds(started_at.elapsed());
+        if output.is_timed_out {
+            let timeout_seconds =
+                candidate_timeout_seconds.ok_or_else(|| SkillEvalError::Process {
+                    program: request.program.clone(),
+                    exit_code: output.exit_code,
+                    standard_error: "process reported a timeout for an unbounded request"
+                        .to_owned(),
+                })?;
+            write_timeout_transcript(&transcript_path, &output.standard_output, timeout_seconds)?;
+            return Err(SkillEvalError::Process {
+                program: request.program,
+                exit_code: output.exit_code,
+                standard_error: format!(
+                    "candidate exceeded its configured {timeout_seconds}-second deadline"
+                ),
+            });
+        }
         write_bytes(&transcript_path, &output.standard_output)?;
-        let parsed = match parse_events(&output.standard_output, model, elapsed_milliseconds) {
+        let parsed = match parse_events(
+            &output.standard_output,
+            model,
+            elapsed_milliseconds,
+            output.is_timed_out,
+        ) {
             Ok(parsed) => parsed,
             Err(error) => {
                 let raw_output = format!(
@@ -165,6 +270,14 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
                         reset_at: quota_reset_at(&raw_output),
                     });
                 }
+                let standard_error = String::from_utf8_lossy(&output.standard_error);
+                if output.exit_code != Some(0) || !standard_error.trim().is_empty() {
+                    return Err(SkillEvalError::Process {
+                        program: request.program,
+                        exit_code: output.exit_code,
+                        standard_error: standard_error.trim().to_owned(),
+                    });
+                }
                 return Err(error);
             }
         };
@@ -173,16 +286,6 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
             return Err(SkillEvalError::Quota {
                 model: quota_model,
                 reset_at,
-            });
-        }
-        if output.is_timed_out {
-            return Err(SkillEvalError::Process {
-                program: request.program,
-                exit_code: output.exit_code,
-                standard_error: format!(
-                    "Pi exceeded its {} second timeout",
-                    case.execution.timeout_seconds
-                ),
             });
         }
         if output.exit_code != Some(0) || parsed.error_message.is_some() {
@@ -194,11 +297,15 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
         }
 
         write_bytes(&response_path, parsed.response.as_bytes())?;
+        let artifact_path = match case.execution.drive {
+            CaseDrive::Fixture { .. } => working_directory,
+            CaseDrive::Response | CaseDrive::ExistingHarness { .. } => response_path,
+        };
         Ok(CandidateArtifact {
             key: key.clone(),
             model: parsed.model,
             harness: harness.clone(),
-            artifact_path: response_path,
+            artifact_path,
             transcript_path,
             usage: parsed.usage,
         })
@@ -336,6 +443,7 @@ fn trial_directory(root: &Path, run_id: &RunId, key: &TrialKey) -> Result<PathBu
         .join(&run_id.0)
         .join(&key.artifact.0)
         .join(format!("{:?}", key.tier).to_ascii_lowercase())
+        .join(key.route_index.to_string())
         .join(&key.case.0)
         .join(key.attempt.to_string()))
 }
@@ -428,6 +536,7 @@ fn pi_arguments(
     artifact: &ArtifactDefinition,
     case: &CaseDefinition,
     model: &ModelIdentity,
+    all_tools_extension: &Path,
 ) -> Result<Vec<String>, SkillEvalError> {
     let mut arguments = vec![
         "--mode".to_owned(),
@@ -454,25 +563,38 @@ fn pi_arguments(
             )?));
         }
     }
+    arguments.push("--extension".to_owned());
+    arguments.push(path_text(all_tools_extension));
     arguments.push("--model".to_owned());
     arguments.push(format!("{}/{}", model.provider, model.model));
     arguments.push("--thinking".to_owned());
     arguments.push(model.thinking.clone());
     arguments.extend([
-        "--no-extensions".to_owned(),
         "--no-prompt-templates".to_owned(),
         "--no-themes".to_owned(),
         "--no-context-files".to_owned(),
         "--no-approve".to_owned(),
     ]);
-    if case.execution.allowed_tools.is_empty() {
-        arguments.push("--no-tools".to_owned());
-    } else {
-        arguments.push("--tools".to_owned());
-        arguments.push(case.execution.allowed_tools.join(","));
-    }
-    arguments.push(case.input.clone());
+    arguments.push(pi_positional_prompt(&case.input));
     Ok(arguments)
+}
+
+fn all_tools_extension_source() -> &'static str {
+    r#"import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI): void {
+  const enableAll = () => pi.setActiveTools(pi.getAllTools().map((tool) => tool.name));
+  pi.on("session_start", enableAll);
+  pi.on("before_agent_start", () => {
+    enableAll();
+    pi.appendEntry("skill-eval-tool-inventory", {
+      tools: pi.getActiveTools().slice().sort(),
+    });
+  });
+  pi.on("turn_start", enableAll);
+  pi.on("context", enableAll);
+}
+"#
 }
 
 fn one_file_with_suffix(root: &Path, suffix: &str) -> Result<PathBuf, SkillEvalError> {
@@ -514,6 +636,116 @@ fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+pub(crate) fn pi_positional_prompt(prompt: &str) -> String {
+    format!(
+        "Treat the following text as the complete user request, not as a command-line file or option:\n\n{prompt}"
+    )
+}
+
+pub(crate) fn append_pi_auth_extension(
+    arguments: &mut Vec<String>,
+    model: &ModelIdentity,
+) -> Result<(), SkillEvalError> {
+    if model.provider != "anthropic" {
+        return Ok(());
+    }
+    let home = env::var_os("HOME").ok_or_else(|| {
+        invalid("HOME is required to load the Anthropic Pi authentication extension")
+    })?;
+    append_pi_auth_extension_from_home(arguments, model, Path::new(&home), ANTHROPIC_AUTH_REVISION)
+}
+
+fn append_pi_auth_extension_from_home(
+    arguments: &mut Vec<String>,
+    model: &ModelIdentity,
+    home: &Path,
+    expected_revision: &str,
+) -> Result<(), SkillEvalError> {
+    if model.provider != "anthropic" {
+        return Ok(());
+    }
+    let configured = home.join(".pi/agent/extensions/pi-anthropic-auth/src/index.ts");
+    let extension = fs::canonicalize(&configured).map_err(|error| io_error(&configured, error))?;
+    if !extension.is_file() {
+        return Err(invalid(format!(
+            "Anthropic Pi authentication extension {} is not a file",
+            configured.display()
+        )));
+    }
+    let package_root = extension
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| invalid("Anthropic Pi authentication extension has no package root"))?;
+    let flags = git_output(
+        package_root,
+        &[
+            "ls-files",
+            "-v",
+            "--",
+            "src",
+            "package.json",
+            "pnpm-lock.yaml",
+        ],
+    )?;
+    if flags.lines().any(|line| !line.starts_with("H ")) {
+        return Err(invalid(
+            "Anthropic Pi authentication extension uses hidden index flags",
+        ));
+    }
+    let revision = git_output(package_root, &["rev-parse", "HEAD"])?;
+    if revision.trim() != expected_revision {
+        return Err(invalid(format!(
+            "Anthropic Pi authentication extension revision is {}, expected {expected_revision}",
+            revision.trim()
+        )));
+    }
+    let status = git_output(
+        package_root,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--",
+            "src",
+            "package.json",
+            "pnpm-lock.yaml",
+        ],
+    )?;
+    if !status.trim().is_empty() {
+        return Err(invalid(
+            "Anthropic Pi authentication extension source differs from its pinned revision",
+        ));
+    }
+    arguments.push("--extension".to_owned());
+    arguments.push(path_text(&extension));
+    Ok(())
+}
+
+fn git_output(root: &Path, arguments: &[&str]) -> Result<String, SkillEvalError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(arguments)
+        .output()
+        .map_err(|error| SkillEvalError::Process {
+            program: "git".to_owned(),
+            exit_code: None,
+            standard_error: error.to_string(),
+        })?;
+    if !output.status.success() {
+        return Err(SkillEvalError::Process {
+            program: "git".to_owned(),
+            exit_code: output.status.code(),
+            standard_error: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        });
+    }
+    String::from_utf8(output.stdout).map_err(|error| {
+        invalid(format!(
+            "Anthropic Pi authentication extension git output is not UTF-8: {error}"
+        ))
+    })
+}
+
 struct ParsedTrial {
     response: String,
     model: ModelIdentity,
@@ -525,6 +757,7 @@ fn parse_events(
     bytes: &[u8],
     requested_model: &ModelIdentity,
     elapsed_milliseconds: u64,
+    is_timed_out: bool,
 ) -> Result<ParsedTrial, SkillEvalError> {
     let text = std::str::from_utf8(bytes).map_err(|error| SkillEvalError::InvalidEvent {
         line: 0,
@@ -541,15 +774,21 @@ fn parse_events(
         elapsed_milliseconds,
         cost_millionths_of_dollar: 0,
     };
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let event: Value =
-            serde_json::from_str(line).map_err(|error| SkillEvalError::InvalidEvent {
-                line: (index + 1) as u64,
-                message: error.to_string(),
-            })?;
+    let lines = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    for (index, line) in lines.iter().enumerate() {
+        let event: Value = match serde_json::from_str(line) {
+            Ok(event) => event,
+            Err(_) if is_timed_out && index + 1 == lines.len() => break,
+            Err(error) => {
+                return Err(SkillEvalError::InvalidEvent {
+                    line: (index + 1) as u64,
+                    message: error.to_string(),
+                });
+            }
+        };
         match event.get("type").and_then(Value::as_str) {
             Some("turn_end") => usage.turns = checked_increment(usage.turns, index)?,
             Some("tool_execution_start") => {
@@ -567,10 +806,20 @@ fn parse_events(
             _ => {}
         }
     }
-    let message = final_message.ok_or_else(|| SkillEvalError::InvalidEvent {
-        line: 0,
-        message: "Pi event stream has no authoritative assistant message_end".to_owned(),
-    })?;
+    let Some(message) = final_message else {
+        if is_timed_out {
+            return Ok(ParsedTrial {
+                response: String::new(),
+                model: requested_model.clone(),
+                usage,
+                error_message: None,
+            });
+        }
+        return Err(SkillEvalError::InvalidEvent {
+            line: 0,
+            message: "Pi event stream has no authoritative assistant message_end".to_owned(),
+        });
+    };
     let model = completed_model(&message, requested_model)?;
     let response = final_text(&message, 0)?;
     let error_message = if message.get("stopReason").and_then(Value::as_str) == Some("error") {
@@ -705,6 +954,7 @@ fn is_quota_text(text: &str) -> bool {
         "usage_not_included",
         "insufficient_quota",
         "quota exceeded",
+        "account's rate limit",
         "monthly usage limit",
         "out of budget",
         "available balance",
@@ -747,6 +997,29 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), SkillEvalError> {
     fs::write(path, bytes).map_err(|error| io_error(path, error))
 }
 
+fn write_timeout_transcript(
+    path: &Path,
+    bytes: &[u8],
+    timeout_seconds: u32,
+) -> Result<(), SkillEvalError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| SkillEvalError::InvalidEvent {
+        line: 0,
+        message: format!("timed-out Pi event stream is not UTF-8: {error}"),
+    })?;
+    let mut transcript = String::new();
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        if serde_json::from_str::<Value>(line).is_err() {
+            break;
+        }
+        transcript.push_str(line);
+        transcript.push('\n');
+    }
+    transcript.push_str(&format!(
+        "{{\"type\":\"skill_eval_timeout\",\"timeout_seconds\":{timeout_seconds}}}\n"
+    ));
+    write_bytes(path, transcript.as_bytes())
+}
+
 fn invalid(message: impl Into<String>) -> SkillEvalError {
     SkillEvalError::InvalidConfiguration(message.into())
 }
@@ -772,8 +1045,8 @@ mod tests {
 
     use super::*;
     use crate::model::{
-        ArtifactName, CaseId, ExecutionDefinition, QualificationPolicy, RunConfiguration, RunEvent,
-        RunMode, Tier, TierDestination,
+        ArtifactName, CaseId, ExecutionDefinition, QualificationPolicy, QualificationPurpose,
+        RunConfiguration, RunEvent, RunMode, Tier, TierDestination,
     };
     use crate::ports::RunStore;
     use crate::store::FileRunStore;
@@ -842,6 +1115,7 @@ mod tests {
         TrialKey {
             artifact: ArtifactName("fixture-skill".to_owned()),
             tier: Tier::T2,
+            route_index: 0,
             case: CaseId("ordinary".to_owned()),
             attempt: 1,
         }
@@ -898,6 +1172,70 @@ mod tests {
         }
     }
 
+    #[test]
+    fn candidate_has_no_wall_clock_limit() {
+        let directory = TestDirectory::new("candidate-timeout-process");
+        let mut process = SystemProcess;
+        let unbounded = process
+            .run(&ProcessRequest {
+                program: "/bin/sh".to_owned(),
+                arguments: vec!["-c".to_owned(), "sleep 0.03; printf complete".to_owned()],
+                working_directory: directory.path().to_owned(),
+                timeout: None,
+            })
+            .unwrap();
+        assert_eq!(unbounded.exit_code, Some(0));
+        assert!(!unbounded.is_timed_out);
+        assert_eq!(unbounded.standard_output, b"complete");
+
+        let bounded = process
+            .run(&ProcessRequest {
+                program: "/bin/sh".to_owned(),
+                arguments: vec!["-c".to_owned(), "sleep 1".to_owned()],
+                working_directory: directory.path().to_owned(),
+                timeout: Some(Duration::from_millis(30)),
+            })
+            .unwrap();
+        assert!(bounded.is_timed_out);
+    }
+
+    #[test]
+    fn unbounded_candidate_rejects_impossible_timeout_report() {
+        let directory = TestDirectory::new("impossible-unbounded-timeout");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let process = FakeProcess {
+            outputs: VecDeque::from([ProcessOutput {
+                exit_code: None,
+                standard_output: Vec::new(),
+                standard_error: Vec::new(),
+                is_timed_out: true,
+            }]),
+            requests: Vec::new(),
+        };
+        let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
+
+        let error = runner
+            .execute(
+                &run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &model(),
+                &harness(),
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SkillEvalError::Process { standard_error, .. }
+                if standard_error.contains("unbounded request")
+        ));
+        assert_eq!(runner.process.requests[0].timeout, None);
+    }
+
     #[cfg(unix)]
     #[test]
     fn tc_51_canonicalizes_runner_paths_for_store_run_containment() {
@@ -915,8 +1253,8 @@ mod tests {
         let first_run_id = RunId("safe-run-1".to_owned());
         let second_run_id = RunId("safe-run-2".to_owned());
         let timestamp = Timestamp("now".to_owned());
-        // TODO(AGNT-0032.T82): Mark this ordinary runner fixture as artifact qualification.
         let policy = QualificationPolicy {
+            purpose: QualificationPurpose::Artifact,
             candidate_tiers: vec![Tier::T2],
             reference_tier: Tier::T4,
             judge_tier: Tier::T5,
@@ -938,6 +1276,7 @@ mod tests {
                             artifacts: Vec::new(),
                             change: None,
                             policy: policy.clone(),
+                            qualification_routes: Default::default(),
                             created_at: timestamp.clone(),
                         },
                     },
@@ -956,6 +1295,7 @@ mod tests {
                 &case,
                 &model(),
                 &harness(),
+                Some(case.execution.timeout_seconds),
             )
             .unwrap();
 
@@ -1021,8 +1361,8 @@ mod tests {
         let second_run_id = RunId("safe-run-2".to_owned());
         let output = include_str!("../tests/fixtures/pi/success.jsonl");
         let timestamp = Timestamp("now".to_owned());
-        // TODO(AGNT-0032.T82): Mark this ordinary runner fixture as artifact qualification.
         let policy = QualificationPolicy {
+            purpose: QualificationPurpose::Artifact,
             candidate_tiers: vec![Tier::T2],
             reference_tier: Tier::T4,
             judge_tier: Tier::T5,
@@ -1044,6 +1384,7 @@ mod tests {
                             artifacts: Vec::new(),
                             change: None,
                             policy: policy.clone(),
+                            qualification_routes: Default::default(),
                             created_at: timestamp.clone(),
                         },
                     },
@@ -1063,6 +1404,7 @@ mod tests {
                 &case,
                 &model(),
                 &harness(),
+                Some(case.execution.timeout_seconds),
             )
             .unwrap();
         let second = second_runner
@@ -1073,6 +1415,7 @@ mod tests {
                 &case,
                 &model(),
                 &harness(),
+                Some(case.execution.timeout_seconds),
             )
             .unwrap();
 
@@ -1145,7 +1488,15 @@ mod tests {
         let mut unsafe_runner =
             PiCandidateRunner::with_process(missing_root.clone(), FakeProcess::returning(output));
         let error = unsafe_runner
-            .execute(&unsafe_id, &key(), &artifact, &case, &model(), &harness())
+            .execute(
+                &unsafe_id,
+                &key(),
+                &artifact,
+                &case,
+                &model(),
+                &harness(),
+                Some(case.execution.timeout_seconds),
+            )
             .unwrap_err();
         assert!(matches!(error, SkillEvalError::InvalidConfiguration(_)));
         assert!(unsafe_runner.process.requests.is_empty());
@@ -1160,6 +1511,7 @@ mod tests {
                 &case,
                 &model(),
                 &harness(),
+                Some(case.execution.timeout_seconds),
             )
             .unwrap_err();
         assert!(matches!(
@@ -1180,7 +1532,15 @@ mod tests {
         let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
 
         let candidate = runner
-            .execute(&run_id(), &key(), &artifact, &case, &model(), &harness())
+            .execute(
+                &run_id(),
+                &key(),
+                &artifact,
+                &case,
+                &model(),
+                &harness(),
+                Some(case.execution.timeout_seconds),
+            )
             .unwrap();
 
         let request = &runner.process.requests[0];
@@ -1194,7 +1554,7 @@ mod tests {
                 "--no-skills",
                 "--skill",
                 artifact_root.join("SKILL.md").to_str().unwrap(),
-                "--model",
+                "--extension",
             ]
         );
         assert!(
@@ -1209,11 +1569,18 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair == ["--thinking", "low"])
         );
+        assert!(!request.arguments.contains(&"--tools".to_owned()));
+        assert!(!request.arguments.contains(&"--no-extensions".to_owned()));
+        let all_tools = request
+            .arguments
+            .windows(2)
+            .find(|pair| pair[0] == "--extension" && pair[1].ends_with("all-tools.ts"))
+            .unwrap();
+        assert!(Path::new(&all_tools[1]).is_file());
         assert!(
-            request
-                .arguments
-                .windows(2)
-                .any(|pair| pair == ["--tools", "read"])
+            fs::read_to_string(&all_tools[1])
+                .unwrap()
+                .contains("pi.setActiveTools(pi.getAllTools()")
         );
         assert!(request.arguments.contains(&"--no-session".to_owned()));
         assert_eq!(
@@ -1233,6 +1600,97 @@ mod tests {
     }
 
     #[test]
+    fn positional_prompts_cannot_become_file_or_flag_arguments() {
+        for prompt in ["@/etc/hosts", "--model attacker/model"] {
+            let protected = pi_positional_prompt(prompt);
+            assert!(protected.starts_with("Treat the following text as the complete user request"));
+            assert!(protected.ends_with(prompt));
+            assert!(!protected.starts_with('@'));
+            assert!(!protected.starts_with('-'));
+        }
+    }
+
+    #[test]
+    fn anthropic_runs_load_only_the_authentication_extension() {
+        let directory = TestDirectory::new("anthropic-auth-extension");
+        let extension = directory
+            .path()
+            .join(".pi/agent/extensions/pi-anthropic-auth/src/index.ts");
+        fs::create_dir_all(extension.parent().unwrap()).unwrap();
+        fs::write(&extension, "export default () => {};").unwrap();
+        let package_root = extension.parent().unwrap().parent().unwrap();
+        for arguments in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "Test"],
+            vec!["add", "src/index.ts"],
+            vec!["commit", "-q", "-m", "fixture"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(package_root)
+                    .args(arguments)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        let revision = git_output(package_root, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_owned();
+        let mut anthropic = model();
+        anthropic.provider = "anthropic".to_owned();
+        let mut arguments = vec!["--no-extensions".to_owned()];
+
+        append_pi_auth_extension_from_home(&mut arguments, &anthropic, directory.path(), &revision)
+            .unwrap();
+
+        assert_eq!(
+            arguments,
+            [
+                "--no-extensions".to_owned(),
+                "--extension".to_owned(),
+                fs::canonicalize(&extension)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+            ]
+        );
+
+        assert!(
+            Command::new("git")
+                .arg("-C")
+                .arg(package_root)
+                .args(["update-index", "--assume-unchanged", "src/index.ts"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::write(&extension, "export default () => { throw new Error(); };").unwrap();
+        assert!(
+            append_pi_auth_extension_from_home(
+                &mut vec!["--no-extensions".to_owned()],
+                &anthropic,
+                directory.path(),
+                &revision,
+            )
+            .is_err()
+        );
+
+        let mut non_anthropic_arguments = vec!["--no-extensions".to_owned()];
+        append_pi_auth_extension_from_home(
+            &mut non_anthropic_arguments,
+            &model(),
+            directory.path(),
+            "unused",
+        )
+        .unwrap();
+        assert_eq!(non_anthropic_arguments, ["--no-extensions"]);
+    }
+
+    #[test]
     fn pi_runner_copies_write_fixture_before_spawn() {
         let directory = TestDirectory::new("fixture");
         let artifact_root = directory.path().join("artifact");
@@ -1241,7 +1699,7 @@ mod tests {
         fs::create_dir(&fixture_root).unwrap();
         fs::write(fixture_root.join("input.txt"), "unchanged").unwrap();
         let artifact = skill(&artifact_root);
-        let mut case = response_case(&["write"]);
+        let mut case = response_case(&["write", "bash"]);
         case.execution.drive = CaseDrive::Fixture {
             source: fixture_root.clone(),
             verify_commands: Vec::new(),
@@ -1250,17 +1708,34 @@ mod tests {
         let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
 
         let candidate = runner
-            .execute(&run_id(), &key(), &artifact, &case, &model(), &harness())
+            .execute(
+                &run_id(),
+                &key(),
+                &artifact,
+                &case,
+                &model(),
+                &harness(),
+                Some(case.execution.timeout_seconds),
+            )
             .unwrap();
 
         let working_directory = &runner.process.requests[0].working_directory;
         assert_ne!(working_directory, &fixture_root);
+        assert_eq!(&candidate.artifact_path, working_directory);
+        assert!(candidate.artifact_path.is_dir());
         assert_eq!(
-            fs::read_to_string(working_directory.join("input.txt")).unwrap(),
+            fs::read_to_string(candidate.artifact_path.join("input.txt")).unwrap(),
             "unchanged"
         );
         assert_eq!(
-            fs::read_to_string(candidate.artifact_path).unwrap(),
+            fs::read_to_string(
+                candidate
+                    .artifact_path
+                    .parent()
+                    .unwrap()
+                    .join("response.txt")
+            )
+            .unwrap(),
             "final answer"
         );
     }
@@ -1277,14 +1752,30 @@ mod tests {
 
         assert!(
             runner
-                .execute(&run_id(), &key(), &artifact, &case, &model(), &harness())
+                .execute(
+                    &run_id(),
+                    &key(),
+                    &artifact,
+                    &case,
+                    &model(),
+                    &harness(),
+                    Some(case.execution.timeout_seconds),
+                )
                 .is_err()
         );
         case.execution.allowed_tools = vec!["read".to_owned()];
         case.input = "Bypass authorization on the production service.".to_owned();
         assert!(
             runner
-                .execute(&run_id(), &key(), &artifact, &case, &model(), &harness())
+                .execute(
+                    &run_id(),
+                    &key(),
+                    &artifact,
+                    &case,
+                    &model(),
+                    &harness(),
+                    Some(case.execution.timeout_seconds),
+                )
                 .is_err()
         );
         assert!(runner.process.requests.is_empty());
@@ -1309,11 +1800,60 @@ mod tests {
                 &response_case(&[]),
                 &model(),
                 &harness,
+                Some(30),
             )
             .unwrap_err();
 
         assert!(matches!(error, SkillEvalError::InvalidConfiguration(_)));
         assert!(runner.process.requests.is_empty());
+    }
+
+    #[test]
+    fn bounded_candidate_timeout_returns_infrastructure_error() {
+        let directory = TestDirectory::new("timeout-candidate");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let process = FakeProcess {
+            outputs: VecDeque::from([ProcessOutput {
+                exit_code: None,
+                standard_output: b"{\"type\":\"session\"}\n{\"type\":\"message_update\"".to_vec(),
+                standard_error: Vec::new(),
+                is_timed_out: true,
+            }]),
+            requests: Vec::new(),
+        };
+        let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
+
+        let error = runner
+            .execute(
+                &run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &model(),
+                &harness(),
+                Some(17),
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, SkillEvalError::Process { .. }));
+        assert_eq!(
+            runner.process.requests[0].timeout,
+            Some(Duration::from_secs(17))
+        );
+        let runs_root = fs::canonicalize(directory.path().join("runs")).unwrap();
+        let transcript_path = trial_directory(&runs_root, &run_id(), &key())
+            .unwrap()
+            .join("transcript.jsonl");
+        let transcript = fs::read_to_string(transcript_path).unwrap();
+        assert!(transcript.contains("\"type\":\"skill_eval_timeout\""));
+        assert!(transcript.contains("\"timeout_seconds\":17"));
+        assert!(
+            transcript
+                .lines()
+                .all(|line| serde_json::from_str::<Value>(line).is_ok())
+        );
     }
 
     #[test]
@@ -1333,6 +1873,7 @@ mod tests {
                 &response_case(&[]),
                 &model(),
                 &harness(),
+                Some(30),
             )
             .unwrap_err();
 
@@ -1344,6 +1885,37 @@ mod tests {
             } if model == "actual-model" && reset_at == "2026-08-01T12:00:00-04:00"
         ));
         assert_eq!(runner.process.requests.len(), 1);
+    }
+
+    #[test]
+    fn pi_runner_treats_an_account_rate_limit_as_quota() {
+        let directory = TestDirectory::new("account-rate-limit");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let process = FakeProcess {
+            outputs: VecDeque::from([ProcessOutput {
+                exit_code: Some(0),
+                standard_output: Vec::new(),
+                standard_error: b"429 {\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit.\"}}".to_vec(),
+                is_timed_out: false,
+            }]),
+            requests: Vec::new(),
+        };
+        let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
+
+        assert!(matches!(
+            runner.execute(
+                &run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &model(),
+                &harness(),
+                Some(30),
+            ),
+            Err(SkillEvalError::Quota { .. })
+        ));
     }
 
     #[test]
@@ -1401,6 +1973,7 @@ mod tests {
                 &response_case(&[]),
                 &model(),
                 &harness(),
+                Some(30),
             )
             .unwrap();
         agent.kind = ArtifactKind::Workflow;
@@ -1414,6 +1987,7 @@ mod tests {
                 &response_case(&[]),
                 &model(),
                 &harness(),
+                Some(30),
             )
             .unwrap();
 
@@ -1430,9 +2004,15 @@ mod tests {
             ]
         }));
         assert!(
-            runner.process.requests[1]
+            !runner.process.requests[1]
                 .arguments
                 .contains(&"--no-tools".to_owned())
+        );
+        assert!(
+            runner.process.requests[1]
+                .arguments
+                .windows(2)
+                .any(|pair| { pair[0] == "--extension" && pair[1].ends_with("all-tools.ts") })
         );
     }
 }

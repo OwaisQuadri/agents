@@ -1,0 +1,7 @@
+“Pop” points to these two terms:
+
+**Contrast ratio** — The luminance difference between a foreground and background color. WCAG requires 4.5:1 for body text, 3:1 for large text and UI components.
+
+**Weight** — How thick or thin a typeface's strokes are. Bold is for UI emphasis and hierarchy. Italic is for linguistic stress or citation, not UI hierarchy.
+
+Increase the button's contrast ratio and label weight.

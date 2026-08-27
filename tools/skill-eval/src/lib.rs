@@ -1,6 +1,23 @@
-// TODO(AGNT-0032.T01): wire the declared models and ports into the crate scaffold
-// TODO(AGNT-0032.T75): declare every planned Rust implementation module
+#![forbid(unsafe_code)]
+
+mod audit;
 mod cli;
+// TODO(AGNT-0032.T136): Register the cumulative frontier modules.
+mod judge;
 mod model;
+mod model_capabilities;
+mod models;
+mod pi_runner;
+mod pool_source;
+mod pool_store;
 mod ports;
+mod publication;
 mod service;
+mod source;
+mod statistics;
+mod store;
+mod t1_screen_campaign_store;
+mod t1_screen_store;
+mod testing;
+mod tier_writer;
+mod verifier;

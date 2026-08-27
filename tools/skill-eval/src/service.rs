@@ -1,22 +1,1779 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
+use sha2::{Digest, Sha256};
+
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
-    CaseDiscovery, Decision, DecisionRecord, EvidenceRole, JudgeInput, ModelIdentity,
-    ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolPauseReason,
-    PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage,
-    PromptJudgeRequest, PromptJudgeResult, PublicationGate, PublicationStatus,
-    QualificationBoundary, QualificationPolicy, QualificationPurpose, QualificationReport,
-    QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus,
-    SkillEvalError, SkillRoutingDecision, Tier, TierAssignment, TierDestination, TierEvidence,
-    TierStatus, TrialKey, TrialRecord, TrialSelector, TrialUsage,
+    CandidateArtifact, CandidateEnvironmentEntry, CaseDiscovery, CaseId, Decision, DecisionRecord,
+    EvidenceRole, FrontierApplyReport, FrontierDecisionRequest, FrontierInspection,
+    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, JudgeInput,
+    ModelIdentity, ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant,
+    PoolPauseReason, PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState,
+    PoolRunStatus, PoolStage, PromptJudgeRequest, PromptJudgeResult, PublicationGate,
+    PublicationStatus, QualificationBoundary, QualificationPolicy, QualificationPurpose,
+    QualificationReport, QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState,
+    RunStatus, SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence,
+    T1ScreenAttemptReport, T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
+    T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun, T1ScreenChildStatus,
+    T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason, T1ScreenRankedRoute,
+    T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport, T1ScreenRouteFailure,
+    T1ScreenRouteFailureRequest, T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, Tier,
+    TierAssignment, TierDestination, TierEvidence, TierStatus, TrialKey, TrialRecord,
+    TrialSelector, TrialUsage,
 };
 use crate::ports::{
-    Clock, PoolProgressSink, PoolRuntime, ProgressSink, QualificationRuntime, RunStore, TierWriter,
+    Clock, FrontierProgressSink, FrontierRuntime, PoolProgressSink, PoolRuntime, ProgressSink,
+    QualificationRuntime, RunStore, T1ScreenProgressSink, T1ScreenRuntime, TierWriter,
 };
-use crate::statistics::{evaluate_calibration, evaluate_qualification, rank_pool};
+use crate::statistics::{
+    evaluate_calibration, evaluate_qualification, qualification_start_index, rank_pool,
+    select_qualification_thinking_level, select_thinking_level,
+};
+use crate::t1_screen_store::{
+    candidate_environment_manifest_digest, t1_screen_effective_caps, validate_t1_screen_state,
+};
+
+/// Builds the immutable pending form of a stored T1 screen for the T117 resume contract.
+///
+/// The input is one validated stored state. The output preserves frozen configuration and child
+/// identities while clearing progress. It returns an error for invalid stored state.
+pub(crate) fn pending_t1_screen_state(
+    stored: &T1ScreenRunState,
+) -> Result<T1ScreenRunState, SkillEvalError> {
+    validate_t1_screen_state(stored)?;
+    let infrastructure_failed_models = stored
+        .models
+        .iter()
+        .enumerate()
+        .filter_map(|(index, model)| {
+            matches!(
+                model.outcome,
+                Some(T1ScreenModelOutcome::InfrastructureFailed { .. })
+            )
+            .then_some(index)
+        })
+        .collect::<BTreeSet<_>>();
+    Ok(T1ScreenRunState {
+        configuration: stored.configuration.clone(),
+        cap_extensions: stored.cap_extensions.clone(),
+        route_failures: stored.route_failures.clone(),
+        status: T1ScreenRunStatus::Pending,
+        child_runs: stored
+            .child_runs
+            .iter()
+            .cloned()
+            .map(|mut child| {
+                if !infrastructure_failed_models
+                    .contains(&usize::try_from(child.model_index).unwrap_or(usize::MAX))
+                {
+                    child.status = T1ScreenChildStatus::Pending;
+                }
+                child
+            })
+            .collect(),
+        models: stored
+            .models
+            .iter()
+            .enumerate()
+            .map(|(index, model)| {
+                if infrastructure_failed_models.contains(&index) {
+                    return model.clone();
+                }
+                crate::model::T1ScreenModelState {
+                    provider: model.provider.clone(),
+                    model: model.model.clone(),
+                    attempts: Vec::new(),
+                    outcome: None,
+                }
+            })
+            .collect(),
+        candidate_usage: if stored.route_failures.is_empty() {
+            t1_zero_usage()
+        } else {
+            stored.candidate_usage.clone()
+        },
+        judge_usage: if stored.route_failures.is_empty() {
+            t1_zero_usage()
+        } else {
+            stored.judge_usage.clone()
+        },
+        spent_judge_millionths_of_dollar: if stored.route_failures.is_empty() {
+            0
+        } else {
+            stored.spent_judge_millionths_of_dollar
+        },
+        pause: None,
+    })
+}
+
+/// Builds one complete read-only T1 screening report from durable parent and child evidence.
+///
+/// The inputs are a safe screening identifier plus read-only parent and child stores. The output
+/// retains inventory, attempts, five case slots, usage, and an optional terminal ranking. It
+/// returns an error for missing, malformed, incomplete, or nonzero-cost selected evidence.
+pub(crate) fn build_t1_screen_report(
+    run_id: &T1ScreenRunId,
+    parent_store: &dyn crate::ports::T1ScreenStore,
+    child_store: &dyn RunStore,
+) -> Result<T1ScreenReport, SkillEvalError> {
+    let state = parent_store.load_t1_screen(run_id)?;
+    validate_t1_screen_state(&state)?;
+    let campaign = parent_store.load_t1_screen_campaign(&state.configuration.campaign_id)?;
+    validate_t1_report_campaign(&state, &campaign)?;
+    let campaign_remaining = campaign
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(campaign.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| t1_invalid("campaign remaining spend underflow"))?;
+    let models = build_t1_model_reports(&state, child_store)?;
+    let ranking = build_t1_ranking(&state)?;
+    let eligible_count = u64::try_from(state.configuration.eligible.len())
+        .map_err(|_| t1_invalid("eligible count exceeds the supported range"))?;
+    let excluded_count = u64::try_from(state.configuration.excluded.len())
+        .map_err(|_| t1_invalid("excluded count exceeds the supported range"))?;
+    let total_inventory_count = eligible_count
+        .checked_add(excluded_count)
+        .ok_or_else(|| t1_invalid("inventory count arithmetic overflow"))?;
+    let active_child_run_id = state
+        .child_runs
+        .iter()
+        .find(|child| {
+            matches!(
+                child.status,
+                T1ScreenChildStatus::Running | T1ScreenChildStatus::Paused
+            )
+        })
+        .map(|child| child.run_id.clone());
+    let configuration = &state.configuration;
+    let candidate_environment_manifest_entry_count =
+        u64::try_from(configuration.candidate_environment.manifest.len()).map_err(|_| {
+            t1_invalid("candidate environment manifest entry count exceeds the supported range")
+        })?;
+    let (effective_owner_cap, effective_provider_cap) = t1_screen_effective_caps(&state)?;
+    Ok(T1ScreenReport {
+        run_id: configuration.run_id.clone(),
+        campaign_id: campaign.campaign_id.clone(),
+        campaign_approved_judge_total_millionths_of_dollar: campaign
+            .approved_judge_total_millionths_of_dollar,
+        campaign_aggregate_judge_spent_millionths_of_dollar: campaign
+            .aggregate_judge_spent_millionths_of_dollar,
+        campaign_remaining_judge_millionths_of_dollar: campaign_remaining,
+        campaign_runs: campaign.runs.clone(),
+        campaign_active_run_id: campaign.active_run_id.clone(),
+        campaign_status: campaign.status,
+        created_at: configuration.created_at.clone(),
+        status: state.status,
+        snapshot: configuration.capability_snapshot.clone(),
+        total_inventory_count,
+        eligible_count,
+        excluded_count,
+        eligible: configuration.eligible.clone(),
+        excluded: configuration.excluded.clone(),
+        exam: configuration.exam.clone(),
+        judge: configuration.judge.clone(),
+        candidate_environment: configuration.candidate_environment.clone(),
+        candidate_environment_manifest_digest: configuration.candidate_environment.digest.clone(),
+        candidate_environment_manifest_entry_count,
+        policy: configuration.policy.clone(),
+        candidate_calls: configuration.candidate_calls.clone(),
+        judge_calls: configuration.judge_calls.clone(),
+        owner_approved_judge_cap_millionths_of_dollar: configuration
+            .owner_approved_judge_cap_millionths_of_dollar,
+        provider_enforced_judge_cap_millionths_of_dollar: configuration
+            .provider_enforced_judge_cap_millionths_of_dollar,
+        effective_owner_approved_judge_cap_millionths_of_dollar: effective_owner_cap,
+        effective_provider_enforced_judge_cap_millionths_of_dollar: effective_provider_cap,
+        cap_extensions: state.cap_extensions.clone(),
+        route_failures: state.route_failures.clone(),
+        spent_judge_millionths_of_dollar: state.spent_judge_millionths_of_dollar,
+        candidate_usage: state.candidate_usage.clone(),
+        judge_usage: state.judge_usage.clone(),
+        active_child_run_id,
+        pause: state.pause.clone(),
+        child_runs: state.child_runs.clone(),
+        models,
+        ranking,
+        is_owner_approval_required: true,
+    })
+}
+
+/// Records one exact infrastructure-failed T1 route and returns the saved report.
+///
+/// The request, parent and child stores, and local clock identify and authorize the transition.
+/// The output is the persisted report. Invalid pause evidence, identity, history, timestamps, or
+/// persistence returns an error.
+pub(crate) fn fail_t1_screen_route(
+    request: &T1ScreenRouteFailureRequest,
+    parent_store: &mut dyn crate::ports::T1ScreenStore,
+    child_store: &dyn RunStore,
+    clock: &dyn Clock,
+) -> Result<T1ScreenReport, SkillEvalError> {
+    if request.owner_reason.trim().is_empty() {
+        return Err(t1_invalid("route failure owner reason is blank"));
+    }
+    let mut state = parent_store.load_t1_screen(&request.run_id)?;
+    validate_t1_screen_state(&state)?;
+    let pause_message = match &state.pause {
+        Some(T1ScreenPauseReason::Infrastructure { message })
+            if state.status == T1ScreenRunStatus::Paused =>
+        {
+            message.clone()
+        }
+        _ => {
+            return Err(t1_invalid(
+                "route failure requires a paused infrastructure run",
+            ));
+        }
+    };
+    let paused_children = state
+        .child_runs
+        .iter()
+        .enumerate()
+        .filter(|(_, child)| child.status == T1ScreenChildStatus::Paused)
+        .collect::<Vec<_>>();
+    if paused_children.len() != 1 || paused_children[0].1.run_id != request.child_run_id {
+        return Err(t1_invalid(
+            "route failure must name the one active paused child",
+        ));
+    }
+    let child_index = paused_children[0].0;
+    let child = state.child_runs[child_index].clone();
+    let model_index = usize::try_from(child.model_index)
+        .map_err(|_| t1_invalid("route failure model index arithmetic overflow"))?;
+    let thinking_index = usize::try_from(child.thinking_index)
+        .map_err(|_| t1_invalid("route failure thinking index arithmetic overflow"))?;
+    let model = state
+        .models
+        .get(model_index)
+        .ok_or_else(|| t1_invalid("route failure child has no model state"))?;
+    if model.outcome.is_some()
+        || model.attempts.len() != thinking_index
+        || state.child_runs.iter().any(|sibling| {
+            sibling.model_index == child.model_index
+                && (sibling.thinking_index < child.thinking_index
+                    && sibling.status != T1ScreenChildStatus::Completed
+                    || sibling.thinking_index > child.thinking_index
+                        && sibling.status != T1ScreenChildStatus::Pending)
+        })
+    {
+        return Err(t1_invalid(
+            "route failure child is not the adjacent active thinking route",
+        ));
+    }
+    if state
+        .route_failures
+        .iter()
+        .any(|failure| failure.child_run_id == child.run_id)
+    {
+        return Err(t1_invalid("route failure child was already recorded"));
+    }
+    if state
+        .route_failures
+        .iter()
+        .any(|failure| failure.model == child.model)
+    {
+        return Err(t1_invalid("exact model route failure was already recorded"));
+    }
+    validate_paused_t1_child(&child, &pause_message, child_store)?;
+
+    let campaign_before = parent_store.load_t1_screen_campaign(&state.configuration.campaign_id)?;
+    if campaign_before.status != T1ScreenCampaignStatus::Paused
+        || campaign_before.active_run_id.as_ref() != Some(&state.configuration.run_id)
+    {
+        return Err(t1_invalid(
+            "route failure campaign is not paused on the exact parent run",
+        ));
+    }
+    let timestamp = clock.now();
+    if timestamp.0 <= state.configuration.created_at.0
+        || state
+            .cap_extensions
+            .iter()
+            .any(|extension| extension.timestamp.0 >= timestamp.0)
+        || state
+            .route_failures
+            .iter()
+            .any(|failure| failure.timestamp.0 >= timestamp.0)
+    {
+        return Err(t1_invalid(
+            "route failure timestamp is not globally later than authority history",
+        ));
+    }
+    state.route_failures.push(T1ScreenRouteFailure {
+        timestamp,
+        child_run_id: child.run_id.clone(),
+        model: child.model.clone(),
+        paused_message_sha256: Sha256::digest(pause_message.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+        owner_reason: request.owner_reason.clone(),
+    });
+    state.child_runs[child_index].status = T1ScreenChildStatus::Failed;
+    for sibling in state.child_runs.iter_mut().filter(|sibling| {
+        sibling.model_index == child.model_index && sibling.thinking_index > child.thinking_index
+    }) {
+        sibling.status = T1ScreenChildStatus::Skipped;
+    }
+    state.models[model_index].outcome = Some(T1ScreenModelOutcome::InfrastructureFailed {
+        model: child.model,
+        child_run_id: child.run_id,
+    });
+    state.status = T1ScreenRunStatus::Running;
+    state.pause = None;
+    validate_t1_screen_state(&state)?;
+    parent_store.save_t1_screen(&state)?;
+    let campaign = parent_store.reconcile_t1_screen_campaign_run(&state)?;
+    if campaign.status != T1ScreenCampaignStatus::Open
+        || campaign.active_run_id.as_ref() != Some(&state.configuration.run_id)
+        || campaign.aggregate_judge_spent_millionths_of_dollar
+            != campaign_before.aggregate_judge_spent_millionths_of_dollar
+        || campaign.approved_judge_total_millionths_of_dollar
+            != campaign_before.approved_judge_total_millionths_of_dollar
+    {
+        return Err(t1_invalid(
+            "route failure campaign reconciliation changed authority or spend",
+        ));
+    }
+    build_t1_screen_report(&request.run_id, parent_store, child_store)
+}
+
+fn validate_paused_t1_child(
+    child: &T1ScreenChildRun,
+    pause_message: &str,
+    child_store: &dyn RunStore,
+) -> Result<(), SkillEvalError> {
+    let mut is_started = false;
+    let mut is_exact_route_seen = false;
+    let mut active_pause = None;
+    child_store.replay(&child.run_id, &mut |event| {
+        match event {
+            RunEvent::RunStarted { configuration, .. } => {
+                if is_started || configuration.run_id != child.run_id {
+                    return Err(t1_invalid("route failure child run identity differs"));
+                }
+                is_started = true;
+            }
+            RunEvent::TrialStarted { models, .. } => {
+                if models.as_slice() != [child.model.clone()] {
+                    return Err(t1_invalid("route failure child model identity differs"));
+                }
+                is_exact_route_seen = true;
+            }
+            RunEvent::CandidateExecuted { candidate, .. } => {
+                if candidate.model != child.model {
+                    return Err(t1_invalid("route failure candidate identity differs"));
+                }
+            }
+            RunEvent::RunPaused { reason, .. } => active_pause = Some(reason),
+            RunEvent::RunResumed { .. } => active_pause = None,
+            _ => {}
+        }
+        Ok(())
+    })?;
+    if !is_started || !is_exact_route_seen {
+        return Err(t1_invalid(
+            "route failure child route evidence is incomplete",
+        ));
+    }
+    match active_pause {
+        Some(PauseReason::Infrastructure { message }) if message == pause_message => Ok(()),
+        _ => Err(t1_invalid(
+            "route failure child pause evidence differs from the parent pause",
+        )),
+    }
+}
+
+pub(crate) fn extend_t1_screen_cap(
+    request: &T1ScreenCapExtensionRequest,
+    parent_store: &mut dyn crate::ports::T1ScreenStore,
+    child_store: &dyn RunStore,
+    clock: &dyn Clock,
+) -> Result<T1ScreenReport, SkillEvalError> {
+    let mut state = parent_store.load_t1_screen(&request.run_id)?;
+    validate_t1_screen_state(&state)?;
+    if state.status != T1ScreenRunStatus::Paused
+        || !matches!(state.pause, Some(T1ScreenPauseReason::JudgeCap { .. }))
+    {
+        return Err(t1_invalid("cap extension requires a paused judge-cap run"));
+    }
+    if request.owner_reason.trim().is_empty() {
+        return Err(t1_invalid("cap extension owner reason is blank"));
+    }
+    let (previous_owner, previous_provider) = t1_screen_effective_caps(&state)?;
+    if request.new_owner_cap_millionths_of_dollar <= previous_owner
+        || request.new_provider_cap_millionths_of_dollar <= previous_provider
+    {
+        return Err(t1_invalid("cap extension must strictly increase both caps"));
+    }
+    if request.new_provider_cap_millionths_of_dollar > request.new_owner_cap_millionths_of_dollar {
+        return Err(t1_invalid("cap extension provider cap exceeds owner cap"));
+    }
+    state.cap_extensions.push(T1ScreenCapExtension {
+        timestamp: clock.now(),
+        previous_owner_cap_millionths_of_dollar: previous_owner,
+        new_owner_cap_millionths_of_dollar: request.new_owner_cap_millionths_of_dollar,
+        previous_provider_cap_millionths_of_dollar: previous_provider,
+        new_provider_cap_millionths_of_dollar: request.new_provider_cap_millionths_of_dollar,
+        owner_reason: request.owner_reason.clone(),
+    });
+    validate_t1_screen_state(&state)?;
+    parent_store.save_t1_screen(&state)?;
+    build_t1_screen_report(&request.run_id, parent_store, child_store)
+}
+
+fn build_t1_model_reports(
+    state: &T1ScreenRunState,
+    child_store: &dyn RunStore,
+) -> Result<Vec<T1ScreenModelReport>, SkillEvalError> {
+    let mut reports = Vec::with_capacity(state.models.len());
+    for (model_index, model) in state.models.iter().enumerate() {
+        let model_index = u64::try_from(model_index)
+            .map_err(|_| t1_invalid("model index arithmetic overflow"))?;
+        let mut attempts = Vec::new();
+        for child in state
+            .child_runs
+            .iter()
+            .filter(|child| child.model_index == model_index)
+            .filter(|child| {
+                !matches!(
+                    child.status,
+                    T1ScreenChildStatus::Pending | T1ScreenChildStatus::Skipped
+                )
+            })
+        {
+            let evidence = model
+                .attempts
+                .iter()
+                .find(|attempt| attempt.child_run_id == child.run_id)
+                .map(|attempt| attempt.evidence.clone());
+            let cases = build_t1_case_reports(state, child, child_store)?;
+            if matches!(
+                child.status,
+                T1ScreenChildStatus::Completed | T1ScreenChildStatus::Exhausted
+            ) && evidence.is_none()
+            {
+                return Err(t1_invalid(
+                    "terminal T1 child has no aggregate attempt evidence",
+                ));
+            }
+            attempts.push(T1ScreenAttemptReport {
+                child_run_id: child.run_id.clone(),
+                model: child.model.clone(),
+                status: child.status,
+                evidence,
+                cases,
+            });
+        }
+        reports.push(T1ScreenModelReport {
+            provider: model.provider.clone(),
+            model: model.model.clone(),
+            attempts,
+            outcome: model.outcome.clone(),
+        });
+    }
+    Ok(reports)
+}
+
+fn build_t1_case_reports(
+    state: &T1ScreenRunState,
+    child: &T1ScreenChildRun,
+    child_store: &dyn RunStore,
+) -> Result<Vec<T1ScreenCaseReport>, SkillEvalError> {
+    let mut candidates = BTreeMap::<CaseId, CandidateArtifact>::new();
+    let mut trials = BTreeMap::<CaseId, TrialRecord>::new();
+    match child_store.replay(&child.run_id, &mut |event| {
+        match event {
+            RunEvent::CandidateExecuted { candidate, .. } => {
+                if candidates
+                    .insert(candidate.key.case.clone(), candidate)
+                    .is_some()
+                {
+                    return Err(t1_invalid("T1 case has duplicate candidate evidence"));
+                }
+            }
+            RunEvent::TrialCompleted { record, .. } => {
+                if trials.insert(record.key.case.clone(), record).is_some() {
+                    return Err(t1_invalid("T1 case has duplicate completed evidence"));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }) {
+        Ok(()) => {}
+        Err(SkillEvalError::NotFound(_))
+            if matches!(
+                child.status,
+                T1ScreenChildStatus::Running | T1ScreenChildStatus::Paused
+            ) => {}
+        Err(error) => return Err(error),
+    }
+    state
+        .configuration
+        .exam
+        .cases
+        .iter()
+        .map(|case| {
+            let candidate = candidates.remove(&case.id);
+            let trial = trials.remove(&case.id);
+            if trial.is_some() && candidate.is_none() {
+                return Err(t1_invalid("T1 completed case has no candidate checkpoint"));
+            }
+            Ok(T1ScreenCaseReport {
+                case: case.id.clone(),
+                candidate,
+                trial,
+            })
+        })
+        .collect()
+}
+
+fn build_t1_ranking(
+    state: &T1ScreenRunState,
+) -> Result<Option<T1ScreenRankingReport>, SkillEvalError> {
+    let is_terminal = state.status == T1ScreenRunStatus::AwaitingOwner
+        && state.models.iter().all(|model| model.outcome.is_some());
+    if !is_terminal {
+        return Ok(None);
+    }
+    let mut ranked = state
+        .models
+        .iter()
+        .filter_map(|model| match &model.outcome {
+            Some(T1ScreenModelOutcome::Selected { model: selected }) => Some((model, selected)),
+            _ => None,
+        })
+        .map(|(model, selected)| {
+            let evidence = model
+                .attempts
+                .iter()
+                .find(|attempt| attempt.evidence.requested_model == *selected)
+                .map(|attempt| &attempt.evidence)
+                .ok_or_else(|| t1_invalid("selected T1 route has no attempt evidence"))?;
+            if !evidence.is_passing {
+                return Err(t1_invalid(
+                    "selected T1 route does not pass the frozen floors",
+                ));
+            }
+            if evidence.candidate_usage.cost_millionths_of_dollar != 0 {
+                return Err(t1_invalid(
+                    "selected T1 candidate cost must be exactly zero before ranking",
+                ));
+            }
+            if evidence.completed_trials == 0 {
+                return Err(t1_invalid("selected T1 route has no completed trials"));
+            }
+            Ok(T1ScreenRankedRoute {
+                rank: 0,
+                model: selected.clone(),
+                ranking_inputs: T1ScreenRankingInputs {
+                    candidate_cost_millionths_of_dollar: evidence
+                        .candidate_usage
+                        .cost_millionths_of_dollar,
+                    candidate_latency_milliseconds: evidence.candidate_usage.elapsed_milliseconds,
+                    candidate_failed_trials: evidence.failed_trials,
+                    candidate_completed_trials: evidence.completed_trials,
+                    provider: selected.provider.clone(),
+                    model: selected.model.clone(),
+                    thinking: selected.thinking.clone(),
+                },
+            })
+        })
+        .collect::<Result<Vec<_>, SkillEvalError>>()?;
+    ranked.sort_by(compare_t1_routes);
+    for (index, route) in ranked.iter_mut().enumerate() {
+        route.rank = u64::try_from(index + 1)
+            .map_err(|_| t1_invalid("T1 rank exceeds the supported range"))?;
+    }
+    let passing_route_count = u64::try_from(ranked.len())
+        .map_err(|_| t1_invalid("passing route count exceeds the supported range"))?;
+    let recommendation_shortage_count = 3_usize.saturating_sub(ranked.len()) as u8;
+    let (recommendations, alternates) = if recommendation_shortage_count == 0 {
+        (ranked[..3].to_vec(), ranked[3..].to_vec())
+    } else {
+        (Vec::new(), ranked)
+    };
+    Ok(Some(T1ScreenRankingReport {
+        passing_route_count,
+        recommendation_shortage_count,
+        recommendations,
+        alternates,
+    }))
+}
+
+fn compare_t1_routes(
+    left: &T1ScreenRankedRoute,
+    right: &T1ScreenRankedRoute,
+) -> std::cmp::Ordering {
+    let left_inputs = &left.ranking_inputs;
+    let right_inputs = &right.ranking_inputs;
+    left_inputs
+        .candidate_cost_millionths_of_dollar
+        .cmp(&right_inputs.candidate_cost_millionths_of_dollar)
+        .then_with(|| {
+            left_inputs
+                .candidate_latency_milliseconds
+                .cmp(&right_inputs.candidate_latency_milliseconds)
+        })
+        .then_with(|| {
+            let left_failures = u64::from(left_inputs.candidate_failed_trials)
+                * u64::from(right_inputs.candidate_completed_trials);
+            let right_failures = u64::from(right_inputs.candidate_failed_trials)
+                * u64::from(left_inputs.candidate_completed_trials);
+            left_failures.cmp(&right_failures)
+        })
+        .then_with(|| left_inputs.provider.cmp(&right_inputs.provider))
+        .then_with(|| left_inputs.model.cmp(&right_inputs.model))
+        .then_with(|| left_inputs.thinking.cmp(&right_inputs.thinking))
+}
+
+/// Starts one preallocated T1 screening state and advances it until completion or pause.
+///
+/// The inputs are the complete pending state, its screening runtime, and a progress sink. The
+/// output is the last durable parent state. It returns errors for invalid state, identity drift,
+/// malformed evidence, arithmetic overflow, or boundary failures that cannot be paused.
+pub(crate) fn start_t1_screening(
+    state: T1ScreenRunState,
+    runtime: &mut dyn T1ScreenRuntime,
+    progress: &mut dyn T1ScreenProgressSink,
+) -> Result<T1ScreenRunState, SkillEvalError> {
+    validate_t1_screen_state(&state)?;
+    validate_t1_screen_environment(&state, &state, runtime)?;
+    let campaign = runtime.reconcile_t1_screen_campaign(&state.configuration.campaign_id)?;
+    validate_t1_campaign_start(&state, &campaign, runtime)?;
+    match runtime.load_t1_screen(&state.configuration.run_id) {
+        Ok(stored) if stored == state => {}
+        Ok(_) => return Err(t1_drift("pending start retry state")),
+        Err(SkillEvalError::NotFound(_)) => runtime.create_t1_screen(&state)?,
+        Err(error) => return Err(error),
+    }
+    runtime.register_t1_screen_campaign_run(&state)?;
+    progress.emit_t1_screen(&state)?;
+    continue_t1_screening(state, runtime, progress)
+}
+
+/// Resumes one T1 screening state against its original preallocated identity.
+///
+/// The inputs are the original pending state, its screening runtime, and a progress sink. The
+/// output is the last durable parent state. It returns errors before candidate or judge calls when
+/// any frozen identity drifted, or when stored evidence and arithmetic are invalid.
+pub(crate) fn resume_t1_screening(
+    expected: &T1ScreenRunState,
+    runtime: &mut dyn T1ScreenRuntime,
+    progress: &mut dyn T1ScreenProgressSink,
+) -> Result<T1ScreenRunState, SkillEvalError> {
+    validate_t1_screen_state(expected)?;
+    validate_pending_t1_screen(expected)?;
+    let mut state = runtime.load_t1_screen(&expected.configuration.run_id)?;
+    validate_t1_screen_environment(expected, &state, runtime)?;
+    runtime.reconcile_t1_screen_campaign(&state.configuration.campaign_id)?;
+    validate_t1_campaign_resume(&state, runtime)?;
+    sync_t1_usage(&mut state, runtime, progress)?;
+    if state.status == T1ScreenRunStatus::AwaitingOwner
+        || state.cap_extensions.is_empty()
+            && matches!(state.pause, Some(T1ScreenPauseReason::JudgeCap { .. }))
+    {
+        return Ok(state);
+    }
+    continue_t1_screening(state, runtime, progress)
+}
+
+fn validate_t1_campaign_start(
+    state: &T1ScreenRunState,
+    campaign: &T1ScreenCampaignState,
+    runtime: &mut dyn T1ScreenRuntime,
+) -> Result<(), SkillEvalError> {
+    if campaign.campaign_id != state.configuration.campaign_id {
+        return Err(t1_invalid(
+            "campaign identity differs from the parent state",
+        ));
+    }
+    if campaign.status != T1ScreenCampaignStatus::Open
+        || campaign
+            .active_run_id
+            .as_ref()
+            .is_some_and(|run_id| run_id != &state.configuration.run_id)
+    {
+        return Err(t1_invalid("campaign is not open for this run"));
+    }
+    if state
+        .configuration
+        .candidate_environment
+        .manifest
+        .is_empty()
+    {
+        return Err(t1_invalid("candidate environment manifest is not named"));
+    }
+    let remaining = campaign
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(campaign.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| t1_invalid("campaign remaining spend underflow"))?;
+    let upper_bound =
+        runtime.conservative_next_judge_cost_upper_bound(&state.configuration.judge)?;
+    if remaining < upper_bound {
+        runtime.pause_t1_screen_campaign_for_budget(&state.configuration.campaign_id)?;
+        return Err(t1_invalid(format!(
+            "campaign remaining {remaining} is below conservative next judge upper bound {upper_bound}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_t1_campaign_resume(
+    state: &T1ScreenRunState,
+    runtime: &dyn T1ScreenRuntime,
+) -> Result<(), SkillEvalError> {
+    if state
+        .configuration
+        .candidate_environment
+        .manifest
+        .is_empty()
+    {
+        return Err(t1_invalid("candidate environment manifest is not named"));
+    }
+    let campaign = runtime.load_t1_screen_campaign(&state.configuration.campaign_id)?;
+    if state.status == T1ScreenRunStatus::AwaitingOwner {
+        if campaign.status != T1ScreenCampaignStatus::AwaitingOwner
+            || campaign.active_run_id.is_some()
+        {
+            return Err(t1_invalid("awaiting-owner campaign state differs"));
+        }
+        return Ok(());
+    }
+    if campaign.active_run_id.as_ref() != Some(&state.configuration.run_id) {
+        return Err(t1_invalid("campaign active run differs from resume run"));
+    }
+    let entry = campaign
+        .runs
+        .iter()
+        .find(|entry| entry.run_id == state.configuration.run_id)
+        .ok_or_else(|| t1_invalid("campaign active run is not registered"))?;
+    if !entry.is_resumable {
+        return Err(t1_invalid("campaign active run is not resumable"));
+    }
+    let remaining = campaign
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(campaign.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| t1_invalid("campaign remaining spend underflow"))?;
+    let upper_bound =
+        runtime.conservative_next_judge_cost_upper_bound(&state.configuration.judge)?;
+    if remaining < upper_bound {
+        return Err(t1_invalid(format!(
+            "campaign remaining {remaining} is below conservative next judge upper bound {upper_bound}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_t1_report_campaign(
+    state: &T1ScreenRunState,
+    campaign: &T1ScreenCampaignState,
+) -> Result<(), SkillEvalError> {
+    if campaign.campaign_id != state.configuration.campaign_id {
+        return Err(t1_invalid("report campaign identity differs"));
+    }
+    let entry = campaign
+        .runs
+        .iter()
+        .find(|entry| entry.run_id == state.configuration.run_id)
+        .ok_or_else(|| t1_invalid("report run is not registered in its campaign"))?;
+    if entry.judge_spend_millionths_of_dollar != state.spent_judge_millionths_of_dollar
+        || entry.candidate_cost_millionths_of_dollar
+            != state.candidate_usage.cost_millionths_of_dollar
+        || entry.observed_status != state.status
+    {
+        return Err(t1_invalid("report campaign audit entry is stale"));
+    }
+    Ok(())
+}
+
+fn validate_pending_t1_screen(state: &T1ScreenRunState) -> Result<(), SkillEvalError> {
+    if state.status != T1ScreenRunStatus::Pending || state.pause.is_some() {
+        return Err(t1_invalid("resume identity is not pending"));
+    }
+    for (model_index, model) in state.models.iter().enumerate() {
+        let is_infrastructure_failed = matches!(
+            model.outcome,
+            Some(T1ScreenModelOutcome::InfrastructureFailed { .. })
+        );
+        if !is_infrastructure_failed
+            && (!model.attempts.is_empty()
+                || model.outcome.is_some()
+                || state.child_runs.iter().any(|child| {
+                    child.model_index == u64::try_from(model_index).unwrap_or(u64::MAX)
+                        && child.status != T1ScreenChildStatus::Pending
+                }))
+        {
+            return Err(t1_invalid("resume identity contains mutable progress"));
+        }
+    }
+    if state.route_failures.is_empty()
+        && (state.candidate_usage != t1_zero_usage()
+            || state.judge_usage != t1_zero_usage()
+            || state.spent_judge_millionths_of_dollar != 0)
+    {
+        return Err(t1_invalid("resume identity is not unspent"));
+    }
+    Ok(())
+}
+
+fn continue_t1_screening(
+    mut state: T1ScreenRunState,
+    runtime: &mut dyn T1ScreenRuntime,
+    progress: &mut dyn T1ScreenProgressSink,
+) -> Result<T1ScreenRunState, SkillEvalError> {
+    if state.status == T1ScreenRunStatus::Pending {
+        state.status = T1ScreenRunStatus::Running;
+        save_t1_screen_and_emit(runtime, progress, &state)?;
+    }
+
+    loop {
+        let Some(child_index) = next_t1_child_index(&state)? else {
+            if state.status != T1ScreenRunStatus::AwaitingOwner {
+                state.status = T1ScreenRunStatus::AwaitingOwner;
+                state.pause = None;
+                save_t1_screen_and_emit(runtime, progress, &state)?;
+            }
+            return Ok(state);
+        };
+        let is_resuming = state.child_runs[child_index].status == T1ScreenChildStatus::Paused;
+        if state.status == T1ScreenRunStatus::Paused {
+            if !is_resuming {
+                return Err(t1_drift("parent pause and active child"));
+            }
+            state.status = T1ScreenRunStatus::Running;
+            state.pause = None;
+        }
+        if matches!(
+            state.child_runs[child_index].status,
+            T1ScreenChildStatus::Pending | T1ScreenChildStatus::Paused
+        ) {
+            state.child_runs[child_index].status = T1ScreenChildStatus::Running;
+            save_t1_screen_and_emit(runtime, progress, &state)?;
+        }
+
+        match run_t1_child(&mut state, child_index, is_resuming, runtime, progress)? {
+            T1ChildResult::Completed => {
+                complete_t1_child(&mut state, child_index, runtime, progress)?;
+            }
+            T1ChildResult::Paused(reason) => {
+                state.child_runs[child_index].status = T1ScreenChildStatus::Paused;
+                state.status = T1ScreenRunStatus::Paused;
+                state.pause = Some(reason);
+                save_t1_screen_and_emit(runtime, progress, &state)?;
+                return Ok(state);
+            }
+        }
+    }
+}
+
+fn validate_t1_screen_environment<R: T1ScreenRuntime + ?Sized>(
+    expected: &T1ScreenRunState,
+    state: &T1ScreenRunState,
+    runtime: &R,
+) -> Result<(), SkillEvalError> {
+    validate_t1_screen_state(state)?;
+    if expected.configuration != state.configuration {
+        return Err(t1_drift("frozen configuration"));
+    }
+    if expected.cap_extensions != state.cap_extensions {
+        return Err(t1_drift("cap extension history"));
+    }
+    if expected.route_failures != state.route_failures {
+        return Err(t1_drift("route failure history"));
+    }
+    if expected.child_runs.len() != state.child_runs.len()
+        || expected
+            .child_runs
+            .iter()
+            .zip(&state.child_runs)
+            .any(|(expected, stored)| t1_child_identity(expected) != t1_child_identity(stored))
+    {
+        return Err(t1_drift("preallocated child identities"));
+    }
+
+    let current_manifest = runtime.candidate_environment_manifest()?;
+    let current_digest = candidate_environment_manifest_digest(&current_manifest)?;
+    if current_digest != state.configuration.candidate_environment.digest
+        || current_manifest != state.configuration.candidate_environment.manifest
+    {
+        let difference = t1_environment_difference(
+            &state.configuration.candidate_environment.manifest,
+            &current_manifest,
+        )
+        .unwrap_or_else(|| "manifest digest changed without an entry difference".to_owned());
+        return Err(t1_invalid(format!(
+            "candidate environment drift: {difference}"
+        )));
+    }
+
+    let snapshot =
+        runtime.capability_snapshot_bytes(&state.configuration.capability_snapshot.path)?;
+    let digest = Sha256::digest(snapshot)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if digest != state.configuration.capability_snapshot.sha256 {
+        return Err(t1_drift("capability snapshot bytes or digest"));
+    }
+    if runtime.load(&state.configuration.exam.root)? != state.configuration.exam {
+        return Err(t1_drift("fixed exam root, revision, or cases"));
+    }
+    if state.configuration.judge.tier <= Tier::T1 {
+        return Err(t1_drift("judge identity"));
+    }
+    for (case, frozen_harness) in state
+        .configuration
+        .exam
+        .cases
+        .iter()
+        .zip(&state.configuration.candidate_environment.harnesses)
+    {
+        if runtime.identity(&state.configuration.exam, &case.execution)? != *frozen_harness {
+            return Err(t1_drift("candidate environment identity"));
+        }
+    }
+    for child in &state.child_runs {
+        if runtime.exact_candidate(&child.model)? != child.model {
+            return Err(t1_drift("exact model capability"));
+        }
+        let judge = runtime.pool_judge(&child.model)?;
+        if judge != state.configuration.judge
+            || judge.provider == child.model.provider && judge.model == child.model.model
+        {
+            return Err(t1_drift("judge identity"));
+        }
+    }
+    validate_t1_progression(state)
+}
+
+fn t1_child_identity(child: &T1ScreenChildRun) -> (&ModelIdentity, &RunId, u64, u64) {
+    (
+        &child.model,
+        &child.run_id,
+        child.model_index,
+        child.thinking_index,
+    )
+}
+
+fn validate_t1_progression(state: &T1ScreenRunState) -> Result<(), SkillEvalError> {
+    let mut is_unfinished_seen = false;
+    for (model_index, model) in state.models.iter().enumerate() {
+        let model_index = u64::try_from(model_index)
+            .map_err(|_| t1_invalid("model index arithmetic overflow"))?;
+        let children = state
+            .child_runs
+            .iter()
+            .filter(|child| child.model_index == model_index)
+            .collect::<Vec<_>>();
+        if is_unfinished_seen
+            && (model.outcome.is_some()
+                || !model.attempts.is_empty()
+                || children
+                    .iter()
+                    .any(|child| child.status != T1ScreenChildStatus::Pending))
+        {
+            return Err(t1_drift("frozen provider and model walk order"));
+        }
+        if model.outcome.is_none() {
+            is_unfinished_seen = true;
+            let attempt_count = model.attempts.len();
+            if attempt_count == children.len() {
+                return Err(t1_drift("complete thinking evidence without an outcome"));
+            }
+            for (index, child) in children.iter().enumerate() {
+                if index < attempt_count && child.status != T1ScreenChildStatus::Completed
+                    || index == attempt_count
+                        && !matches!(
+                            child.status,
+                            T1ScreenChildStatus::Pending
+                                | T1ScreenChildStatus::Running
+                                | T1ScreenChildStatus::Paused
+                        )
+                    || index > attempt_count && child.status != T1ScreenChildStatus::Pending
+                {
+                    return Err(t1_drift("adjacent thinking-level progression"));
+                }
+            }
+        } else {
+            validate_terminal_t1_children(model, &children)?;
+        }
+    }
+    if state.status == T1ScreenRunStatus::AwaitingOwner
+        && state.models.iter().any(|model| model.outcome.is_none())
+    {
+        return Err(t1_drift("awaiting-owner terminal state"));
+    }
+    Ok(())
+}
+
+fn validate_terminal_t1_children(
+    model: &crate::model::T1ScreenModelState,
+    children: &[&T1ScreenChildRun],
+) -> Result<(), SkillEvalError> {
+    match &model.outcome {
+        Some(T1ScreenModelOutcome::Selected { .. }) => {
+            if model.attempts.len() != children.len()
+                || children
+                    .iter()
+                    .any(|child| child.status != T1ScreenChildStatus::Completed)
+            {
+                return Err(t1_drift("selected model child statuses"));
+            }
+        }
+        Some(T1ScreenModelOutcome::Exhausted) => {
+            for (index, child) in children.iter().enumerate() {
+                let expected = if index + 1 == children.len() {
+                    T1ScreenChildStatus::Exhausted
+                } else {
+                    T1ScreenChildStatus::Completed
+                };
+                if child.status != expected {
+                    return Err(t1_drift("exhausted model child statuses"));
+                }
+            }
+        }
+        Some(T1ScreenModelOutcome::InfrastructureFailed {
+            model,
+            child_run_id,
+        }) => {
+            let failed = children
+                .iter()
+                .position(|child| child.run_id == *child_run_id && child.model == *model)
+                .ok_or_else(|| t1_drift("infrastructure-failed model child identity"))?;
+            for (index, child) in children.iter().enumerate() {
+                let expected = match index.cmp(&failed) {
+                    std::cmp::Ordering::Less => T1ScreenChildStatus::Completed,
+                    std::cmp::Ordering::Equal => T1ScreenChildStatus::Failed,
+                    std::cmp::Ordering::Greater => T1ScreenChildStatus::Skipped,
+                };
+                if child.status != expected {
+                    return Err(t1_drift("infrastructure-failed model child statuses"));
+                }
+            }
+        }
+        None => unreachable!(),
+    }
+    Ok(())
+}
+
+fn next_t1_child_index(state: &T1ScreenRunState) -> Result<Option<usize>, SkillEvalError> {
+    validate_t1_progression(state)?;
+    let Some((model_index, model)) = state
+        .models
+        .iter()
+        .enumerate()
+        .find(|(_, model)| model.outcome.is_none())
+    else {
+        return Ok(None);
+    };
+    let thinking_index = model.attempts.len();
+    state
+        .child_runs
+        .iter()
+        .position(|child| {
+            child.model_index == u64::try_from(model_index).unwrap_or(u64::MAX)
+                && child.thinking_index == u64::try_from(thinking_index).unwrap_or(u64::MAX)
+        })
+        .map(Some)
+        .ok_or_else(|| t1_drift("next preallocated child"))
+}
+
+fn run_t1_child(
+    state: &mut T1ScreenRunState,
+    child_index: usize,
+    is_resuming: bool,
+    runtime: &mut dyn T1ScreenRuntime,
+    progress: &mut dyn T1ScreenProgressSink,
+) -> Result<T1ChildResult, SkillEvalError> {
+    let child = state.child_runs[child_index].clone();
+    let mut replay = match replay_pool_child(&child.run_id, runtime) {
+        Ok(replay) => replay,
+        Err(SkillEvalError::NotFound(_)) => PoolChildReplay::default(),
+        Err(error) => return Err(error),
+    };
+    validate_t1_child_replay(state, &child, &replay)?;
+    let mut child_progress = SilentProgress;
+    if replay.configuration.is_none() {
+        let configuration = t1_child_configuration(state, &child, runtime.now());
+        append_t1_child_event(
+            runtime,
+            &mut child_progress,
+            &child.run_id,
+            RunEvent::RunStarted {
+                at: configuration.created_at.clone(),
+                configuration: configuration.clone(),
+            },
+        )?;
+        replay.configuration = Some(configuration);
+    } else if is_resuming {
+        append_t1_child_event(
+            runtime,
+            &mut child_progress,
+            &child.run_id,
+            RunEvent::RunResumed { at: runtime.now() },
+        )?;
+    }
+    if replay.discovery.is_none() {
+        let discovery = t1_discovery(&state.configuration.exam);
+        append_t1_child_event(
+            runtime,
+            &mut child_progress,
+            &child.run_id,
+            RunEvent::DiscoveryCompleted {
+                at: runtime.now(),
+                artifacts: vec![discovery.clone()],
+            },
+        )?;
+        replay.discovery = Some(vec![discovery]);
+    }
+
+    let cases = state.configuration.exam.cases.clone();
+    for (case_index, case) in cases.iter().enumerate() {
+        let key = TrialKey {
+            artifact: state.configuration.exam.name.clone(),
+            tier: Tier::T1,
+            route_index: 0,
+            case: case.id.clone(),
+            attempt: 1,
+        };
+        if replay.completed.contains_key(&key) {
+            continue;
+        }
+        let harness = state
+            .configuration
+            .candidate_environment
+            .harnesses
+            .get(case_index)
+            .ok_or_else(|| t1_drift("candidate environment identity"))?
+            .clone();
+        if !replay.started.contains_key(&key) {
+            append_t1_child_event(
+                runtime,
+                &mut child_progress,
+                &child.run_id,
+                RunEvent::TrialStarted {
+                    at: runtime.now(),
+                    key: key.clone(),
+                    models: vec![child.model.clone()],
+                    harness: harness.clone(),
+                },
+            )?;
+        }
+        let candidate = if let Some(candidate) = replay.candidates.get(&key) {
+            candidate.clone()
+        } else {
+            let candidate = match runtime.execute(
+                &child.run_id,
+                &key,
+                &state.configuration.exam,
+                case,
+                &child.model,
+                &harness,
+                state.configuration.policy.candidate_timeout_seconds,
+            ) {
+                Ok(candidate) => candidate,
+                Err(error) if is_t1_boundary_error(&error) => {
+                    return pause_t1_child(runtime, &child.run_id, error);
+                }
+                Err(error) => return Err(error),
+            };
+            if candidate.key != key
+                || candidate.model != child.model
+                || candidate.harness != harness
+            {
+                return Err(t1_drift("requested and effective candidate identity"));
+            }
+            append_t1_child_event(
+                runtime,
+                &mut child_progress,
+                &child.run_id,
+                RunEvent::CandidateExecuted {
+                    at: runtime.now(),
+                    candidate: candidate.clone(),
+                },
+            )?;
+            if candidate.usage.cost_millionths_of_dollar != 0 {
+                return Err(t1_invalid("candidate cost must be exactly zero"));
+            }
+            sync_t1_usage(state, runtime, progress)?;
+            candidate
+        };
+        if candidate.usage.cost_millionths_of_dollar != 0 {
+            return Err(t1_invalid("candidate cost must be exactly zero"));
+        }
+        let checks = match runtime.verify(case, &candidate) {
+            Ok(checks) => checks,
+            Err(error) if is_t1_boundary_error(&error) => {
+                return pause_t1_child(runtime, &child.run_id, error);
+            }
+            Err(error) => return Err(error),
+        };
+        let input = JudgeInput {
+            candidate: candidate.clone(),
+            expect: case.expect.clone(),
+            rubric_path: state.configuration.exam.root.join("evals/rubric.md"),
+            checks,
+        };
+        let upper_bound = runtime.judge_cost_upper_bound(&state.configuration.judge, &input)?;
+        let projected_spend = state
+            .spent_judge_millionths_of_dollar
+            .checked_add(upper_bound)
+            .ok_or_else(|| t1_invalid("judge spending arithmetic overflow"))?;
+        let cap = t1_judge_cap(state);
+        let campaign_remaining = t1_campaign_remaining(runtime, state)?;
+        if projected_spend > cap || upper_bound > campaign_remaining {
+            append_t1_child_event(
+                runtime,
+                &mut child_progress,
+                &child.run_id,
+                RunEvent::RunPaused {
+                    at: runtime.now(),
+                    reason: PauseReason::Infrastructure {
+                        message: "T1 screening judge cap reached".to_owned(),
+                    },
+                },
+            )?;
+            return Ok(T1ChildResult::Paused(t1_judge_cap_pause(state)));
+        }
+        let judged = match runtime.grade(&state.configuration.judge, &input) {
+            Ok(judged) => judged,
+            Err(error) if is_t1_boundary_error(&error) => {
+                return pause_t1_child(runtime, &child.run_id, error);
+            }
+            Err(error) => return Err(error),
+        };
+        if judged.model != state.configuration.judge {
+            return Err(t1_drift("judge identity"));
+        }
+        if judged.usage.cost_millionths_of_dollar > upper_bound
+            || state
+                .spent_judge_millionths_of_dollar
+                .checked_add(judged.usage.cost_millionths_of_dollar)
+                .is_none_or(|spent| spent > cap)
+        {
+            return Err(t1_invalid(
+                "judge usage exceeded its preflight upper bound or frozen cap",
+            ));
+        }
+        let record = TrialRecord {
+            key: key.clone(),
+            model: candidate.model.clone(),
+            harness: candidate.harness.clone(),
+            artifact_path: candidate.artifact_path.clone(),
+            transcript_path: candidate.transcript_path.clone(),
+            candidate_usage: candidate.usage.clone(),
+            judge_model: judged.model,
+            judge_usage: judged.usage,
+            verdict: judged.verdict,
+        };
+        append_t1_child_event(
+            runtime,
+            &mut child_progress,
+            &child.run_id,
+            RunEvent::TrialCompleted {
+                at: runtime.now(),
+                record,
+            },
+        )?;
+        sync_t1_usage(state, runtime, progress)?;
+    }
+
+    if !replay
+        .completed_artifacts
+        .contains_key(&state.configuration.exam.name)
+    {
+        append_t1_child_event(
+            runtime,
+            &mut child_progress,
+            &child.run_id,
+            RunEvent::PoolChildCompleted {
+                at: runtime.now(),
+                artifact: state.configuration.exam.name.clone(),
+                tier: Tier::T1,
+            },
+        )?;
+    }
+    Ok(T1ChildResult::Completed)
+}
+
+fn validate_t1_child_replay(
+    state: &T1ScreenRunState,
+    child: &T1ScreenChildRun,
+    replay: &PoolChildReplay,
+) -> Result<(), SkillEvalError> {
+    if let Some(configuration) = &replay.configuration {
+        let expected = t1_child_configuration(state, child, configuration.created_at.clone());
+        if configuration != &expected {
+            return Err(t1_drift("child frozen configuration"));
+        }
+    } else if replay.discovery.is_some()
+        || !replay.started.is_empty()
+        || !replay.candidates.is_empty()
+        || !replay.completed.is_empty()
+        || !replay.completed_artifacts.is_empty()
+    {
+        return Err(t1_drift("child run start checkpoint"));
+    }
+    let discovery = vec![t1_discovery(&state.configuration.exam)];
+    if replay
+        .discovery
+        .as_ref()
+        .is_some_and(|stored| stored != &discovery)
+    {
+        return Err(t1_drift("child discovery checkpoint"));
+    }
+    let planned = state
+        .configuration
+        .exam
+        .cases
+        .iter()
+        .zip(&state.configuration.candidate_environment.harnesses)
+        .map(|(case, harness)| {
+            (
+                TrialKey {
+                    artifact: state.configuration.exam.name.clone(),
+                    tier: Tier::T1,
+                    route_index: 0,
+                    case: case.id.clone(),
+                    attempt: 1,
+                },
+                harness,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    if replay
+        .started
+        .keys()
+        .chain(replay.candidates.keys())
+        .chain(replay.completed.keys())
+        .any(|key| !planned.contains_key(key))
+    {
+        return Err(t1_drift("five-case child plan"));
+    }
+    for (key, started) in &replay.started {
+        if started.models != [child.model.clone()]
+            || planned
+                .get(key)
+                .is_none_or(|harness| **harness != started.harness)
+        {
+            return Err(t1_drift("fallback-free child identity"));
+        }
+    }
+    for (key, candidate) in &replay.candidates {
+        if candidate.key != *key
+            || candidate.model != child.model
+            || planned
+                .get(key)
+                .is_none_or(|harness| **harness != candidate.harness)
+            || candidate.usage.cost_millionths_of_dollar != 0
+        {
+            return Err(t1_drift("candidate checkpoint identity or cost"));
+        }
+    }
+    for (key, record) in &replay.completed {
+        let candidate = replay
+            .candidates
+            .get(key)
+            .ok_or_else(|| t1_drift("candidate checkpoint"))?;
+        if !candidate_matches_record(candidate, record)
+            || record.judge_model != state.configuration.judge
+        {
+            return Err(t1_drift("judge completion checkpoint"));
+        }
+    }
+    if replay.completed_artifacts.iter().any(|(artifact, tier)| {
+        artifact != &state.configuration.exam.name
+            || *tier != Tier::T1
+            || replay.completed.len() != planned.len()
+    }) {
+        return Err(t1_drift("child completion checkpoint"));
+    }
+    Ok(())
+}
+
+fn t1_child_configuration(
+    state: &T1ScreenRunState,
+    child: &T1ScreenChildRun,
+    created_at: crate::model::Timestamp,
+) -> RunConfiguration {
+    RunConfiguration {
+        run_id: child.run_id.clone(),
+        mode: RunMode::Execute,
+        artifacts: vec![state.configuration.exam.clone()],
+        change: None,
+        policy: t1_qualification_policy(state),
+        qualification_routes: BTreeMap::new(),
+        created_at,
+    }
+}
+
+fn t1_qualification_policy(state: &T1ScreenRunState) -> QualificationPolicy {
+    QualificationPolicy {
+        purpose: QualificationPurpose::ModelPool,
+        candidate_tiers: vec![Tier::T1],
+        reference_tier: Tier::T2,
+        judge_tier: state.configuration.judge.tier,
+        repeats_per_case: state.configuration.policy.repeats_per_case,
+        minimum_score: state.configuration.policy.minimum_score,
+        noninferiority_margin: 0.0,
+        confidence_level: 0.95,
+    }
+}
+
+fn t1_discovery(artifact: &ArtifactDefinition) -> ArtifactDiscovery {
+    ArtifactDiscovery {
+        artifact: artifact.name.clone(),
+        kind: artifact.kind,
+        revision: artifact.revision.clone(),
+        cases: artifact
+            .cases
+            .iter()
+            .map(|case| CaseDiscovery {
+                id: case.id.clone(),
+                drive: case.execution.drive.clone(),
+                is_holdout: case.is_holdout,
+            })
+            .collect(),
+    }
+}
+
+fn complete_t1_child(
+    state: &mut T1ScreenRunState,
+    child_index: usize,
+    runtime: &mut dyn T1ScreenRuntime,
+    progress: &mut dyn T1ScreenProgressSink,
+) -> Result<(), SkillEvalError> {
+    sync_t1_usage(state, runtime, progress)?;
+    let child = state.child_runs[child_index].clone();
+    let replay = replay_pool_child(&child.run_id, runtime)?;
+    let expected_cases = state
+        .configuration
+        .exam
+        .cases
+        .iter()
+        .map(|case| case.id.clone())
+        .collect::<Vec<_>>();
+    if replay.completed_artifacts.len() != 1
+        || replay
+            .completed_artifacts
+            .get(&state.configuration.exam.name)
+            != Some(&Tier::T1)
+    {
+        return Err(t1_drift("complete five-case child evidence"));
+    }
+    let evidence = evaluate_calibration(
+        &child.model,
+        &expected_cases,
+        &replay.completed.into_values().collect::<Vec<_>>(),
+        &t1_pool_policy(state),
+    )?;
+    if evidence.candidate_usage.cost_millionths_of_dollar != 0
+        || evidence.effective_model != evidence.requested_model
+        || evidence.judge_model != state.configuration.judge
+    {
+        return Err(t1_drift("completed child cost or identity"));
+    }
+    let model_index = usize::try_from(child.model_index)
+        .map_err(|_| t1_invalid("model index arithmetic overflow"))?;
+    if state.models[model_index].attempts.len()
+        != usize::try_from(child.thinking_index)
+            .map_err(|_| t1_invalid("thinking index arithmetic overflow"))?
+    {
+        return Err(t1_drift("append-only adjacent attempt"));
+    }
+    let is_strongest = state.child_runs.iter().all(|other| {
+        other.model_index != child.model_index || other.thinking_index <= child.thinking_index
+    });
+    state.models[model_index]
+        .attempts
+        .push(T1ScreenAttemptEvidence {
+            child_run_id: child.run_id.clone(),
+            evidence,
+        });
+    if !is_strongest {
+        state.child_runs[child_index].status = T1ScreenChildStatus::Completed;
+    } else if let Some(selected) = state.models[model_index]
+        .attempts
+        .iter()
+        .find(|attempt| attempt.evidence.is_passing)
+        .map(|attempt| attempt.evidence.requested_model.clone())
+    {
+        state.child_runs[child_index].status = T1ScreenChildStatus::Completed;
+        state.models[model_index].outcome =
+            Some(T1ScreenModelOutcome::Selected { model: selected });
+    } else {
+        state.child_runs[child_index].status = T1ScreenChildStatus::Exhausted;
+        state.models[model_index].outcome = Some(T1ScreenModelOutcome::Exhausted);
+    }
+    save_t1_screen_and_emit(runtime, progress, state)
+}
+
+fn t1_pool_policy(state: &T1ScreenRunState) -> crate::model::PoolPolicy {
+    crate::model::PoolPolicy {
+        calibration_repeats_per_case: state.configuration.policy.repeats_per_case,
+        qualification_repeats_per_case: 1,
+        promotion_count: 2,
+        minimum_score: state.configuration.policy.minimum_score,
+        calibration_minimum_reliability_basis_points: state
+            .configuration
+            .policy
+            .calibration_minimum_reliability_basis_points,
+        qualification_minimum_reliability_basis_points: 10_000,
+        maximum_catalog_age_seconds: 1,
+        spending_limit_millionths_of_dollar: t1_judge_cap(state),
+        is_provider_limit_enforced: true,
+    }
+}
+
+fn sync_t1_usage(
+    state: &mut T1ScreenRunState,
+    runtime: &mut dyn T1ScreenRuntime,
+    progress: &mut dyn T1ScreenProgressSink,
+) -> Result<(), SkillEvalError> {
+    let mut candidate = t1_zero_usage();
+    let mut judge = t1_zero_usage();
+    for child in &state.child_runs {
+        let replay = match replay_pool_child(&child.run_id, runtime) {
+            Ok(replay) => replay,
+            Err(SkillEvalError::NotFound(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        for item in replay.candidates.values() {
+            if item.usage.cost_millionths_of_dollar != 0 {
+                return Err(t1_invalid("candidate cost must be exactly zero"));
+            }
+            candidate = add_t1_usage(&candidate, &item.usage)?;
+        }
+        for item in replay.completed.values() {
+            judge = add_t1_usage(&judge, &item.judge_usage)?;
+        }
+    }
+    if !t1_usage_is_nondecreasing(&state.candidate_usage, &candidate)
+        || !t1_usage_is_nondecreasing(&state.judge_usage, &judge)
+    {
+        return Err(t1_drift("aggregate child usage"));
+    }
+    if state.candidate_usage == candidate && state.judge_usage == judge {
+        return Ok(());
+    }
+    state.candidate_usage = candidate;
+    state.spent_judge_millionths_of_dollar = judge.cost_millionths_of_dollar;
+    state.judge_usage = judge;
+    if state.spent_judge_millionths_of_dollar > t1_judge_cap(state) {
+        return Err(t1_invalid("judge spend exceeds a frozen cap"));
+    }
+    save_t1_screen_and_emit(runtime, progress, state)
+}
+
+fn add_t1_usage(left: &TrialUsage, right: &TrialUsage) -> Result<TrialUsage, SkillEvalError> {
+    Ok(TrialUsage {
+        input_tokens: t1_add(left.input_tokens, right.input_tokens, "input tokens")?,
+        output_tokens: t1_add(left.output_tokens, right.output_tokens, "output tokens")?,
+        cache_read_tokens: t1_add(
+            left.cache_read_tokens,
+            right.cache_read_tokens,
+            "cache-read tokens",
+        )?,
+        cache_write_tokens: t1_add(
+            left.cache_write_tokens,
+            right.cache_write_tokens,
+            "cache-write tokens",
+        )?,
+        turns: left
+            .turns
+            .checked_add(right.turns)
+            .ok_or_else(|| t1_invalid("turns arithmetic overflow"))?,
+        tool_calls: left
+            .tool_calls
+            .checked_add(right.tool_calls)
+            .ok_or_else(|| t1_invalid("tool calls arithmetic overflow"))?,
+        elapsed_milliseconds: t1_add(
+            left.elapsed_milliseconds,
+            right.elapsed_milliseconds,
+            "elapsed milliseconds",
+        )?,
+        cost_millionths_of_dollar: t1_add(
+            left.cost_millionths_of_dollar,
+            right.cost_millionths_of_dollar,
+            "cost",
+        )?,
+    })
+}
+
+fn t1_add(left: u64, right: u64, label: &str) -> Result<u64, SkillEvalError> {
+    left.checked_add(right)
+        .ok_or_else(|| t1_invalid(format!("{label} arithmetic overflow")))
+}
+
+fn t1_usage_is_nondecreasing(old: &TrialUsage, new: &TrialUsage) -> bool {
+    new.input_tokens >= old.input_tokens
+        && new.output_tokens >= old.output_tokens
+        && new.cache_read_tokens >= old.cache_read_tokens
+        && new.cache_write_tokens >= old.cache_write_tokens
+        && new.turns >= old.turns
+        && new.tool_calls >= old.tool_calls
+        && new.elapsed_milliseconds >= old.elapsed_milliseconds
+        && new.cost_millionths_of_dollar >= old.cost_millionths_of_dollar
+}
+
+fn t1_zero_usage() -> TrialUsage {
+    TrialUsage {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        turns: 0,
+        tool_calls: 0,
+        elapsed_milliseconds: 0,
+        cost_millionths_of_dollar: 0,
+    }
+}
+
+fn t1_campaign_remaining(
+    runtime: &dyn T1ScreenRuntime,
+    state: &T1ScreenRunState,
+) -> Result<u64, SkillEvalError> {
+    let campaign = runtime.load_t1_screen_campaign(&state.configuration.campaign_id)?;
+    if campaign.active_run_id.as_ref() != Some(&state.configuration.run_id) {
+        return Err(t1_invalid("campaign active run differs before judge call"));
+    }
+    campaign
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(campaign.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| t1_invalid("campaign remaining spend underflow"))
+}
+
+fn t1_judge_cap(state: &T1ScreenRunState) -> u64 {
+    let (owner, provider) = t1_screen_effective_caps(state)
+        .expect("validated T1 screening state has an effective cap chain");
+    owner.min(provider)
+}
+
+fn t1_judge_cap_pause(state: &T1ScreenRunState) -> T1ScreenPauseReason {
+    let (owner, provider) = t1_screen_effective_caps(state)
+        .expect("validated T1 screening state has an effective cap chain");
+    T1ScreenPauseReason::JudgeCap {
+        spent_millionths_of_dollar: state.spent_judge_millionths_of_dollar,
+        owner_approved_millionths_of_dollar: owner,
+        provider_enforced_millionths_of_dollar: provider,
+    }
+}
+
+fn pause_t1_child<R: T1ScreenRuntime + ?Sized>(
+    runtime: &mut R,
+    run_id: &RunId,
+    error: SkillEvalError,
+) -> Result<T1ChildResult, SkillEvalError> {
+    let reason = t1_pause_from_error(error);
+    let child_reason = match &reason {
+        T1ScreenPauseReason::Quota { model, reset_at } => PauseReason::Quota {
+            model: model.clone(),
+            reset_at: reset_at.clone(),
+        },
+        T1ScreenPauseReason::Infrastructure { message } => PauseReason::Infrastructure {
+            message: message.clone(),
+        },
+        T1ScreenPauseReason::JudgeCap { .. } => unreachable!(),
+    };
+    let mut progress = SilentProgress;
+    append_t1_child_event(
+        runtime,
+        &mut progress,
+        run_id,
+        RunEvent::RunPaused {
+            at: runtime.now(),
+            reason: child_reason,
+        },
+    )?;
+    Ok(T1ChildResult::Paused(reason))
+}
+
+fn is_t1_boundary_error(error: &SkillEvalError) -> bool {
+    !matches!(
+        error,
+        SkillEvalError::InvalidArguments(_) | SkillEvalError::InvalidConfiguration(_)
+    )
+}
+
+fn t1_pause_from_error(error: SkillEvalError) -> T1ScreenPauseReason {
+    match error {
+        SkillEvalError::Quota { model, reset_at } => T1ScreenPauseReason::Quota { model, reset_at },
+        error => T1ScreenPauseReason::Infrastructure {
+            message: format!("{error:?}"),
+        },
+    }
+}
+
+fn append_t1_child_event<R: T1ScreenRuntime + ?Sized>(
+    runtime: &mut R,
+    progress: &mut dyn ProgressSink,
+    run_id: &RunId,
+    event: RunEvent,
+) -> Result<(), SkillEvalError> {
+    runtime.append(run_id, &event)?;
+    progress.emit(&event)
+}
+
+fn save_t1_screen_and_emit<R: T1ScreenRuntime + ?Sized>(
+    runtime: &mut R,
+    progress: &mut dyn T1ScreenProgressSink,
+    state: &T1ScreenRunState,
+) -> Result<(), SkillEvalError> {
+    runtime.save_t1_screen(state)?;
+    runtime.reconcile_t1_screen_campaign_run(state)?;
+    progress.emit_t1_screen(state)
+}
+
+fn t1_invalid(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("T1 screening {}", message.into()))
+}
+
+fn t1_drift(label: &str) -> SkillEvalError {
+    t1_invalid(format!("resume drift in {label}"))
+}
+
+pub(crate) fn t1_environment_difference(
+    expected: &[CandidateEnvironmentEntry],
+    current: &[CandidateEnvironmentEntry],
+) -> Option<String> {
+    let mut expected_index = 0;
+    let mut current_index = 0;
+    while let (Some(frozen), Some(observed)) =
+        (expected.get(expected_index), current.get(current_index))
+    {
+        match frozen.key.cmp(&observed.key) {
+            std::cmp::Ordering::Less => {
+                return Some(format!("removed {}", frozen.key));
+            }
+            std::cmp::Ordering::Greater => {
+                return Some(format!("added {}", observed.key));
+            }
+            std::cmp::Ordering::Equal if frozen.sha256 != observed.sha256 => {
+                return Some(format!("changed {}", frozen.key));
+            }
+            std::cmp::Ordering::Equal => {
+                expected_index += 1;
+                current_index += 1;
+            }
+        }
+    }
+    if let Some(frozen) = expected.get(expected_index) {
+        return Some(format!("removed {}", frozen.key));
+    }
+    if let Some(observed) = current.get(current_index) {
+        return Some(format!("added {}", observed.key));
+    }
+    None
+}
+
+enum T1ChildResult {
+    Completed,
+    Paused(T1ScreenPauseReason),
+}
+
 pub(crate) fn start_pool_qualification(
     request: PoolQualifyRequest,
     runtime: &mut dyn PoolRuntime,
@@ -57,26 +1814,17 @@ pub(crate) fn start_pool_qualification(
 
     state.status = PoolRunStatus::Running;
     save_pool_and_emit(runtime, progress, &state)?;
-    let child_index = state
-        .child_runs
-        .iter()
-        .position(|child| {
-            child.tier == state.selected_tiers[0]
-                && child.entrant_index == 0
-                && child.stage == PoolStage::Calibration
-        })
-        .ok_or_else(|| {
-            SkillEvalError::InvalidConfiguration(
-                "pool has no first selected calibration child".to_owned(),
-            )
-        })?;
+    let child_index = next_pool_child_index(&state)?.ok_or_else(|| {
+        SkillEvalError::InvalidConfiguration(
+            "pool has no first selected calibration child".to_owned(),
+        )
+    })?;
     state.child_runs[child_index].status = PoolChildStatus::Running;
     save_pool_and_emit(runtime, progress, &state)?;
 
     let child = state.child_runs[child_index].clone();
-    let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
-        .model
-        .clone();
+    let requested = requested_pool_child_model(&state, &child)?;
+    let candidate_timeout_seconds = pool_child_candidate_timeout(&state, &child)?;
     let child_request = pool_child_request(
         &state
             .configuration
@@ -90,18 +1838,20 @@ pub(crate) fn start_pool_qualification(
         runtime.configured_judge_tier()?,
     );
     let mut child_progress = SilentProgress;
-    match start_qualification_with_run_id(
+    match start_pool_qualification_with_run_id(
         child.run_id,
-        Some(requested),
+        requested,
+        candidate_timeout_seconds,
         child_request,
         runtime,
         &mut child_progress,
     ) {
         Ok(report) => {
-            if report.total_usage.cost_millionths_of_dollar > 0 {
+            let candidate_cost = candidate_cost(&report.run_id, runtime)?;
+            if candidate_cost > 0 {
                 state.spent_millionths_of_dollar = state
                     .spent_millionths_of_dollar
-                    .checked_add(report.total_usage.cost_millionths_of_dollar)
+                    .checked_add(candidate_cost)
                     .ok_or_else(|| {
                         SkillEvalError::InvalidConfiguration(
                             "pool spending arithmetic overflow".to_owned(),
@@ -171,10 +1921,10 @@ fn validate_pool_request(
     if selected.iter().any(|tier| {
         plan.entrants
             .get(tier)
-            .is_none_or(|entrants| entrants.len() != 3)
+            .is_none_or(|entrants| entrants.len() < 3)
     }) {
         return Err(SkillEvalError::InvalidConfiguration(
-            "each selected pool tier must contain exactly three entrants".to_owned(),
+            "each selected pool tier must contain at least three entrants".to_owned(),
         ));
     }
     if plan.policy.spending_limit_millionths_of_dollar == 0
@@ -222,41 +1972,96 @@ fn validate_single_pool_artifact(artifacts: &[ArtifactDefinition]) -> Result<(),
     Ok(())
 }
 
-// TODO(AGNT-0032.T105): Preallocate and resume model-plus-thinking child identities.
 fn preallocate_pool_children(
     selected_tiers: &[Tier],
     configuration: &PoolRunConfiguration,
     runtime: &mut dyn PoolRuntime,
 ) -> Result<Vec<PoolChildRun>, SkillEvalError> {
-    let mut child_runs = Vec::with_capacity(selected_tiers.len().saturating_mul(6));
+    let slot_count = selected_tiers.iter().try_fold(0_usize, |count, tier| {
+        let entrants = configuration.entrants.get(tier).ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(
+                "pool selected tier is absent from its configuration".to_owned(),
+            )
+        })?;
+        entrants.iter().try_fold(count, |count, entrant| {
+            count
+                .checked_add(entrant.thinking_levels.len().saturating_mul(2))
+                .ok_or_else(|| {
+                    SkillEvalError::InvalidConfiguration(
+                        "pool child preallocation count overflow".to_owned(),
+                    )
+                })
+        })
+    })?;
+    let mut child_runs = Vec::with_capacity(slot_count);
     let mut run_ids = BTreeSet::new();
     for tier in selected_tiers {
-        for entrant_index in 0_u8..3 {
-            for stage in [PoolStage::Calibration, PoolStage::Qualification] {
-                let run_id = runtime.next()?;
-                validate_run_id(&run_id)?;
-                if !run_ids.insert(run_id.clone()) {
-                    return Err(SkillEvalError::InvalidConfiguration(
-                        "pool child run identifiers must be unique".to_owned(),
-                    ));
+        let entrants = &configuration.entrants[tier];
+        for (entrant_index, entrant) in entrants.iter().enumerate() {
+            let entrant_index = u8::try_from(entrant_index).map_err(|_| {
+                SkillEvalError::InvalidConfiguration(
+                    "pool child entrant index is out of range".to_owned(),
+                )
+            })?;
+            for thinking_index in 0..entrant.thinking_levels.len() {
+                let thinking_index = u8::try_from(thinking_index).map_err(|_| {
+                    SkillEvalError::InvalidConfiguration(
+                        "pool child thinking index is out of range".to_owned(),
+                    )
+                })?;
+                for stage in [PoolStage::Calibration, PoolStage::Qualification] {
+                    let run_id = runtime.next()?;
+                    validate_run_id(&run_id)?;
+                    if !run_ids.insert(run_id.clone()) {
+                        return Err(SkillEvalError::InvalidConfiguration(
+                            "pool child run identifiers must be unique".to_owned(),
+                        ));
+                    }
+                    child_runs.push(PoolChildRun {
+                        tier: *tier,
+                        entrant_index,
+                        thinking_index,
+                        stage,
+                        run_id,
+                        status: PoolChildStatus::Pending,
+                    });
                 }
-                if usize::from(entrant_index) >= configuration.entrants[tier].len() {
-                    return Err(SkillEvalError::InvalidConfiguration(
-                        "pool child entrant index is out of range".to_owned(),
-                    ));
-                }
-                // TODO(AGNT-0032.T103): Add neutral thinking index zero before adaptive preallocation.
-                child_runs.push(PoolChildRun {
-                    tier: *tier,
-                    entrant_index,
-                    stage,
-                    run_id,
-                    status: PoolChildStatus::Pending,
-                });
             }
         }
     }
     Ok(child_runs)
+}
+
+fn requested_pool_child_model(
+    state: &PoolRunState,
+    child: &PoolChildRun,
+) -> Result<ModelIdentity, SkillEvalError> {
+    let entrant = state
+        .configuration
+        .entrants
+        .get(&child.tier)
+        .and_then(|entrants| entrants.get(usize::from(child.entrant_index)))
+        .ok_or_else(|| resume_drift("pool child entrant index"))?;
+    let thinking = entrant
+        .thinking_levels
+        .get(usize::from(child.thinking_index))
+        .ok_or_else(|| resume_drift("pool child thinking index"))?;
+    let mut requested = entrant.model.clone();
+    requested.thinking.clone_from(thinking);
+    Ok(requested)
+}
+
+fn pool_child_candidate_timeout(
+    state: &PoolRunState,
+    child: &PoolChildRun,
+) -> Result<Option<u32>, SkillEvalError> {
+    state
+        .configuration
+        .entrants
+        .get(&child.tier)
+        .and_then(|entrants| entrants.get(usize::from(child.entrant_index)))
+        .map(|entrant| entrant.candidate_timeout_seconds)
+        .ok_or_else(|| resume_drift("pool child entrant index"))
 }
 
 fn pool_child_request(
@@ -333,15 +2138,132 @@ impl ProgressSink for SilentProgress {
     }
 }
 
+pub(crate) fn start_pool_replacement_qualification(
+    parent_run_id: &PoolRunId,
+    entrant_index: u8,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<QualificationReport, SkillEvalError> {
+    let state = runtime.load_pool(parent_run_id)?;
+    validate_frozen_pool_artifacts(&state, runtime)?;
+    validate_single_pool_artifact(&state.configuration.artifacts)?;
+    validate_frozen_pool_plan(&state)?;
+    if state.status != PoolRunStatus::AwaitingDecision {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "pool replacement requires an awaiting-decision parent".to_owned(),
+        ));
+    }
+    let tier = state
+        .selected_tiers
+        .first()
+        .copied()
+        .ok_or_else(|| resume_drift("replacement selected tier"))?;
+    if state.selected_tiers.len() != 1 {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "pool replacement requires one selected tier".to_owned(),
+        ));
+    }
+    let entrant = state.configuration.entrants[&tier]
+        .get(usize::from(entrant_index))
+        .ok_or_else(|| {
+            SkillEvalError::InvalidArguments("replacement entrant index is out of range".to_owned())
+        })?;
+    let pool = state
+        .pools
+        .iter()
+        .find(|pool| pool.tier == tier)
+        .ok_or_else(|| resume_drift("replacement ranked pool"))?;
+    let replacement = pool
+        .thinking_selections
+        .iter()
+        .find(|model| is_same_base_model(model, &entrant.model))
+        .cloned()
+        .ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(
+                "replacement entrant has no completed thinking selection".to_owned(),
+            )
+        })?;
+    if pool.promoted.contains(&replacement)
+        || !pool
+            .calibration
+            .iter()
+            .any(|evidence| evidence.requested_model == replacement && evidence.is_passing)
+        || pool
+            .qualification
+            .iter()
+            .any(|evidence| evidence.requested_model == replacement)
+        || !pool.qualification.iter().any(|evidence| {
+            pool.promoted.contains(&evidence.requested_model) && !evidence.is_passing
+        })
+    {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "replacement requires one passing unpromoted calibration entrant and one failed finalist"
+                .to_owned(),
+        ));
+    }
+    let thinking_index = entrant
+        .thinking_levels
+        .iter()
+        .position(|thinking| thinking == &replacement.thinking)
+        .and_then(|index| u8::try_from(index).ok())
+        .ok_or_else(|| resume_drift("replacement thinking index"))?;
+    let is_skipped = state.child_runs.iter().any(|child| {
+        child.tier == tier
+            && child.entrant_index == entrant_index
+            && child.thinking_index == thinking_index
+            && child.stage == PoolStage::Qualification
+            && child.status == PoolChildStatus::Skipped
+    });
+    if !is_skipped {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "replacement qualification child is not a terminal skip".to_owned(),
+        ));
+    }
+
+    let roots = state
+        .configuration
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.root.clone())
+        .collect::<Vec<_>>();
+    let request = pool_child_request(
+        &roots,
+        tier,
+        state.configuration.policy.qualification_repeats_per_case,
+        state.configuration.policy.minimum_score,
+        runtime.configured_judge_tier()?,
+    );
+    let candidate_timeout_seconds = entrant.candidate_timeout_seconds;
+    let run_id = runtime.next()?;
+    start_pool_qualification_with_run_id(
+        run_id,
+        replacement,
+        candidate_timeout_seconds,
+        request,
+        runtime,
+        progress,
+    )
+}
+
 pub(crate) fn resume_pool_qualification(
     run_id: &PoolRunId,
     runtime: &mut dyn PoolRuntime,
     progress: &mut dyn PoolProgressSink,
 ) -> Result<PoolRunState, SkillEvalError> {
     let mut state = runtime.load_pool(run_id)?;
-    let child_index = validate_pool_resume_state(run_id, &state)?;
     validate_frozen_pool_artifacts(&state, runtime)?;
     validate_single_pool_artifact(&state.configuration.artifacts)?;
+    let prior_status = state.status;
+    recover_completed_pool_child_evidence(&mut state, runtime, progress)?;
+    if matches!(prior_status, PoolRunStatus::Running | PoolRunStatus::Paused)
+        && !matches!(state.status, PoolRunStatus::Running | PoolRunStatus::Paused)
+    {
+        return Ok(state);
+    }
+    let Some(child_index) = validate_pool_resume_state(run_id, &state)? else {
+        recover_completed_thinking_decisions(&mut state, runtime, progress)?;
+        return Ok(state);
+    };
     if state.spent_millionths_of_dollar
         >= state
             .configuration
@@ -351,11 +2273,8 @@ pub(crate) fn resume_pool_qualification(
         pause_pool_for_spending_limit(&mut state, runtime, progress)?;
         return Ok(state);
     }
-
     let child = state.child_runs[child_index].clone();
-    let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
-        .model
-        .clone();
+    let requested = requested_pool_child_model(&state, &child)?;
     let repeats_per_case = match child.stage {
         PoolStage::Calibration => state.configuration.policy.calibration_repeats_per_case,
         PoolStage::Qualification => state.configuration.policy.qualification_repeats_per_case,
@@ -386,7 +2305,9 @@ pub(crate) fn resume_pool_qualification(
     };
     let prior_cost = prior_report
         .as_ref()
-        .map_or(0, |report| report.total_usage.cost_millionths_of_dollar);
+        .map(|report| candidate_cost(&report.run_id, runtime))
+        .transpose()?
+        .unwrap_or(0);
 
     let mut replay = None;
     let mut exact_candidate = None;
@@ -424,6 +2345,7 @@ pub(crate) fn resume_pool_qualification(
         save_pool_and_emit(runtime, progress, &state)?;
     }
 
+    let candidate_timeout_seconds = pool_child_candidate_timeout(&state, &child)?;
     let mut child_progress = SilentProgress;
     let result = match prior_report {
         None => {
@@ -434,9 +2356,10 @@ pub(crate) fn resume_pool_qualification(
                 state.configuration.policy.minimum_score,
                 pending_judge_tier.expect("pending child judge tier is present"),
             );
-            start_qualification_with_run_id(
+            start_pool_qualification_with_run_id(
                 child.run_id.clone(),
-                Some(requested),
+                requested,
+                candidate_timeout_seconds,
                 child_request,
                 runtime,
                 &mut child_progress,
@@ -454,6 +2377,7 @@ pub(crate) fn resume_pool_qualification(
                 pool_judge
                     .as_ref()
                     .expect("existing child pool judge is present"),
+                candidate_timeout_seconds,
                 runtime,
                 &mut child_progress,
             )
@@ -506,10 +2430,79 @@ pub(crate) fn resume_pool_qualification(
     Ok(state)
 }
 
+fn recover_completed_pool_child_evidence(
+    state: &mut PoolRunState,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    for child_index in 0..state.child_runs.len() {
+        let child = state.child_runs[child_index].clone();
+        if child.status != PoolChildStatus::Completed {
+            continue;
+        }
+        let requested = requested_pool_child_model(state, &child)?;
+        let is_persisted = state
+            .pools
+            .iter()
+            .find(|pool| pool.tier == child.tier)
+            .is_some_and(|pool| {
+                let evidence = match child.stage {
+                    PoolStage::Calibration => &pool.calibration,
+                    PoolStage::Qualification => &pool.qualification,
+                };
+                evidence
+                    .iter()
+                    .any(|item| item.requested_model == requested)
+            });
+        if !is_persisted {
+            let replay = replay_pool_child(&child.run_id, runtime)?;
+            if replay.completed_artifacts.is_empty() {
+                continue;
+            }
+            persist_completed_pool_child_evidence(state, child_index, runtime, progress)?;
+        }
+    }
+    Ok(())
+}
+
+fn recover_completed_thinking_decisions(
+    state: &mut PoolRunState,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    for tier in state.selected_tiers.clone() {
+        let Some(pool_index) = state.pools.iter().position(|pool| pool.tier == tier) else {
+            continue;
+        };
+        let entrant_count = state.configuration.entrants[&tier].len();
+        for entrant_index in 0..entrant_count {
+            let entrant_index = u8::try_from(entrant_index).map_err(|_| {
+                SkillEvalError::InvalidConfiguration(
+                    "pool entrant index exceeds its persisted range".to_owned(),
+                )
+            })?;
+            let entrant = &state.configuration.entrants[&tier][usize::from(entrant_index)];
+            let evidence =
+                base_model_calibration_evidence(&state.pools[pool_index], &entrant.model);
+            if select_thinking_level(entrant, &evidence)?.is_complete {
+                advance_thinking_selection(
+                    state,
+                    tier,
+                    entrant_index,
+                    pool_index,
+                    runtime,
+                    progress,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_pool_resume_state(
     run_id: &PoolRunId,
     state: &PoolRunState,
-) -> Result<usize, SkillEvalError> {
+) -> Result<Option<usize>, SkillEvalError> {
     if state.configuration.run_id != *run_id {
         return Err(resume_drift("pool run identity"));
     }
@@ -533,104 +2526,232 @@ fn validate_pool_resume_state(
         return Err(resume_drift("selected tier plan"));
     }
     validate_frozen_pool_plan(state)?;
+    validate_pool_child_slots(state)?;
 
-    let mut ordered = Vec::new();
-    let mut identities = BTreeSet::new();
-    for (tier_order, tier) in state.selected_tiers.iter().enumerate() {
-        let entrants = state
-            .configuration
-            .entrants
-            .get(tier)
-            .ok_or_else(|| resume_drift("selected tier"))?;
-        if entrants.len() != 3 {
-            return Err(resume_drift("pool model plan"));
+    let child_index = next_pool_child_index(state)?;
+    let Some(child_index) = child_index else {
+        if state.child_runs.iter().any(|child| {
+            matches!(
+                child.status,
+                PoolChildStatus::Running | PoolChildStatus::Paused | PoolChildStatus::Failed
+            )
+        }) {
+            return Err(resume_drift("stable pool child order"));
         }
-        for stage in [PoolStage::Calibration, PoolStage::Qualification] {
-            for entrant_index in 0_u8..3 {
-                let matches = state
-                    .child_runs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, child)| {
-                        child.tier == *tier
-                            && child.stage == stage
-                            && child.entrant_index == entrant_index
-                    })
-                    .collect::<Vec<_>>();
-                if matches.len() != 1 {
-                    return Err(resume_drift("pool child identity"));
-                }
-                let (index, child) = matches[0];
-                validate_run_id(&child.run_id)?;
-                if !identities.insert(child.run_id.clone()) {
-                    return Err(resume_drift("pool child identity"));
-                }
-                ordered.push((tier_order, stage, entrant_index, index));
-            }
-        }
-    }
-    if identities.len() != state.child_runs.len() {
-        return Err(resume_drift("pool child identity"));
-    }
-    ordered.sort_by_key(|(tier_order, stage, entrant_index, _)| {
-        (
-            *tier_order,
-            match stage {
-                PoolStage::Calibration => 0_u8,
-                PoolStage::Qualification => 1_u8,
-            },
-            *entrant_index,
-        )
-    });
-
-    let is_terminal = |index: usize| {
-        matches!(
-            state.child_runs[index].status,
-            PoolChildStatus::Completed | PoolChildStatus::Skipped
-        )
+        return Ok(None);
     };
-    let first = ordered
-        .iter()
-        .position(|(_, _, _, index)| !is_terminal(*index))
-        .ok_or_else(|| resume_drift("terminal pool status"))?;
-    if ordered[..first]
-        .iter()
-        .any(|(_, _, _, index)| !is_terminal(*index))
-        || ordered[first + 1..].iter().any(|(_, _, _, index)| {
-            !is_terminal(*index) && state.child_runs[*index].status != PoolChildStatus::Pending
-        })
-    {
+    let child_status = state.child_runs[child_index].status;
+    if state.child_runs.iter().enumerate().any(|(index, child)| {
+        index != child_index
+            && matches!(
+                child.status,
+                PoolChildStatus::Running | PoolChildStatus::Paused | PoolChildStatus::Failed
+            )
+    }) {
         return Err(resume_drift("stable pool child order"));
     }
-
-    let child_index = ordered[first].3;
-    let child_status = state.child_runs[child_index].status;
     match (state.status, child_status) {
         (
             PoolRunStatus::Running,
             PoolChildStatus::Pending | PoolChildStatus::Running | PoolChildStatus::Paused,
         )
-        | (PoolRunStatus::Paused, PoolChildStatus::Paused) => Ok(child_index),
+        | (PoolRunStatus::Paused, PoolChildStatus::Paused) => Ok(Some(child_index)),
         (PoolRunStatus::Paused, PoolChildStatus::Pending)
             if matches!(state.pause, Some(PoolPauseReason::SpendingLimit { .. })) =>
         {
-            Ok(child_index)
+            Ok(Some(child_index))
         }
         (_, PoolChildStatus::Failed) => Err(resume_drift("failed pool child")),
         _ => Err(resume_drift("parent and child status")),
     }
 }
 
+fn validate_pool_child_slots(state: &PoolRunState) -> Result<(), SkillEvalError> {
+    let mut slots = BTreeSet::new();
+    let mut run_ids = BTreeSet::new();
+    for child in &state.child_runs {
+        validate_run_id(&child.run_id)?;
+        let entrant = state
+            .configuration
+            .entrants
+            .get(&child.tier)
+            .and_then(|entrants| entrants.get(usize::from(child.entrant_index)))
+            .ok_or_else(|| resume_drift("pool child entrant index"))?;
+        if usize::from(child.thinking_index) >= entrant.thinking_levels.len()
+            || !state.selected_tiers.contains(&child.tier)
+            || !slots.insert((
+                child.tier,
+                child.entrant_index,
+                child.thinking_index,
+                child.stage,
+            ))
+            || !run_ids.insert(child.run_id.clone())
+        {
+            return Err(resume_drift("pool child identity"));
+        }
+    }
+    for tier in &state.selected_tiers {
+        for (entrant_index, entrant) in state.configuration.entrants[tier].iter().enumerate() {
+            let entrant_index = u8::try_from(entrant_index)
+                .map_err(|_| resume_drift("pool child entrant index"))?;
+            for thinking_index in 0..entrant.thinking_levels.len() {
+                let thinking_index = u8::try_from(thinking_index)
+                    .map_err(|_| resume_drift("pool child thinking index"))?;
+                for stage in [PoolStage::Calibration, PoolStage::Qualification] {
+                    if !slots.contains(&(*tier, entrant_index, thinking_index, stage)) {
+                        return Err(resume_drift("pool child identity"));
+                    }
+                }
+            }
+        }
+    }
+    if slots.len() != state.child_runs.len() {
+        return Err(resume_drift("pool child identity"));
+    }
+    Ok(())
+}
+
+fn next_pool_child_index(state: &PoolRunState) -> Result<Option<usize>, SkillEvalError> {
+    for tier in &state.selected_tiers {
+        let entrants = &state.configuration.entrants[tier];
+        let pool = state.pools.iter().find(|pool| pool.tier == *tier);
+        for (entrant_index, entrant) in entrants.iter().enumerate() {
+            let entrant_index = u8::try_from(entrant_index)
+                .map_err(|_| resume_drift("pool child entrant index"))?;
+            let evidence = pool.map_or(&[][..], |pool| pool.calibration.as_slice());
+            let evidence = evidence
+                .iter()
+                .filter(|item| {
+                    item.requested_model.tier == entrant.model.tier
+                        && item.requested_model.provider == entrant.model.provider
+                        && item.requested_model.model == entrant.model.model
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let decision = select_thinking_level(entrant, &evidence)?;
+            if let Some(thinking_index) = decision.next_thinking_index {
+                let child_index = pool_child_slot(
+                    state,
+                    *tier,
+                    entrant_index,
+                    thinking_index,
+                    PoolStage::Calibration,
+                )?;
+                match state.child_runs[child_index].status {
+                    PoolChildStatus::Completed => continue,
+                    PoolChildStatus::Skipped => {
+                        return Err(resume_drift("thinking decision child status"));
+                    }
+                    PoolChildStatus::Pending
+                    | PoolChildStatus::Running
+                    | PoolChildStatus::Paused
+                    | PoolChildStatus::Failed => return Ok(Some(child_index)),
+                }
+            }
+
+            let mut is_terminal = true;
+            for thinking_index in 0..entrant.thinking_levels.len() {
+                let thinking_index = u8::try_from(thinking_index)
+                    .map_err(|_| resume_drift("pool child thinking index"))?;
+                let index = pool_child_slot(
+                    state,
+                    *tier,
+                    entrant_index,
+                    thinking_index,
+                    PoolStage::Calibration,
+                )?;
+                is_terminal &= matches!(
+                    state.child_runs[index].status,
+                    PoolChildStatus::Completed | PoolChildStatus::Skipped
+                );
+            }
+            let is_selection_persisted = match &decision.selected {
+                Some(selected) => {
+                    pool.is_some_and(|pool| pool.thinking_selections.contains(selected))
+                }
+                None => true,
+            };
+            if !is_terminal || !is_selection_persisted {
+                return Ok(None);
+            }
+        }
+
+        let Some(pool) = pool else {
+            return Ok(None);
+        };
+        for (entrant_index, entrant) in entrants.iter().enumerate() {
+            let entrant_index = u8::try_from(entrant_index)
+                .map_err(|_| resume_drift("pool child entrant index"))?;
+            let calibration = base_model_calibration_evidence(pool, &entrant.model);
+            let screening = select_thinking_level(entrant, &calibration)?;
+            if !screening.is_complete {
+                return Ok(None);
+            }
+            if qualification_eligible_indices(entrant, &calibration)?.is_empty() {
+                continue;
+            }
+            let qualification = base_model_qualification_evidence(pool, &entrant.model);
+            let decision =
+                select_qualification_thinking_level(entrant, &calibration, &qualification)?;
+            if let Some(thinking_index) = decision.next_thinking_index {
+                let child_index = pool_child_slot(
+                    state,
+                    *tier,
+                    entrant_index,
+                    thinking_index,
+                    PoolStage::Qualification,
+                )?;
+                match state.child_runs[child_index].status {
+                    PoolChildStatus::Pending
+                    | PoolChildStatus::Running
+                    | PoolChildStatus::Paused
+                    | PoolChildStatus::Failed => return Ok(Some(child_index)),
+                    PoolChildStatus::Completed => continue,
+                    PoolChildStatus::Skipped => {
+                        return Err(resume_drift("qualification decision child status"));
+                    }
+                }
+            }
+        }
+    }
+    Err(resume_drift("terminal pool status"))
+}
+
+fn pool_child_slot(
+    state: &PoolRunState,
+    tier: Tier,
+    entrant_index: u8,
+    thinking_index: u8,
+    stage: PoolStage,
+) -> Result<usize, SkillEvalError> {
+    let mut matches = state.child_runs.iter().enumerate().filter(|(_, child)| {
+        child.tier == tier
+            && child.entrant_index == entrant_index
+            && child.thinking_index == thinking_index
+            && child.stage == stage
+    });
+    let (index, _) = matches
+        .next()
+        .ok_or_else(|| resume_drift("pool child identity"))?;
+    if matches.next().is_some() {
+        return Err(resume_drift("pool child identity"));
+    }
+    Ok(index)
+}
+
 fn is_promoted_pool_child(
     state: &PoolRunState,
     child: &PoolChildRun,
-    requested: &ModelIdentity,
+    _requested: &ModelIdentity,
 ) -> bool {
-    state.pools.iter().any(|pool| {
-        pool.tier == child.tier
-            && pool.promoted.len() == usize::from(state.configuration.policy.promotion_count)
-            && pool.promoted.contains(requested)
-    })
+    let Some(pool) = state.pools.iter().find(|pool| pool.tier == child.tier) else {
+        return false;
+    };
+    let entrant = &state.configuration.entrants[&child.tier][usize::from(child.entrant_index)];
+    let calibration = base_model_calibration_evidence(pool, &entrant.model);
+    let qualification = base_model_qualification_evidence(pool, &entrant.model);
+    select_qualification_thinking_level(entrant, &calibration, &qualification)
+        .is_ok_and(|decision| decision.next_thinking_index == Some(child.thinking_index))
 }
 
 fn validate_frozen_pool_plan(state: &PoolRunState) -> Result<(), SkillEvalError> {
@@ -639,7 +2760,8 @@ fn validate_frozen_pool_plan(state: &PoolRunState) -> Result<(), SkillEvalError>
         || policy.qualification_repeats_per_case == 0
         || policy.promotion_count != 2
         || policy.minimum_score > 10
-        || policy.minimum_reliability_basis_points > 10_000
+        || policy.calibration_minimum_reliability_basis_points != 8_000
+        || policy.qualification_minimum_reliability_basis_points != 10_000
         || policy.maximum_catalog_age_seconds == 0
         || policy.spending_limit_millionths_of_dollar == 0
         || !policy.is_provider_limit_enforced
@@ -655,7 +2777,7 @@ fn validate_frozen_pool_plan(state: &PoolRunState) -> Result<(), SkillEvalError>
             .entrants
             .get(&tier)
             .ok_or_else(|| resume_drift("pool model plan"))?;
-        if entrants.len() != 3 {
+        if entrants.len() < 3 {
             return Err(resume_drift("pool model plan"));
         }
         for entrant in entrants {
@@ -665,6 +2787,7 @@ fn validate_frozen_pool_plan(state: &PoolRunState) -> Result<(), SkillEvalError>
                 || entrant.model.thinking.trim().is_empty()
                 || entrant.catalog_observed_at.0.trim().is_empty()
                 || models.contains(&entrant.model)
+                || select_thinking_level(entrant, &[]).is_err()
             {
                 return Err(resume_drift("pool model plan"));
             }
@@ -705,9 +2828,9 @@ struct PoolChildReplay {
     completed_artifacts: BTreeMap<ArtifactName, Tier>,
 }
 
-fn replay_pool_child(
+fn replay_pool_child<S: RunStore + ?Sized>(
     run_id: &RunId,
-    store: &dyn RunStore,
+    store: &S,
 ) -> Result<PoolChildReplay, SkillEvalError> {
     let mut replay = PoolChildReplay::default();
     store.replay(run_id, &mut |event| {
@@ -871,6 +2994,7 @@ fn validate_pool_child_resume(
                 let key = TrialKey {
                     artifact: artifact.name.clone(),
                     tier: child.tier,
+                    route_index: 0,
                     case: case.id.clone(),
                     attempt,
                 };
@@ -930,12 +3054,17 @@ fn validate_pool_child_resume(
     Ok((exact_candidate, judge))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pool resume needs the frozen candidate, judge, and timeout context"
+)]
 fn resume_exact_pool_child(
     run_id: &RunId,
     is_paused: bool,
     replay: &PoolChildReplay,
     exact_candidate: &ModelIdentity,
     judge: &ModelIdentity,
+    candidate_timeout_seconds: Option<u32>,
     runtime: &mut dyn QualificationRuntime,
     progress: &mut dyn ProgressSink,
 ) -> Result<QualificationReport, SkillEvalError> {
@@ -961,6 +3090,7 @@ fn resume_exact_pool_child(
                 let key = TrialKey {
                     artifact: artifact.name.clone(),
                     tier: exact_candidate.tier,
+                    route_index: 0,
                     case: case.id.clone(),
                     attempt,
                 };
@@ -987,7 +3117,15 @@ fn resume_exact_pool_child(
                 let candidate = if let Some(candidate) = replay.candidates.get(&key) {
                     candidate.clone()
                 } else {
-                    match runtime.execute(run_id, &key, artifact, case, exact_candidate, &harness) {
+                    match runtime.execute(
+                        run_id,
+                        &key,
+                        artifact,
+                        case,
+                        exact_candidate,
+                        &harness,
+                        candidate_timeout_seconds,
+                    ) {
                         Ok(candidate) => {
                             if candidate.key != key
                                 || candidate.model != *exact_candidate
@@ -1093,7 +3231,7 @@ fn add_pool_resume_spending(
     runtime: &mut dyn PoolRuntime,
     progress: &mut dyn PoolProgressSink,
 ) -> Result<(), SkillEvalError> {
-    let current_cost = report.total_usage.cost_millionths_of_dollar;
+    let current_cost = candidate_cost(&report.run_id, runtime)?;
     let delta = current_cost.checked_sub(prior_cost).ok_or_else(|| {
         SkillEvalError::InvalidConfiguration("pool child usage decreased across resume".to_owned())
     })?;
@@ -1107,6 +3245,20 @@ fn add_pool_resume_spending(
             SkillEvalError::InvalidConfiguration("pool spending arithmetic overflow".to_owned())
         })?;
     save_pool_and_emit(runtime, progress, state)
+}
+
+fn candidate_cost(run_id: &RunId, store: &dyn RunStore) -> Result<u64, SkillEvalError> {
+    replay_pool_child(run_id, store)?
+        .candidates
+        .values()
+        .try_fold(0_u64, |cost, candidate| {
+            cost.checked_add(candidate.usage.cost_millionths_of_dollar)
+                .ok_or_else(|| {
+                    SkillEvalError::InvalidConfiguration(
+                        "pool candidate spending arithmetic overflow".to_owned(),
+                    )
+                })
+        })
 }
 
 fn pause_pool_for_spending_limit(
@@ -1134,7 +3286,6 @@ fn pause_pool_for_spending_limit(
     save_pool_and_emit(runtime, progress, state)
 }
 
-// TODO(AGNT-0032.T106): Advance independent thinking staircases before model promotion.
 fn persist_completed_pool_child_evidence(
     state: &mut PoolRunState,
     child_index: usize,
@@ -1142,9 +3293,7 @@ fn persist_completed_pool_child_evidence(
     progress: &mut dyn PoolProgressSink,
 ) -> Result<(), SkillEvalError> {
     let child = state.child_runs[child_index].clone();
-    let requested = state.configuration.entrants[&child.tier][usize::from(child.entrant_index)]
-        .model
-        .clone();
+    let requested = requested_pool_child_model(state, &child)?;
     let replay = replay_pool_child(&child.run_id, runtime)?;
     let artifact = state
         .configuration
@@ -1181,10 +3330,11 @@ fn persist_completed_pool_child_evidence(
     let pool_index = match state.pools.iter().position(|pool| pool.tier == child.tier) {
         Some(index) => index,
         None => {
-            // TODO(AGNT-0032.T103): Initialize empty thinking selections before adaptive integration.
             state.pools.push(crate::model::RankedPool {
                 tier: child.tier,
                 calibration: Vec::new(),
+                thinking_selections: Vec::new(),
+                retained_lower_routes: Vec::new(),
                 promoted: Vec::new(),
                 qualification: Vec::new(),
                 ranked: Vec::new(),
@@ -1204,50 +3354,155 @@ fn persist_completed_pool_child_evidence(
         return Ok(());
     }
     stage_evidence.push(evidence.clone());
-    save_pool_and_emit(runtime, progress, state)?;
 
     match child.stage {
-        PoolStage::Calibration if state.pools[pool_index].calibration.len() == 3 => {
-            let ranked = rank_pool(
-                child.tier,
-                &state.pools[pool_index].calibration,
-                &[],
-                &state.configuration.policy,
-            )?;
-            state.pools[pool_index] = ranked;
+        PoolStage::Calibration => {
             save_pool_and_emit(runtime, progress, state)?;
-            if state.pools[pool_index].promoted.len()
-                < usize::from(state.configuration.policy.promotion_count)
-            {
-                state.status = PoolRunStatus::AwaitingDecision;
-                save_pool_and_emit(runtime, progress, state)?;
-                return Ok(());
-            }
-            skip_unpromoted_qualification_children(
-                state, child.tier, pool_index, runtime, progress,
-            )?;
-        }
-        PoolStage::Qualification if state.pools[pool_index].calibration.len() != 3 => {}
-        PoolStage::Qualification => {
-            let ranked = rank_pool(
+            advance_thinking_selection(
+                state,
                 child.tier,
+                child.entrant_index,
+                pool_index,
+                runtime,
+                progress,
+            )
+        }
+        PoolStage::Qualification => {
+            let mut ranked = rank_pool(
+                child.tier,
+                &state.configuration.entrants[&child.tier],
                 &state.pools[pool_index].calibration,
                 &state.pools[pool_index].qualification,
                 &state.configuration.policy,
             )?;
-            let is_failed = !evidence.is_passing;
+            restore_thinking_evidence(&mut ranked, &state.pools[pool_index]);
             state.pools[pool_index] = ranked;
             save_pool_and_emit(runtime, progress, state)?;
-            if is_failed
-                || state.pools[pool_index].is_complete && are_selected_pools_complete(state)
-            {
+            skip_unpromoted_qualification_children(
+                state, child.tier, pool_index, runtime, progress,
+            )?;
+            if is_selected_pool_walks_complete(state)? {
                 state.status = PoolRunStatus::AwaitingDecision;
                 save_pool_and_emit(runtime, progress, state)?;
             }
+            Ok(())
         }
-        PoolStage::Calibration => {}
+    }
+}
+
+fn advance_thinking_selection(
+    state: &mut PoolRunState,
+    tier: Tier,
+    entrant_index: u8,
+    pool_index: usize,
+    runtime: &mut dyn PoolRuntime,
+    progress: &mut dyn PoolProgressSink,
+) -> Result<(), SkillEvalError> {
+    let entrant = &state.configuration.entrants[&tier][usize::from(entrant_index)];
+    let evidence = base_model_calibration_evidence(&state.pools[pool_index], &entrant.model);
+    let decision = select_thinking_level(entrant, &evidence)?;
+    if !decision.is_complete {
+        return Ok(());
+    }
+
+    if let Some(selected) = decision.selected
+        && !state.pools[pool_index]
+            .thinking_selections
+            .contains(&selected)
+    {
+        state.pools[pool_index].thinking_selections.push(selected);
+        save_pool_and_emit(runtime, progress, state)?;
+    }
+    if !is_thinking_decisions_complete(state, tier, pool_index)? {
+        return Ok(());
+    }
+    let mut ranked = rank_pool(
+        tier,
+        &state.configuration.entrants[&tier],
+        &state.pools[pool_index].calibration,
+        &[],
+        &state.configuration.policy,
+    )?;
+    restore_thinking_evidence(&mut ranked, &state.pools[pool_index]);
+    state.pools[pool_index] = ranked;
+    save_pool_and_emit(runtime, progress, state)?;
+    skip_unpromoted_qualification_children(state, tier, pool_index, runtime, progress)?;
+    if is_selected_pool_walks_complete(state)? {
+        state.status = PoolRunStatus::AwaitingDecision;
+        save_pool_and_emit(runtime, progress, state)?;
     }
     Ok(())
+}
+
+fn base_model_calibration_evidence(
+    pool: &crate::model::RankedPool,
+    model: &ModelIdentity,
+) -> Vec<crate::model::PoolEntrantEvidence> {
+    pool.calibration
+        .iter()
+        .filter(|evidence| is_same_base_model(&evidence.requested_model, model))
+        .cloned()
+        .collect()
+}
+
+fn base_model_qualification_evidence(
+    pool: &crate::model::RankedPool,
+    model: &ModelIdentity,
+) -> Vec<crate::model::PoolEntrantEvidence> {
+    pool.qualification
+        .iter()
+        .filter(|evidence| is_same_base_model(&evidence.requested_model, model))
+        .cloned()
+        .collect()
+}
+
+fn is_same_base_model(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.tier == right.tier && left.provider == right.provider && left.model == right.model
+}
+
+fn is_thinking_decisions_complete(
+    state: &PoolRunState,
+    tier: Tier,
+    pool_index: usize,
+) -> Result<bool, SkillEvalError> {
+    state.configuration.entrants[&tier]
+        .iter()
+        .map(|entrant| {
+            let evidence =
+                base_model_calibration_evidence(&state.pools[pool_index], &entrant.model);
+            select_thinking_level(entrant, &evidence).map(|decision| decision.is_complete)
+        })
+        .try_fold(true, |is_all_complete, is_complete| {
+            is_complete.map(|is_complete| is_all_complete && is_complete)
+        })
+}
+
+fn selected_calibration_evidence(
+    state: &PoolRunState,
+    pool_index: usize,
+) -> Result<Vec<crate::model::PoolEntrantEvidence>, SkillEvalError> {
+    state.pools[pool_index]
+        .thinking_selections
+        .iter()
+        .map(|selected| {
+            state.pools[pool_index]
+                .calibration
+                .iter()
+                .find(|evidence| evidence.requested_model == *selected && evidence.is_passing)
+                .cloned()
+                .ok_or_else(|| resume_drift("selected thinking calibration evidence"))
+        })
+        .collect()
+}
+
+fn restore_thinking_evidence(
+    ranked: &mut crate::model::RankedPool,
+    attempted: &crate::model::RankedPool,
+) {
+    ranked.calibration.clone_from(&attempted.calibration);
+    ranked
+        .thinking_selections
+        .clone_from(&attempted.thinking_selections);
 }
 
 fn skip_unpromoted_qualification_children(
@@ -1257,32 +3512,103 @@ fn skip_unpromoted_qualification_children(
     runtime: &mut dyn PoolRuntime,
     progress: &mut dyn PoolProgressSink,
 ) -> Result<(), SkillEvalError> {
-    let promoted = state.pools[pool_index].promoted.clone();
-    for child_index in 0..state.child_runs.len() {
-        let child = &state.child_runs[child_index];
-        if child.tier != tier
-            || child.stage != PoolStage::Qualification
-            || child.status != PoolChildStatus::Pending
-        {
-            continue;
+    let entrants = state.configuration.entrants[&tier].clone();
+    for (entrant_index, entrant) in entrants.iter().enumerate() {
+        let calibration = base_model_calibration_evidence(&state.pools[pool_index], &entrant.model);
+        let eligible = qualification_eligible_indices(entrant, &calibration)?;
+        let qualification =
+            base_model_qualification_evidence(&state.pools[pool_index], &entrant.model);
+        let final_decision = if eligible.is_empty() {
+            None
+        } else {
+            Some(select_qualification_thinking_level(
+                entrant,
+                &calibration,
+                &qualification,
+            )?)
+        };
+        let selected_index = final_decision
+            .as_ref()
+            .and_then(|decision| decision.selected.as_ref())
+            .and_then(|selected| {
+                entrant
+                    .thinking_levels
+                    .iter()
+                    .position(|level| level == &selected.thinking)
+            });
+        for thinking_index in 0..entrant.thinking_levels.len() {
+            let child_index = pool_child_slot(
+                state,
+                tier,
+                u8::try_from(entrant_index)
+                    .map_err(|_| resume_drift("pool child entrant index"))?,
+                u8::try_from(thinking_index)
+                    .map_err(|_| resume_drift("pool child thinking index"))?,
+                PoolStage::Qualification,
+            )?;
+            if state.child_runs[child_index].status != PoolChildStatus::Pending {
+                continue;
+            }
+            let is_skipped = !eligible.contains(&thinking_index)
+                || selected_index.is_some_and(|selected| thinking_index > selected);
+            if is_skipped {
+                state.child_runs[child_index].status = PoolChildStatus::Skipped;
+                save_pool_and_emit(runtime, progress, state)?;
+            }
         }
-        let entrant = &state.configuration.entrants[&tier][usize::from(child.entrant_index)].model;
-        if promoted.contains(entrant) {
-            continue;
-        }
-        state.child_runs[child_index].status = PoolChildStatus::Skipped;
-        save_pool_and_emit(runtime, progress, state)?;
     }
     Ok(())
 }
 
-fn are_selected_pools_complete(state: &PoolRunState) -> bool {
-    state.selected_tiers.iter().all(|tier| {
-        state
-            .pools
+fn qualification_eligible_indices(
+    entrant: &PoolEntrant,
+    calibration: &[crate::model::PoolEntrantEvidence],
+) -> Result<BTreeSet<usize>, SkillEvalError> {
+    let mut eligible = BTreeSet::new();
+    if let Some(retained) = &entrant.retained_lower_thinking_level {
+        let retained_index = entrant
+            .thinking_levels
             .iter()
-            .any(|pool| pool.tier == *tier && pool.is_complete)
-    })
+            .position(|level| level == retained)
+            .ok_or_else(|| resume_drift("retained lower thinking level"))?;
+        if calibration
+            .iter()
+            .any(|evidence| evidence.requested_model.thinking == *retained && evidence.is_passing)
+        {
+            eligible.insert(retained_index);
+        }
+    }
+    if let Some(start) = qualification_start_index(entrant, calibration)? {
+        eligible.extend(start..entrant.thinking_levels.len());
+    }
+    Ok(eligible)
+}
+
+fn is_selected_pool_walks_complete(state: &PoolRunState) -> Result<bool, SkillEvalError> {
+    state
+        .selected_tiers
+        .iter()
+        .try_fold(true, |is_all_complete, tier| {
+            let Some(pool) = state.pools.iter().find(|pool| pool.tier == *tier) else {
+                return Ok(false);
+            };
+            let mut is_tier_complete = true;
+            for entrant in &state.configuration.entrants[tier] {
+                let calibration = base_model_calibration_evidence(pool, &entrant.model);
+                let screening = select_thinking_level(entrant, &calibration)?;
+                if !screening.is_complete {
+                    is_tier_complete = false;
+                    continue;
+                }
+                if !qualification_eligible_indices(entrant, &calibration)?.is_empty() {
+                    let qualification = base_model_qualification_evidence(pool, &entrant.model);
+                    is_tier_complete &=
+                        select_qualification_thinking_level(entrant, &calibration, &qualification)?
+                            .is_complete;
+                }
+            }
+            Ok(is_all_complete && is_tier_complete)
+        })
 }
 
 fn review_failed_pool_child(
@@ -1312,7 +3638,34 @@ pub(crate) fn start_qualification_with_run_id(
     runtime: &mut dyn QualificationRuntime,
     progress: &mut dyn ProgressSink,
 ) -> Result<QualificationReport, SkillEvalError> {
-    start_qualification_for_run(run_id, exact_candidate, request, true, runtime, progress)
+    start_qualification_for_run(
+        run_id,
+        exact_candidate,
+        None,
+        request,
+        true,
+        runtime,
+        progress,
+    )
+}
+
+fn start_pool_qualification_with_run_id(
+    run_id: RunId,
+    exact_candidate: ModelIdentity,
+    candidate_timeout_seconds: Option<u32>,
+    request: QualifyRequest,
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<QualificationReport, SkillEvalError> {
+    start_qualification_for_run(
+        run_id,
+        Some(exact_candidate),
+        candidate_timeout_seconds,
+        request,
+        true,
+        runtime,
+        progress,
+    )
 }
 
 pub(crate) fn start_qualification(
@@ -1322,12 +3675,13 @@ pub(crate) fn start_qualification(
 ) -> Result<QualificationReport, SkillEvalError> {
     validate_start_request(&request)?;
     let run_id = runtime.next()?;
-    start_qualification_for_run(run_id, None, request, false, runtime, progress)
+    start_qualification_for_run(run_id, None, None, request, false, runtime, progress)
 }
 
 fn start_qualification_for_run(
     run_id: RunId,
     exact_candidate: Option<ModelIdentity>,
+    candidate_timeout_seconds: Option<u32>,
     request: QualifyRequest,
     is_preallocated: bool,
     runtime: &mut dyn QualificationRuntime,
@@ -1335,6 +3689,16 @@ fn start_qualification_for_run(
 ) -> Result<QualificationReport, SkillEvalError> {
     validate_start_request(&request)?;
     validate_run_id(&run_id)?;
+    if candidate_timeout_seconds == Some(0) {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "candidate timeout must be greater than zero".to_owned(),
+        ));
+    }
+    if exact_candidate.is_none() && candidate_timeout_seconds.is_some() {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "candidate timeout requires an exact pool candidate".to_owned(),
+        ));
+    }
     if is_preallocated {
         validate_exact_candidate_shape(&request, exact_candidate.as_ref())?;
     }
@@ -1374,12 +3738,32 @@ fn start_qualification_for_run(
     } else {
         RunMode::Execute
     };
+    let qualification_routes = if mode == RunMode::Execute && exact_candidate.is_none() {
+        let configured_judge_tier = runtime.configured_judge_tier()?;
+        if configured_judge_tier != request.policy.judge_tier {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "configured judge tier differs from qualification policy".to_string(),
+            ));
+        }
+        let tiers = std::iter::once(request.policy.reference_tier)
+            .chain(request.policy.candidate_tiers.iter().copied())
+            .collect::<BTreeSet<_>>();
+        let mut routes = BTreeMap::new();
+        for tier in tiers {
+            routes.insert(tier, exact_qualification_routes(runtime, tier)?);
+        }
+        routes
+    } else {
+        BTreeMap::new()
+    };
+
     let configuration = RunConfiguration {
         run_id: run_id.clone(),
         mode,
         artifacts: artifacts.clone(),
         change: request.change.clone(),
         policy: request.policy.clone(),
+        qualification_routes: qualification_routes.clone(),
         created_at: created_at.clone(),
     };
     append_and_emit(
@@ -1403,41 +3787,32 @@ fn start_qualification_for_run(
             &run_id,
             &artifacts,
             exact_candidate,
+            candidate_timeout_seconds,
             &request.policy,
             runtime,
             progress,
         );
     }
 
-    let configured_judge_tier = runtime.configured_judge_tier()?;
-    if configured_judge_tier != request.policy.judge_tier {
-        return Err(SkillEvalError::InvalidConfiguration(
-            "configured judge tier differs from qualification policy".to_string(),
-        ));
-    }
-
     for artifact in &artifacts {
-        let reference_trials = match run_tier_trials(
+        let reference = match run_tier_qualification(
             &run_id,
             artifact,
             request.policy.reference_tier,
+            EvidenceRole::Reference,
+            None,
             &request.policy,
+            routes_for_tier(&qualification_routes, request.policy.reference_tier)?,
             runtime,
             progress,
         ) {
-            Ok(trials) => trials,
+            Ok(evidence) => evidence,
             Err(StartTrialError::BeforeCheckpoint(error)) => return Err(error),
             Err(StartTrialError::AfterCheckpoint(error)) => {
                 append_pause(runtime, progress, &run_id, error)?;
                 return build_report(&run_id, runtime);
             }
         };
-        let reference = evaluate_tier(
-            EvidenceRole::Reference,
-            &reference_trials,
-            None,
-            &request.policy,
-        )?;
         let at = runtime.now();
         append_and_emit(
             runtime,
@@ -1452,31 +3827,21 @@ fn start_qualification_for_run(
 
         let mut candidate_evidence = Vec::new();
         for tier in &request.policy.candidate_tiers {
-            let trials =
-                match run_tier_trials(&run_id, artifact, *tier, &request.policy, runtime, progress)
-                {
-                    Ok(trials) => trials,
-                    Err(StartTrialError::BeforeCheckpoint(error)) => return Err(error),
-                    Err(StartTrialError::AfterCheckpoint(error)) => {
-                        append_pause(runtime, progress, &run_id, error)?;
-                        return build_report(&run_id, runtime);
-                    }
-                };
-            let evidence = match evaluate_tier(
+            let evidence = match run_tier_qualification(
+                &run_id,
+                artifact,
+                *tier,
                 EvidenceRole::Candidate,
-                &trials,
                 Some(&reference),
                 &request.policy,
+                routes_for_tier(&qualification_routes, *tier)?,
+                runtime,
+                progress,
             ) {
                 Ok(evidence) => evidence,
-                Err(_) => {
-                    append_review(
-                        runtime,
-                        progress,
-                        &run_id,
-                        &artifact.name,
-                        "candidate evidence is unsupported",
-                    )?;
+                Err(StartTrialError::BeforeCheckpoint(error)) => return Err(error),
+                Err(StartTrialError::AfterCheckpoint(error)) => {
+                    append_pause(runtime, progress, &run_id, error)?;
                     return build_report(&run_id, runtime);
                 }
             };
@@ -1598,6 +3963,7 @@ fn run_exact_pool_child(
     run_id: &RunId,
     artifacts: &[ArtifactDefinition],
     exact_candidate: &ModelIdentity,
+    candidate_timeout_seconds: Option<u32>,
     policy: &QualificationPolicy,
     runtime: &mut dyn QualificationRuntime,
     progress: &mut dyn ProgressSink,
@@ -1609,6 +3975,7 @@ fn run_exact_pool_child(
                 let key = TrialKey {
                     artifact: artifact.name.clone(),
                     tier: exact_candidate.tier,
+                    route_index: 0,
                     case: case.id.clone(),
                     attempt,
                 };
@@ -1632,6 +3999,7 @@ fn run_exact_pool_child(
                     case,
                     exact_candidate,
                     &harness,
+                    candidate_timeout_seconds,
                 ) {
                     Ok(candidate) => candidate,
                     Err(
@@ -1744,10 +4112,117 @@ enum StartTrialError {
     AfterCheckpoint(SkillEvalError),
 }
 
-fn run_tier_trials(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "tier qualification needs the route and evidence context"
+)]
+fn run_tier_qualification(
     run_id: &RunId,
     artifact: &ArtifactDefinition,
     tier: Tier,
+    role: EvidenceRole,
+    reference: Option<&TierEvidence>,
+    policy: &QualificationPolicy,
+    routes: &[ModelIdentity],
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<TierEvidence, StartTrialError> {
+    let mut last_evidence = None;
+    for (route_index, route) in routes.iter().enumerate() {
+        let route_index = u16::try_from(route_index).map_err(|_| {
+            StartTrialError::BeforeCheckpoint(SkillEvalError::InvalidConfiguration(format!(
+                "tier {tier:?} qualification route index is out of range"
+            )))
+        })?;
+        let trials = run_exact_route_trials(
+            run_id,
+            artifact,
+            tier,
+            route_index,
+            route,
+            policy,
+            runtime,
+            progress,
+        )?;
+        let evidence = evaluate_tier(role, &trials, reference, policy)
+            .map_err(StartTrialError::BeforeCheckpoint)?;
+        if evidence.status == TierStatus::Accepted {
+            return Ok(evidence);
+        }
+        last_evidence = Some(evidence);
+    }
+    last_evidence.ok_or_else(|| {
+        StartTrialError::BeforeCheckpoint(SkillEvalError::InvalidConfiguration(format!(
+            "artifact qualification route order for tier {tier:?} is absent"
+        )))
+    })
+}
+
+fn exact_qualification_routes(
+    runtime: &dyn QualificationRuntime,
+    tier: Tier,
+) -> Result<Vec<ModelIdentity>, SkillEvalError> {
+    let routes = runtime.qualification_routes(tier)?;
+    validate_exact_qualification_routes(runtime, tier, &routes)?;
+    Ok(routes)
+}
+
+fn validate_exact_qualification_routes(
+    runtime: &dyn QualificationRuntime,
+    tier: Tier,
+    routes: &[ModelIdentity],
+) -> Result<(), SkillEvalError> {
+    if routes.is_empty() {
+        return Err(SkillEvalError::InvalidConfiguration(format!(
+            "artifact qualification route order for tier {tier:?} is absent"
+        )));
+    }
+    u16::try_from(routes.len() - 1).map_err(|_| {
+        SkillEvalError::InvalidConfiguration(format!(
+            "artifact qualification route order for tier {tier:?} is too long"
+        ))
+    })?;
+    let mut exact_routes = BTreeSet::new();
+    for route in routes {
+        if route.tier != tier || runtime.exact_candidate(route)? != *route {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "artifact qualification route for tier {tier:?} is not exact"
+            )));
+        }
+        if !exact_routes.insert((
+            route.provider.clone(),
+            route.model.clone(),
+            route.thinking.clone(),
+        )) {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "artifact qualification route order for tier {tier:?} contains a duplicate exact route"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn routes_for_tier(
+    routes: &BTreeMap<Tier, Vec<ModelIdentity>>,
+    tier: Tier,
+) -> Result<&[ModelIdentity], SkillEvalError> {
+    routes.get(&tier).map(Vec::as_slice).ok_or_else(|| {
+        SkillEvalError::InvalidConfiguration(format!(
+            "frozen artifact qualification routes for tier {tier:?} are absent"
+        ))
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "trial execution needs the frozen route context"
+)]
+fn run_exact_route_trials(
+    run_id: &RunId,
+    artifact: &ArtifactDefinition,
+    tier: Tier,
+    route_index: u16,
+    route: &ModelIdentity,
     policy: &QualificationPolicy,
     runtime: &mut dyn QualificationRuntime,
     progress: &mut dyn ProgressSink,
@@ -1767,17 +4242,10 @@ fn run_tier_trials(
             let key = TrialKey {
                 artifact: artifact.name.clone(),
                 tier,
+                route_index,
                 case: case.id.clone(),
                 attempt,
             };
-            let models = runtime
-                .candidates(tier)
-                .map_err(StartTrialError::BeforeCheckpoint)?;
-            let primary = models.first().cloned().ok_or_else(|| {
-                StartTrialError::BeforeCheckpoint(SkillEvalError::InvalidConfiguration(format!(
-                    "tier {tier:?} has an empty model route"
-                )))
-            })?;
             let at = runtime.now();
             append_and_emit(
                 runtime,
@@ -1786,15 +4254,28 @@ fn run_tier_trials(
                 RunEvent::TrialStarted {
                     at,
                     key: key.clone(),
-                    models: models.clone(),
+                    models: vec![route.clone()],
                     harness: harness.clone(),
                 },
             )
             .map_err(StartTrialError::BeforeCheckpoint)?;
 
             let candidate = runtime
-                .execute(run_id, &key, artifact, case, &primary, &harness)
+                .execute(
+                    run_id,
+                    &key,
+                    artifact,
+                    case,
+                    route,
+                    &harness,
+                    Some(case.execution.timeout_seconds),
+                )
                 .map_err(StartTrialError::BeforeCheckpoint)?;
+            if candidate.key != key || candidate.model != *route || candidate.harness != harness {
+                return Err(StartTrialError::BeforeCheckpoint(resume_drift(
+                    "exact artifact qualification route",
+                )));
+            }
             let at = runtime.now();
             append_and_emit(
                 runtime,
@@ -2064,6 +4545,11 @@ pub(crate) fn resume_qualification(
     let configuration = replay.configuration.as_ref().ok_or_else(|| {
         SkillEvalError::InvalidConfiguration("run has no frozen configuration".to_string())
     })?;
+    if configuration.policy.purpose == QualificationPurpose::ModelPool {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "resume a model-pool child through its parent pool run".to_owned(),
+        ));
+    }
     validate_resume_environment(configuration, &replay, runtime)?;
 
     let at = runtime.now();
@@ -2159,21 +4645,12 @@ fn validate_resume_environment(
         policy: configuration.policy.clone(),
         is_dry_run: false,
     })?;
+    validate_frozen_resume_routes(configuration, runtime)?;
     if runtime.configured_judge_tier()? != configuration.policy.judge_tier {
         return Err(resume_drift("qualification policy"));
     }
 
     let mut planned_keys = BTreeSet::new();
-    let started_tiers = replay
-        .started
-        .keys()
-        .map(|key| key.tier)
-        .collect::<BTreeSet<_>>();
-    let mut routes = BTreeMap::new();
-    for tier in started_tiers {
-        routes.insert(tier, runtime.candidates(tier)?);
-    }
-
     for artifact in &configuration.artifacts {
         let current = runtime.load(&artifact.root)?;
         if current.name != artifact.name
@@ -2187,20 +4664,35 @@ fn validate_resume_environment(
             for tier in std::iter::once(configuration.policy.reference_tier)
                 .chain(configuration.policy.candidate_tiers.iter().copied())
             {
-                for attempt in 1..=configuration.policy.repeats_per_case {
-                    let key = TrialKey {
-                        artifact: artifact.name.clone(),
-                        tier,
-                        case: case.id.clone(),
-                        attempt,
-                    };
-                    planned_keys.insert(key.clone());
-                    if let Some(started) = replay.started.get(&key) {
-                        if routes.get(&tier) != Some(&started.models) {
-                            return Err(resume_drift("model route"));
-                        }
-                        if started.harness != current_harness {
-                            return Err(resume_drift("harness identity"));
+                for (route_index, route) in
+                    routes_for_tier(&configuration.qualification_routes, tier)?
+                        .iter()
+                        .enumerate()
+                {
+                    let route_index = u16::try_from(route_index)
+                        .map_err(|_| resume_drift("qualification route index"))?;
+                    for attempt in 1..=configuration.policy.repeats_per_case {
+                        let key = TrialKey {
+                            artifact: artifact.name.clone(),
+                            tier,
+                            route_index,
+                            case: case.id.clone(),
+                            attempt,
+                        };
+                        planned_keys.insert(key.clone());
+                        if let Some(started) = replay.started.get(&key) {
+                            if started.models.len() != 1 {
+                                return Err(SkillEvalError::InvalidConfiguration(
+                                    "resume rejected legacy artifact qualification route schema; start a new run"
+                                        .to_owned(),
+                                ));
+                            }
+                            if started.models[0] != *route {
+                                return Err(resume_drift("model route"));
+                            }
+                            if started.harness != current_harness {
+                                return Err(resume_drift("harness identity"));
+                            }
                         }
                     }
                 }
@@ -2241,6 +4733,37 @@ fn validate_resume_environment(
     Ok(())
 }
 
+fn validate_frozen_resume_routes(
+    configuration: &RunConfiguration,
+    runtime: &dyn QualificationRuntime,
+) -> Result<(), SkillEvalError> {
+    if configuration.policy.purpose != QualificationPurpose::Artifact {
+        return Ok(());
+    }
+    if configuration.qualification_routes.is_empty() {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "resume rejected legacy artifact qualification run without frozen routes; start a new run"
+                .to_owned(),
+        ));
+    }
+    let tiers = std::iter::once(configuration.policy.reference_tier)
+        .chain(configuration.policy.candidate_tiers.iter().copied())
+        .collect::<BTreeSet<_>>();
+    if configuration
+        .qualification_routes
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        != tiers
+    {
+        return Err(resume_drift("frozen qualification routes"));
+    }
+    for (tier, routes) in &configuration.qualification_routes {
+        validate_exact_qualification_routes(runtime, *tier, routes)?;
+    }
+    Ok(())
+}
+
 fn continue_qualification(
     configuration: &RunConfiguration,
     report: &QualificationReport,
@@ -2261,28 +4784,28 @@ fn continue_qualification(
         let reference = if let Some(reference) = &prior.reference {
             reference.clone()
         } else {
-            let trials = match resume_tier_trials(
+            let evidence = match resume_tier_qualification(
                 &configuration.run_id,
                 artifact,
                 configuration.policy.reference_tier,
+                EvidenceRole::Reference,
+                None,
                 &configuration.policy,
+                routes_for_tier(
+                    &configuration.qualification_routes,
+                    configuration.policy.reference_tier,
+                )?,
                 replay,
                 runtime,
                 progress,
             ) {
-                Ok(trials) => trials,
+                Ok(evidence) => evidence,
                 Err(StartTrialError::BeforeCheckpoint(error)) => return Err(error),
                 Err(StartTrialError::AfterCheckpoint(error)) => {
                     append_pause(runtime, progress, &configuration.run_id, error)?;
                     return build_report(&configuration.run_id, runtime);
                 }
             };
-            let evidence = evaluate_tier(
-                EvidenceRole::Reference,
-                &trials,
-                None,
-                &configuration.policy,
-            )?;
             let at = runtime.now();
             append_and_emit(
                 runtime,
@@ -2316,37 +4839,22 @@ fn continue_qualification(
                 }
                 continue;
             }
-            let trials = match resume_tier_trials(
+            let evidence = match resume_tier_qualification(
                 &configuration.run_id,
                 artifact,
                 *tier,
+                EvidenceRole::Candidate,
+                Some(&reference),
                 &configuration.policy,
+                routes_for_tier(&configuration.qualification_routes, *tier)?,
                 replay,
                 runtime,
                 progress,
             ) {
-                Ok(trials) => trials,
+                Ok(evidence) => evidence,
                 Err(StartTrialError::BeforeCheckpoint(error)) => return Err(error),
                 Err(StartTrialError::AfterCheckpoint(error)) => {
                     append_pause(runtime, progress, &configuration.run_id, error)?;
-                    return build_report(&configuration.run_id, runtime);
-                }
-            };
-            let evidence = match evaluate_tier(
-                EvidenceRole::Candidate,
-                &trials,
-                Some(&reference),
-                &configuration.policy,
-            ) {
-                Ok(evidence) => evidence,
-                Err(_) => {
-                    append_review(
-                        runtime,
-                        progress,
-                        &configuration.run_id,
-                        &artifact.name,
-                        "candidate evidence is unsupported",
-                    )?;
                     return build_report(&configuration.run_id, runtime);
                 }
             };
@@ -2405,10 +4913,62 @@ fn continue_qualification(
     build_report(&configuration.run_id, runtime)
 }
 
-fn resume_tier_trials(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "resume needs the frozen route and evidence context"
+)]
+fn resume_tier_qualification(
     run_id: &RunId,
     artifact: &ArtifactDefinition,
     tier: Tier,
+    role: EvidenceRole,
+    reference: Option<&TierEvidence>,
+    policy: &QualificationPolicy,
+    routes: &[ModelIdentity],
+    replay: &ResumeData,
+    runtime: &mut dyn QualificationRuntime,
+    progress: &mut dyn ProgressSink,
+) -> Result<TierEvidence, StartTrialError> {
+    let mut last_evidence = None;
+    for (route_index, route) in routes.iter().enumerate() {
+        let route_index = u16::try_from(route_index).map_err(|_| {
+            StartTrialError::BeforeCheckpoint(resume_drift("qualification route index"))
+        })?;
+        let trials = resume_exact_route_trials(
+            run_id,
+            artifact,
+            tier,
+            route_index,
+            route,
+            policy,
+            replay,
+            runtime,
+            progress,
+        )?;
+        let evidence = evaluate_tier(role, &trials, reference, policy)
+            .map_err(StartTrialError::BeforeCheckpoint)?;
+        if evidence.status == TierStatus::Accepted {
+            return Ok(evidence);
+        }
+        last_evidence = Some(evidence);
+    }
+    last_evidence.ok_or_else(|| {
+        StartTrialError::BeforeCheckpoint(SkillEvalError::InvalidConfiguration(format!(
+            "artifact qualification route order for tier {tier:?} is absent"
+        )))
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "resume needs the frozen exact trial context"
+)]
+fn resume_exact_route_trials(
+    run_id: &RunId,
+    artifact: &ArtifactDefinition,
+    tier: Tier,
+    route_index: u16,
+    route: &ModelIdentity,
     policy: &QualificationPolicy,
     replay: &ResumeData,
     runtime: &mut dyn QualificationRuntime,
@@ -2425,6 +4985,7 @@ fn resume_tier_trials(
             let key = TrialKey {
                 artifact: artifact.name.clone(),
                 tier,
+                route_index,
                 case: case.id.clone(),
                 attempt,
             };
@@ -2433,22 +4994,17 @@ fn resume_tier_trials(
                 continue;
             }
 
-            let (models, harness) = if let Some(started) = replay.started.get(&key) {
-                (started.models.clone(), started.harness.clone())
+            let harness = if let Some(started) = replay.started.get(&key) {
+                if started.models != [route.clone()] {
+                    return Err(StartTrialError::BeforeCheckpoint(resume_drift(
+                        "exact model route",
+                    )));
+                }
+                started.harness.clone()
             } else {
                 let harness = runtime
                     .identity(artifact, &case.execution)
                     .map_err(StartTrialError::BeforeCheckpoint)?;
-                let models = runtime
-                    .candidates(tier)
-                    .map_err(StartTrialError::BeforeCheckpoint)?;
-                if models.is_empty() {
-                    return Err(StartTrialError::BeforeCheckpoint(
-                        SkillEvalError::InvalidConfiguration(format!(
-                            "tier {tier:?} has an empty model route"
-                        )),
-                    ));
-                }
                 let at = runtime.now();
                 append_and_emit(
                     runtime,
@@ -2457,25 +5013,34 @@ fn resume_tier_trials(
                     RunEvent::TrialStarted {
                         at,
                         key: key.clone(),
-                        models: models.clone(),
+                        models: vec![route.clone()],
                         harness: harness.clone(),
                     },
                 )
                 .map_err(StartTrialError::BeforeCheckpoint)?;
-                (models, harness)
+                harness
             };
 
             let candidate = if let Some(candidate) = replay.candidates.get(&key) {
                 candidate.clone()
             } else {
-                let primary = models.first().ok_or_else(|| {
-                    StartTrialError::BeforeCheckpoint(SkillEvalError::InvalidConfiguration(
-                        format!("tier {tier:?} has an empty model route"),
-                    ))
-                })?;
                 let candidate = runtime
-                    .execute(run_id, &key, artifact, case, primary, &harness)
+                    .execute(
+                        run_id,
+                        &key,
+                        artifact,
+                        case,
+                        route,
+                        &harness,
+                        Some(case.execution.timeout_seconds),
+                    )
                     .map_err(StartTrialError::BeforeCheckpoint)?;
+                if candidate.key != key || candidate.model != *route || candidate.harness != harness
+                {
+                    return Err(StartTrialError::BeforeCheckpoint(resume_drift(
+                        "exact artifact qualification route",
+                    )));
+                }
                 let at = runtime.now();
                 append_and_emit(
                     runtime,
@@ -3005,11 +5570,19 @@ pub(crate) fn prepare_audit_briefs(
             let key = TrialKey {
                 artifact: artifact.name.clone(),
                 tier,
+                route_index: 0,
                 case: case.id.clone(),
                 attempt: 1,
             };
-            let result =
-                runtime.execute(&audit_run_id, &key, &artifact, case, incumbent, &harness)?;
+            let result = runtime.execute(
+                &audit_run_id,
+                &key,
+                &artifact,
+                case,
+                incumbent,
+                &harness,
+                Some(case.execution.timeout_seconds),
+            )?;
             if result.key != key || result.harness != harness || result.model != *incumbent {
                 return Err(SkillEvalError::InvalidConfiguration(
                     "incumbent execution returned drifted trial identity".to_owned(),
@@ -3600,6 +6173,112 @@ pub(crate) fn find_boundary(
     policy: &QualificationPolicy,
 ) -> Result<Option<QualificationBoundary>, SkillEvalError> {
     crate::statistics::find_boundary(evidence, policy)
+}
+
+// TODO(AGNT-0032.T146): Build the guarded no-call frontier preview.
+/// Validates one reviewed plan and projects its complete cumulative frontier.
+///
+/// The inputs are a plan path and read-only runtime. The output is a no-call preview.
+///
+/// # Errors
+///
+/// Returns an error for invalid suite, plan, capability, policy, identity, or source evidence.
+pub(crate) fn preview_frontier(
+    _plan_path: &Path,
+    _runtime: &dyn FrontierRuntime,
+) -> Result<FrontierPreviewReport, SkillEvalError> {
+    unimplemented!()
+}
+
+// TODO(AGNT-0032.T147): Start and resume the exact cumulative frontier lifecycle.
+/// Creates and advances one cumulative first-party frontier run.
+///
+/// The inputs are a frozen plan path, runtime, and progress sink. The output is saved state.
+///
+/// # Errors
+///
+/// Returns an error for invalid authority, storage, identity, candidate, judge, or infrastructure state.
+pub(crate) fn start_frontier(
+    _plan_path: &Path,
+    _runtime: &mut dyn FrontierRuntime,
+    _progress: &mut dyn FrontierProgressSink,
+) -> Result<FrontierRunState, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Continues one saved cumulative frontier without repeating terminal work.
+///
+/// The inputs are a run identity, runtime, and progress sink. The output is updated saved state.
+///
+/// # Errors
+///
+/// Returns an error for resume drift, invalid state, quota, storage, or execution failure.
+pub(crate) fn resume_frontier(
+    _run_id: &FrontierRunId,
+    _runtime: &mut dyn FrontierRuntime,
+    _progress: &mut dyn FrontierProgressSink,
+) -> Result<FrontierRunState, SkillEvalError> {
+    unimplemented!()
+}
+
+// TODO(AGNT-0032.T148): Build the cross-tier report and exact inspection.
+/// Builds one cross-tier report and optional saved-baseline comparison.
+///
+/// The inputs are a run identity, optional baseline path, and runtime. The output is the report.
+///
+/// # Errors
+///
+/// Returns an error for absent, malformed, incomplete, conflicting, or drifted evidence.
+pub(crate) fn build_frontier_report(
+    _run_id: &FrontierRunId,
+    _baseline_path: Option<&Path>,
+    _runtime: &dyn FrontierRuntime,
+) -> Result<FrontierReport, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Loads one exact frontier trial or infrastructure event.
+///
+/// The inputs are an exact selector and runtime. The output is the selected evidence.
+///
+/// # Errors
+///
+/// Returns an error for an unsafe, ambiguous, absent, or inconsistent selector.
+pub(crate) fn inspect_frontier(
+    _selector: &crate::model::FrontierTrialSelector,
+    _runtime: &dyn FrontierRuntime,
+) -> Result<FrontierInspection, SkillEvalError> {
+    unimplemented!()
+}
+
+// TODO(AGNT-0032.T149): Record rejection or commit acceptance with one ledger suffix.
+/// Records an owner decision and appends an accepted baseline when requested.
+///
+/// The inputs are a decision request and runtime. The output is the terminal saved state.
+///
+/// # Errors
+///
+/// Returns an error for an invalid decision, nonterminal run, stale ledger, or failed atomic write.
+pub(crate) fn record_frontier_decision(
+    _request: &FrontierDecisionRequest,
+    _runtime: &mut dyn FrontierRuntime,
+) -> Result<FrontierRunState, SkillEvalError> {
+    unimplemented!()
+}
+
+// TODO(AGNT-0032.T159): Publish only current accepted active routes.
+/// Applies one accepted frontier's active routes to the owned routing map.
+///
+/// The inputs are an accepted run identity and runtime. The output records routes and byte change.
+///
+/// # Errors
+///
+/// Returns an error for unresolved, rejected, stale, drifted, unsafe, or unwritable evidence.
+pub(crate) fn apply_frontier_baseline(
+    _run_id: &FrontierRunId,
+    _runtime: &mut dyn FrontierRuntime,
+) -> Result<FrontierApplyReport, SkillEvalError> {
+    unimplemented!()
 }
 
 #[cfg(test)]
@@ -4223,6 +6902,7 @@ mod state {
                     noninferiority_margin: 0.1,
                     confidence_level: 0.95,
                 },
+                qualification_routes: Default::default(),
                 created_at: timestamp(),
             },
         }
@@ -4295,6 +6975,7 @@ mod state {
             key: TrialKey {
                 artifact: artifact_name(),
                 tier: Tier::T2,
+                route_index: 0,
                 case: CaseId("case-1".to_string()),
                 attempt,
             },

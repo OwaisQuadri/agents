@@ -1,0 +1,1 @@
+Use `particles.js` as the current representation. Keep movement, hue, and removal behavior for 200,000 particles. Use built-in typed arrays only. Partition live particles with a live count and swap removal. Run the program before and after. Put exact output, allocated typed-array bytes, and moves in `REPORT.md`.

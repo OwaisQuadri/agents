@@ -1,0 +1,10 @@
+{
+  "tiers": {
+    "T5": {
+      "pi": "anthropic/claude-fable-5",
+      "fallbacks": [],
+      "thinking": "medium"
+    }
+  },
+  "judge": "T9"
+}

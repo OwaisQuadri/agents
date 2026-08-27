@@ -6,8 +6,8 @@ macro_rules! report_destination_tests {
 
             use $crate::model::{
                 ArtifactDefinition, ArtifactKind, ArtifactName, QualificationPolicy,
-                RunConfiguration, RunEvent, RunId, RunMode, SkillEvalError, Tier, TierAssignment,
-                TierDestination, Timestamp, TrialRecord, TrialSelector,
+                QualificationPurpose, RunConfiguration, RunEvent, RunId, RunMode, SkillEvalError,
+                Tier, TierAssignment, TierDestination, Timestamp, TrialRecord, TrialSelector,
             };
             use $crate::ports::RunStore;
 
@@ -202,8 +202,8 @@ macro_rules! report_destination_tests {
                             mode: RunMode::Execute,
                             artifacts,
                             change: None,
-                            // TODO(AGNT-0032.T82): Mark this report run as artifact qualification.
                             policy: QualificationPolicy {
+                                purpose: QualificationPurpose::Artifact,
                                 candidate_tiers: vec![Tier::T2],
                                 reference_tier: Tier::T4,
                                 judge_tier: Tier::T5,
@@ -212,6 +212,7 @@ macro_rules! report_destination_tests {
                                 noninferiority_margin: 0.1,
                                 confidence_level: 0.95,
                             },
+                            qualification_routes: Default::default(),
                             created_at: timestamp(),
                         },
                     }],

@@ -1,0 +1,2 @@
+provider  model         context  max-out  thinking  images
+legacy    plain-model   32K      4K       no        no

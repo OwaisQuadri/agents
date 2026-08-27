@@ -1,0 +1,10 @@
+provider      model                         context  max-out  thinking  images
+anthropic     claude-fable-5                1M       128K     yes       yes
+anthropic     claude-haiku-4-5              200K     64K      yes       yes
+anthropic     claude-opus-5                 1M       128K     yes       yes
+anthropic     claude-sonnet-5               1M       128K     yes       yes
+openai-codex  gpt-5.3-codex-spark           1M       128K     yes       no
+openai-codex  gpt-5.6-luna                  1M       128K     yes       yes
+openai-codex  gpt-5.6-sol                   1M       128K     yes       yes
+openai-codex  gpt-5.6-terra                 1M       128K     yes       yes
+openrouter    openrouter/free               200K     4.1K     yes       yes

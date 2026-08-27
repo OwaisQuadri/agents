@@ -1,0 +1,3 @@
+**Motion as feedback** is indexed, but it is not in the bundled definitions. The provided Material Design 3 motion guidance says that motion can provide feedback and status, guide users, and create expressive experiences.
+
+A bundled option is **hover state** — The visual change when a cursor moves over an interactive element. Should confirm interactivity through cursor change, color shift, or both. Color alone is not enough.

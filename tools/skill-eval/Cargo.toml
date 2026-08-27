@@ -1,0 +1,21 @@
+[package]
+name = "skill-eval"
+version = "0.3.2"
+edition = "2024"
+
+[[bin]]
+name = "fake-pi-authoring-gate"
+path = "tests/fixtures/authoring-gate/fake_pi.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "fake-pi-model-capabilities"
+path = "tests/fixtures/model-capabilities/fake_pi.rs"
+test = false
+bench = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

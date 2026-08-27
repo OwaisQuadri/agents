@@ -1,0 +1,17 @@
+{
+  "at": "2026-08-04T09:30:00-0400",
+  "sessions": [],
+  "workspaces": [
+    {
+      "repo": "agents",
+      "workspace": "machu-picchu",
+      "path": "/Users/owaisquadri/conductor/workspaces/agents/machu-picchu",
+      "branch": "main",
+      "headSha": "def5678",
+      "lastTouchedAt": "2026-08-04T09:29:00-0400"
+    }
+  ],
+  "jobs": [],
+  "daemonWorkerCount": 0,
+  "launchd": []
+}

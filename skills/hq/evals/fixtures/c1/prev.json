@@ -1,0 +1,40 @@
+{
+  "at": "2026-08-04T09:00:00-0400",
+  "sessions": [
+    {
+      "pid": 100,
+      "sessionId": "s-aaa",
+      "cwd": "/Users/owaisquadri/conductor/workspaces/agents/machu-picchu",
+      "name": "machu-picchu-74",
+      "startedAt": 1
+    }
+  ],
+  "workspaces": [
+    {
+      "repo": "agents",
+      "workspace": "machu-picchu",
+      "path": "/Users/owaisquadri/conductor/workspaces/agents/machu-picchu",
+      "branch": "main",
+      "headSha": "abc1234",
+      "lastTouchedAt": "2026-08-04T08:59:00-0400"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "j1",
+      "state": "running",
+      "detail": "suite",
+      "stateMtime": "2026-08-04T08:58:00-0400",
+      "timelineMtime": "2026-08-04T08:58:00-0400"
+    }
+  ],
+  "daemonWorkerCount": 0,
+  "launchd": [
+    {
+      "label": "com.owaisquadri.ollama",
+      "isRunning": true,
+      "pid": 910,
+      "lastExit": 0
+    }
+  ]
+}

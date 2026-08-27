@@ -1,0 +1,10 @@
+{
+  "tiers": {
+    "T1": {
+      "pi": "legacy/plain-model",
+      "fallbacks": [],
+      "thinking": "off"
+    }
+  },
+  "judge": "T1"
+}

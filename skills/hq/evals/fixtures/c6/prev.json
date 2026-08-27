@@ -1,0 +1,16 @@
+{
+  "at": "2026-08-04T09:00:00-0400",
+  "sessions": [
+    {
+      "pid": 100,
+      "sessionId": "s-aaa",
+      "cwd": "/Users/owaisquadri/conductor/workspaces/agents/machu-picchu",
+      "name": "machu-picchu-74",
+      "startedAt": 1
+    }
+  ],
+  "workspaces": [],
+  "jobs": [],
+  "daemonWorkerCount": 0,
+  "launchd": []
+}

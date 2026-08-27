@@ -9,9 +9,11 @@ use crate::model::{
 };
 use crate::ports::PoolPlanSource;
 
-const ENTRANTS_PER_TIER: usize = 3;
-const MAXIMUM_THINKING_LEVELS: usize = 3;
+const MINIMUM_ENTRANTS_PER_TIER: usize = 3;
+const MAXIMUM_THINKING_LEVELS: usize = THINKING_LEVELS.len();
 const PROMOTION_COUNT: u8 = 2;
+const CALIBRATION_RELIABILITY_BASIS_POINTS: u16 = 8_000;
+const QUALIFICATION_RELIABILITY_BASIS_POINTS: u16 = 10_000;
 const THINKING_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// Loads frozen model-pool plans from one repository root.
@@ -141,6 +143,10 @@ struct RawEntrants {
 struct RawEntrant {
     model: RawModelIdentity,
     thinking_levels: Vec<String>,
+    #[serde(default)]
+    retained_lower_thinking_level: Option<String>,
+    #[serde(default)]
+    candidate_timeout_seconds: Option<u32>,
     catalog_observed_at: String,
 }
 
@@ -176,7 +182,8 @@ struct RawPoolPolicy {
     qualification_repeats_per_case: u16,
     promotion_count: u8,
     minimum_score: u8,
-    minimum_reliability_basis_points: u16,
+    calibration_minimum_reliability_basis_points: u16,
+    qualification_minimum_reliability_basis_points: u16,
     maximum_catalog_age_seconds: u32,
     spending_limit_millionths_of_dollar: u64,
     is_provider_limit_enforced: bool,
@@ -197,13 +204,13 @@ fn normalize(raw: RawPoolPlan) -> Result<PoolPlan, SkillEvalError> {
         (Tier::T5, raw.entrants.t5),
     ] {
         let tier_name = tier_name(tier);
-        if raw_entrants.len() != ENTRANTS_PER_TIER {
+        if raw_entrants.len() < MINIMUM_ENTRANTS_PER_TIER {
             return Err(invalid(format!(
-                "pool plan tier {tier_name} must contain exactly {ENTRANTS_PER_TIER} entrants"
+                "pool plan tier {tier_name} must contain at least {MINIMUM_ENTRANTS_PER_TIER} entrants"
             )));
         }
 
-        let mut normalized = Vec::with_capacity(ENTRANTS_PER_TIER);
+        let mut normalized = Vec::with_capacity(raw_entrants.len());
         for entrant in raw_entrants {
             parse_timestamp(
                 &entrant.catalog_observed_at,
@@ -228,9 +235,21 @@ fn normalize(raw: RawPoolPlan) -> Result<PoolPlan, SkillEvalError> {
                 )));
             }
             let thinking_levels = normalize_thinking_levels(&model, entrant.thinking_levels)?;
+            let retained_lower_thinking_level = normalize_retained_lower_thinking_level(
+                &model,
+                &thinking_levels,
+                entrant.retained_lower_thinking_level,
+            )?;
+            if entrant.candidate_timeout_seconds == Some(0) {
+                return Err(invalid(format!(
+                    "pool plan tier {tier_name} candidate_timeout_seconds must be positive when present"
+                )));
+            }
             normalized.push(PoolEntrant {
                 model,
                 thinking_levels,
+                retained_lower_thinking_level,
+                candidate_timeout_seconds: entrant.candidate_timeout_seconds,
                 catalog_observed_at: Timestamp(entrant.catalog_observed_at),
             });
         }
@@ -284,7 +303,6 @@ fn normalize_model(tier: Tier, raw: RawModelIdentity) -> Result<ModelIdentity, S
     })
 }
 
-// TODO(AGNT-0032.T103): Validate and preserve one to three ordered model-specific levels.
 fn normalize_thinking_levels(
     model: &ModelIdentity,
     levels: Vec<String>,
@@ -336,6 +354,38 @@ fn normalize_thinking_levels(
     Ok(levels)
 }
 
+fn normalize_retained_lower_thinking_level(
+    model: &ModelIdentity,
+    levels: &[String],
+    retained: Option<String>,
+) -> Result<Option<String>, SkillEvalError> {
+    let Some(retained) = retained else {
+        return Ok(None);
+    };
+    let retained_index = levels
+        .iter()
+        .position(|level| level == &retained)
+        .ok_or_else(|| {
+            invalid(format!(
+                "pool plan model {}/{} retained lower thinking level {retained:?} must appear exactly once in thinking_levels",
+                model.provider, model.model
+            ))
+        })?;
+    if levels.iter().filter(|level| *level == &retained).count() != 1 {
+        return Err(invalid(format!(
+            "pool plan model {}/{} retained lower thinking level {retained:?} must appear exactly once in thinking_levels",
+            model.provider, model.model
+        )));
+    }
+    if retained_index + 1 >= levels.len() {
+        return Err(invalid(format!(
+            "pool plan model {}/{} retained lower thinking level {retained:?} must be below at least one declared level",
+            model.provider, model.model
+        )));
+    }
+    Ok(Some(retained))
+}
+
 fn normalize_policy(raw: RawPoolPolicy) -> Result<PoolPolicy, SkillEvalError> {
     if raw.calibration_repeats_per_case == 0 {
         return Err(invalid(
@@ -355,10 +405,16 @@ fn normalize_policy(raw: RawPoolPolicy) -> Result<PoolPolicy, SkillEvalError> {
     if raw.minimum_score > 10 {
         return Err(invalid("pool policy minimum_score must not exceed 10"));
     }
-    if raw.minimum_reliability_basis_points > 10_000 {
-        return Err(invalid(
-            "pool policy minimum_reliability_basis_points must not exceed 10000",
-        ));
+    if raw.calibration_minimum_reliability_basis_points != CALIBRATION_RELIABILITY_BASIS_POINTS {
+        return Err(invalid(format!(
+            "pool policy calibration_minimum_reliability_basis_points must be {CALIBRATION_RELIABILITY_BASIS_POINTS}"
+        )));
+    }
+    if raw.qualification_minimum_reliability_basis_points != QUALIFICATION_RELIABILITY_BASIS_POINTS
+    {
+        return Err(invalid(format!(
+            "pool policy qualification_minimum_reliability_basis_points must be {QUALIFICATION_RELIABILITY_BASIS_POINTS}"
+        )));
     }
     if raw.maximum_catalog_age_seconds == 0 {
         return Err(invalid(
@@ -381,7 +437,10 @@ fn normalize_policy(raw: RawPoolPolicy) -> Result<PoolPolicy, SkillEvalError> {
         qualification_repeats_per_case: raw.qualification_repeats_per_case,
         promotion_count: raw.promotion_count,
         minimum_score: raw.minimum_score,
-        minimum_reliability_basis_points: raw.minimum_reliability_basis_points,
+        calibration_minimum_reliability_basis_points: raw
+            .calibration_minimum_reliability_basis_points,
+        qualification_minimum_reliability_basis_points: raw
+            .qualification_minimum_reliability_basis_points,
         maximum_catalog_age_seconds: raw.maximum_catalog_age_seconds,
         spending_limit_millionths_of_dollar: raw.spending_limit_millionths_of_dollar,
         is_provider_limit_enforced: raw.is_provider_limit_enforced,

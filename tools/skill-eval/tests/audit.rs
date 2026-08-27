@@ -379,12 +379,27 @@ macro_rules! audit_tests {
                 }
             }
 
-            // TODO(AGNT-0032.T82): Keep the audit fake exhaustive without pool behavior.
             impl ModelResolver for FakeRuntime {
                 fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
                     self.model_calls.set(self.model_calls.get() + 1);
                     assert_eq!(tier, Tier::T3);
                     Ok(vec![model(tier, "HIDDEN_MODEL_SENTINEL")])
+                }
+
+                fn qualification_routes(
+                    &self,
+                    tier: Tier,
+                ) -> Result<Vec<ModelIdentity>, SkillEvalError> {
+                    self.candidates(tier)
+                }
+
+                fn exact_candidate(
+                    &self,
+                    _requested: &ModelIdentity,
+                ) -> Result<ModelIdentity, SkillEvalError> {
+                    Err(SkillEvalError::InvalidConfiguration(
+                        "exact model-pool candidate resolution is not implemented".to_owned(),
+                    ))
                 }
 
                 fn configured_judge_tier(&self) -> Result<Tier, SkillEvalError> {
@@ -427,7 +442,12 @@ macro_rules! audit_tests {
                     case: &CaseDefinition,
                     model: &ModelIdentity,
                     harness: &HarnessIdentity,
+                    candidate_timeout_seconds: Option<u32>,
                 ) -> Result<CandidateArtifact, SkillEvalError> {
+                    assert_eq!(
+                        candidate_timeout_seconds,
+                        Some(case.execution.timeout_seconds)
+                    );
                     self.execute_calls += 1;
                     self.is_identity_fresh &= self.identity_calls.get() == self.execute_calls;
                     self.executed.push(case.id.clone());

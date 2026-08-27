@@ -1,41 +1,61 @@
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use crate::judge::PiJudge;
 use crate::model::{
-    ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CaseId, CliCommand,
-    CliRequest, Decision, ExecutionDefinition, HarnessIdentity, ModelIdentity, OutputFormat,
-    OwnEvalEvidence, PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState,
-    PoolRunStatus, PromptJudgeRequest, QualificationPolicy, QualificationPurpose,
-    QualificationReport, QualifyRequest, RunEvent, RunId, SkillEvalError, Tier, TierAssignment,
-    TierDestination, Timestamp, TrialRecord, TrialSelector,
+    ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
+    CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
+    FrontierInspection, FrontierPreviewReport, FrontierReport, HarnessIdentity, ModelIdentity,
+    OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence,
+    PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest,
+    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest, RunEvent,
+    RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest,
+    T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment,
+    T1ScreenCandidatePrice, T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat,
+    T1ScreenModelState, T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport,
+    T1ScreenRouteFailureRequest, T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState,
+    T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp,
+    TrialRecord, TrialSelector, TrialUsage,
 };
-use crate::models::ConfiguredModelResolver;
+use crate::model_capabilities;
+use crate::models::{ConfiguredModelResolver, validate_rpc_models_data};
 use crate::pi_runner::PiCandidateRunner;
 use crate::pool_source::FilePoolPlanSource;
 use crate::pool_store::FilePoolStore;
 use crate::ports::{
     ArtifactSource, CandidateRunner, Clock, HarnessResolver, Judge, ModelResolver, PoolPlanSource,
     PoolProgressSink, PoolRunIdSource, PoolRuntime, PoolStore, ProgressSink, QualificationRuntime,
-    RunIdSource, RunStore, TierWriter, Verifier,
+    RunIdSource, RunStore, T1ScreenProgressSink, T1ScreenRuntime, T1ScreenStore, TierWriter,
+    Verifier,
 };
 use crate::service::{
-    apply_tier_assignments, build_pool_report, build_report, evaluate_publication_gate,
-    inspect_trial, judge_prompt, prepare_audit_briefs, record_decision, resume_pool_qualification,
-    resume_qualification, start_pool_qualification, start_qualification,
+    apply_tier_assignments, build_pool_report, build_report, build_t1_screen_report,
+    evaluate_publication_gate, extend_t1_screen_cap, fail_t1_screen_route, inspect_trial,
+    judge_prompt, pending_t1_screen_state, prepare_audit_briefs, record_decision,
+    resume_pool_qualification, resume_qualification, resume_t1_screening, start_pool_qualification,
+    start_pool_replacement_qualification, start_qualification, start_t1_screening,
 };
 use crate::source::FileArtifactSource;
+use crate::statistics::select_thinking_level;
 use crate::store::FileRunStore;
+use crate::t1_screen_campaign_store::{
+    FileT1ScreenCampaignStore, T1_SCREEN_CAMPAIGN_APPROVED_TOTAL,
+};
+use crate::t1_screen_store::{
+    FileT1ScreenStore, candidate_environment_manifest_digest, preallocate_t1_screen_children,
+    t1_screen_classification_digest,
+};
 use crate::tier_writer::FileTierWriter;
 use crate::verifier::FileVerifier;
 
@@ -46,6 +66,16 @@ const DEFAULT_MARGIN: f64 = 1.0;
 const DEFAULT_CONFIDENCE: f64 = 0.95;
 const DEFAULT_JUDGE_TIMEOUT: u32 = 120;
 const RUNNER_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MODELS_RPC_ID: &str = "skill-eval-models";
+const MODELS_RPC_REQUEST: &[u8] =
+    b"{\"id\":\"skill-eval-models\",\"type\":\"get_available_models\"}\n";
+const MODELS_RPC_ARGUMENTS: [&str; 5] = [
+    "--mode",
+    "rpc",
+    "--no-session",
+    "--no-context-files",
+    "--no-extensions",
+];
 static RUN_ID_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
@@ -67,6 +97,16 @@ pub(crate) fn parse_arguments(arguments: &[OsString]) -> Result<CliRequest, Skil
         .ok_or_else(|| invalid("missing command"))?;
     let mut parser = ArgumentParser::new(tail);
     let request = match command.as_str() {
+        "model-capabilities" => parse_model_capabilities(&mut parser)?,
+        "t1-screen-preview" => parse_t1_screen_preview(&mut parser)?,
+        "t1-screen-campaign-create" => parse_t1_screen_campaign_create(&mut parser)?,
+        "t1-screen-campaign-extend-cap" => parse_t1_screen_campaign_extend_cap(&mut parser)?,
+        "t1-screen-campaign-retire-run" => parse_t1_screen_campaign_retire_run(&mut parser)?,
+        "t1-screen-start" => parse_t1_screen_start(&mut parser)?,
+        "t1-screen-resume" => parse_t1_screen_run(&mut parser, true)?,
+        "t1-screen-extend-cap" => parse_t1_screen_extend_cap(&mut parser)?,
+        "t1-screen-fail-route" => parse_t1_screen_fail_route(&mut parser)?,
+        "t1-screen-report" => parse_t1_screen_run(&mut parser, false)?,
         "qualify" => parse_qualify(&mut parser)?,
         "report" => CliCommand::Report {
             run_id: parse_run_only(&mut parser)?,
@@ -86,6 +126,7 @@ pub(crate) fn parse_arguments(arguments: &[OsString]) -> Result<CliRequest, Skil
         "pool-resume" => CliCommand::PoolResume {
             run_id: parse_pool_run_only(&mut parser)?,
         },
+        "pool-replacement" => parse_pool_replacement(&mut parser)?,
         _ => return Err(invalid(format!("unknown command {command:?}"))),
     };
     parser.finish()?;
@@ -94,6 +135,394 @@ pub(crate) fn parse_arguments(arguments: &[OsString]) -> Result<CliRequest, Skil
         output_format: parser.output_format,
         command: request,
     })
+}
+
+fn parse_model_capabilities(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut output = None;
+    while parser.peek().is_some() {
+        match parser.peek().expect("checked above") {
+            "--output" => {
+                let path = PathBuf::from(parser.value_once("--output")?);
+                validate_repository_path(&path, "model capability output")?;
+                output = Some(path);
+            }
+            _ => break,
+        }
+    }
+    Ok(CliCommand::ModelCapabilities {
+        output: output.ok_or_else(|| invalid("model-capabilities requires --output"))?,
+    })
+}
+
+fn parse_t1_screen_preview(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut capabilities = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        match parser.peek().expect("checked above") {
+            "--capabilities" => {
+                let path = PathBuf::from(parser.value_once("--capabilities")?);
+                validate_repository_path(&path, "T1 capability snapshot")?;
+                capabilities = Some(path);
+            }
+            "--format" => {
+                format = match parser.value_once("--format")? {
+                    "text" => T1ScreenFormat::Text,
+                    "json" => T1ScreenFormat::Json,
+                    value => return Err(invalid(format!("unknown T1 preview format {value:?}"))),
+                };
+            }
+            _ => break,
+        }
+    }
+    Ok(CliCommand::T1ScreenPreview {
+        capabilities: capabilities
+            .ok_or_else(|| invalid("t1-screen-preview requires --capabilities"))?,
+        format,
+    })
+}
+
+fn parse_t1_screen_campaign_create(
+    parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    let mut campaign_id = None;
+    let mut judge_cap = None;
+    let mut owner_reason = None;
+    let mut run_ids = Vec::new();
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--campaign" => {
+                campaign_id = Some(parse_t1_screen_campaign_id(
+                    parser.value_once("--campaign")?,
+                )?);
+            }
+            "--judge-cap-millionths" => {
+                judge_cap = Some(parse_positive_number(
+                    parser.value_once("--judge-cap-millionths")?,
+                    "campaign judge cap millionths",
+                )?);
+            }
+            "--reason" => {
+                owner_reason = Some(
+                    nonempty(parser.value_once("--reason")?, "campaign owner reason")?.to_owned(),
+                );
+            }
+            "--run" => run_ids.push(parse_t1_screen_run_id(parser.value()?)?),
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    if run_ids.is_empty() {
+        return Err(invalid(
+            "t1-screen-campaign-create requires at least one --run",
+        ));
+    }
+    let judge_cap = judge_cap
+        .ok_or_else(|| invalid("t1-screen-campaign-create requires --judge-cap-millionths"))?;
+    if judge_cap != T1_SCREEN_CAMPAIGN_APPROVED_TOTAL {
+        return Err(invalid(format!(
+            "t1-screen-campaign-create judge cap must be exactly {T1_SCREEN_CAMPAIGN_APPROVED_TOTAL} millionths"
+        )));
+    }
+    Ok(CliCommand::T1ScreenCampaignCreate {
+        request: T1ScreenCampaignCreateRequest {
+            campaign_id: campaign_id
+                .ok_or_else(|| invalid("t1-screen-campaign-create requires --campaign"))?,
+            judge_cap_millionths_of_dollar: judge_cap,
+            owner_reason: owner_reason
+                .ok_or_else(|| invalid("t1-screen-campaign-create requires --reason"))?,
+            run_ids,
+        },
+        format,
+    })
+}
+
+fn parse_t1_screen_campaign_extend_cap(
+    parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    let mut campaign_id = None;
+    let mut approved_total = None;
+    let mut owner_reason = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--campaign" => {
+                campaign_id = Some(parse_t1_screen_campaign_id(
+                    parser.value_once("--campaign")?,
+                )?);
+            }
+            "--judge-cap-millionths" => {
+                approved_total = Some(parse_positive_number(
+                    parser.value_once("--judge-cap-millionths")?,
+                    "campaign judge cap millionths",
+                )?);
+            }
+            "--reason" => {
+                owner_reason = Some(
+                    nonempty(parser.value_once("--reason")?, "campaign owner reason")?.to_owned(),
+                );
+            }
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::T1ScreenCampaignExtendCap {
+        request: T1ScreenCampaignCapExtensionRequest {
+            campaign_id: campaign_id
+                .ok_or_else(|| invalid("t1-screen-campaign-extend-cap requires --campaign"))?,
+            new_approved_total_millionths_of_dollar: approved_total.ok_or_else(|| {
+                invalid("t1-screen-campaign-extend-cap requires --judge-cap-millionths")
+            })?,
+            owner_reason: owner_reason
+                .ok_or_else(|| invalid("t1-screen-campaign-extend-cap requires --reason"))?,
+        },
+        format,
+    })
+}
+
+fn parse_t1_screen_campaign_retire_run(
+    parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    let mut campaign_id = None;
+    let mut run_id = None;
+    let mut owner_reason = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--campaign" => {
+                campaign_id = Some(parse_t1_screen_campaign_id(
+                    parser.value_once("--campaign")?,
+                )?);
+            }
+            "--run" => {
+                run_id = Some(parse_t1_screen_run_id(parser.value_once("--run")?)?);
+            }
+            "--reason" => {
+                owner_reason = Some(
+                    nonempty(parser.value_once("--reason")?, "retirement owner reason")?.to_owned(),
+                );
+            }
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ => break,
+        }
+    }
+    Ok(CliCommand::T1ScreenCampaignRetireRun {
+        request: T1ScreenCampaignRunRetirementRequest {
+            campaign_id: campaign_id
+                .ok_or_else(|| invalid("t1-screen-campaign-retire-run requires --campaign"))?,
+            run_id: run_id
+                .ok_or_else(|| invalid("t1-screen-campaign-retire-run requires --run"))?,
+            owner_reason: owner_reason
+                .ok_or_else(|| invalid("t1-screen-campaign-retire-run requires --reason"))?,
+        },
+        format,
+    })
+}
+
+fn parse_t1_screen_start(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut campaign_id = None;
+    let mut capabilities = None;
+    let mut exam = None;
+    let mut owner_cap = None;
+    let mut provider_cap = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--campaign" => {
+                campaign_id = Some(parse_t1_screen_campaign_id(
+                    parser.value_once("--campaign")?,
+                )?);
+            }
+            "--capabilities" => {
+                let path = PathBuf::from(parser.value_once("--capabilities")?);
+                validate_repository_path(&path, "T1 capability snapshot")?;
+                capabilities = Some(path);
+            }
+            "--exam" => {
+                let path = PathBuf::from(parser.value_once("--exam")?);
+                validate_repository_path(&path, "T1 exam root")?;
+                exam = Some(path);
+            }
+            "--judge-cap-millionths" => {
+                owner_cap = Some(parse_positive_number(
+                    parser.value_once("--judge-cap-millionths")?,
+                    "judge cap millionths",
+                )?);
+            }
+            "--provider-cap-millionths" => {
+                provider_cap = Some(parse_positive_number(
+                    parser.value_once("--provider-cap-millionths")?,
+                    "provider cap millionths",
+                )?);
+            }
+            "--run-id-file" => {
+                let path = PathBuf::from(parser.value_once("--run-id-file")?);
+                validate_output_path(&path, "run-id file")?;
+                RUN_ID_FILE.with(|slot| *slot.borrow_mut() = Some(path));
+            }
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    let owner_cap =
+        owner_cap.ok_or_else(|| invalid("t1-screen-start requires --judge-cap-millionths"))?;
+    let provider_cap = provider_cap
+        .ok_or_else(|| invalid("t1-screen-start requires --provider-cap-millionths"))?;
+    if provider_cap > owner_cap {
+        return Err(invalid(
+            "provider cap millionths must not exceed judge cap millionths",
+        ));
+    }
+    Ok(CliCommand::T1ScreenStart {
+        request: T1ScreenStartRequest {
+            campaign_id: campaign_id
+                .ok_or_else(|| invalid("t1-screen-start requires --campaign"))?,
+            capabilities: capabilities
+                .ok_or_else(|| invalid("t1-screen-start requires --capabilities"))?,
+            exam: exam.ok_or_else(|| invalid("t1-screen-start requires --exam"))?,
+            owner_approved_judge_cap_millionths_of_dollar: owner_cap,
+            provider_enforced_judge_cap_millionths_of_dollar: provider_cap,
+        },
+        format,
+    })
+}
+
+fn parse_t1_screen_run(
+    parser: &mut ArgumentParser<'_>,
+    is_resume: bool,
+) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => {
+                run_id = Some(parse_t1_screen_run_id(parser.value_once("--run")?)?);
+            }
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    let run_id = run_id.ok_or_else(|| {
+        invalid(if is_resume {
+            "t1-screen-resume requires --run"
+        } else {
+            "t1-screen-report requires --run"
+        })
+    })?;
+    Ok(if is_resume {
+        CliCommand::T1ScreenResume { run_id, format }
+    } else {
+        CliCommand::T1ScreenReport { run_id, format }
+    })
+}
+
+fn parse_t1_screen_extend_cap(
+    parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut owner_cap = None;
+    let mut provider_cap = None;
+    let mut owner_reason = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => run_id = Some(parse_t1_screen_run_id(parser.value_once("--run")?)?),
+            "--judge-cap-millionths" => {
+                owner_cap = Some(parse_positive_number(
+                    parser.value_once("--judge-cap-millionths")?,
+                    "judge cap millionths",
+                )?);
+            }
+            "--provider-cap-millionths" => {
+                provider_cap = Some(parse_positive_number(
+                    parser.value_once("--provider-cap-millionths")?,
+                    "provider cap millionths",
+                )?);
+            }
+            "--reason" => {
+                owner_reason =
+                    Some(nonempty(parser.value_once("--reason")?, "owner reason")?.to_owned());
+            }
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    let run_id = run_id.ok_or_else(|| invalid("t1-screen-extend-cap requires --run"))?;
+    let owner_cap =
+        owner_cap.ok_or_else(|| invalid("t1-screen-extend-cap requires --judge-cap-millionths"))?;
+    let provider_cap = provider_cap
+        .ok_or_else(|| invalid("t1-screen-extend-cap requires --provider-cap-millionths"))?;
+    if provider_cap > owner_cap {
+        return Err(invalid(
+            "provider cap millionths must not exceed judge cap millionths",
+        ));
+    }
+    Ok(CliCommand::T1ScreenExtendCap {
+        request: T1ScreenCapExtensionRequest {
+            run_id,
+            new_owner_cap_millionths_of_dollar: owner_cap,
+            new_provider_cap_millionths_of_dollar: provider_cap,
+            owner_reason: owner_reason
+                .ok_or_else(|| invalid("t1-screen-extend-cap requires --reason"))?,
+        },
+        format,
+    })
+}
+
+fn parse_t1_screen_fail_route(
+    parser: &mut ArgumentParser<'_>,
+) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut child_run_id = None;
+    let mut owner_reason = None;
+    let mut format = T1ScreenFormat::Text;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => run_id = Some(parse_t1_screen_run_id(parser.value_once("--run")?)?),
+            "--child" => {
+                child_run_id = Some(parse_t1_screen_child_run_id(parser.value_once("--child")?)?)
+            }
+            "--reason" => {
+                owner_reason = Some(
+                    nonempty(parser.value_once("--reason")?, "route failure owner reason")?
+                        .to_owned(),
+                );
+            }
+            "--format" => format = parse_t1_screen_format(parser.value_once("--format")?)?,
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::T1ScreenFailRoute {
+        request: T1ScreenRouteFailureRequest {
+            run_id: run_id.ok_or_else(|| invalid("t1-screen-fail-route requires --run"))?,
+            child_run_id: child_run_id
+                .ok_or_else(|| invalid("t1-screen-fail-route requires --child"))?,
+            owner_reason: owner_reason
+                .ok_or_else(|| invalid("t1-screen-fail-route requires --reason"))?,
+        },
+        format,
+    })
+}
+
+fn parse_t1_screen_format(value: &str) -> Result<T1ScreenFormat, SkillEvalError> {
+    match value {
+        "text" => Ok(T1ScreenFormat::Text),
+        "json" => Ok(T1ScreenFormat::Json),
+        value => Err(invalid(format!("unknown T1 screen format {value:?}"))),
+    }
 }
 
 fn parse_qualify(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
@@ -281,6 +710,35 @@ fn parse_pool_qualify(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, Ski
     })
 }
 
+fn parse_pool_replacement(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut entrant_index = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => run_id = Some(parse_pool_run_id(parser.value_once("--run")?)?),
+            "--entrant-index" => {
+                entrant_index = Some(parse_number(
+                    parser.value_once("--entrant-index")?,
+                    "entrant index",
+                )?)
+            }
+            "--run-id-file" => {
+                let path = PathBuf::from(parser.value_once("--run-id-file")?);
+                validate_output_path(&path, "run-id file")?;
+                RUN_ID_FILE.with(|slot| *slot.borrow_mut() = Some(path));
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::PoolReplacement {
+        run_id: run_id.ok_or_else(|| invalid("pool-replacement requires --run"))?,
+        entrant_index: entrant_index
+            .ok_or_else(|| invalid("pool-replacement requires --entrant-index"))?,
+    })
+}
+
 fn parse_run_only(parser: &mut ArgumentParser<'_>) -> Result<RunId, SkillEvalError> {
     let mut run_id = None;
     while parser.peek().is_some() {
@@ -311,6 +769,7 @@ fn parse_inspect(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEva
     let mut run_id = None;
     let mut artifact = None;
     let mut tier = None;
+    let mut route_index = None;
     let mut case = None;
     let mut attempt = None;
     while parser.peek().is_some() {
@@ -323,6 +782,12 @@ fn parse_inspect(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEva
                 ))
             }
             "--tier" => tier = Some(parse_tier(parser.value_once("--tier")?)?),
+            "--route-index" => {
+                route_index = Some(parse_number(
+                    parser.value_once("--route-index")?,
+                    "route index",
+                )?)
+            }
             "--case" => {
                 case = Some(CaseId(
                     nonempty(parser.value_once("--case")?, "case")?.to_owned(),
@@ -343,6 +808,7 @@ fn parse_inspect(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEva
             run_id: run_id.ok_or_else(|| invalid("inspect requires --run"))?,
             artifact: artifact.ok_or_else(|| invalid("inspect requires --skill or --artifact"))?,
             tier: tier.ok_or_else(|| invalid("inspect requires --tier"))?,
+            route_index: route_index.ok_or_else(|| invalid("inspect requires --route-index"))?,
             case: case.ok_or_else(|| invalid("inspect requires --case"))?,
             attempt: attempt.ok_or_else(|| invalid("inspect requires --trial"))?,
         },
@@ -538,6 +1004,21 @@ pub(crate) fn execute_command(
 ) -> Result<(), SkillEvalError> {
     let format = request.output_format;
     match request.command {
+        CliCommand::ModelCapabilities { output: path } => run_model_capabilities(&path, output),
+        CliCommand::T1ScreenPreview {
+            capabilities,
+            format,
+        } => run_t1_screen_preview(&capabilities, format, output),
+        CliCommand::T1ScreenCampaignCreate { .. }
+        | CliCommand::T1ScreenCampaignExtendCap { .. }
+        | CliCommand::T1ScreenCampaignRetireRun { .. }
+        | CliCommand::T1ScreenStart { .. }
+        | CliCommand::T1ScreenResume { .. }
+        | CliCommand::T1ScreenExtendCap { .. }
+        | CliCommand::T1ScreenFailRoute { .. }
+        | CliCommand::T1ScreenReport { .. } => Err(invalid(
+            "T1 screening commands require the dedicated T1 runtime",
+        )),
         CliCommand::Qualify { request } => {
             let mut progress = RenderProgress { format, output };
             let report = start_qualification(request, runtime, &mut progress)?;
@@ -622,6 +1103,20 @@ pub(crate) fn execute_command(
             };
             let state = resume_pool_qualification(&run_id, runtime, &mut progress)?;
             render_pool_report(&state, format, progress.output)
+        }
+        CliCommand::PoolReplacement {
+            run_id,
+            entrant_index,
+        } => {
+            let mut progress = RenderProgress { format, output };
+            let report = start_pool_replacement_qualification(
+                &run_id,
+                entrant_index,
+                runtime,
+                &mut progress,
+            )?;
+            write_run_id_file(&report.run_id)?;
+            render_report(&report, format, progress.output)
         }
     }
 }
@@ -781,14 +1276,205 @@ pub(crate) fn render_report(
     .map_err(output_error)
 }
 
-// TODO(AGNT-0032.T107): Render attempted, selected, next, and skipped thinking per model.
+const RESULT_MATRIX_LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+type ResultMatrixCells = [Option<bool>; RESULT_MATRIX_LEVELS.len()];
+
+fn render_pool_tier_matrix(
+    entrants: &[PoolEntrant],
+    pool: Option<&crate::model::RankedPool>,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let rows = pool_tier_matrix_rows(entrants, pool)?;
+    render_result_matrix(&rows, output)
+}
+
+fn pool_tier_matrix_rows(
+    entrants: &[PoolEntrant],
+    pool: Option<&crate::model::RankedPool>,
+) -> Result<Vec<(String, ResultMatrixCells)>, SkillEvalError> {
+    let tier = entrants
+        .first()
+        .map(|entrant| entrant.model.tier)
+        .ok_or_else(|| malformed_pool_report("matrix entrants are empty"))?;
+    let mut configured = BTreeMap::new();
+    for (entrant_index, entrant) in entrants.iter().enumerate() {
+        if entrant.model.provider.trim().is_empty()
+            || entrant.model.model.trim().is_empty()
+            || entrant.thinking_levels.is_empty()
+        {
+            return Err(malformed_pool_report("matrix entrant is empty"));
+        }
+        if entrant.model.tier != tier {
+            return Err(malformed_pool_report("matrix entrants span tiers"));
+        }
+        let base = (
+            entrant.model.provider.as_str(),
+            entrant.model.model.as_str(),
+        );
+        if configured.insert(base, entrant_index).is_some() {
+            return Err(malformed_pool_report(
+                "matrix entrants contain a duplicate base model",
+            ));
+        }
+        let mut levels = BTreeSet::new();
+        for level in &entrant.thinking_levels {
+            thinking_level_index(level)?;
+            if !levels.insert(level) {
+                return Err(malformed_pool_report(
+                    "matrix entrant contains a duplicate thinking level",
+                ));
+            }
+        }
+        thinking_level_index(&entrant.model.thinking)?;
+        if !levels.contains(&entrant.model.thinking) {
+            return Err(malformed_pool_report(
+                "matrix entrant start thinking is not configured",
+            ));
+        }
+    }
+    if pool.is_some_and(|pool| pool.tier != tier) {
+        return Err(malformed_pool_report("matrix pool tier differs"));
+    }
+
+    let mut calibration = vec![[None; RESULT_MATRIX_LEVELS.len()]; entrants.len()];
+    let mut qualification = calibration.clone();
+    let mut seen = BTreeSet::new();
+    if let Some(pool) = pool {
+        collect_pool_matrix_evidence(
+            entrants,
+            &configured,
+            &pool.calibration,
+            crate::model::PoolStage::Calibration,
+            &mut calibration,
+            &mut seen,
+        )?;
+        collect_pool_matrix_evidence(
+            entrants,
+            &configured,
+            &pool.qualification,
+            crate::model::PoolStage::Qualification,
+            &mut qualification,
+            &mut seen,
+        )?;
+    }
+
+    Ok(entrants
+        .iter()
+        .enumerate()
+        .map(|(entrant_index, entrant)| {
+            let cells = std::array::from_fn(|level_index| {
+                qualification[entrant_index][level_index]
+                    .or(calibration[entrant_index][level_index])
+            });
+            (
+                format!("{}/{}", entrant.model.provider, entrant.model.model),
+                cells,
+            )
+        })
+        .collect())
+}
+
+fn collect_pool_matrix_evidence<'a>(
+    entrants: &[PoolEntrant],
+    configured: &BTreeMap<(&'a str, &'a str), usize>,
+    evidence: &[PoolEntrantEvidence],
+    stage: crate::model::PoolStage,
+    cells: &mut [ResultMatrixCells],
+    seen: &mut BTreeSet<(crate::model::PoolStage, usize, usize)>,
+) -> Result<(), SkillEvalError> {
+    for item in evidence {
+        if item.stage != stage {
+            return Err(malformed_pool_report(
+                "matrix evidence appears in the wrong stage",
+            ));
+        }
+        let base = (
+            item.requested_model.provider.as_str(),
+            item.requested_model.model.as_str(),
+        );
+        let entrant_index = configured.get(&base).copied().ok_or_else(|| {
+            malformed_pool_report("matrix evidence belongs to a foreign base model")
+        })?;
+        let entrant = &entrants[entrant_index];
+        if item.requested_model.tier != entrant.model.tier
+            || item.effective_model != item.requested_model
+        {
+            return Err(malformed_pool_report(
+                "matrix evidence identity differs from its configured entrant",
+            ));
+        }
+        let level_index = thinking_level_index(&item.requested_model.thinking)?;
+        if !entrant
+            .thinking_levels
+            .contains(&item.requested_model.thinking)
+        {
+            return Err(malformed_pool_report(
+                "matrix evidence uses an unconfigured thinking level",
+            ));
+        }
+        if !seen.insert((stage, entrant_index, level_index)) {
+            let message = if cells[entrant_index][level_index]
+                .is_some_and(|is_passing| is_passing != item.is_passing)
+            {
+                "matrix evidence conflicts within one stage"
+            } else {
+                "matrix evidence contains a duplicate configuration"
+            };
+            return Err(malformed_pool_report(message));
+        }
+        if item.expected_trials > 0 && item.completed_trials == item.expected_trials {
+            cells[entrant_index][level_index] = Some(item.is_passing);
+        }
+    }
+    Ok(())
+}
+
+fn thinking_level_index(level: &str) -> Result<usize, SkillEvalError> {
+    RESULT_MATRIX_LEVELS
+        .iter()
+        .position(|candidate| *candidate == level)
+        .ok_or_else(|| malformed_pool_report("matrix uses an unknown thinking level"))
+}
+
+fn render_result_matrix(
+    rows: &[(String, ResultMatrixCells)],
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    writeln!(
+        output,
+        "| Model | off | minimal | low | medium | high | xhigh | max |"
+    )
+    .map_err(output_error)?;
+    writeln!(output, "| --- | --- | --- | --- | --- | --- | --- | --- |").map_err(output_error)?;
+    for (model, cells) in rows {
+        write!(output, "| {model} |").map_err(output_error)?;
+        for cell in cells {
+            write!(
+                output,
+                " {} |",
+                cell.map_or("", |is_passing| if is_passing { "P" } else { "F" })
+            )
+            .map_err(output_error)?;
+        }
+        writeln!(output).map_err(output_error)?;
+    }
+    writeln!(output).map_err(output_error)
+}
+
 pub(crate) fn render_pool_report(
     state: &PoolRunState,
     format: OutputFormat,
     output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
+    validate_pool_report_state(state)?;
     if format == OutputFormat::JsonLines {
         return write_json_line(state, output);
+    }
+
+    for tier in &state.selected_tiers {
+        let entrants = selected_tier_entrants(state, *tier)?;
+        let pool = state.pools.iter().find(|pool| pool.tier == *tier);
+        render_pool_tier_matrix(entrants, pool, output)?;
     }
 
     writeln!(
@@ -811,14 +1497,25 @@ pub(crate) fn render_pool_report(
     writeln!(output, "created: {}", state.configuration.created_at.0).map_err(output_error)?;
     writeln!(
         output,
-        "floors: score >= {}, reliability >= {:.2}%",
+        "floors: score >= {}, calibration reliability >= {:.2}%, qualification reliability >= {:.2}%",
         state.configuration.policy.minimum_score,
-        f64::from(state.configuration.policy.minimum_reliability_basis_points) / 100.0
+        f64::from(
+            state
+                .configuration
+                .policy
+                .calibration_minimum_reliability_basis_points
+        ) / 100.0,
+        f64::from(
+            state
+                .configuration
+                .policy
+                .qualification_minimum_reliability_basis_points
+        ) / 100.0
     )
     .map_err(output_error)?;
     writeln!(
         output,
-        "spending: ${:.6} spent / ${:.6} limit; provider limit enforced: {}",
+        "candidate spending: ${:.6} spent / ${:.6} limit; provider limit enforced: {}",
         dollars(state.spent_millionths_of_dollar),
         dollars(
             state
@@ -845,75 +1542,39 @@ pub(crate) fn render_pool_report(
         .map_err(output_error)?;
     }
     for tier in &state.selected_tiers {
-        if let Some(entrants) = state.configuration.entrants.get(tier) {
-            for (index, entrant) in entrants.iter().enumerate() {
-                writeln!(
-                    output,
-                    "{} entrant {}: exact candidate host {} catalog {}",
-                    tier_label(*tier),
-                    index + 1,
-                    model_label(&entrant.model),
-                    entrant.catalog_observed_at.0
-                )
-                .map_err(output_error)?;
-            }
+        let entrants = selected_tier_entrants(state, *tier)?;
+        for (index, entrant) in entrants.iter().enumerate() {
+            writeln!(
+                output,
+                "{} entrant {}: exact candidate host {} catalog {}; ordered thinking levels [{}]; starting thinking {}",
+                tier_label(*tier),
+                index + 1,
+                model_label(&entrant.model),
+                entrant.catalog_observed_at.0,
+                entrant.thinking_levels.join(", "),
+                entrant.model.thinking,
+            )
+            .map_err(output_error)?;
         }
     }
     for child in &state.child_runs {
-        let candidate = state
-            .configuration
-            .entrants
-            .get(&child.tier)
-            .and_then(|entrants| entrants.get(usize::from(child.entrant_index)))
-            .map(|entrant| model_label(&entrant.model))
-            .unwrap_or_else(|| "unknown".to_owned());
+        let candidate =
+            pool_child_model(state, child.tier, child.entrant_index, child.thinking_index)?;
         writeln!(
             output,
-            "child {}: {} entrant {} {:?} {:?}; candidate {}",
+            "child {}: {} entrant {} thinking index {} {:?} {:?}; exact requested {}",
             child.run_id.0,
             tier_label(child.tier),
             child.entrant_index + 1,
+            child.thinking_index,
             child.stage,
             child.status,
-            candidate
+            model_label(&candidate)
         )
         .map_err(output_error)?;
     }
-    for pool in &state.pools {
-        writeln!(
-            output,
-            "{} calibration: {}/{} passing; full qualification: {}/{} passing; complete: {}",
-            tier_label(pool.tier),
-            pool.calibration
-                .iter()
-                .filter(|item| item.is_passing)
-                .count(),
-            pool.calibration.len(),
-            pool.qualification
-                .iter()
-                .filter(|item| item.is_passing)
-                .count(),
-            pool.qualification.len(),
-            pool.is_complete
-        )
-        .map_err(output_error)?;
-        for evidence in pool.calibration.iter().chain(&pool.qualification) {
-            render_pool_evidence(evidence, output)?;
-        }
-        writeln!(
-            output,
-            "{} promoted pair: {}",
-            tier_label(pool.tier),
-            model_list(&pool.promoted)
-        )
-        .map_err(output_error)?;
-        writeln!(
-            output,
-            "{} ranked order: {}",
-            tier_label(pool.tier),
-            model_list(&pool.ranked)
-        )
-        .map_err(output_error)?;
+    for tier in &state.selected_tiers {
+        render_tier_pool(state, *tier, output)?;
     }
 
     if let Some(pause) = &state.pause {
@@ -944,7 +1605,330 @@ pub(crate) fn render_pool_report(
     .map_err(output_error)
 }
 
+fn selected_tier_entrants(
+    state: &PoolRunState,
+    tier: Tier,
+) -> Result<&[PoolEntrant], SkillEvalError> {
+    let entrants = state
+        .configuration
+        .entrants
+        .get(&tier)
+        .ok_or_else(|| malformed_pool_report("selected tier has no configured entrants"))?;
+    if entrants.len() < 3 {
+        return Err(malformed_pool_report(
+            "selected tier must contain at least three entrants",
+        ));
+    }
+    Ok(entrants)
+}
+
+fn validate_pool_report_state(state: &PoolRunState) -> Result<(), SkillEvalError> {
+    if state.selected_tiers.iter().collect::<BTreeSet<_>>().len() != state.selected_tiers.len() {
+        return Err(malformed_pool_report("selected tiers contain a duplicate"));
+    }
+    for child in &state.child_runs {
+        pool_child_model(state, child.tier, child.entrant_index, child.thinking_index)?;
+    }
+    for pool in &state.pools {
+        if !state.selected_tiers.contains(&pool.tier)
+            || state
+                .pools
+                .iter()
+                .filter(|candidate| candidate.tier == pool.tier)
+                .count()
+                != 1
+        {
+            return Err(malformed_pool_report(
+                "pool report contains an unselected or duplicate tier pool",
+            ));
+        }
+    }
+    for tier in &state.selected_tiers {
+        let entrants = selected_tier_entrants(state, *tier)?;
+        let pool = state.pools.iter().find(|pool| pool.tier == *tier);
+        pool_tier_matrix_rows(entrants, pool)?;
+        let calibration = pool.map_or(&[][..], |pool| pool.calibration.as_slice());
+        for evidence in calibration {
+            if entrants
+                .iter()
+                .filter(|entrant| is_same_base_model(&entrant.model, &evidence.requested_model))
+                .count()
+                != 1
+            {
+                return Err(malformed_pool_report(
+                    "calibration evidence does not belong to one configured base model",
+                ));
+            }
+        }
+        for entrant in entrants {
+            let evidence = calibration
+                .iter()
+                .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+                .cloned()
+                .collect::<Vec<_>>();
+            let decision = select_thinking_level(entrant, &evidence)?;
+            validate_persisted_thinking_selection(pool, entrant, &decision.selected)?;
+        }
+        if let Some(pool) = pool {
+            for selection in &pool.thinking_selections {
+                if entrants
+                    .iter()
+                    .filter(|entrant| is_same_base_model(&entrant.model, selection))
+                    .count()
+                    != 1
+                {
+                    return Err(malformed_pool_report(
+                        "thinking selection does not belong to one configured base model",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_tier_pool(
+    state: &PoolRunState,
+    tier: Tier,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let entrants = selected_tier_entrants(state, tier)?;
+    let pool = state.pools.iter().find(|pool| pool.tier == tier);
+    let calibration = pool.map_or(&[][..], |pool| pool.calibration.as_slice());
+    let qualification = pool.map_or(&[][..], |pool| pool.qualification.as_slice());
+    let is_complete = pool.is_some_and(|pool| pool.is_complete);
+
+    for evidence in calibration {
+        if entrants
+            .iter()
+            .filter(|entrant| is_same_base_model(&entrant.model, &evidence.requested_model))
+            .count()
+            != 1
+        {
+            return Err(malformed_pool_report(
+                "calibration evidence does not belong to one configured base model",
+            ));
+        }
+    }
+
+    writeln!(
+        output,
+        "{} calibration: {}/{} passing; full qualification: {}/{} passing; complete: {}",
+        tier_label(tier),
+        calibration.iter().filter(|item| item.is_passing).count(),
+        calibration.len(),
+        qualification.iter().filter(|item| item.is_passing).count(),
+        qualification.len(),
+        is_complete
+    )
+    .map_err(output_error)?;
+
+    for (entrant_index, entrant) in entrants.iter().enumerate() {
+        let evidence = calibration
+            .iter()
+            .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+            .cloned()
+            .collect::<Vec<_>>();
+        let decision = select_thinking_level(entrant, &evidence)?;
+        validate_persisted_thinking_selection(pool, entrant, &decision.selected)?;
+        render_thinking_progress(
+            state,
+            tier,
+            entrant_index,
+            entrant,
+            &evidence,
+            &decision,
+            output,
+        )?;
+    }
+
+    for evidence in qualification {
+        render_pool_evidence("full qualification", evidence, output)?;
+    }
+    let thinking_selections = pool.map_or(&[][..], |pool| pool.thinking_selections.as_slice());
+    let promoted = pool.map_or(&[][..], |pool| pool.promoted.as_slice());
+    let ranked = pool.map_or(&[][..], |pool| pool.ranked.as_slice());
+    let retained_lower_routes = pool.map_or(&[][..], |pool| pool.retained_lower_routes.as_slice());
+    writeln!(
+        output,
+        "{} thinking selections: {}",
+        tier_label(tier),
+        model_list(thinking_selections)
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "{} promoted routes: {}",
+        tier_label(tier),
+        model_list(promoted)
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "{} ranked order: {}",
+        tier_label(tier),
+        model_list(ranked)
+    )
+    .map_err(output_error)?;
+    if retained_lower_routes.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        output,
+        "{} retained lower routes: {}",
+        tier_label(tier),
+        model_list(retained_lower_routes)
+    )
+    .map_err(output_error)
+}
+
+fn validate_persisted_thinking_selection(
+    pool: Option<&crate::model::RankedPool>,
+    entrant: &PoolEntrant,
+    derived: &Option<ModelIdentity>,
+) -> Result<(), SkillEvalError> {
+    let mut selections = pool
+        .into_iter()
+        .flat_map(|pool| &pool.thinking_selections)
+        .filter(|selection| is_same_base_model(selection, &entrant.model));
+    let persisted = selections.next();
+    if selections.next().is_some() {
+        return Err(malformed_pool_report(
+            "thinking selections contain a duplicate base model",
+        ));
+    }
+    if persisted.is_some_and(|selection| Some(selection) != derived.as_ref()) {
+        return Err(malformed_pool_report(
+            "persisted thinking selection differs from calibration evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn render_thinking_progress(
+    state: &PoolRunState,
+    tier: Tier,
+    entrant_index: usize,
+    entrant: &PoolEntrant,
+    evidence: &[PoolEntrantEvidence],
+    decision: &crate::model::ThinkingDecision,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    writeln!(
+        output,
+        "  {} entrant {} thinking: exact base {}/{}; ordered levels [{}]; start {}",
+        tier_label(tier),
+        entrant_index + 1,
+        entrant.model.provider,
+        entrant.model.model,
+        entrant.thinking_levels.join(", "),
+        entrant.model.thinking
+    )
+    .map_err(output_error)?;
+    if evidence.is_empty() {
+        writeln!(output, "    calibration attempts: none").map_err(output_error)?;
+    }
+    for (attempt_index, item) in evidence.iter().enumerate() {
+        let thinking_index = entrant
+            .thinking_levels
+            .iter()
+            .position(|level| level == &item.requested_model.thinking)
+            .ok_or_else(|| malformed_pool_report("calibration evidence uses an unknown level"))?;
+        render_pool_evidence(
+            &format!(
+                "thinking attempt {} index {} {}",
+                attempt_index + 1,
+                thinking_index,
+                item.requested_model.thinking
+            ),
+            item,
+            output,
+        )?;
+    }
+    if decision.is_complete {
+        match &decision.selected {
+            Some(selected) => writeln!(
+                output,
+                "    thinking result: selected lowest passing exact identity {}",
+                model_label(selected)
+            )
+            .map_err(output_error)?,
+            None => writeln!(output, "    thinking result: complete, all levels failed")
+                .map_err(output_error)?,
+        }
+    } else {
+        let next_index = decision.next_thinking_index.ok_or_else(|| {
+            malformed_pool_report("incomplete thinking decision has no next probe")
+        })?;
+        let next = pool_thinking_model(entrant, next_index)?;
+        writeln!(
+            output,
+            "    next thinking probe: index {} exact requested {}",
+            next_index,
+            model_label(&next)
+        )
+        .map_err(output_error)?;
+    }
+    let skipped = state
+        .child_runs
+        .iter()
+        .filter(|child| {
+            child.tier == tier
+                && usize::from(child.entrant_index) == entrant_index
+                && child.stage == crate::model::PoolStage::Calibration
+                && child.status == PoolChildStatus::Skipped
+        })
+        .map(|child| {
+            entrant
+                .thinking_levels
+                .get(usize::from(child.thinking_index))
+                .cloned()
+                .ok_or_else(|| malformed_pool_report("skipped child has an unknown thinking index"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    writeln!(
+        output,
+        "    skipped calibration levels: {}",
+        if skipped.is_empty() {
+            "none".to_owned()
+        } else {
+            skipped.join(", ")
+        }
+    )
+    .map_err(output_error)
+}
+
+fn pool_child_model(
+    state: &PoolRunState,
+    tier: Tier,
+    entrant_index: u8,
+    thinking_index: u8,
+) -> Result<ModelIdentity, SkillEvalError> {
+    let entrant = selected_tier_entrants(state, tier)?
+        .get(usize::from(entrant_index))
+        .ok_or_else(|| malformed_pool_report("child has an unknown entrant index"))?;
+    pool_thinking_model(entrant, thinking_index)
+}
+
+fn pool_thinking_model(
+    entrant: &PoolEntrant,
+    thinking_index: u8,
+) -> Result<ModelIdentity, SkillEvalError> {
+    let thinking = entrant
+        .thinking_levels
+        .get(usize::from(thinking_index))
+        .ok_or_else(|| malformed_pool_report("child has an unknown thinking index"))?;
+    let mut model = entrant.model.clone();
+    model.thinking.clone_from(thinking);
+    Ok(model)
+}
+
+fn is_same_base_model(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.tier == right.tier && left.provider == right.provider && left.model == right.model
+}
+
 fn render_pool_evidence(
+    label: &str,
     evidence: &PoolEntrantEvidence,
     output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
@@ -955,11 +1939,10 @@ fn render_pool_evidence(
     };
     writeln!(
         output,
-        "  {:?}: exact candidate {}; judge host {}; pass {}; score {:.2} [{:.2}, {:.2}]; trials {}/{}; failures {} ({failure_rate:.2}%); catastrophic {}; candidate usage {} input, {} output, ${:.6}, {} ms; judge usage {} input, {} output, ${:.6}, {} ms",
-        evidence.stage,
+        "    {label}: exact candidate {}; judge host {}; result {}; score {:.2} [{:.2}, {:.2}]; trials {}/{}; failures {} ({failure_rate:.2}%); catastrophic {}; candidate usage {} input, {} output, ${:.6}, {} ms; judge usage {} input, {} output, ${:.6}, {} ms",
         model_label(&evidence.effective_model),
         model_label(&evidence.judge_model),
-        evidence.is_passing,
+        if evidence.is_passing { "pass" } else { "fail" },
         evidence.score.estimate,
         evidence.score.lower,
         evidence.score.upper,
@@ -977,6 +1960,10 @@ fn render_pool_evidence(
         evidence.judge_usage.elapsed_milliseconds,
     )
     .map_err(output_error)
+}
+
+fn malformed_pool_report(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("malformed pool report: {}", message.into()))
 }
 
 fn model_label(model: &ModelIdentity) -> String {
@@ -1084,6 +2071,298 @@ impl Clock for FixedClock {
     }
 }
 
+const CANDIDATE_EXTENSION_IDENTITY_SIZE_LIMIT: u64 = 64 * 1024 * 1024;
+const MISSING_NODE_MODULES_LOCK_MARKER: &[u8] = b"missing";
+
+fn candidate_environment_manifest() -> Result<Vec<CandidateEnvironmentEntry>, SkillEvalError> {
+    let home = env::var_os("HOME").ok_or_else(|| {
+        SkillEvalError::InvalidConfiguration(
+            "HOME is required to identify the candidate Pi environment".to_owned(),
+        )
+    })?;
+    candidate_environment_manifest_at(&PathBuf::from(home).join(".pi/agent"))
+}
+
+fn candidate_environment_manifest_at(
+    agent_root: &Path,
+) -> Result<Vec<CandidateEnvironmentEntry>, SkillEvalError> {
+    let mut manifest = Vec::new();
+    for name in ["settings.json", "models.json"] {
+        let path = agent_root.join(name);
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => {
+                let bytes = read_candidate_file(&path)?;
+                manifest.push(CandidateEnvironmentEntry {
+                    key: format!("pi-agent/{name}"),
+                    sha256: sha256_digest(&bytes),
+                });
+            }
+            Ok(_) => {
+                return Err(SkillEvalError::InvalidConfiguration(format!(
+                    "candidate Pi input {} is not a regular file",
+                    path.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_path_error(path, error)),
+        }
+    }
+
+    let extensions = agent_root.join("extensions");
+    let mut entries = match fs::read_dir(&extensions) {
+        Ok(entries) => entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| io_path_error(extensions.clone(), error))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(io_path_error(extensions, error)),
+    };
+    entries.sort_by_key(fs::DirEntry::file_name);
+    for entry in entries {
+        let name = utf8_path_segment(&entry.file_name(), "candidate extension name")?;
+        let key_root = format!("extensions/{name}");
+        let path = entry.path();
+        let canonical =
+            fs::canonicalize(&path).map_err(|error| io_path_error(path.clone(), error))?;
+        manifest.push(CandidateEnvironmentEntry {
+            key: key_root.clone(),
+            sha256: sha256_digest(name.as_bytes()),
+        });
+        manifest.push(CandidateEnvironmentEntry {
+            key: format!("{key_root}/canonical-path"),
+            sha256: sha256_digest(canonical.as_os_str().as_encoded_bytes()),
+        });
+        let metadata =
+            fs::metadata(&canonical).map_err(|error| io_path_error(canonical.clone(), error))?;
+        if metadata.is_file() {
+            let mut total_bytes = 0;
+            let bytes = read_bounded_extension_file(&canonical, &canonical, &mut total_bytes)?;
+            manifest.push(CandidateEnvironmentEntry {
+                key: format!("{key_root}/content"),
+                sha256: sha256_digest(&bytes),
+            });
+        } else if metadata.is_dir() {
+            append_extension_directory_manifest(&canonical, &key_root, &mut manifest)?;
+        } else {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "candidate extension {} has an unsupported type",
+                path.display()
+            )));
+        }
+    }
+
+    manifest.sort_by(|left, right| left.key.cmp(&right.key));
+    if manifest
+        .windows(2)
+        .any(|entries| entries[0].key == entries[1].key)
+    {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "candidate environment manifest contains a duplicate key".to_owned(),
+        ));
+    }
+    Ok(manifest)
+}
+
+fn append_extension_directory_manifest(
+    root: &Path,
+    key_root: &str,
+    manifest: &mut Vec<CandidateEnvironmentEntry>,
+) -> Result<(), SkillEvalError> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut visited = BTreeSet::from([root.to_path_buf()]);
+    let mut total_bytes = 0;
+    while let Some(directory) = pending.pop() {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(|error| io_path_error(directory.clone(), error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| io_path_error(directory.clone(), error))?;
+        entries.sort_by_key(fs::DirEntry::file_name);
+        for entry in entries {
+            let path = entry.path();
+            let name = entry.file_name();
+            if name == ".git" || name == "node_modules" {
+                continue;
+            }
+            let metadata =
+                fs::metadata(&path).map_err(|error| io_path_error(path.clone(), error))?;
+            if metadata.is_dir() {
+                let canonical =
+                    fs::canonicalize(&path).map_err(|error| io_path_error(path.clone(), error))?;
+                if !visited.insert(canonical) {
+                    return Err(SkillEvalError::InvalidConfiguration(format!(
+                        "candidate extension directory {} contains a directory cycle",
+                        root.display()
+                    )));
+                }
+                pending.push(path);
+                continue;
+            }
+            if !metadata.is_file() {
+                return Err(SkillEvalError::InvalidConfiguration(format!(
+                    "candidate extension entry {} has an unsupported type",
+                    path.display()
+                )));
+            }
+            let bytes = read_bounded_extension_file(&path, root, &mut total_bytes)?;
+            let relative = searchable_relative_path(root, &path)?;
+            manifest.push(CandidateEnvironmentEntry {
+                key: format!("{key_root}/files/{relative}"),
+                sha256: sha256_digest(&bytes),
+            });
+        }
+    }
+    append_node_modules_lock_marker(root, key_root, manifest, &mut total_bytes)
+}
+
+fn append_node_modules_lock_marker(
+    root: &Path,
+    key_root: &str,
+    manifest: &mut Vec<CandidateEnvironmentEntry>,
+    total_bytes: &mut u64,
+) -> Result<(), SkillEvalError> {
+    let is_runtime_dependencies_present = runtime_dependencies_indicated(root)?;
+    let node_modules = root.join("node_modules");
+    match fs::symlink_metadata(&node_modules) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "candidate extension entry {} has an unsupported type",
+                node_modules.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if is_runtime_dependencies_present {
+                manifest.push(missing_node_modules_lock_entry(key_root));
+            }
+            return Ok(());
+        }
+        Err(error) => return Err(io_path_error(node_modules, error)),
+    }
+
+    let lock = node_modules.join(".package-lock.json");
+    match fs::symlink_metadata(&lock) {
+        Ok(metadata) if metadata.is_file() => {
+            let bytes = read_bounded_extension_file(&lock, root, total_bytes)?;
+            manifest.push(CandidateEnvironmentEntry {
+                key: node_modules_lock_key(key_root),
+                sha256: sha256_digest(&bytes),
+            });
+        }
+        Ok(_) => {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "candidate extension entry {} has an unsupported type",
+                lock.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if is_runtime_dependencies_present {
+                manifest.push(missing_node_modules_lock_entry(key_root));
+            }
+        }
+        Err(error) => return Err(io_path_error(lock, error)),
+    }
+    Ok(())
+}
+
+fn missing_node_modules_lock_entry(key_root: &str) -> CandidateEnvironmentEntry {
+    CandidateEnvironmentEntry {
+        key: node_modules_lock_key(key_root),
+        sha256: sha256_digest(MISSING_NODE_MODULES_LOCK_MARKER),
+    }
+}
+
+fn node_modules_lock_key(key_root: &str) -> String {
+    format!("{key_root}/files/node_modules/.package-lock.json")
+}
+
+fn runtime_dependencies_indicated(root: &Path) -> Result<bool, SkillEvalError> {
+    let package = dependency_object_is_nonempty(&root.join("package.json"), &["dependencies"])?;
+    let lock = root.join("package-lock.json");
+    let lock_root = dependency_object_is_nonempty(&lock, &["packages", "", "dependencies"])?;
+    let lock_v1 = dependency_object_is_nonempty(&lock, &["dependencies"])?;
+    Ok(package || lock_root || lock_v1)
+}
+
+fn dependency_object_is_nonempty(path: &Path, fields: &[&str]) -> Result<bool, SkillEvalError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io_path_error(path.to_path_buf(), error)),
+    };
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        SkillEvalError::InvalidConfiguration(format!(
+            "candidate extension dependency file {} is malformed: {error}",
+            path.display()
+        ))
+    })?;
+    let value = fields
+        .iter()
+        .try_fold(&value, |value, field| value.get(*field).ok_or(()));
+    Ok(value
+        .ok()
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|dependencies| !dependencies.is_empty()))
+}
+
+fn read_candidate_file(path: &Path) -> Result<Vec<u8>, SkillEvalError> {
+    fs::read(path).map_err(|error| io_path_error(path.to_path_buf(), error))
+}
+
+fn read_bounded_extension_file(
+    path: &Path,
+    identity_root: &Path,
+    total_bytes: &mut u64,
+) -> Result<Vec<u8>, SkillEvalError> {
+    let bytes = read_candidate_file(path)?;
+    let length = u64::try_from(bytes.len()).map_err(|_| {
+        SkillEvalError::InvalidConfiguration(
+            "candidate extension file size exceeds the supported range".to_owned(),
+        )
+    })?;
+    *total_bytes = total_bytes.checked_add(length).ok_or_else(|| {
+        SkillEvalError::InvalidConfiguration(
+            "candidate extension directory size overflowed".to_owned(),
+        )
+    })?;
+    if *total_bytes > CANDIDATE_EXTENSION_IDENTITY_SIZE_LIMIT {
+        return Err(SkillEvalError::InvalidConfiguration(format!(
+            "candidate extension {} exceeds the identity size limit",
+            identity_root.display()
+        )));
+    }
+    Ok(bytes)
+}
+
+fn searchable_relative_path(root: &Path, path: &Path) -> Result<String, SkillEvalError> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        SkillEvalError::InvalidConfiguration("candidate extension path escaped its root".to_owned())
+    })?;
+    let mut components = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(component) = component else {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "candidate extension path is not searchable".to_owned(),
+            ));
+        };
+        components.push(utf8_path_segment(component, "candidate extension path")?);
+    }
+    Ok(components.join("/"))
+}
+
+fn utf8_path_segment(segment: &std::ffi::OsStr, label: &str) -> Result<String, SkillEvalError> {
+    segment
+        .to_str()
+        .map(str::to_owned)
+        .ok_or_else(|| SkillEvalError::InvalidConfiguration(format!("{label} is not UTF-8")))
+}
+
+fn io_path_error(path: PathBuf, error: std::io::Error) -> SkillEvalError {
+    SkillEvalError::Io {
+        path,
+        message: error.to_string(),
+    }
+}
+
+// TODO(AGNT-0032.T150): Delegate cumulative frontier ports to concrete adapters.
 pub(crate) struct ConcreteRuntime {
     source: FileArtifactSource,
     models: ConfiguredModelResolver,
@@ -1093,9 +2372,14 @@ pub(crate) struct ConcreteRuntime {
     store: FileRunStore,
     pool_source: FilePoolPlanSource,
     pool_store: FilePoolStore,
+    t1_screen_store: FileT1ScreenStore,
     writer: FileTierWriter,
     run_ids: PathRunIdSource,
+    repository_root: PathBuf,
     pi_version: String,
+    candidate_environment_manifest: Vec<CandidateEnvironmentEntry>,
+    candidate_environment_manifest_digest: String,
+    t1_capability_snapshot: RefCell<Option<Vec<u8>>>,
 }
 
 impl ConcreteRuntime {
@@ -1105,21 +2389,30 @@ impl ConcreteRuntime {
             message: error.to_string(),
         })?;
         let catalog = command_output("pi", &["--list-models"])?;
+        let rpc_models = pi_available_models()?;
         let pi_version = command_output("pi", &["--version"])?;
         let repository_root = repository_root()?;
         let configuration_path = repository_root.join("config/model-tiers.json");
+        let candidate_environment_manifest = candidate_environment_manifest()?;
+        let candidate_environment_manifest_digest =
+            candidate_environment_manifest_digest(&candidate_environment_manifest)?;
         Ok(Self {
             source: FileArtifactSource,
-            models: ConfiguredModelResolver::load(&configuration_path, &catalog)?,
+            models: ConfiguredModelResolver::load(&configuration_path, &catalog, &rpc_models)?,
             runner: PiCandidateRunner::new(runs_root.to_path_buf()),
             verifier: FileVerifier::new(runs_root)?,
             judge: PiJudge::new(),
             store: FileRunStore::new(runs_root)?,
             pool_source: FilePoolPlanSource::new(&repository_root)?,
             pool_store: FilePoolStore::new(runs_root)?,
+            t1_screen_store: FileT1ScreenStore::new(&repository_root)?,
             writer: FileTierWriter,
             run_ids: PathRunIdSource::new(runs_root)?,
+            repository_root,
             pi_version: pi_version.trim().to_owned(),
+            candidate_environment_manifest,
+            candidate_environment_manifest_digest,
+            t1_capability_snapshot: RefCell::new(None),
         })
     }
 }
@@ -1133,6 +2426,10 @@ impl ArtifactSource for ConcreteRuntime {
 impl ModelResolver for ConcreteRuntime {
     fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
         self.models.candidates(tier)
+    }
+
+    fn qualification_routes(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
+        self.models.qualification_routes(tier)
     }
 
     fn exact_candidate(&self, requested: &ModelIdentity) -> Result<ModelIdentity, SkillEvalError> {
@@ -1174,7 +2471,12 @@ impl HarnessResolver for ConcreteRuntime {
                 "harness identity requires an artifact revision".to_owned(),
             ));
         }
-        let policy = serde_json::to_vec(execution).map_err(|error| {
+        let policy = serde_json::to_vec(&(
+            execution,
+            "candidate uses every tool and extension discovered by Pi",
+            &self.candidate_environment_manifest_digest,
+        ))
+        .map_err(|error| {
             SkillEvalError::InvalidConfiguration(format!(
                 "tool policy serialization failed: {error}"
             ))
@@ -1203,9 +2505,17 @@ impl CandidateRunner for ConcreteRuntime {
         case: &crate::model::CaseDefinition,
         model: &ModelIdentity,
         harness: &HarnessIdentity,
+        candidate_timeout_seconds: Option<u32>,
     ) -> Result<crate::model::CandidateArtifact, SkillEvalError> {
-        self.runner
-            .execute(run_id, key, artifact, case, model, harness)
+        self.runner.execute(
+            run_id,
+            key,
+            artifact,
+            case,
+            model,
+            harness,
+            candidate_timeout_seconds,
+        )
     }
 }
 
@@ -1290,18 +2600,151 @@ impl PoolStore for ConcreteRuntime {
     }
 }
 
+impl T1ScreenStore for ConcreteRuntime {
+    fn create_t1_screen(&mut self, state: &T1ScreenRunState) -> Result<(), SkillEvalError> {
+        self.t1_screen_store.create(state)
+    }
+
+    fn load_t1_screen(&self, run_id: &T1ScreenRunId) -> Result<T1ScreenRunState, SkillEvalError> {
+        self.t1_screen_store.load(run_id)
+    }
+
+    fn save_t1_screen(&mut self, state: &T1ScreenRunState) -> Result<(), SkillEvalError> {
+        self.t1_screen_store.save(state)
+    }
+
+    fn load_t1_screen_campaign(
+        &self,
+        campaign_id: &T1ScreenCampaignId,
+    ) -> Result<crate::model::T1ScreenCampaignState, SkillEvalError> {
+        self.t1_screen_store.load_t1_screen_campaign(campaign_id)
+    }
+
+    fn reconcile_t1_screen_campaign(
+        &mut self,
+        campaign_id: &T1ScreenCampaignId,
+    ) -> Result<crate::model::T1ScreenCampaignState, SkillEvalError> {
+        self.t1_screen_store
+            .reconcile_t1_screen_campaign(campaign_id)
+    }
+
+    fn pause_t1_screen_campaign_for_budget(
+        &mut self,
+        campaign_id: &T1ScreenCampaignId,
+    ) -> Result<crate::model::T1ScreenCampaignState, SkillEvalError> {
+        self.t1_screen_store
+            .pause_t1_screen_campaign_for_budget(campaign_id)
+    }
+
+    fn register_t1_screen_campaign_run(
+        &mut self,
+        state: &T1ScreenRunState,
+    ) -> Result<crate::model::T1ScreenCampaignState, SkillEvalError> {
+        self.t1_screen_store.register_t1_screen_campaign_run(state)
+    }
+
+    fn reconcile_t1_screen_campaign_run(
+        &mut self,
+        state: &T1ScreenRunState,
+    ) -> Result<crate::model::T1ScreenCampaignState, SkillEvalError> {
+        self.t1_screen_store.reconcile_t1_screen_campaign_run(state)
+    }
+}
+
+impl T1ScreenRuntime for ConcreteRuntime {
+    fn capability_snapshot_bytes(&self, path: &Path) -> Result<Vec<u8>, SkillEvalError> {
+        let canonical = fs::canonicalize(path).map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+        let metadata = fs::symlink_metadata(path).map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+        if canonical != path || !canonical.starts_with(&self.repository_root) || !metadata.is_file()
+        {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "T1 capability snapshot path or type changed".to_owned(),
+            ));
+        }
+        let bytes = fs::read(&canonical).map_err(|error| SkillEvalError::Io {
+            path: canonical,
+            message: error.to_string(),
+        })?;
+        *self.t1_capability_snapshot.borrow_mut() = Some(bytes.clone());
+        Ok(bytes)
+    }
+
+    fn candidate_environment_manifest(
+        &self,
+    ) -> Result<Vec<CandidateEnvironmentEntry>, SkillEvalError> {
+        candidate_environment_manifest()
+    }
+
+    fn judge_cost_upper_bound(
+        &self,
+        model: &ModelIdentity,
+        _input: &crate::model::JudgeInput,
+    ) -> Result<u64, SkillEvalError> {
+        let snapshot = self.t1_capability_snapshot.borrow();
+        let bytes = snapshot.as_deref().ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(
+                "T1 capability snapshot was not frozen before judge preflight".to_owned(),
+            )
+        })?;
+        model_capabilities::t1_judge_cost_upper_bound(bytes, model)
+    }
+
+    fn conservative_next_judge_cost_upper_bound(
+        &self,
+        model: &ModelIdentity,
+    ) -> Result<u64, SkillEvalError> {
+        self.judge_cost_upper_bound(
+            model,
+            &crate::model::JudgeInput {
+                candidate: crate::model::CandidateArtifact {
+                    key: crate::model::TrialKey {
+                        artifact: ArtifactName("campaign-preflight".to_owned()),
+                        tier: Tier::T1,
+                        route_index: 0,
+                        case: CaseId("campaign-preflight".to_owned()),
+                        attempt: 1,
+                    },
+                    model: model.clone(),
+                    harness: HarnessIdentity {
+                        runner_version: RUNNER_VERSION.to_owned(),
+                        pi_version: "campaign-preflight".to_owned(),
+                        artifact_revision: "campaign-preflight".to_owned(),
+                        tool_policy_digest: "campaign-preflight".to_owned(),
+                    },
+                    artifact_path: PathBuf::new(),
+                    transcript_path: PathBuf::new(),
+                    usage: zero_t1_usage(),
+                },
+                expect: String::new(),
+                rubric_path: PathBuf::new(),
+                checks: Vec::new(),
+            },
+        )
+    }
+}
+
 impl Clock for ConcreteRuntime {
     fn now(&self) -> Timestamp {
-        let value = Command::new("date")
-            .arg("+%Y-%m-%dT%H:%M:%S%z")
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|value| value.trim().to_owned())
-            .unwrap_or_else(|| "1970-01-01T00:00:00+0000".to_owned());
-        Timestamp(value)
+        local_timestamp()
     }
+}
+
+fn local_timestamp() -> Timestamp {
+    let value = Command::new("date")
+        .arg("+%Y-%m-%dT%H:%M:%S%z")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .unwrap_or_else(|| "1970-01-01T00:00:00+0000".to_owned());
+    Timestamp(value)
 }
 
 impl TierWriter for ConcreteRuntime {
@@ -1380,15 +2823,20 @@ fn test_pool_plan() -> crate::model::PoolPlan {
         entrants.insert(
             tier,
             (0..3)
-                // TODO(AGNT-0032.T103): Add the neutral one-level thinking list to CLI fixtures.
-                .map(|index| PoolEntrant {
-                    model: ModelIdentity {
+                .map(|index| {
+                    let model = ModelIdentity {
                         tier,
                         provider: format!("provider-{index}"),
                         model: format!("exact-{index}"),
                         thinking: "off".to_owned(),
-                    },
-                    catalog_observed_at: Timestamp("2026-08-24T11:59:00-0400".to_owned()),
+                    };
+                    PoolEntrant {
+                        thinking_levels: vec![model.thinking.clone()],
+                        retained_lower_thinking_level: None,
+                        model,
+                        candidate_timeout_seconds: None,
+                        catalog_observed_at: Timestamp("2026-08-24T11:59:00-0400".to_owned()),
+                    }
                 })
                 .collect(),
         );
@@ -1406,7 +2854,8 @@ fn test_pool_plan() -> crate::model::PoolPlan {
             qualification_repeats_per_case: 2,
             promotion_count: 2,
             minimum_score: 8,
-            minimum_reliability_basis_points: 9_500,
+            calibration_minimum_reliability_basis_points: 8_000,
+            qualification_minimum_reliability_basis_points: 10_000,
             maximum_catalog_age_seconds: 3_600,
             spending_limit_millionths_of_dollar: 10_000_000,
             is_provider_limit_enforced: true,
@@ -1475,14 +2924,1166 @@ pub(crate) fn run_main() -> Result<(), SkillEvalError> {
         return Ok(());
     }
     let request = parse_arguments(&arguments)?;
+    match &request.command {
+        CliCommand::ModelCapabilities { output } => {
+            return run_model_capabilities(output, &mut std::io::stdout());
+        }
+        CliCommand::T1ScreenPreview {
+            capabilities,
+            format,
+        } => {
+            return run_t1_screen_preview(capabilities, *format, &mut std::io::stdout());
+        }
+        CliCommand::T1ScreenCampaignCreate { request, format } => {
+            return run_t1_screen_campaign_create(request, *format, &mut std::io::stdout());
+        }
+        CliCommand::T1ScreenCampaignExtendCap { request, format } => {
+            return run_t1_screen_campaign_extend_cap(request, *format, &mut std::io::stdout());
+        }
+        CliCommand::T1ScreenCampaignRetireRun { request, format } => {
+            return run_t1_screen_campaign_retire_run(request, *format, &mut std::io::stdout());
+        }
+        CliCommand::T1ScreenStart {
+            request: start,
+            format,
+        } => {
+            return run_t1_screen_start(start, &request.runs_root, *format, &mut std::io::stdout());
+        }
+        CliCommand::T1ScreenResume { run_id, format } => {
+            return run_t1_screen_resume(
+                run_id,
+                &request.runs_root,
+                *format,
+                &mut std::io::stdout(),
+            );
+        }
+        CliCommand::T1ScreenExtendCap {
+            request: extension,
+            format,
+        } => {
+            return run_t1_screen_extend_cap(
+                extension,
+                &request.runs_root,
+                *format,
+                &mut std::io::stdout(),
+            );
+        }
+        CliCommand::T1ScreenFailRoute {
+            request: route_failure,
+            format,
+        } => {
+            return run_t1_screen_fail_route(
+                route_failure,
+                &request.runs_root,
+                *format,
+                &mut std::io::stdout(),
+            );
+        }
+        CliCommand::T1ScreenReport { run_id, format } => {
+            return run_t1_screen_report(
+                run_id,
+                &request.runs_root,
+                *format,
+                &mut std::io::stdout(),
+            );
+        }
+        _ => {}
+    }
     let mut runtime = ConcreteRuntime::new(&request.runs_root)?;
     execute_command(request, &mut runtime, &mut std::io::stdout())
+}
+
+fn run_t1_screen_campaign_retire_run(
+    request: &T1ScreenCampaignRunRetirementRequest,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    run_t1_screen_campaign_retire_run_at(
+        &repository_root()?,
+        request,
+        local_timestamp(),
+        format,
+        output,
+    )
+}
+
+fn run_t1_screen_campaign_retire_run_at(
+    repository_root: &Path,
+    request: &T1ScreenCampaignRunRetirementRequest,
+    timestamp: Timestamp,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let mut store = FileT1ScreenCampaignStore::open(repository_root)?;
+    let state = store.retire_run(request, timestamp)?;
+    render_t1_screen_campaign_retirement(&state, &request.run_id, format, output)
+}
+
+fn render_t1_screen_campaign_retirement(
+    state: &crate::model::T1ScreenCampaignState,
+    run_id: &T1ScreenRunId,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    if format == T1ScreenFormat::Json {
+        return write_json_line(state, output);
+    }
+    let remaining = state
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(state.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| invalid("campaign remaining spend underflow"))?;
+    writeln!(
+        output,
+        "retired T1 screen campaign run {}; total {}, spent {}, remaining {} millionths",
+        run_id.0,
+        state.approved_judge_total_millionths_of_dollar,
+        state.aggregate_judge_spent_millionths_of_dollar,
+        remaining
+    )
+    .map_err(output_error)
+}
+
+fn run_t1_screen_campaign_extend_cap(
+    request: &T1ScreenCampaignCapExtensionRequest,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    run_t1_screen_campaign_extend_cap_at(
+        &repository_root()?,
+        request,
+        local_timestamp(),
+        format,
+        output,
+    )
+}
+
+fn run_t1_screen_campaign_extend_cap_at(
+    repository_root: &Path,
+    request: &T1ScreenCampaignCapExtensionRequest,
+    timestamp: Timestamp,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let mut store = FileT1ScreenCampaignStore::open(repository_root)?;
+    let state = store.extend_cap(request, timestamp)?;
+    render_t1_screen_campaign_cap_extension(&state, format, output)
+}
+
+fn render_t1_screen_campaign_cap_extension(
+    state: &crate::model::T1ScreenCampaignState,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    if format == T1ScreenFormat::Json {
+        return write_json_line(state, output);
+    }
+    let remaining = state
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(state.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| invalid("campaign remaining spend underflow"))?;
+    writeln!(
+        output,
+        "T1 screen campaign {}: {:?}",
+        state.campaign_id.0, state.status
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "judge budget: total {}, spent {}, remaining {} millionths",
+        state.approved_judge_total_millionths_of_dollar,
+        state.aggregate_judge_spent_millionths_of_dollar,
+        remaining
+    )
+    .map_err(output_error)?;
+    writeln!(output, "cap extensions: {}", state.cap_extensions.len()).map_err(output_error)
+}
+
+fn run_t1_screen_campaign_create(
+    request: &T1ScreenCampaignCreateRequest,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let repository_root = repository_root()?;
+    let mut store = FileT1ScreenCampaignStore::new(&repository_root)?;
+    let state = store.create_from_runs(
+        &request.campaign_id,
+        request.judge_cap_millionths_of_dollar,
+        &request.owner_reason,
+        local_timestamp(),
+        &request.run_ids,
+    )?;
+    if format == T1ScreenFormat::Json {
+        return write_json_line(&state, output);
+    }
+    let remaining = state
+        .approved_judge_total_millionths_of_dollar
+        .checked_sub(state.aggregate_judge_spent_millionths_of_dollar)
+        .ok_or_else(|| invalid("campaign remaining spend underflow"))?;
+    writeln!(
+        output,
+        "T1 screen campaign {}: {:?}",
+        state.campaign_id.0, state.status
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "judge budget: total {}, spent {}, remaining {} millionths",
+        state.approved_judge_total_millionths_of_dollar,
+        state.aggregate_judge_spent_millionths_of_dollar,
+        remaining
+    )
+    .map_err(output_error)?;
+    writeln!(output, "runs: {}", state.runs.len()).map_err(output_error)?;
+    for run in &state.runs {
+        writeln!(
+            output,
+            "  {}: {:?}; judge {}; candidate {}; resumable={}",
+            run.run_id.0,
+            run.observed_status,
+            run.judge_spend_millionths_of_dollar,
+            run.candidate_cost_millionths_of_dollar,
+            run.is_resumable
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(
+        output,
+        "active run: {}",
+        state
+            .active_run_id
+            .as_ref()
+            .map_or("none", |run_id| run_id.0.as_str())
+    )
+    .map_err(output_error)
+}
+
+fn run_t1_screen_start(
+    request: &T1ScreenStartRequest,
+    runs_root: &Path,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    preflight_run_id_file()?;
+    let repository_root = repository_root()?;
+    let mut preview =
+        model_capabilities::t1_screen_preview(&repository_root, &request.capabilities)?;
+    if preview.eligible.is_empty() {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "T1 screening snapshot has no eligible models".to_owned(),
+        ));
+    }
+    validate_tracked_capability_snapshot(
+        &repository_root,
+        &request.capabilities,
+        &preview.snapshot.sha256,
+    )?;
+    preview.snapshot.path = repository_root
+        .join(&request.capabilities)
+        .canonicalize()
+        .map_err(|error| SkillEvalError::Io {
+            path: request.capabilities.clone(),
+            message: error.to_string(),
+        })?;
+    let source = FileArtifactSource;
+    let exam = source.load(&repository_root.join(&request.exam))?;
+    if exam.cases.len() != 5 || exam.cases.iter().any(|case| case.is_holdout) {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "T1 screening exam must contain exactly five non-holdout cases".to_owned(),
+        ));
+    }
+
+    let mut runtime = ConcreteRuntime::new(runs_root)?;
+    let state = build_t1_screen_initial_state(request, preview, exam, &mut runtime)?;
+    let mut progress = T1CliProgress {
+        is_run_id_written: false,
+    };
+    let state = start_t1_screening(state, &mut runtime, &mut progress)?;
+    let report = build_t1_screen_report(&state.configuration.run_id, &runtime, &runtime)?;
+    render_t1_screen_report(&report, format, output)
+}
+
+fn build_t1_screen_initial_state(
+    request: &T1ScreenStartRequest,
+    preview: T1ScreenPreviewReport,
+    exam: ArtifactDefinition,
+    runtime: &mut ConcreteRuntime,
+) -> Result<T1ScreenRunState, SkillEvalError> {
+    if request.provider_enforced_judge_cap_millionths_of_dollar
+        > request.owner_approved_judge_cap_millionths_of_dollar
+    {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "T1 provider cap exceeds the owner-approved cap".to_owned(),
+        ));
+    }
+    let parent_id = runtime.next()?;
+    let run_id = T1ScreenRunId(format!("t1-screen-{}", parent_id.0));
+    let child_runs = preallocate_t1_screen_children(&preview.eligible, runtime)?;
+    let judge_tier = runtime.configured_judge_tier()?;
+    let mut judge = None;
+    for child in &child_runs {
+        if runtime.exact_candidate(&child.model)? != child.model {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "T1 exact candidate identity changed during start".to_owned(),
+            ));
+        }
+        let resolved = runtime.pool_judge(&child.model)?;
+        if resolved.tier != judge_tier
+            || resolved.provider == child.model.provider && resolved.model == child.model.model
+        {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "T1 screening requires one exact external configured judge".to_owned(),
+            ));
+        }
+        if judge.as_ref().is_some_and(|frozen| frozen != &resolved) {
+            return Err(SkillEvalError::InvalidConfiguration(
+                "T1 screening judge identity differs across eligible routes".to_owned(),
+            ));
+        }
+        judge = Some(resolved);
+    }
+    let judge = judge.ok_or_else(|| {
+        SkillEvalError::InvalidConfiguration("T1 screening has no eligible judge route".to_owned())
+    })?;
+    let harnesses = exam
+        .cases
+        .iter()
+        .map(|case| runtime.identity(&exam, &case.execution))
+        .collect::<Result<Vec<_>, _>>()?;
+    if harnesses.len() != 5 {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "T1 screening requires exactly five candidate harness identities".to_owned(),
+        ));
+    }
+    let first_harness = &harnesses[0];
+    if harnesses.iter().skip(1).any(|harness| {
+        harness.runner_version != first_harness.runner_version
+            || harness.pi_version != first_harness.pi_version
+            || harness.artifact_revision != first_harness.artifact_revision
+    }) {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "T1 screening cases do not share one runner, Pi, and artifact identity".to_owned(),
+        ));
+    }
+    let environment_manifest = runtime.candidate_environment_manifest.clone();
+    let environment_digest = runtime.candidate_environment_manifest_digest.clone();
+    let models = preview
+        .eligible
+        .iter()
+        .map(|row| T1ScreenModelState {
+            provider: row.provider.clone(),
+            model: row.model.clone(),
+            attempts: Vec::new(),
+            outcome: None,
+        })
+        .collect();
+    let classification_sha256 =
+        t1_screen_classification_digest(&preview.eligible, &preview.excluded)?;
+    Ok(T1ScreenRunState {
+        configuration: T1ScreenRunConfiguration {
+            run_id,
+            campaign_id: request.campaign_id.clone(),
+            created_at: runtime.now(),
+            capability_snapshot: preview.snapshot,
+            classification_sha256,
+            eligible: preview.eligible,
+            excluded: preview.excluded,
+            exam,
+            judge,
+            candidate_environment: T1ScreenCandidateEnvironment {
+                harnesses,
+                manifest: environment_manifest,
+                digest: environment_digest,
+            },
+            policy: T1ScreenPolicy {
+                minimum_score: 8,
+                calibration_minimum_reliability_basis_points: 8_000,
+                maximum_catastrophic_trials: 0,
+                repeats_per_case: 1,
+                candidate_timeout_seconds: None,
+            },
+            is_complete_thinking_coverage: true,
+            candidate_calls: preview.candidate_calls,
+            judge_calls: preview.judge_calls,
+            candidate_price: T1ScreenCandidatePrice {
+                input_per_million_tokens: 0,
+                output_per_million_tokens: 0,
+            },
+            owner_approved_judge_cap_millionths_of_dollar: request
+                .owner_approved_judge_cap_millionths_of_dollar,
+            provider_enforced_judge_cap_millionths_of_dollar: request
+                .provider_enforced_judge_cap_millionths_of_dollar,
+        },
+        cap_extensions: Vec::new(),
+        route_failures: Vec::new(),
+        status: T1ScreenRunStatus::Pending,
+        child_runs,
+        models,
+        candidate_usage: zero_t1_usage(),
+        judge_usage: zero_t1_usage(),
+        spent_judge_millionths_of_dollar: 0,
+        pause: None,
+    })
+}
+
+fn run_t1_screen_resume(
+    run_id: &T1ScreenRunId,
+    runs_root: &Path,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let mut runtime = ConcreteRuntime::new(runs_root)?;
+    let stored = runtime.load_t1_screen(run_id)?;
+    let pending = pending_t1_screen_state(&stored)?;
+    let mut progress = T1CliProgress {
+        is_run_id_written: true,
+    };
+    let state = resume_t1_screening(&pending, &mut runtime, &mut progress)?;
+    let report = build_t1_screen_report(&state.configuration.run_id, &runtime, &runtime)?;
+    render_t1_screen_report(&report, format, output)
+}
+
+fn run_t1_screen_extend_cap(
+    request: &T1ScreenCapExtensionRequest,
+    runs_root: &Path,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let repository_root = repository_root()?;
+    let mut parent_store = FileT1ScreenStore::open(&repository_root)?;
+    let child_store = FileRunStore::open(runs_root)?;
+    let report = extend_t1_screen_cap(request, &mut parent_store, &child_store, &T1CliClock)?;
+    render_t1_screen_report(&report, format, output)
+}
+
+fn run_t1_screen_fail_route(
+    request: &T1ScreenRouteFailureRequest,
+    runs_root: &Path,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    run_t1_screen_fail_route_at(
+        &repository_root()?,
+        request,
+        runs_root,
+        &T1CliClock,
+        format,
+        output,
+    )
+}
+
+fn run_t1_screen_fail_route_at(
+    repository_root: &Path,
+    request: &T1ScreenRouteFailureRequest,
+    runs_root: &Path,
+    clock: &dyn Clock,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let mut parent_store = FileT1ScreenStore::open(repository_root)?;
+    let child_store = FileRunStore::open(runs_root)?;
+    let report = fail_t1_screen_route(request, &mut parent_store, &child_store, clock)?;
+    render_t1_screen_report(&report, format, output)
+}
+
+struct T1CliClock;
+
+impl Clock for T1CliClock {
+    fn now(&self) -> Timestamp {
+        local_timestamp()
+    }
+}
+
+fn run_t1_screen_report(
+    run_id: &T1ScreenRunId,
+    runs_root: &Path,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let repository_root = repository_root()?;
+    let parent_store = FileT1ScreenStore::open(&repository_root)?;
+    let child_store = FileRunStore::open(runs_root)?;
+    let report = build_t1_screen_report(run_id, &parent_store, &child_store)?;
+    render_t1_screen_report(&report, format, output)
+}
+
+struct T1CliProgress {
+    is_run_id_written: bool,
+}
+
+impl T1ScreenProgressSink for T1CliProgress {
+    fn emit_t1_screen(&mut self, state: &T1ScreenRunState) -> Result<(), SkillEvalError> {
+        if !self.is_run_id_written {
+            write_run_id_value(&state.configuration.run_id.0)?;
+            self.is_run_id_written = true;
+        }
+        Ok(())
+    }
+}
+
+fn zero_t1_usage() -> TrialUsage {
+    TrialUsage {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        turns: 0,
+        tool_calls: 0,
+        elapsed_milliseconds: 0,
+        cost_millionths_of_dollar: 0,
+    }
+}
+
+fn run_model_capabilities(
+    output_path: &Path,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let repository_root = repository_root()?;
+    model_capabilities::preflight_output(&repository_root, output_path)?;
+    let list_output = command_output("pi", &["--list-models"])?;
+    let rpc_output = pi_available_models()?;
+    let pi_version = command_output("pi", &["--version"])?;
+    let observed_at = model_capabilities::observed_at_unix_seconds()?;
+    model_capabilities::capture(
+        &repository_root,
+        output_path,
+        &list_output,
+        &rpc_output,
+        &pi_version,
+        observed_at,
+    )?;
+    writeln!(
+        output,
+        "model capabilities written: {}",
+        output_path.display()
+    )
+    .map_err(output_error)
+}
+
+fn run_t1_screen_preview(
+    capabilities_path: &Path,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let repository_root = repository_root()?;
+    let report = model_capabilities::t1_screen_preview(&repository_root, capabilities_path)?;
+    render_t1_screen_preview(&report, format, output)
+}
+
+fn render_t1_screen_preview(
+    report: &T1ScreenPreviewReport,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    if format == T1ScreenFormat::Json {
+        return write_json_line(report, output);
+    }
+    writeln!(output, "snapshot path: {}", report.snapshot.path.display()).map_err(output_error)?;
+    writeln!(output, "snapshot sha256: {}", report.snapshot.sha256).map_err(output_error)?;
+    writeln!(output, "snapshot version: {}", report.snapshot.version).map_err(output_error)?;
+    writeln!(
+        output,
+        "snapshot observed at unix seconds: {}",
+        report.snapshot.observed_at_unix_seconds
+    )
+    .map_err(output_error)?;
+    writeln!(output, "Pi version: {}", report.snapshot.pi_version).map_err(output_error)?;
+    writeln!(output, "total rows: {}", report.total_rows).map_err(output_error)?;
+    writeln!(output, "eligible count: {}", report.eligible_count).map_err(output_error)?;
+    writeln!(output, "excluded count: {}", report.excluded_count).map_err(output_error)?;
+    writeln!(output, "eligible rows:").map_err(output_error)?;
+    for row in &report.eligible {
+        writeln!(
+            output,
+            "  {}/{}; preview={}; thinking=[{}]",
+            row.provider,
+            row.model,
+            row.is_preview,
+            row.supported_pi_thinking_levels.join(", ")
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(output, "excluded rows:").map_err(output_error)?;
+    for row in &report.excluded {
+        let reasons = row
+            .reasons
+            .iter()
+            .map(|reason| t1_exclusion_reason_label(*reason))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "  {}/{}; preview={}; reasons=[{}]",
+            row.provider, row.model, row.is_preview, reasons
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(output, "exam case count: {}", report.exam_case_count).map_err(output_error)?;
+    writeln!(
+        output,
+        "candidate calls: minimum {}, maximum {}",
+        report.candidate_calls.minimum, report.candidate_calls.maximum
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "judge calls: minimum {}, maximum {}",
+        report.judge_calls.minimum, report.judge_calls.maximum
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "projected candidate money cost USD: {}",
+        report.projected_candidate_money_cost_usd
+    )
+    .map_err(output_error)?;
+    writeln!(output, "judge money: {}", report.judge_money_note).map_err(output_error)
+}
+
+fn render_t1_screen_matrix(
+    report: &T1ScreenReport,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    if report.models.is_empty() {
+        return Err(t1_matrix_error("configured models are empty"));
+    }
+    let mut configured = BTreeMap::new();
+    for (model_index, model) in report.models.iter().enumerate() {
+        if model.provider.trim().is_empty() || model.model.trim().is_empty() {
+            return Err(t1_matrix_error("configured model is empty"));
+        }
+        if configured
+            .insert((model.provider.as_str(), model.model.as_str()), model_index)
+            .is_some()
+        {
+            return Err(t1_matrix_error("configured models contain a duplicate"));
+        }
+    }
+
+    let mut children = BTreeMap::new();
+    let mut child_slots = BTreeSet::new();
+    let mut configured_children = BTreeSet::new();
+    for child in &report.child_runs {
+        if child.model.tier != Tier::T1 {
+            return Err(t1_matrix_error("child tier differs from T1"));
+        }
+        thinking_level_index(&child.model.thinking)
+            .map_err(|_| t1_matrix_error("child model uses an unknown thinking level"))?;
+        let model_index = configured
+            .get(&(child.model.provider.as_str(), child.model.model.as_str()))
+            .copied()
+            .ok_or_else(|| t1_matrix_error("child belongs to a foreign model"))?;
+        if child.model_index != u64::try_from(model_index).unwrap_or(u64::MAX) {
+            return Err(t1_matrix_error("child model index differs"));
+        }
+        if children.insert(&child.run_id, child).is_some()
+            || !child_slots.insert((child.model_index, child.thinking_index))
+        {
+            return Err(t1_matrix_error("child identity is duplicated"));
+        }
+        configured_children.insert(model_index);
+    }
+    if configured_children.len() != report.models.len() {
+        return Err(t1_matrix_error("configured model has no child identity"));
+    }
+
+    let mut seen_attempts = BTreeSet::new();
+    let mut rows = Vec::with_capacity(report.models.len());
+    for model in &report.models {
+        let mut cells = [None; RESULT_MATRIX_LEVELS.len()];
+        for attempt in &model.attempts {
+            if attempt.model.tier != Tier::T1
+                || attempt.model.provider != model.provider
+                || attempt.model.model != model.model
+            {
+                return Err(t1_matrix_error("attempt model identity differs"));
+            }
+            let level_index = thinking_level_index(&attempt.model.thinking)
+                .map_err(|_| t1_matrix_error("attempt uses an unknown thinking level"))?;
+            let child = children
+                .get(&attempt.child_run_id)
+                .ok_or_else(|| t1_matrix_error("attempt child identity is unknown"))?;
+            if child.model != attempt.model || child.status != attempt.status {
+                return Err(t1_matrix_error("attempt child identity differs"));
+            }
+            if !seen_attempts.insert(&attempt.child_run_id)
+                || cells[level_index].is_some()
+                || model
+                    .attempts
+                    .iter()
+                    .filter(|candidate| candidate.model.thinking == attempt.model.thinking)
+                    .count()
+                    != 1
+            {
+                return Err(t1_matrix_error("attempt evidence is duplicated"));
+            }
+            if let Some(evidence) = &attempt.evidence {
+                if evidence.stage != crate::model::PoolStage::Calibration
+                    || evidence.requested_model != attempt.model
+                    || evidence.effective_model != attempt.model
+                {
+                    return Err(t1_matrix_error("attempt evidence identity differs"));
+                }
+                if attempt.status == crate::model::T1ScreenChildStatus::Completed
+                    && evidence.expected_trials > 0
+                    && evidence.completed_trials == evidence.expected_trials
+                {
+                    cells[level_index] = Some(evidence.is_passing);
+                }
+            }
+        }
+        rows.push((format!("{}/{}", model.provider, model.model), cells));
+    }
+    render_result_matrix(&rows, output)
+}
+
+fn t1_matrix_error(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("malformed T1 result matrix: {}", message.into()))
+}
+
+fn render_t1_screen_report(
+    report: &T1ScreenReport,
+    format: T1ScreenFormat,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    if format == T1ScreenFormat::Json {
+        return write_json_line(report, output);
+    }
+    render_t1_screen_matrix(report, output)?;
+    writeln!(output, "T1 screen {}: {:?}", report.run_id.0, report.status).map_err(output_error)?;
+    writeln!(
+        output,
+        "campaign {}: {:?}; total {}, spent {}, remaining {}; active {}",
+        report.campaign_id.0,
+        report.campaign_status,
+        report.campaign_approved_judge_total_millionths_of_dollar,
+        report.campaign_aggregate_judge_spent_millionths_of_dollar,
+        report.campaign_remaining_judge_millionths_of_dollar,
+        report
+            .campaign_active_run_id
+            .as_ref()
+            .map_or("none", |run_id| run_id.0.as_str())
+    )
+    .map_err(output_error)?;
+    writeln!(output, "campaign runs:").map_err(output_error)?;
+    for run in &report.campaign_runs {
+        writeln!(
+            output,
+            "  {}: {:?}; judge {}; candidate {}; resumable={}",
+            run.run_id.0,
+            run.observed_status,
+            run.judge_spend_millionths_of_dollar,
+            run.candidate_cost_millionths_of_dollar,
+            run.is_resumable
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(
+        output,
+        "inventory: {} total, {} eligible, {} excluded",
+        report.total_inventory_count, report.eligible_count, report.excluded_count
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "snapshot: {} sha256 {} version {} observed {} Pi {}",
+        report.snapshot.path.display(),
+        report.snapshot.sha256,
+        report.snapshot.version,
+        report.snapshot.observed_at_unix_seconds,
+        report.snapshot.pi_version
+    )
+    .map_err(output_error)?;
+    writeln!(output, "eligible identities:").map_err(output_error)?;
+    for row in &report.eligible {
+        writeln!(
+            output,
+            "  {}/{}; preview={}; thinking=[{}]",
+            row.provider,
+            row.model,
+            row.is_preview,
+            row.supported_pi_thinking_levels.join(", ")
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(output, "excluded inventory:").map_err(output_error)?;
+    for row in &report.excluded {
+        writeln!(
+            output,
+            "  {}/{}; preview={}; reasons=[{}]",
+            row.provider,
+            row.model,
+            row.is_preview,
+            row.reasons
+                .iter()
+                .map(|reason| t1_exclusion_reason_label(*reason))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(
+        output,
+        "candidate environment: sha256 {}; {} manifest entries",
+        report.candidate_environment_manifest_digest,
+        report.candidate_environment_manifest_entry_count
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "call projection: candidate {}-{}; judge {}-{}",
+        report.candidate_calls.minimum,
+        report.candidate_calls.maximum,
+        report.judge_calls.minimum,
+        report.judge_calls.maximum
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "judge cap: {} spent / {} effective provider / {} effective owner millionths; judge {}",
+        report.spent_judge_millionths_of_dollar,
+        report.effective_provider_enforced_judge_cap_millionths_of_dollar,
+        report.effective_owner_approved_judge_cap_millionths_of_dollar,
+        model_label(&report.judge)
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "base judge caps: {} provider / {} owner millionths",
+        report.provider_enforced_judge_cap_millionths_of_dollar,
+        report.owner_approved_judge_cap_millionths_of_dollar
+    )
+    .map_err(output_error)?;
+    writeln!(output, "cap extension history:").map_err(output_error)?;
+    if report.cap_extensions.is_empty() {
+        writeln!(output, "  none").map_err(output_error)?;
+    }
+    for extension in &report.cap_extensions {
+        writeln!(
+            output,
+            "  {}: provider {} -> {}; owner {} -> {}; reason {}",
+            extension.timestamp.0,
+            extension.previous_provider_cap_millionths_of_dollar,
+            extension.new_provider_cap_millionths_of_dollar,
+            extension.previous_owner_cap_millionths_of_dollar,
+            extension.new_owner_cap_millionths_of_dollar,
+            extension.owner_reason
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(output, "route failure history:").map_err(output_error)?;
+    if report.route_failures.is_empty() {
+        writeln!(output, "  none").map_err(output_error)?;
+    }
+    for failure in &report.route_failures {
+        writeln!(
+            output,
+            "  {}: child {} exact {}; pause sha256 {}; reason {}",
+            failure.timestamp.0,
+            failure.child_run_id.0,
+            model_label(&failure.model),
+            failure.paused_message_sha256,
+            failure.owner_reason
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(
+        output,
+        "candidate usage: {} input, {} output, {} ms, {} failures priced at {} millionths",
+        report.candidate_usage.input_tokens,
+        report.candidate_usage.output_tokens,
+        report.candidate_usage.elapsed_milliseconds,
+        report
+            .models
+            .iter()
+            .flat_map(|model| &model.attempts)
+            .filter_map(|attempt| attempt.evidence.as_ref())
+            .map(|evidence| u64::from(evidence.failed_trials))
+            .sum::<u64>(),
+        report.candidate_usage.cost_millionths_of_dollar
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "judge usage: {} input, {} output, {} ms, {} millionths",
+        report.judge_usage.input_tokens,
+        report.judge_usage.output_tokens,
+        report.judge_usage.elapsed_milliseconds,
+        report.judge_usage.cost_millionths_of_dollar
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "active child: {}",
+        report
+            .active_child_run_id
+            .as_ref()
+            .map_or("none", |run_id| run_id.0.as_str())
+    )
+    .map_err(output_error)?;
+    if let Some(pause) = &report.pause {
+        writeln!(output, "pause: {pause:?}").map_err(output_error)?;
+    }
+    for model in &report.models {
+        writeln!(
+            output,
+            "model {}/{}: {}",
+            model.provider,
+            model.model,
+            match &model.outcome {
+                Some(crate::model::T1ScreenModelOutcome::Selected { model }) => {
+                    format!("selected {}", model_label(model))
+                }
+                Some(crate::model::T1ScreenModelOutcome::Exhausted) => "exhausted".to_owned(),
+                Some(crate::model::T1ScreenModelOutcome::InfrastructureFailed {
+                    model,
+                    child_run_id,
+                }) => format!(
+                    "infrastructure_failed {} child {}",
+                    model_label(model),
+                    child_run_id.0
+                ),
+                None => "pending".to_owned(),
+            }
+        )
+        .map_err(output_error)?;
+        for (attempt_index, attempt) in model.attempts.iter().enumerate() {
+            writeln!(
+                output,
+                "  attempt {} child {} exact {} status {:?}",
+                attempt_index + 1,
+                attempt.child_run_id.0,
+                model_label(&attempt.model),
+                attempt.status
+            )
+            .map_err(output_error)?;
+            if let Some(evidence) = &attempt.evidence {
+                writeln!(
+                    output,
+                    "    result {} score {:.2} [{:.2}, {:.2}] reliability {}/{} failures {} catastrophic {}; candidate {} millionths {} ms; judge {} millionths {} ms",
+                    if evidence.is_passing { "pass" } else { "fail" },
+                    evidence.score.estimate,
+                    evidence.score.lower,
+                    evidence.score.upper,
+                    evidence.completed_trials - evidence.failed_trials,
+                    evidence.completed_trials,
+                    evidence.failed_trials,
+                    evidence.catastrophic_trials,
+                    evidence.candidate_usage.cost_millionths_of_dollar,
+                    evidence.candidate_usage.elapsed_milliseconds,
+                    evidence.judge_usage.cost_millionths_of_dollar,
+                    evidence.judge_usage.elapsed_milliseconds
+                )
+                .map_err(output_error)?;
+            }
+            for case in &attempt.cases {
+                match &case.trial {
+                    Some(trial) => {
+                        writeln!(
+                            output,
+                            "    case {}: score {} catastrophic {} failure {:?}; candidate {} millionths {} ms; judge {} millionths {} ms",
+                            case.case.0,
+                            trial.verdict.score,
+                            trial.verdict.is_catastrophic,
+                            trial.verdict.failure_mode,
+                            trial.candidate_usage.cost_millionths_of_dollar,
+                            trial.candidate_usage.elapsed_milliseconds,
+                            trial.judge_usage.cost_millionths_of_dollar,
+                            trial.judge_usage.elapsed_milliseconds
+                        )
+                        .map_err(output_error)?;
+                        for check in &trial.verdict.checks {
+                            writeln!(
+                                output,
+                                "      check {}: {:?}; detail {:?}",
+                                check.name, check.status, check.detail
+                            )
+                            .map_err(output_error)?;
+                        }
+                    }
+                    None if case.candidate.is_some() => writeln!(
+                        output,
+                        "    case {}: candidate checkpoint saved; judge pending",
+                        case.case.0
+                    )
+                    .map_err(output_error)?,
+                    None => writeln!(output, "    case {}: pending", case.case.0)
+                        .map_err(output_error)?,
+                }
+            }
+        }
+    }
+    match &report.ranking {
+        None => writeln!(
+            output,
+            "ranking: unavailable until every eligible model is terminal"
+        )
+        .map_err(output_error)?,
+        Some(ranking) if ranking.recommendation_shortage_count > 0 => {
+            writeln!(
+                output,
+                "ranking: no recommendation; {} more passing route(s) required",
+                ranking.recommendation_shortage_count
+            )
+            .map_err(output_error)?;
+            render_t1_ranked_routes("ordered passing routes", &ranking.alternates, output)?;
+        }
+        Some(ranking) => {
+            render_t1_ranked_routes("recommendations", &ranking.recommendations, output)?;
+            render_t1_ranked_routes("ordered alternates", &ranking.alternates, output)?;
+        }
+    }
+    writeln!(
+        output,
+        "owner approval required: {}",
+        report.is_owner_approval_required
+    )
+    .map_err(output_error)
+}
+
+fn render_t1_ranked_routes(
+    label: &str,
+    routes: &[crate::model::T1ScreenRankedRoute],
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    writeln!(output, "{label}:").map_err(output_error)?;
+    if routes.is_empty() {
+        writeln!(output, "  none").map_err(output_error)?;
+    }
+    for route in routes {
+        let inputs = &route.ranking_inputs;
+        writeln!(
+            output,
+            "  {}. {}; candidate cost {} millionths, latency {} ms, failures {}/{}; judge overhead ignored",
+            route.rank,
+            model_label(&route.model),
+            inputs.candidate_cost_millionths_of_dollar,
+            inputs.candidate_latency_milliseconds,
+            inputs.candidate_failed_trials,
+            inputs.candidate_completed_trials
+        )
+        .map_err(output_error)?;
+    }
+    Ok(())
+}
+
+fn validate_tracked_capability_snapshot(
+    repository_root: &Path,
+    relative: &Path,
+    expected_sha256: &str,
+) -> Result<(), SkillEvalError> {
+    let path = relative.to_string_lossy();
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repository_root)
+        .args(["show", &format!("HEAD:{path}")])
+        .output()
+        .map_err(|error| SkillEvalError::Process {
+            program: "git".to_owned(),
+            exit_code: None,
+            standard_error: error.to_string(),
+        })?;
+    if !output.status.success() {
+        return Err(SkillEvalError::InvalidConfiguration(format!(
+            "T1 capability snapshot {} is not tracked at HEAD",
+            relative.display()
+        )));
+    }
+    let tracked_digest = Sha256::digest(&output.stdout)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if tracked_digest != expected_sha256 {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "T1 capability snapshot bytes differ from the tracked snapshot".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn preflight_run_id_file() -> Result<(), SkillEvalError> {
+    let path = RUN_ID_FILE.with(|slot| slot.borrow().clone());
+    let Some(path) = path else {
+        return Ok(());
+    };
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            return Err(invalid(format!(
+                "run-id file {} already exists",
+                path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(SkillEvalError::Io {
+                path,
+                message: error.to_string(),
+            });
+        }
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut current = if parent.is_absolute() {
+        PathBuf::from("/")
+    } else {
+        PathBuf::from(".")
+    };
+    for component in parent.components() {
+        if matches!(component, Component::RootDir | Component::CurDir) {
+            continue;
+        }
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(invalid(format!(
+                    "run-id file parent {} is not a real directory",
+                    current.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => {
+                return Err(SkillEvalError::Io {
+                    path: current,
+                    message: error.to_string(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn t1_exclusion_reason_label(reason: T1ScreenExclusionReason) -> &'static str {
+    match reason {
+        T1ScreenExclusionReason::MissingList => "missing_list",
+        T1ScreenExclusionReason::MissingRpc => "missing_rpc",
+        T1ScreenExclusionReason::MovingAlias => "moving_alias",
+        T1ScreenExclusionReason::NotExactEvidence => "not_exact_evidence",
+        T1ScreenExclusionReason::MovingRouterOrControl => "moving_router_or_control",
+        T1ScreenExclusionReason::MissingPrice => "missing_price",
+        T1ScreenExclusionReason::NonzeroInputPrice => "nonzero_input_price",
+        T1ScreenExclusionReason::NonzeroOutputPrice => "nonzero_output_price",
+        T1ScreenExclusionReason::MissingTextInput => "missing_text_input",
+        T1ScreenExclusionReason::MissingThinkingLevels => "missing_thinking_levels",
+        T1ScreenExclusionReason::MalformedThinkingLevels => "malformed_thinking_levels",
+    }
 }
 
 fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
     writeln!(output, "skill-eval <command> [options]")?;
     writeln!(output, "commands:")?;
     for command in [
+        "model-capabilities",
+        "t1-screen-preview",
+        "t1-screen-campaign-create",
+        "t1-screen-campaign-extend-cap",
+        "t1-screen-campaign-retire-run",
+        "t1-screen-start",
+        "t1-screen-resume",
+        "t1-screen-extend-cap",
+        "t1-screen-fail-route",
+        "t1-screen-report",
         "qualify",
         "report",
         "inspect",
@@ -1494,9 +4095,35 @@ fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
         "pool-qualify",
         "pool-report",
         "pool-resume",
+        "pool-replacement",
     ] {
         writeln!(output, "  {command}")?;
     }
+    writeln!(output, "model catalog: model-capabilities --output PATH")?;
+    writeln!(
+        output,
+        "T1 preview: t1-screen-preview --capabilities PATH [--format text|json]"
+    )?;
+    writeln!(
+        output,
+        "T1 campaign import: t1-screen-campaign-create --campaign ID --judge-cap-millionths 20000000 --reason TEXT --run ID... [--format text|json]"
+    )?;
+    writeln!(
+        output,
+        "T1 campaign extension: t1-screen-campaign-extend-cap --campaign ID --judge-cap-millionths N --reason TEXT [--format text|json]"
+    )?;
+    writeln!(
+        output,
+        "T1 paused-run retirement: t1-screen-campaign-retire-run --campaign ID --run ID --reason TEXT [--format text|json]"
+    )?;
+    writeln!(
+        output,
+        "T1 start: t1-screen-start --campaign ID --capabilities PATH --exam PATH --judge-cap-millionths N --provider-cap-millionths N [--run-id-file PATH] [--format text|json]"
+    )?;
+    writeln!(
+        output,
+        "T1 continue: t1-screen-resume --run ID [--format text|json]; t1-screen-extend-cap --run ID --judge-cap-millionths N --provider-cap-millionths N --reason TEXT [--format text|json]; t1-screen-fail-route --run PARENT --child CHILD --reason TEXT [--format text|json]; t1-screen-report --run ID [--format text|json]"
+    )?;
     writeln!(
         output,
         "common options: --runs-root PATH; --format text; --format jsonl"
@@ -1507,7 +4134,7 @@ fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
     )?;
     writeln!(
         output,
-        "pool options: --plan PATH --artifact PATH... [--tiers TIER...] [--dry-run] [--run-id-file PATH]"
+        "pool options: --plan PATH --artifact PATH... [--tiers TIER...] [--dry-run] [--run-id-file PATH]; replacement: --run ID --entrant-index N [--run-id-file PATH]"
     )?;
     writeln!(
         output,
@@ -1684,6 +4311,45 @@ fn parse_run_id(value: &str) -> Result<RunId, SkillEvalError> {
     Ok(run_id)
 }
 
+fn parse_t1_screen_campaign_id(value: &str) -> Result<T1ScreenCampaignId, SkillEvalError> {
+    nonempty(value, "T1 screening campaign identifier")?;
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(invalid(format!(
+            "T1 screening campaign identifier {value:?} is not a safe path component"
+        )));
+    }
+    Ok(T1ScreenCampaignId(value.to_owned()))
+}
+
+fn parse_t1_screen_run_id(value: &str) -> Result<T1ScreenRunId, SkillEvalError> {
+    nonempty(value, "T1 screening run identifier")?;
+    if !is_t1_screen_identifier(value) {
+        return Err(invalid(
+            "T1 screening run identifier must be one safe path component",
+        ));
+    }
+    Ok(T1ScreenRunId(value.to_owned()))
+}
+
+fn parse_t1_screen_child_run_id(value: &str) -> Result<RunId, SkillEvalError> {
+    nonempty(value, "T1 screening child identifier")?;
+    if !is_t1_screen_identifier(value) {
+        return Err(invalid(
+            "T1 screening child identifier must be one safe path component",
+        ));
+    }
+    Ok(RunId(value.to_owned()))
+}
+
+fn is_t1_screen_identifier(value: &str) -> bool {
+    value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+}
+
 fn parse_pool_run_id(value: &str) -> Result<PoolRunId, SkillEvalError> {
     nonempty(value, "pool run identifier")?;
     let path = Path::new(value);
@@ -1744,6 +4410,110 @@ fn repository_root() -> Result<PathBuf, SkillEvalError> {
     }
 }
 
+fn pi_available_models() -> Result<String, SkillEvalError> {
+    let mut command = pi_available_models_command("pi");
+    let mut child = command.spawn().map_err(|error| SkillEvalError::Process {
+        program: "pi".to_owned(),
+        exit_code: None,
+        standard_error: error.to_string(),
+    })?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| invalid_configuration("Pi RPC capability probe has no stdin"))?;
+    let write_result = stdin.write_all(MODELS_RPC_REQUEST);
+    drop(stdin);
+    let output = child
+        .wait_with_output()
+        .map_err(|error| SkillEvalError::Process {
+            program: "pi".to_owned(),
+            exit_code: None,
+            standard_error: error.to_string(),
+        })?;
+    if !output.status.success() {
+        return Err(SkillEvalError::Process {
+            program: "pi".to_owned(),
+            exit_code: output.status.code(),
+            standard_error: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    write_result.map_err(|error| SkillEvalError::Process {
+        program: "pi".to_owned(),
+        exit_code: output.status.code(),
+        standard_error: format!("failed to write Pi RPC capability request: {error}"),
+    })?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| {
+        invalid_configuration(format!("Pi RPC capability output is not UTF-8: {error}"))
+    })?;
+    parse_available_models_response(&stdout)
+}
+
+fn pi_available_models_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command
+        .args(MODELS_RPC_ARGUMENTS)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+fn parse_available_models_response(output: &str) -> Result<String, SkillEvalError> {
+    let mut response = None;
+    for raw_line in output.split('\n') {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+            invalid_configuration(format!(
+                "Pi RPC capability output is malformed JSONL: {error}"
+            ))
+        })?;
+        if response.is_some() {
+            return Err(invalid_configuration(
+                "Pi RPC capability output contains duplicate responses",
+            ));
+        }
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("response") {
+            return Err(invalid_configuration(
+                "Pi RPC capability output contains a non-response record",
+            ));
+        }
+        if value.get("id").and_then(serde_json::Value::as_str) != Some(MODELS_RPC_ID) {
+            return Err(invalid_configuration(
+                "Pi RPC capability response has the wrong id",
+            ));
+        }
+        if value.get("command").and_then(serde_json::Value::as_str) != Some("get_available_models")
+        {
+            return Err(invalid_configuration(
+                "Pi RPC capability response has the wrong command",
+            ));
+        }
+        if value.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+            return Err(invalid_configuration(
+                "Pi RPC capability response was not successful",
+            ));
+        }
+        let data = value
+            .get("data")
+            .ok_or_else(|| invalid_configuration("Pi RPC capability response is missing data"))?;
+        let data = serde_json::to_string(data).map_err(|error| {
+            invalid_configuration(format!(
+                "Pi RPC capability data cannot be serialized: {error}"
+            ))
+        })?;
+        validate_rpc_models_data(&data)?;
+        response = Some(data);
+    }
+    response.ok_or_else(|| invalid_configuration("Pi RPC capability response is missing"))
+}
+
+fn invalid_configuration(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(message.into())
+}
+
 fn command_output(program: &str, arguments: &[&str]) -> Result<String, SkillEvalError> {
     let output = Command::new(program)
         .args(arguments)
@@ -1780,6 +4550,13 @@ fn read_prompt(path: &str) -> Result<String, SkillEvalError> {
         path: PathBuf::from(path),
         message: error.to_string(),
     })
+}
+
+fn sha256_digest(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn stable_digest(bytes: &[u8]) -> String {
@@ -1832,8 +4609,12 @@ fn write_run_id_value(run_id: &str) -> Result<(), SkillEvalError> {
                 path: temporary.clone(),
                 message: error.to_string(),
             })?;
-        fs::rename(&temporary, &path).map_err(|error| SkillEvalError::Io {
+        fs::hard_link(&temporary, &path).map_err(|error| SkillEvalError::Io {
             path: path.clone(),
+            message: error.to_string(),
+        })?;
+        fs::remove_file(&temporary).map_err(|error| SkillEvalError::Io {
+            path: temporary.clone(),
             message: error.to_string(),
         })?;
         fs::File::open(parent)
@@ -1952,6 +4733,69 @@ fn ensure_unique_assignments(assignments: &[TierAssignment]) -> Result<(), Skill
     Ok(())
 }
 
+// TODO(AGNT-0032.T151): Parse and dispatch strict cumulative frontier commands.
+fn parse_frontier_preview(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_start(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_resume(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_report(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_inspect(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+fn parse_frontier_decide(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+// TODO(AGNT-0032.T159): Parse, dispatch, and report accepted-route publication.
+fn parse_frontier_apply(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    unimplemented!()
+}
+
+// TODO(AGNT-0032.T152): Render preview, matrix, inspection, and apply outputs.
+fn render_frontier_preview(
+    _report: &FrontierPreviewReport,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+fn render_frontier_report(
+    _report: &FrontierReport,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+fn render_frontier_inspection(
+    _inspection: &FrontierInspection,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
+fn render_frontier_apply(
+    _report: &FrontierApplyReport,
+    _format: OutputFormat,
+    _output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    unimplemented!()
+}
+
 fn set_decision(current: &mut Option<Decision>, value: Decision) -> Result<(), SkillEvalError> {
     if current.replace(value).is_some() {
         return Err(invalid("choose exactly one of --accept or --reject"));
@@ -1966,6 +4810,14 @@ where
     value
         .parse()
         .map_err(|_| invalid(format!("{label} is not a valid number")))
+}
+
+fn parse_positive_number(value: &str, label: &str) -> Result<u64, SkillEvalError> {
+    let number = parse_number(value, label)?;
+    if number == 0 {
+        return Err(invalid(format!("{label} must be positive")));
+    }
+    Ok(number)
 }
 
 fn parse_float(value: &str, label: &str) -> Result<f64, SkillEvalError> {

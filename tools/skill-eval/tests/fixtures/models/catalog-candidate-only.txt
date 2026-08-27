@@ -1,0 +1,2 @@
+provider      model                         context  max-out  thinking  images
+openai-codex  gpt-5.3-codex-spark           1M       128K     yes       no

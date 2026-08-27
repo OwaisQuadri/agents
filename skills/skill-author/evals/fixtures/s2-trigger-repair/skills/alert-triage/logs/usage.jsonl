@@ -1,0 +1,3 @@
+{"outcome":"failure","notes":"Fired while the user discussed a one-off local compiler error."}
+{"outcome":"failure","notes":"Fired for general error-handling prose with no service alert."}
+{"outcome":"success","notes":"Classified repeated service alerts."}

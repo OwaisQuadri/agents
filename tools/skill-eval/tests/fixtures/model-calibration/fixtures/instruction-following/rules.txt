@@ -1,0 +1,6 @@
+tokens: violet ridge 42
+1. Put the second token first.
+2. Put the third token second.
+3. Put the first token last.
+4. Convert only the first output token to uppercase.
+5. Join the output tokens with one hyphen and add one newline.

@@ -1,0 +1,1 @@
+# Disposable stash-selection repository

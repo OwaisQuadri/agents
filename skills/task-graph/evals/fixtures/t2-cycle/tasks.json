@@ -1,0 +1,1 @@
+{"ticket":"MJLS-0042","tasks":[{"id":"MJLS-0042.T01","short":"existing","long":"Keep this graph unchanged.","deps":[],"status":"todo","files":["src/existing.ts"],"blame_phase":null,"created":"2031-01-01T00:00:00-0500","kind":"code"}]}

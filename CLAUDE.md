@@ -1,4 +1,3 @@
-<!-- TODO(AGNT-0032.T18): keep human decisions and irreversible work in the parent -->
 # Global guidance
 
 ## working style: startup, not enterprise
@@ -72,6 +71,16 @@ reads a file argument or stdin, and it exits nonzero on any failure.
 Use Z shell (`zsh`) for all shell commands. Do not use Bash. If a tool has the name
 `bash` but does not let you select its shell, run the command through `/bin/zsh -lc`.
 
+## configuration ownership
+
+Never edit a managed file under the home directory directly. Change its tracked source,
+run that source repository's installer, and verify the live target. The agents repository
+owns agent configuration under `~/.agents`, `~/.claude`, `~/.codex`, and `~/.pi`. The shell
+repository at `~/Documents/GitHub/shell` owns `~/.zshrc` and `~/.config/ghostty`.
+Machine-local values belong only in a destination that the owning repository documents,
+such as `~/.zshrc.local`. If no owner or apply command is known, stop and ask instead of
+creating drift under the home directory.
+
 ## tooling language
 
 New tooling in this repo is Rust. A Python or shell script that needs a change gets
@@ -98,6 +107,11 @@ A skill may declare `metadata.minimum-tier`. Reaching one whose floor sits above
 session model, say so in the first reply and recommend the switch. The user decides, and
 the work continues either way. A skill cannot change the model by itself. That line is the
 only thing standing between judgment work and a model too small for it.
+
+A skill with an accepted cheaper `metadata.target-tier` may dispatch bounded mechanical
+work to a child at that tier. The parent can delegate, but does not have to delegate. The
+parent keeps every human decision, irreversible action, and final verification. Without
+target metadata, keep the existing parent path.
 
 ## code style
 

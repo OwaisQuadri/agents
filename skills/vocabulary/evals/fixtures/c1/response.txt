@@ -1,0 +1,7 @@
+“Smushed together” points to two terms:
+
+**Leading** — The vertical space between lines of text. Too tight and text suffocates. Too loose and it stops reading as a paragraph.
+
+**Negative space** — The empty area around and between elements. It defines shape, creates breathing room, and guides the eye. Crowding elements together removes clarity, it doesn't add information.
+
+I will increase the leading and negative space in the hero section, then continue the build.

@@ -1,0 +1,2 @@
+stash@{0} map/MJLS-0042/impl attempt-2 STASH-ATTEMPT-2 files=src/store.ts,src/save.ts
+stash@{1} map/MJLS-0042/impl attempt-1 STASH-ATTEMPT-1 files=src/store.ts

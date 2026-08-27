@@ -30,13 +30,14 @@
       "thinking": "high"
     },
     "T5": {
-      "pi": "anthropic/claude-fable-5",
+      "pi": "anthropic/claude-opus-5",
       "fallbacks": [
-        "anthropic/claude-opus-5"
+        "anthropic/claude-fable-5"
       ],
       "thinking": "medium"
     }
   },
+  "qualification_routes": {},
   "orchestrator": "T3",
   "judge": "T5",
   "capabilities": {},

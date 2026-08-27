@@ -1,0 +1,1 @@
+{"ticket":"MJLS-0042","tasks":[{"short":"C","long":"Build C.","deps":["D"],"files":["src/c.ts"]},{"short":"D","long":"Build D.","deps":["C"],"files":["src/d.ts"]}]}

@@ -1,0 +1,1 @@
+{"tasks":[{"id":"MJLS-0042.T01","short":"Update store","files":["src/store.ts"],"deps":[],"status":"todo"},{"id":"MJLS-0042.T02","short":"Verify store","files":["src/store.ts"],"deps":[],"status":"todo"},{"id":"MJLS-0042.T03","short":"Fix save contract","files":["src/save.ts"],"deps":[],"status":"todo"}]}

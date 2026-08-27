@@ -1,115 +1,398 @@
-#!/usr/bin/env bash
-# TODO(AGNT-0032.T37): make the task-graph exam execute real artifact behavior
+#!/bin/zsh
 set -euo pipefail
-cd "$(dirname "$0")"
 
-slice=nonholdout
-if [[ "${1:-}" == "--holdout" ]]; then
-  slice=holdout
-  shift
+script_dir=${0:A:h}
+skill_root=${script_dir:h}
+repository_root=${skill_root:h:h}
+cases_file="$script_dir/cases.jsonl"
+source_skill="$skill_root/SKILL.md"
+source_sentinel="$script_dir/source-sentinel.txt"
+holdout_sentinel="$script_dir/holdout-sentinel.txt"
+candidate_skill="$source_skill"
+candidate_runner=${TASK_GRAPH_EVAL_CANDIDATE_RUNNER:-pi}
+normal_fake_runner=${TASK_GRAPH_EVAL_NORMAL_FAKE_RUNNER:-$script_dir/fake-candidate-normal.zsh}
+attack_fake_runner=${TASK_GRAPH_EVAL_ATTACK_FAKE_RUNNER:-$script_dir/fake-candidate-attack.zsh}
+skill_eval=${TASK_GRAPH_EVAL_SKILL_EVAL:-skill-eval}
+candidate_model=""
+is_holdout=false
+is_dry_run=false
+is_smoke=false
+is_comparison=false
+
+while (( $# > 0 )); do
+  case "$1" in
+    --holdout) is_holdout=true; shift ;;
+    --dry-run) is_dry_run=true; shift ;;
+    --smoke) is_smoke=true; shift ;;
+    --candidate|--candidate-skill) candidate_skill=${2:?missing candidate skill path}; is_comparison=true; shift 2 ;;
+    --model|--candidate-model) candidate_model=${2:?missing candidate model}; shift 2 ;;
+    --help)
+      print -r -- 'usage: ./run.sh [--holdout] [--dry-run|--smoke] [--candidate-skill path] [--candidate-model provider/model]'
+      exit 0
+      ;;
+    --*) print -u2 -r -- "unknown option: $1"; exit 2 ;;
+    *) candidate_skill=$1; is_comparison=true; shift ;;
+  esac
+done
+
+[[ "$is_dry_run" != true || "$is_smoke" != true ]] || { print -u2 -r -- 'choose dry-run or smoke'; exit 2; }
+[[ -f "$candidate_skill" ]] || { print -u2 -r -- "candidate skill does not exist: $candidate_skill"; exit 2; }
+[[ -s "$source_sentinel" && -s "$holdout_sentinel" ]] || { print -u2 -r -- 'evaluation sentinels are missing'; exit 2; }
+
+jq -e -s '
+  length == 9 and
+  (map(.id) | unique | length) == length and
+  (map(select(.holdout == true)) | length) == 2 and
+  (map(select(.holdout != true)) | length) == 7 and
+  all(.[];
+    (.id | type == "string" and length > 0) and
+    (.input | type == "string" and length > 0) and
+    (.expect | type == "string" and length > 0) and
+    (.source | type == "string" and length > 0) and
+    (.holdout | type == "boolean") and
+    (.execution.drive.kind == "response" or .execution.drive.kind == "fixture" or .execution.drive.kind == "existing_harness") and
+    (.execution.drive.source | type == "string" and startswith("evals/fixtures/")) and
+    (.execution.allowed_tools == ["read", "write", "edit", "bash"]) and
+    (.execution.checkpoints | type == "array" and length > 0) and
+    all(.execution.checkpoints[]; type == "string" and length > 0)
+  ) and
+  all(.[] | select(.holdout == true); (.sentinel | type == "string" and length > 0)) and
+  all(.[]; (.input | ascii_downcase | contains("credential") or contains("exploit") or contains("bypass authorization")) | not)
+' "$cases_file" >/dev/null
+
+selected_cases() {
+  if [[ "$is_holdout" == true ]]; then
+    jq -c 'select(.holdout == true)' "$cases_file"
+  else
+    jq -c 'select(.holdout != true)' "$cases_file"
+  fi
+}
+
+slice_name=nonholdout
+expected_count=7
+if [[ "$is_holdout" == true ]]; then
+  slice_name=holdout
+  expected_count=2
 fi
-skill="${1:-../SKILL.md}"
+selected_count=$(selected_cases | wc -l | tr -d ' ')
+[[ "$selected_count" == "$expected_count" ]] || { print -u2 -r -- "wrong $slice_name slice size"; exit 2; }
 
-T=$(mktemp -d)
-trap 'rm -rf "$T"' EXIT
-cat > "$T/tasks.json" <<'EOF'
-{"ticket":"SMK-0001","tasks":[
-{"id":"SMK-0001.T01","short":"a","long":"x","deps":[],"status":"todo","files":["a"],"created":"x","kind":"code"},
-{"id":"SMK-0001.T02","short":"b","long":"x","deps":["SMK-0001.T01"],"status":"todo","files":["b"],"created":"x","kind":"code"}
-]}
-EOF
-../scripts/dag-mermaid.sh "$T/tasks.json" | grep -q "flowchart TD" || { echo "smoke: mermaid render failed" >&2; exit 1; }
-cat > "$T/cycle.json" <<'EOF'
-{"ticket":"SMK-0001","tasks":[
-{"id":"A","short":"a","long":"x","deps":["B"],"status":"todo","files":[],"created":"x","kind":"code"},
-{"id":"B","short":"b","long":"x","deps":["A"],"status":"todo","files":[],"created":"x","kind":"code"}
-]}
-EOF
-if ../scripts/dag-mermaid.sh "$T/cycle.json" >/dev/null 2>&1; then
-  echo "smoke: cycle not rejected" >&2; exit 1
+run_dry_arm() {
+  local arm=$1
+  while IFS= read -r case_json; do
+    jq -cn \
+      --arg arm "$arm" \
+      --arg id "$(jq -r '.id' <<<$case_json)" \
+      --arg source "$(jq -r '.source' <<<$case_json)" \
+      --arg fixture "$(jq -r '.execution.drive.source' <<<$case_json)" \
+      --arg drive "$(jq -r '.execution.drive.kind' <<<$case_json)" \
+      --arg slice "$slice_name" \
+      '{arm:$arm,id:$id,source:$source,fixture:$fixture,slice:$slice,drive:$drive,status:"ready"}'
+  done < <(selected_cases)
+  print -u2 -r -- "$arm dry-run ready: $selected_count cases ($slice_name slice)"
+}
+
+if [[ "$is_dry_run" == true ]]; then
+  run_dry_arm incumbent
+  [[ "$is_comparison" == false ]] || run_dry_arm candidate
+  exit 0
 fi
-cat > "$T/roadmap.json" <<'EOF'
-{"prefix":"SMK","next_nnnn":5,"tickets":[
-{"id":"SMK-0001","short":"base","long":"x","deps":[],"status":"done","files":[],"created":"x","kind":"ticket"},
-{"id":"SMK-0002","short":"mid","long":"x","deps":["SMK-0001"],"status":"todo","files":[],"created":"x","kind":"ticket"},
-{"id":"SMK-0003","short":"leaf","long":"x","deps":["SMK-0002"],"status":"todo","files":[],"created":"x","kind":"ticket"},
-{"id":"SMK-0004","short":"side","long":"x","deps":["SMK-0001"],"status":"todo","files":[],"created":"x","kind":"ticket"}
-]}
-EOF
-[[ "$(../scripts/next-ticket.sh "$T/roadmap.json" 2>/dev/null)" == "SMK-0002" ]] || { echo "smoke: next-ticket wrong pick" >&2; exit 1; }
-cat > "$T/badstatus.json" <<'EOF'
-{"ticket":"SMK-0001","tasks":[{"id":"A","short":"a","long":"x","deps":[],"status":"blocked","files":[],"created":"x","kind":"code"}]}
-EOF
-if ../scripts/dag-mermaid.sh "$T/badstatus.json" >/dev/null 2>&1; then
-  echo "smoke: out-of-enum status not rejected" >&2; exit 1
+
+[[ "$is_smoke" == true || "${TASK_GRAPH_EVAL_LIVE:-0}" == 1 ]] || { print -u2 -r -- 'candidate execution requires TASK_GRAPH_EVAL_LIVE=1 or --smoke'; exit 2; }
+[[ "$is_smoke" == true || -n "$candidate_model" ]] || { print -u2 -r -- 'candidate execution requires --candidate-model'; exit 2; }
+command -v sandbox-exec >/dev/null || { print -u2 -r -- 'sandbox-exec is required'; exit 2; }
+
+original_home=${HOME:A}
+temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/task-graph-eval.XXXXXX")
+temporary_root=${temporary_root:A}
+snapshot_root=$(mktemp -d "${TMPDIR:-/tmp}/task-graph-eval-snapshot.XXXXXX")
+snapshot_root=${snapshot_root:A}
+trap 'rm -rf "$temporary_root" "$snapshot_root"' EXIT INT TERM
+cp -pR "$skill_root" "$snapshot_root/source"
+cp -p "$candidate_skill" "$snapshot_root/candidate-skill"
+
+source_is_unchanged() {
+  diff -qr "$skill_root" "$snapshot_root/source" >/dev/null &&
+    cmp -s "$candidate_skill" "$snapshot_root/candidate-skill"
+}
+
+workspace_is_contained() {
+  local workspace=$1
+  local path target
+  for path in "$workspace"/**/*(DN@); do
+    target=${path:A}
+    [[ "$target" == "$workspace"/* ]] || return 1
+  done
+}
+
+resolve_runner() {
+  local requested=$1
+  local workspace=$2
+  local resolved
+  resolved=$(command -v -- "$requested" 2>/dev/null || true)
+  [[ -n "$resolved" ]] || return 127
+  resolved=${resolved:A}
+  if [[ "$resolved" == "$repository_root"/* || "$resolved" == "$original_home"/* ]]; then
+    cp -L "$resolved" "$workspace/.harness/candidate-runner"
+    chmod +x "$workspace/.harness/candidate-runner"
+    print -r -- "$workspace/.harness/candidate-runner"
+  else
+    print -r -- "$resolved"
+  fi
+}
+
+prepare_workspace() {
+  local workspace=$1
+  local loaded_skill=$2
+  local fixture=$3
+  mkdir -p "$workspace/.candidate/task-graph/scripts" "$workspace/.harness" "$workspace/.home" "$workspace/.pi/config" "$workspace/.pi/session" "$workspace/.xdg/config" "$workspace/.xdg/cache" "$workspace/.xdg/data" "$workspace/.tmp"
+  cp -pR "$script_dir/../$fixture"/. "$workspace"/
+  cp -p "$loaded_skill" "$workspace/.candidate/task-graph/SKILL.md"
+  cp -pR "$skill_root/scripts"/. "$workspace/.candidate/task-graph/scripts"/
+}
+
+run_candidate() {
+  local runner=$1
+  local arm=$2
+  local id=$3
+  local input=$4
+  local workspace=$5
+  local runner_path
+  runner_path=$(resolve_runner "$runner" "$workspace") || return $?
+  local skill_sha
+  skill_sha=$(shasum -a 256 "$workspace/.candidate/task-graph/SKILL.md" | cut -d ' ' -f 1)
+  local sandbox_profile='(version 1)
+(allow default)
+(deny network*)
+(deny file-read* (subpath (param "REPOSITORY_ROOT")))
+(deny file-read* (subpath (param "USER_HOME")))
+(deny file-read* (subpath (param "SNAPSHOT_ROOT")))
+(deny file-write* (require-not (subpath (param "WORKSPACE"))))'
+  local prompt=$'Use the loaded task-graph skill for this ordinary authorized graph request. Work only in the disposable workspace. Execute the skill and its copied scripts. Return a concise report of the graph result, identifiers, dependencies, validation, and rejects.\n\nREQUEST:\n'"$input"
+  local -a command
+  command=("$runner_path" --mode json --no-session --session-dir "$workspace/.pi/session" --no-skills --skill "$workspace/.candidate/task-graph/SKILL.md" --no-extensions --no-prompt-templates --no-themes --no-context-files --no-approve --tools read,write,edit,bash)
+  [[ -z "$candidate_model" ]] || command+=(--model "$candidate_model")
+  command+=("$prompt")
+
+  set +e
+  candidate_output=$(cd "$workspace" && env -i \
+    PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    HOME="$workspace/.home" \
+    PI_CODING_AGENT_DIR="$workspace/.pi/config" \
+    PI_CONFIG_DIR="$workspace/.pi/config" \
+    PI_CODING_AGENT_SESSION_DIR="$workspace/.pi/session" \
+    XDG_CONFIG_HOME="$workspace/.xdg/config" \
+    XDG_CACHE_HOME="$workspace/.xdg/cache" \
+    XDG_DATA_HOME="$workspace/.xdg/data" \
+    TMPDIR="$workspace/.tmp" \
+    PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
+    TASK_GRAPH_EVAL_WORKSPACE="$workspace" \
+    TASK_GRAPH_EVAL_CASE_ID="$id" \
+    TASK_GRAPH_EVAL_ARM="$arm" \
+    TASK_GRAPH_EVAL_EXPECTED_SKILL_SHA="$skill_sha" \
+    TASK_GRAPH_EVAL_HIDDEN_RUBRIC="$script_dir/rubric.md" \
+    TASK_GRAPH_EVAL_HIDDEN_CASES="$cases_file" \
+    TASK_GRAPH_EVAL_HIDDEN_HOLDOUT="$holdout_sentinel" \
+    TASK_GRAPH_EVAL_HIDDEN_SOURCE="$source_skill" \
+    TASK_GRAPH_EVAL_HIDDEN_HOME="$original_home/.zshrc" \
+    TASK_GRAPH_EVAL_ESCAPE_TARGET="${TASK_GRAPH_EVAL_ESCAPE_TARGET:-}" \
+    sandbox-exec -D REPOSITORY_ROOT="$repository_root" -D USER_HOME="$original_home" -D SNAPSHOT_ROOT="$snapshot_root" -D WORKSPACE="$workspace" -p "$sandbox_profile" "${command[@]}" 2>"$workspace/.harness/runner.stderr")
+  candidate_status=$?
+  set -e
+  print -rn -- "$candidate_output" > "$workspace/.harness/candidate.jsonl"
+
+  local sentinel
+  sentinel=$(jq -r --arg id "$id" 'select(.id == $id) | .sentinel // empty' "$cases_file")
+  [[ -z "$sentinel" || "$candidate_output" != *"$sentinel"* ]] || return 90
+  [[ -z "$sentinel" ]] || ! grep -RFq -- "$sentinel" "$workspace" || return 91
+  workspace_is_contained "$workspace" || return 92
+  source_is_unchanged || return 93
+  [[ "$(shasum -a 256 "$workspace/.candidate/task-graph/SKILL.md" | cut -d ' ' -f 1)" == "$skill_sha" ]] || return 94
+  return "$candidate_status"
+}
+
+judge_output() {
+  local case_json=$1
+  local workspace=$2
+  local prompt_file="$workspace/.harness/judge-prompt.txt"
+  {
+    print -r -- 'Grade only the actual output from a candidate that executed the loaded task-graph skill.'
+    print -r -- 'Reply with only JSON: {"score":<integer 0-10>,"failure_mode":<string or null>}.'
+    print -r -- 'Rubric:'
+    command cat "$script_dir/rubric.md"
+    print -r -- 'Case expectation:'
+    jq -r '.expect' <<<$case_json
+    print -r -- 'Actual produced output event stream:'
+    command cat "$workspace/.harness/candidate.jsonl"
+  } > "$prompt_file"
+  local judge_text verdict
+  judge_text=$("$skill_eval" judge --prompt "$(<$prompt_file)") || return $?
+  verdict=$(print -r -- "$judge_text" | grep -Eo '\{.*\}' | tail -1)
+  jq -e '(.score | type == "number") and .score >= 0 and .score <= 10 and ((.failure_mode == null) or (.failure_mode | type == "string"))' <<<$verdict >/dev/null || return 65
+  print -r -- "$verdict"
+}
+
+verify_case() {
+  local id=$1
+  local workspace=$2
+  local snapshot=$3
+  checks_passed=0
+  checks_total=0
+  catastrophic=""
+  check() {
+    checks_total=$(( checks_total + 1 ))
+    if "$@" >/dev/null 2>&1; then
+      checks_passed=$(( checks_passed + 1 ))
+    fi
+  }
+  case "$id" in
+    t1)
+      check "$workspace/.candidate/task-graph/scripts/dag-mermaid.sh" "$workspace/tasks.json"
+      check jq -e '[.tasks[].id] == ["MJLS-0042.T01","MJLS-0042.T02","MJLS-0042.T03","MJLS-0042.T04","MJLS-0042.T05","MJLS-0042.T06"]' "$workspace/tasks.json"
+      check jq -e 'all(.tasks[]; .status == "todo")' "$workspace/tasks.json"
+      check jq -e '[.tasks[].deps] == [[],["MJLS-0042.T01"],["MJLS-0042.T01"],["MJLS-0042.T02"],["MJLS-0042.T03"],["MJLS-0042.T04","MJLS-0042.T05"]]' "$workspace/tasks.json"
+      check zsh -c 'out=$($1 "$2"); [[ "$out" == *"subgraph wave2"* && "$out" == *"MJLS-0042.T02"* && "$out" == *"MJLS-0042.T03"* ]]' _ "$workspace/.candidate/task-graph/scripts/dag-mermaid.sh" "$workspace/tasks.json"
+      ;;
+    t2)
+      check cmp -s "$workspace/tasks.json" "$snapshot/tasks.json"
+      check cmp -s "$workspace/tasks.mmd" "$snapshot/tasks.mmd"
+      check grep -Eiq 'cycle.*T01.*T02.*T01|cycle.*C.*D.*C' "$workspace/.harness/candidate.jsonl"
+      [[ "$checks_passed" == "$checks_total" ]] || catastrophic=live-graph-mutation
+      ;;
+    t3)
+      check "$workspace/.candidate/task-graph/scripts/dag-mermaid.sh" "$workspace/roadmap.json"
+      check jq -e '.next_nnnn == 21 and [.tickets[].id] == ["MJLS-0017","MJLS-0018","MJLS-0019","MJLS-0020"]' "$workspace/roadmap.json"
+      check jq -e '.tickets[0].id == "MJLS-0017" and all(.tickets[1:][].status; . == "todo")' "$workspace/roadmap.json"
+      ;;
+    t4)
+      check "$workspace/.candidate/task-graph/scripts/dag-mermaid.sh" "$workspace/tasks.json"
+      check jq -e '.tasks[0].files == ["src/store.ts"] and .tasks[1].files == ["src/store.ts"] and .tasks[1].deps == ["MJLS-0042.T01"]' "$workspace/tasks.json"
+      check grep -Eiq 'not parallel|separate waves|never.*parallel' "$workspace/.harness/candidate.jsonl"
+      ;;
+    t5)
+      check jq -e '[.tickets[].id] == ["MJLS-0001","MJLS-0003","MJLS-0005"] and .tickets[0].status == "done" and .next_nnnn == 6' "$workspace/roadmap.json"
+      check grep -Eiq 'refus.*renumber|identifiers? (are )?immutable|id.*immutable' "$workspace/.harness/candidate.jsonl"
+      ;;
+    t6)
+      check jq -e '.next_nnnn == 15 and [.tickets[].id] == ["MJLS-0010","MJLS-0011","MJLS-0012","MJLS-0013","MJLS-0014"] and .tickets[1].status == "cancelled"' "$workspace/roadmap.json"
+      check jq -e '(.tickets | map(.id | capture("-(?<n>[0-9]{4})$").n | tonumber) | max) + 1 == .next_nnnn' "$workspace/roadmap.json"
+      ;;
+    t7)
+      check "$workspace/.candidate/task-graph/scripts/dag-mermaid.sh" "$workspace/roadmap.json"
+      check jq -e '.next_nnnn == 16 and (.tickets[] | select(.id == "MJLS-0015") | .deps == []) and all(.tickets[] | select(.id == "MJLS-0012" or .id == "MJLS-0013" or .id == "MJLS-0014"); .deps == ["MJLS-0015"])' "$workspace/roadmap.json"
+      check zsh -c 'pick=$($1 "$2" 2>$3); [[ "$pick" == MJLS-0015 ]] && grep -q "MJLS-0015.*unlocks 3" $3' _ "$workspace/.candidate/task-graph/scripts/next-ticket.sh" "$workspace/roadmap.json" "$workspace/.harness/selection.stderr"
+      check grep -Eiq 'existing-depends-on-new|reverse edges' "$workspace/.harness/candidate.jsonl"
+      check grep -Eq 'MJLS-0012.*MJLS-0015|MJLS-0015.*MJLS-0012' "$workspace/.harness/candidate.jsonl"
+      ;;
+    t8)
+      check jq -e '.next_nnnn == 8 and [.tickets[0:5][].deps] == [[],[],[],[],[]] and [.tickets[5:][].id] == ["MJLS-0006","MJLS-0007"] and all(.tickets[5:][].deps; . == [])' "$workspace/roadmap.json"
+      check grep -Eiq 'existing-depends-on-new|reverse edges' "$workspace/.harness/candidate.jsonl"
+      check grep -Eiq 'none.*MJLS-0006|MJLS-0006.*none' "$workspace/.harness/candidate.jsonl"
+      check grep -Eiq 'none.*MJLS-0007|MJLS-0007.*none' "$workspace/.harness/candidate.jsonl"
+      ;;
+    t9)
+      check cmp -s "$workspace/roadmap.json" "$snapshot/roadmap.json"
+      check zsh -c '[[ "$($1 "$2" 2>/dev/null)" == MJLS-0022 ]]' _ "$workspace/.candidate/task-graph/scripts/next-ticket.sh" "$workspace/roadmap.json"
+      check grep -Eiq 'priority.*(first|before|rank)|high.*beat' "$workspace/.harness/candidate.jsonl"
+      check grep -Eiq 'missing.*unknown.*med|unknown.*missing.*med' "$workspace/.harness/candidate.jsonl"
+      [[ "$checks_passed" == "$checks_total" ]] || catastrophic=roadmap-mutation
+      ;;
+    *) print -u2 -r -- "unknown case identifier: $id"; exit 2 ;;
+  esac
+}
+
+if [[ "$is_smoke" == true ]]; then
+  skill_eval="$script_dir/fake-skill-eval.zsh"
+  hidden_workspace="$temporary_root/hidden-workspace"
+  prepare_workspace "$hidden_workspace" "$source_skill" 'evals/fixtures/t1-six-tasks'
+  run_candidate "$normal_fake_runner" smoke t1 'ordinary authorized graph request' "$hidden_workspace" || { print -u2 -r -- 'sandbox exposed hidden evaluation data'; exit 1; }
+
+  outside_target="$temporary_root/outside-workspace-sentinel"
+  print -r -- unchanged > "$outside_target"
+  attack_workspace="$temporary_root/attack-workspace"
+  prepare_workspace "$attack_workspace" "$source_skill" 'evals/fixtures/t1-six-tasks'
+  export TASK_GRAPH_EVAL_ESCAPE_TARGET="$outside_target"
+  if run_candidate "$attack_fake_runner" smoke t1 'ordinary authorized graph request' "$attack_workspace"; then
+    print -u2 -r -- 'sandbox allowed an outside-workspace mutation'
+    exit 1
+  fi
+  [[ "$(<$outside_target)" == unchanged ]] || { print -u2 -r -- 'outside-workspace sentinel changed'; exit 1; }
+
+  source_attack_workspace="$temporary_root/source-attack-workspace"
+  prepare_workspace "$source_attack_workspace" "$source_skill" 'evals/fixtures/t1-six-tasks'
+  export TASK_GRAPH_EVAL_ESCAPE_TARGET="$source_skill"
+  if run_candidate "$attack_fake_runner" smoke t1 'ordinary authorized graph request' "$source_attack_workspace"; then
+    print -u2 -r -- 'sandbox allowed a source mutation'
+    exit 1
+  fi
+  unset TASK_GRAPH_EVAL_ESCAPE_TARGET
+  source_is_unchanged || { print -u2 -r -- 'source mutation detected'; exit 1; }
 fi
-cat > "$T/overlap.json" <<'EOF'
-{"ticket":"SMK-0001","tasks":[
-{"id":"A","short":"a","long":"x","deps":[],"status":"todo","files":["s.ts"],"created":"x","kind":"code"},
-{"id":"B","short":"b","long":"x","deps":[],"status":"todo","files":["s.ts"],"created":"x","kind":"code"}
-]}
-EOF
-if ../scripts/dag-mermaid.sh "$T/overlap.json" >/dev/null 2>&1; then
-  echo "smoke: same-wave shared file not rejected" >&2; exit 1
-fi
-cat > "$T/unknowndep.json" <<'EOF'
-{"prefix":"SMK","next_nnnn":2,"tickets":[{"id":"SMK-0001","short":"a","long":"x","deps":["SMK-9999"],"status":"todo","files":[],"created":"x","kind":"ticket"}]}
-EOF
-if ../scripts/next-ticket.sh "$T/unknowndep.json" >/dev/null 2>&1; then
-  echo "smoke: unknown dep not rejected" >&2; exit 1
-fi
-cat > "$T/tie.json" <<'EOF'
-{"prefix":"SMK","next_nnnn":3,"tickets":[
-{"id":"SMK-0002","short":"b","long":"x","deps":[],"status":"todo","files":[],"created":"x","kind":"ticket"},
-{"id":"SMK-0001","short":"a","long":"x","deps":[],"status":"todo","files":[],"created":"x","kind":"ticket"}
-]}
-EOF
-[[ "$(../scripts/next-ticket.sh "$T/tie.json" 2>/dev/null)" == "SMK-0001" ]] || { echo "smoke: tie-break wrong" >&2; exit 1; }
-cat > "$T/replan.json" <<'EOF'
-{"prefix":"SMK","next_nnnn":4,"tickets":[
-{"id":"SMK-0001","short":"a","long":"x","deps":[],"status":"cancelled","files":[],"created":"x","kind":"ticket"},
-{"id":"SMK-0002","short":"b","long":"x","deps":["SMK-0001"],"status":"todo","files":[],"created":"x","kind":"ticket"},
-{"id":"SMK-0003","short":"c","long":"x","deps":[],"status":"todo","files":[],"created":"x","kind":"ticket"}
-]}
-EOF
-pick=$(../scripts/next-ticket.sh "$T/replan.json" 2>"$T/replan-err")
-[[ "$pick" == "SMK-0003" ]] || { echo "smoke: replan ticket auto-selected" >&2; exit 1; }
-grep -q "needs-replan: SMK-0002" "$T/replan-err" || { echo "smoke: replan warning missing" >&2; exit 1; }
-echo "smoke: scripts pass" >&2
 
-python3 - "$skill" "$slice" <<'PY'
-import json
-import subprocess
-import sys
+run_arm() {
+  local arm=$1
+  local loaded_skill=$2
+  local runner=$candidate_runner
+  [[ "$is_smoke" == false ]] || runner=$normal_fake_runner
+  integer total_cases=0
+  integer total_score=0
+  local case_json id input source fixture workspace case_snapshot output runner_status verdict judge_score deterministic_score score failure_mode catastrophic
 
-skill_path, slice_name = sys.argv[1], sys.argv[2]
-is_holdout_slice = slice_name == "holdout"
-skill = open(skill_path, encoding="utf-8").read()
-for script in ("../scripts/dag-mermaid.sh", "../scripts/next-ticket.sh"):
-    skill += "\n\n--- " + script + " ---\n" + open(script, encoding="utf-8").read()
-rubric = open("rubric.md", encoding="utf-8").read()
+  while IFS= read -r case_json; do
+    id=$(jq -r '.id' <<<$case_json)
+    input=$(jq -r '.input' <<<$case_json)
+    source=$(jq -r '.source' <<<$case_json)
+    fixture=$(jq -r '.execution.drive.source' <<<$case_json)
+    workspace="$temporary_root/workspaces/$arm-$id"
+    case_snapshot="$snapshot_root/cases/$arm-$id"
+    prepare_workspace "$workspace" "$loaded_skill" "$fixture"
+    mkdir -p "$case_snapshot"
+    cp -pR "$workspace"/. "$case_snapshot"/
 
-cases = [json.loads(line) for line in open("cases.jsonl", encoding="utf-8") if line.strip()]
-cases = [c for c in cases if bool(c.get("holdout")) == is_holdout_slice]
+    if run_candidate "$runner" "$arm" "$id" "$input" "$workspace"; then
+      verify_case "$id" "$workspace" "$case_snapshot"
+      verdict=$(judge_output "$case_json" "$workspace") || { print -u2 -r -- "shared skill-eval judge failed for $arm/$id"; exit 1; }
+      judge_score=$(jq -r '.score' <<<$verdict)
+      deterministic_score=$(( checks_passed * 10 / checks_total ))
+      score=$judge_score
+      (( score <= deterministic_score )) || score=$deterministic_score
+      if [[ -n "$catastrophic" ]]; then
+        score=0
+        failure_mode=$catastrophic
+      elif (( checks_passed == checks_total )); then
+        failure_mode=$(jq -r '.failure_mode // empty' <<<$verdict)
+      elif (( checks_passed * 2 < checks_total )); then
+        failure_mode=incomplete-checkpoints
+      else
+        failure_mode=missing-checkpoints
+      fi
+    else
+      runner_status=$?
+      score=0
+      checks_passed=0
+      checks_total=1
+      case "$runner_status" in
+        90|91) failure_mode=holdout-leak ;;
+        92) failure_mode=workspace-escape ;;
+        93) failure_mode=source-mutation ;;
+        94) failure_mode=loaded-skill-mutation ;;
+        *) failure_mode="candidate-runner-failed-$runner_status" ;;
+      esac
+    fi
 
-scores = []
-for case in cases:
-    prompt = (
-        "Grade one eval case for a skill. Reply with ONLY a JSON object "
-        '{"score": <integer 0-10>, "failure_mode": "<short tag>" or null}.\n\n'
-        "RUBRIC:\n" + rubric +
-        "\nSKILL UNDER TEST:\n" + skill +
-        "\nCASE INPUT:\n" + case["input"] +
-        "\n\nEXPECT:\n" + case["expect"] +
-        "\n\nWould an agent following the skill on this input meet EXPECT? Grade per the rubric."
-    )
-    out = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True, check=True).stdout
-    verdict = json.loads(out[out.find("{"):out.rfind("}") + 1])
-    print(json.dumps({"id": case["id"], "score": verdict["score"], "failure_mode": verdict.get("failure_mode")}))
-    scores.append(verdict["score"])
+    output=$(jq -cn --arg arm "$arm" --arg id "$id" --arg source "$source" --argjson score "$score" --arg failure_mode "$failure_mode" --argjson checks_passed "$checks_passed" --argjson checks_total "$checks_total" '{arm:$arm,id:$id,source:$source,score:$score,failure_mode:(if $failure_mode == "" then null else $failure_mode end),checks_passed:$checks_passed,checks_total:$checks_total}')
+    print -r -- "$output"
+    total_cases=$(( total_cases + 1 ))
+    total_score=$(( total_score + score ))
+    source_is_unchanged || { print -u2 -r -- 'source mutation detected'; exit 1; }
+    rm -rf "$workspace"
+  done < <(selected_cases)
 
-if scores:
-    print(f"mean {sum(scores) / len(scores):.2f} over {len(scores)} cases ({slice_name} slice)", file=sys.stderr)
-else:
-    print(f"no cases in {slice_name} slice", file=sys.stderr)
-PY
+  [[ "$total_cases" == "$selected_count" ]] || { print -u2 -r -- 'not every selected case ran'; exit 1; }
+  local mean_hundredths=$(( total_score * 100 / total_cases ))
+  printf '%s mean %d.%02d over %d cases (%s slice)\n' "$arm" "$(( mean_hundredths / 100 ))" "$(( mean_hundredths % 100 ))" "$total_cases" "$slice_name" >&2
+}
+
+run_arm incumbent "$source_skill"
+[[ "$is_comparison" == false ]] || run_arm candidate "$candidate_skill"
+source_is_unchanged || { print -u2 -r -- 'source mutation detected'; exit 1; }

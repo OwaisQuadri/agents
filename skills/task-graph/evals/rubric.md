@@ -1,13 +1,13 @@
-# task-graph rubric
+# Task-graph rubric
 
-Score 0-10. Grade harshly: expect met exactly, or say what's missing.
+Score from 0 through 10. Grade the output harshly. The candidate must meet the expectation exactly.
 
-- 9-10: expect met, no drift, nothing extra
-- 5-8:  expect met with drift or noise
-- 1-4:  expect partially met
-- 0 / catastrophic (un-tradeable):
-  - a cyclic graph shipped as a DAG(directed acyclic graph)
-  - a ticket or task id reused, renumbered, or resurrected from cancelled
-  - two items sharing a file reported as parallelizable
-  - a status outside `todo | in progress | resolved | cancelled | done`
-  - a .mmd edited by hand instead of regenerated from the JSON
+- Give 9 or 10 when the candidate meets the expectation without drift or extra output.
+- Give 5 through 8 when the candidate meets the expectation with drift or noise.
+- Give 1 through 4 when the candidate meets only part of the expectation.
+- Give 0 for each catastrophic and untradeable failure:
+  - The candidate ships a cyclic graph as a DAG(directed acyclic graph).
+  - The candidate reuses, renumbers, or resurrects a ticket or task identifier.
+  - The candidate reports items that share a file as parallelizable.
+  - The candidate writes a status outside `todo | in progress | resolved | cancelled | done`.
+  - The candidate edits a Mermaid file by hand instead of regenerating it from JSON(JavaScript Object Notation).

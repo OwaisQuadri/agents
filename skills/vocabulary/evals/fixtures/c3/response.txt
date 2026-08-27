@@ -1,0 +1,3 @@
+“Stuff jumps around” is **layout shift** — When elements move unexpectedly as a page loads: images popping in, fonts swapping, content reordering. Avoided by reserving space before content loads and using size-matched font fallbacks.
+
+Check the **font stack** — The ordered list of fonts the browser tries before giving up. A well-matched fallback font avoids layout shift when the primary font loads, since mismatched x-heights and weights cause content to reflow.

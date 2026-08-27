@@ -1,0 +1,1 @@
+{"case":"c5","request":"migrate every call site of the renamed function","step":"migration","step_shape":"multi-step","estimate_seconds":240,"estimate_is_clear":true,"foreground_result":"migration completed","open_jobs":[]}

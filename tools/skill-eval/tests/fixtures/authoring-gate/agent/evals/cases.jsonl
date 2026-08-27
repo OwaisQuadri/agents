@@ -1,0 +1,1 @@
+{"id":"own-agent","input":"Run the changed agent.","expect":"synthetic candidate passed its own case","source":"phase-04-h6","holdout":false,"execution":{"drive":{"kind":"response"},"allowed_tools":[],"timeout_seconds":5}}

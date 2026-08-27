@@ -1,0 +1,7 @@
+[
+  {"id":"bounded-analysis","kind":"analysis_ranking","required_reads":["observations.csv"],"required_writes":["answer.json"],"maximum_tool_calls":5},
+  {"id":"code-repair","kind":"minimal_repair","required_reads":["widget.rs"],"required_writes":["widget.rs"],"maximum_tool_calls":3},
+  {"id":"instruction-following","kind":"ordered_rules","required_reads":["rules.txt"],"required_writes":["answer.txt"],"maximum_tool_calls":3},
+  {"id":"tool-use","kind":"record_selection","required_reads":["inbox/a.txt","inbox/b.txt","inbox/c.txt"],"required_writes":["selected.txt"],"maximum_tool_calls":4},
+  {"id":"structured-output","kind":"strict_object","required_reads":["events.json"],"required_writes":["summary.json"],"maximum_tool_calls":3}
+]

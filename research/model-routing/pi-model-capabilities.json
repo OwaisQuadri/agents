@@ -1,7 +1,7 @@
 {
   "snapshot_version": 1,
-  "observed_at_unix_seconds": 1787707885,
-  "pi_version": "0.84.2",
+  "observed_at_unix_seconds": 1787803284,
+  "pi_version": "0.84.3",
   "probe_commands": [
     {
       "purpose": "all_extension_availability",
@@ -39,9 +39,9 @@
     }
   ],
   "counts": {
-    "union": 379,
-    "all_extension_list": 379,
-    "core_rpc": 379,
+    "union": 374,
+    "all_extension_list": 374,
+    "core_rpc": 374,
     "list_only": 0,
     "rpc_only": 0,
     "moving_aliases": 12
@@ -477,7 +477,7 @@
         "high",
         "xhigh"
       ],
-      "context_window": 1000000,
+      "context_window": 272000,
       "maximum_output": 128000,
       "input_modes": [
         "text",
@@ -487,7 +487,16 @@
         "input": 2.5,
         "output": 15.0,
         "cacheRead": 0.25,
-        "cacheWrite": 0.0
+        "cacheWrite": 0.0,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 5.0,
+            "output": 22.5,
+            "cacheRead": 0.5,
+            "cacheWrite": 0.0
+          }
+        ]
       },
       "is_in_all_extension_list": true,
       "is_in_core_rpc": true,
@@ -507,7 +516,7 @@
         "high",
         "xhigh"
       ],
-      "context_window": 1000000,
+      "context_window": 272000,
       "maximum_output": 128000,
       "input_modes": [
         "text",
@@ -537,7 +546,7 @@
         "high",
         "xhigh"
       ],
-      "context_window": 1000000,
+      "context_window": 272000,
       "maximum_output": 128000,
       "input_modes": [
         "text",
@@ -547,7 +556,16 @@
         "input": 5.0,
         "output": 30.0,
         "cacheRead": 0.5,
-        "cacheWrite": 0.0
+        "cacheWrite": 0.0,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 10.0,
+            "output": 45.0,
+            "cacheRead": 1.0,
+            "cacheWrite": 0.0
+          }
+        ]
       },
       "is_in_all_extension_list": true,
       "is_in_core_rpc": true,
@@ -578,7 +596,16 @@
         "input": 0.2,
         "output": 1.2,
         "cacheRead": 0.02,
-        "cacheWrite": 0.25
+        "cacheWrite": 0.25,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 0.4,
+            "output": 1.8,
+            "cacheRead": 0.04,
+            "cacheWrite": 0.5
+          }
+        ]
       },
       "is_in_all_extension_list": true,
       "is_in_core_rpc": true,
@@ -609,7 +636,16 @@
         "input": 5.0,
         "output": 30.0,
         "cacheRead": 0.5,
-        "cacheWrite": 6.25
+        "cacheWrite": 6.25,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 10.0,
+            "output": 45.0,
+            "cacheRead": 1.0,
+            "cacheWrite": 12.5
+          }
+        ]
       },
       "is_in_all_extension_list": true,
       "is_in_core_rpc": true,
@@ -640,31 +676,16 @@
         "input": 2.0,
         "output": 12.0,
         "cacheRead": 0.2,
-        "cacheWrite": 2.5
-      },
-      "is_in_all_extension_list": true,
-      "is_in_core_rpc": true,
-      "is_moving_alias": false,
-      "is_exact_qualification_evidence": true
-    },
-    {
-      "provider": "openrouter",
-      "model": "ai21/jamba-large-1.7",
-      "display_name": "AI21: Jamba Large 1.7",
-      "reasoning": false,
-      "supported_pi_thinking_levels": [
-        "off"
-      ],
-      "context_window": 256000,
-      "maximum_output": 4096,
-      "input_modes": [
-        "text"
-      ],
-      "pricing_per_million_tokens": {
-        "input": 2.0,
-        "output": 8.0,
-        "cacheRead": 0.0,
-        "cacheWrite": 0.0
+        "cacheWrite": 2.5,
+        "tiers": [
+          {
+            "inputTokensAbove": 272000,
+            "input": 4.0,
+            "output": 18.0,
+            "cacheRead": 0.4,
+            "cacheWrite": 5.0
+          }
+        ]
       },
       "is_in_all_extension_list": true,
       "is_in_core_rpc": true,
@@ -1829,7 +1850,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -1968,7 +1989,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -2179,7 +2200,7 @@
         "off"
       ],
       "context_window": 163840,
-      "maximum_output": 163840,
+      "maximum_output": 147456,
       "input_modes": [
         "text"
       ],
@@ -2207,7 +2228,7 @@
         "high"
       ],
       "context_window": 161000,
-      "maximum_output": 161000,
+      "maximum_output": 144900,
       "input_modes": [
         "text"
       ],
@@ -2317,7 +2338,7 @@
         "high"
       ],
       "context_window": 163840,
-      "maximum_output": 163840,
+      "maximum_output": 147456,
       "input_modes": [
         "text"
       ],
@@ -2376,9 +2397,9 @@
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.0854,
-        "output": 0.1708,
-        "cacheRead": 0.01708,
+        "input": 0.0826,
+        "output": 0.1652,
+        "cacheRead": 0.01652,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2397,14 +2418,14 @@
         "xhigh"
       ],
       "context_window": 1048576,
-      "maximum_output": 131072,
+      "maximum_output": 943718,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.14,
-        "output": 0.28,
-        "cacheRead": 0.028,
+        "input": 0.06,
+        "output": 0.12,
+        "cacheRead": 0.012,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2423,14 +2444,14 @@
         "xhigh"
       ],
       "context_window": 1048576,
-      "maximum_output": 1048576,
+      "maximum_output": 131072,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.035,
-        "output": 0.1,
-        "cacheRead": 0.008,
+        "input": 0.03,
+        "output": 0.075,
+        "cacheRead": 0.007,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2481,9 +2502,9 @@
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.579072,
-        "output": 1.158144,
-        "cacheRead": 0.048256,
+        "input": 0.87,
+        "output": 1.74,
+        "cacheRead": 0.0725,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2502,7 +2523,7 @@
         "xhigh"
       ],
       "context_window": 1048575,
-      "maximum_output": 4096,
+      "maximum_output": 943717,
       "input_modes": [
         "text"
       ],
@@ -2530,7 +2551,7 @@
         "high"
       ],
       "context_window": 512000,
-      "maximum_output": 512000,
+      "maximum_output": 460800,
       "input_modes": [
         "text",
         "image"
@@ -2843,7 +2864,7 @@
         "medium",
         "high"
       ],
-      "context_window": 65536,
+      "context_window": 131072,
       "maximum_output": 32768,
       "input_modes": [
         "text",
@@ -3338,7 +3359,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 131072,
+      "maximum_output": 117964,
       "input_modes": [
         "text",
         "image"
@@ -3425,15 +3446,15 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 16384,
       "input_modes": [
         "text",
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.1,
+        "input": 0.09,
         "output": 0.34,
-        "cacheRead": 0.1,
+        "cacheRead": 0.05,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -3479,7 +3500,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 131072,
+      "maximum_output": 117964,
       "input_modes": [
         "text"
       ],
@@ -3522,54 +3543,6 @@
     },
     {
       "provider": "openrouter",
-      "model": "inclusionai/ling-2.6-1t",
-      "display_name": "inclusionAI: Ling-2.6-1T",
-      "reasoning": false,
-      "supported_pi_thinking_levels": [
-        "off"
-      ],
-      "context_window": 262144,
-      "maximum_output": 32768,
-      "input_modes": [
-        "text"
-      ],
-      "pricing_per_million_tokens": {
-        "input": 0.075,
-        "output": 0.625,
-        "cacheRead": 0.015,
-        "cacheWrite": 0.0
-      },
-      "is_in_all_extension_list": true,
-      "is_in_core_rpc": true,
-      "is_moving_alias": false,
-      "is_exact_qualification_evidence": true
-    },
-    {
-      "provider": "openrouter",
-      "model": "inclusionai/ling-2.6-flash",
-      "display_name": "inclusionAI: Ling-2.6-flash",
-      "reasoning": false,
-      "supported_pi_thinking_levels": [
-        "off"
-      ],
-      "context_window": 262144,
-      "maximum_output": 32768,
-      "input_modes": [
-        "text"
-      ],
-      "pricing_per_million_tokens": {
-        "input": 0.01,
-        "output": 0.03,
-        "cacheRead": 0.002,
-        "cacheWrite": 0.0
-      },
-      "is_in_all_extension_list": true,
-      "is_in_core_rpc": true,
-      "is_moving_alias": false,
-      "is_exact_qualification_evidence": true
-    },
-    {
-      "provider": "openrouter",
       "model": "inclusionai/ling-3.0-flash",
       "display_name": "Ling-3.0-flash",
       "reasoning": true,
@@ -3589,34 +3562,6 @@
         "input": 0.021,
         "output": 0.063,
         "cacheRead": 0.0042,
-        "cacheWrite": 0.0
-      },
-      "is_in_all_extension_list": true,
-      "is_in_core_rpc": true,
-      "is_moving_alias": false,
-      "is_exact_qualification_evidence": true
-    },
-    {
-      "provider": "openrouter",
-      "model": "inclusionai/ring-2.6-1t",
-      "display_name": "inclusionAI: Ring-2.6-1T",
-      "reasoning": true,
-      "supported_pi_thinking_levels": [
-        "off",
-        "minimal",
-        "low",
-        "medium",
-        "high"
-      ],
-      "context_window": 262144,
-      "maximum_output": 65536,
-      "input_modes": [
-        "text"
-      ],
-      "pricing_per_million_tokens": {
-        "input": 0.075,
-        "output": 0.625,
-        "cacheRead": 0.015,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -3784,7 +3729,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 131072,
+      "maximum_output": 117964,
       "input_modes": [
         "text"
       ],
@@ -3807,15 +3752,15 @@
       "supported_pi_thinking_levels": [
         "off"
       ],
-      "context_window": 131072,
-      "maximum_output": 16384,
+      "context_window": 128000,
+      "maximum_output": 115200,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.1,
-        "output": 0.32,
-        "cacheRead": 0.0,
+        "input": 0.71,
+        "output": 0.71,
+        "cacheRead": 0.71,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -3856,16 +3801,16 @@
       "supported_pi_thinking_levels": [
         "off"
       ],
-      "context_window": 327680,
-      "maximum_output": 16384,
+      "context_window": 131072,
+      "maximum_output": 8192,
       "input_modes": [
         "text",
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.1,
-        "output": 0.3,
-        "cacheRead": 0.0,
+        "input": 0.11,
+        "output": 0.34,
+        "cacheRead": 0.055,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -3885,7 +3830,7 @@
         "xhigh"
       ],
       "context_window": 131072,
-      "maximum_output": 4096,
+      "maximum_output": 117964,
       "input_modes": [
         "text",
         "image"
@@ -3914,7 +3859,7 @@
         "xhigh"
       ],
       "context_window": 1048576,
-      "maximum_output": 4096,
+      "maximum_output": 943718,
       "input_modes": [
         "text",
         "image"
@@ -3943,7 +3888,7 @@
         "xhigh"
       ],
       "context_window": 1048576,
-      "maximum_output": 4096,
+      "maximum_output": 943718,
       "input_modes": [
         "text",
         "image"
@@ -3972,7 +3917,7 @@
         "xhigh"
       ],
       "context_window": 1048576,
-      "maximum_output": 4096,
+      "maximum_output": 943718,
       "input_modes": [
         "text",
         "image"
@@ -4108,8 +4053,8 @@
         "medium",
         "high"
       ],
-      "context_window": 196608,
-      "maximum_output": 4096,
+      "context_window": 204800,
+      "maximum_output": 131072,
       "input_modes": [
         "text"
       ],
@@ -4136,7 +4081,7 @@
         "high"
       ],
       "context_window": 196608,
-      "maximum_output": 4096,
+      "maximum_output": 176947,
       "input_modes": [
         "text"
       ],
@@ -4193,7 +4138,7 @@
         "high"
       ],
       "context_window": 524288,
-      "maximum_output": 4096,
+      "maximum_output": 471859,
       "input_modes": [
         "text",
         "image"
@@ -4222,7 +4167,7 @@
         "high"
       ],
       "context_window": 1048576,
-      "maximum_output": 4096,
+      "maximum_output": 943718,
       "input_modes": [
         "text",
         "image"
@@ -4247,7 +4192,7 @@
         "off"
       ],
       "context_window": 256000,
-      "maximum_output": 4096,
+      "maximum_output": 204800,
       "input_modes": [
         "text"
       ],
@@ -4271,7 +4216,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 209715,
       "input_modes": [
         "text"
       ],
@@ -4295,7 +4240,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 209715,
       "input_modes": [
         "text",
         "image"
@@ -4320,7 +4265,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 4096,
+      "maximum_output": 104857,
       "input_modes": [
         "text",
         "image"
@@ -4345,7 +4290,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 209715,
       "input_modes": [
         "text",
         "image"
@@ -4370,7 +4315,7 @@
         "off"
       ],
       "context_window": 128000,
-      "maximum_output": 4096,
+      "maximum_output": 102400,
       "input_modes": [
         "text"
       ],
@@ -4394,7 +4339,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 4096,
+      "maximum_output": 104857,
       "input_modes": [
         "text"
       ],
@@ -4418,7 +4363,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 209715,
       "input_modes": [
         "text",
         "image"
@@ -4443,7 +4388,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 4096,
+      "maximum_output": 104857,
       "input_modes": [
         "text",
         "image"
@@ -4469,7 +4414,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 209715,
       "input_modes": [
         "text",
         "image"
@@ -4494,7 +4439,7 @@
         "off"
       ],
       "context_window": 131072,
-      "maximum_output": 4096,
+      "maximum_output": 104857,
       "input_modes": [
         "text",
         "image"
@@ -4543,7 +4488,7 @@
         "off"
       ],
       "context_window": 32768,
-      "maximum_output": 4096,
+      "maximum_output": 26214,
       "input_modes": [
         "text"
       ],
@@ -4568,7 +4513,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 209715,
       "input_modes": [
         "text",
         "image"
@@ -4618,7 +4563,7 @@
         "off"
       ],
       "context_window": 65536,
-      "maximum_output": 4096,
+      "maximum_output": 52428,
       "input_modes": [
         "text"
       ],
@@ -4642,7 +4587,7 @@
         "off"
       ],
       "context_window": 32000,
-      "maximum_output": 4096,
+      "maximum_output": 25600,
       "input_modes": [
         "text"
       ],
@@ -4774,7 +4719,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -4802,7 +4747,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -4830,7 +4775,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -4892,9 +4837,9 @@
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 2.8,
-        "output": 14.0,
-        "cacheRead": 0.29,
+        "input": 2.55,
+        "output": 12.75,
+        "cacheRead": 0.256,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -4915,7 +4860,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -4944,7 +4889,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -4973,7 +4918,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -5082,7 +5027,7 @@
         "medium"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -5108,7 +5053,7 @@
         "high"
       ],
       "context_window": 512288,
-      "maximum_output": 4096,
+      "maximum_output": 461059,
       "input_modes": [
         "text"
       ],
@@ -5134,7 +5079,7 @@
         "high"
       ],
       "context_window": 512288,
-      "maximum_output": 4096,
+      "maximum_output": 461059,
       "input_modes": [
         "text"
       ],
@@ -5321,7 +5266,7 @@
         "off"
       ],
       "context_window": 4095,
-      "maximum_output": 4096,
+      "maximum_output": 3685,
       "input_modes": [
         "text"
       ],
@@ -7254,7 +7199,7 @@
         "high"
       ],
       "context_window": 131072,
-      "maximum_output": 131072,
+      "maximum_output": 117964,
       "input_modes": [
         "text"
       ],
@@ -7280,7 +7225,7 @@
         "high"
       ],
       "context_window": 131072,
-      "maximum_output": 131072,
+      "maximum_output": 117964,
       "input_modes": [
         "text"
       ],
@@ -7288,34 +7233,6 @@
         "input": 0.03,
         "output": 0.13,
         "cacheRead": 0.03,
-        "cacheWrite": 0.0
-      },
-      "is_in_all_extension_list": true,
-      "is_in_core_rpc": true,
-      "is_moving_alias": false,
-      "is_exact_qualification_evidence": true
-    },
-    {
-      "provider": "openrouter",
-      "model": "openai/gpt-oss-20b:free",
-      "display_name": "OpenAI: gpt-oss-20b (free)",
-      "reasoning": true,
-      "supported_pi_thinking_levels": [
-        "off",
-        "minimal",
-        "low",
-        "medium",
-        "high"
-      ],
-      "context_window": 131072,
-      "maximum_output": 32768,
-      "input_modes": [
-        "text"
-      ],
-      "pricing_per_million_tokens": {
-        "input": 0.0,
-        "output": 0.0,
-        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -7986,7 +7903,7 @@
         "off"
       ],
       "context_window": 32768,
-      "maximum_output": 32768,
+      "maximum_output": 29491,
       "input_modes": [
         "text"
       ],
@@ -8169,7 +8086,7 @@
         "high"
       ],
       "context_window": 131072,
-      "maximum_output": 4096,
+      "maximum_output": 117964,
       "input_modes": [
         "text"
       ],
@@ -8352,7 +8269,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -8400,7 +8317,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -8500,7 +8417,7 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -8739,7 +8656,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -8797,7 +8714,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -8826,15 +8743,15 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 65536,
       "input_modes": [
         "text",
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.5,
-        "output": 3.6,
-        "cacheRead": 0.3,
+        "input": 0.39,
+        "output": 2.34,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -8855,7 +8772,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -8971,15 +8888,15 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 81920,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.32,
-        "output": 3.2,
-        "cacheRead": 0.0,
+        "input": 0.6,
+        "output": 3.6,
+        "cacheRead": 0.12,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -9000,7 +8917,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 262144,
+      "maximum_output": 235929,
       "input_modes": [
         "text",
         "image"
@@ -9280,7 +9197,7 @@
         "off"
       ],
       "context_window": 16384,
-      "maximum_output": 16384,
+      "maximum_output": 14745,
       "input_modes": [
         "text",
         "image"
@@ -9288,7 +9205,7 @@
       "pricing_per_million_tokens": {
         "input": 0.1,
         "output": 0.1,
-        "cacheRead": 0.1,
+        "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -9462,7 +9379,7 @@
         "high"
       ],
       "context_window": 256000,
-      "maximum_output": 256000,
+      "maximum_output": 230400,
       "input_modes": [
         "text",
         "image"
@@ -9515,7 +9432,7 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 4096,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
@@ -9539,7 +9456,7 @@
         "off"
       ],
       "context_window": 32768,
-      "maximum_output": 32768,
+      "maximum_output": 26214,
       "input_modes": [
         "text"
       ],
@@ -9658,7 +9575,7 @@
         "max"
       ],
       "context_window": 524288,
-      "maximum_output": 4096,
+      "maximum_output": 471859,
       "input_modes": [
         "text",
         "image"
@@ -9717,7 +9634,7 @@
         "high"
       ],
       "context_window": 131072,
-      "maximum_output": 131072,
+      "maximum_output": 117964,
       "input_modes": [
         "text"
       ],
@@ -9773,7 +9690,7 @@
         "high"
       ],
       "context_window": 2000000,
-      "maximum_output": 4096,
+      "maximum_output": 1800000,
       "input_modes": [
         "text",
         "image"
@@ -9801,7 +9718,7 @@
         "high"
       ],
       "context_window": 1000000,
-      "maximum_output": 4096,
+      "maximum_output": 900000,
       "input_modes": [
         "text",
         "image"
@@ -9828,7 +9745,7 @@
         "high"
       ],
       "context_window": 500000,
-      "maximum_output": 4096,
+      "maximum_output": 450000,
       "input_modes": [
         "text",
         "image"
@@ -9856,7 +9773,7 @@
         "xhigh"
       ],
       "context_window": 500000,
-      "maximum_output": 4096,
+      "maximum_output": 450000,
       "input_modes": [
         "text",
         "image"
@@ -9884,7 +9801,7 @@
         "high"
       ],
       "context_window": 256000,
-      "maximum_output": 4096,
+      "maximum_output": 230400,
       "input_modes": [
         "text",
         "image"
@@ -9912,7 +9829,7 @@
         "xhigh"
       ],
       "context_window": 500000,
-      "maximum_output": 4096,
+      "maximum_output": 450000,
       "input_modes": [
         "text",
         "image"
@@ -10252,7 +10169,7 @@
         "high"
       ],
       "context_window": 202752,
-      "maximum_output": 202752,
+      "maximum_output": 182476,
       "input_modes": [
         "text"
       ],
@@ -10304,7 +10221,7 @@
         "xhigh"
       ],
       "context_window": 1048575,
-      "maximum_output": 4096,
+      "maximum_output": 943717,
       "input_modes": [
         "text"
       ],
@@ -10330,7 +10247,7 @@
         "xhigh"
       ],
       "context_window": 256000,
-      "maximum_output": 256000,
+      "maximum_output": 230400,
       "input_modes": [
         "text"
       ],

@@ -1,0 +1,1 @@
+{"canonical_skill_count":3,"claude_skill_count":5,"codex_skill_count":1,"independent_claude_skill_count":4,"dead_skill_links":["claude/skills/ghost"],"hook_only_scripts":["skill-usage-sweep.sh"],"mcp_servers":[{"name":"search","scope":"user"},{"name":"search","scope":"project"}],"tracked_claude_paths":["project/.claude/settings.json"]}

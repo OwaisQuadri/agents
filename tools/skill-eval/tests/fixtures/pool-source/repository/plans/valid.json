@@ -1,0 +1,169 @@
+{
+  "entrants": {
+    "T1": [
+      {
+        "model": {
+          "provider": "openrouter",
+          "model": "meta-llama/llama-3.2-3b-instruct-20240925",
+          "thinking": "off"
+        },
+        "thinking_levels": ["off"],
+        "catalog_observed_at": "2000-12-01T10:00:00-0500"
+      },
+      {
+        "model": {
+          "provider": "google",
+          "model": "gemini-2.0-flash-001",
+          "thinking": "minimal"
+        },
+        "thinking_levels": ["off", "minimal", "low"],
+        "catalog_observed_at": "2000-12-01T10:01:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openrouter",
+          "model": "google/gemini-2.0-flash-001",
+          "thinking": "minimal"
+        },
+        "thinking_levels": ["minimal", "low", "medium"],
+        "catalog_observed_at": "2000-12-01T10:02:00-0500"
+      }
+    ],
+    "T2": [
+      {
+        "model": {
+          "provider": "anthropic",
+          "model": "claude-haiku-3-5-20241022",
+          "thinking": "off"
+        },
+        "thinking_levels": ["off", "minimal", "low"],
+        "catalog_observed_at": "2000-12-01T11:00:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openrouter",
+          "model": "anthropic/claude-haiku-3-5-20241022",
+          "thinking": "off"
+        },
+        "thinking_levels": ["off"],
+        "catalog_observed_at": "2000-12-01T11:01:00-0500"
+      },
+      {
+        "model": {
+          "provider": "mistral",
+          "model": "ministral-8b-2410",
+          "thinking": "low"
+        },
+        "thinking_levels": ["minimal", "low", "medium"],
+        "catalog_observed_at": "2000-12-01T11:02:00-0500"
+      }
+    ],
+    "T3": [
+      {
+        "model": {
+          "provider": "anthropic",
+          "model": "claude-sonnet-4-5-20250929",
+          "thinking": "medium"
+        },
+        "thinking_levels": ["low", "medium", "high"],
+        "catalog_observed_at": "2000-12-01T12:00:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openrouter",
+          "model": "anthropic/claude-sonnet-4-5-20250929",
+          "thinking": "medium"
+        },
+        "thinking_levels": ["medium", "high", "xhigh"],
+        "catalog_observed_at": "2000-12-01T12:01:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openai",
+          "model": "gpt-5.1-2025-11-13",
+          "thinking": "medium"
+        },
+        "thinking_levels": ["low", "medium", "high"],
+        "catalog_observed_at": "2000-12-01T12:02:00-0500"
+      }
+    ],
+    "T4": [
+      {
+        "model": {
+          "provider": "anthropic",
+          "model": "claude-opus-4-5-20251101",
+          "thinking": "high"
+        },
+        "thinking_levels": ["medium", "high", "xhigh"],
+        "catalog_observed_at": "2000-12-01T13:00:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openrouter",
+          "model": "anthropic/claude-opus-4-5-20251101",
+          "thinking": "high"
+        },
+        "thinking_levels": ["high", "xhigh", "max"],
+        "catalog_observed_at": "2000-12-01T13:01:00-0500"
+      },
+      {
+        "model": {
+          "provider": "google",
+          "model": "gemini-2.5-pro-20250605",
+          "thinking": "high"
+        },
+        "thinking_levels": ["high"],
+        "catalog_observed_at": "2000-12-01T13:02:00-0500"
+      }
+    ],
+    "T5": [
+      {
+        "model": {
+          "provider": "anthropic",
+          "model": "claude-opus-4-6-20260205",
+          "thinking": "max"
+        },
+        "thinking_levels": ["high", "xhigh", "max"],
+        "catalog_observed_at": "2000-12-01T14:00:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openrouter",
+          "model": "anthropic/claude-opus-4-6-20260205",
+          "thinking": "max"
+        },
+        "thinking_levels": ["high", "xhigh", "max"],
+        "catalog_observed_at": "2000-12-01T14:01:00-0500"
+      },
+      {
+        "model": {
+          "provider": "openai",
+          "model": "o3-2025-04-16",
+          "thinking": "xhigh"
+        },
+        "thinking_levels": ["high", "xhigh", "max"],
+        "catalog_observed_at": "2000-12-01T14:02:00-0500"
+      }
+    ]
+  },
+  "control": {
+    "model": {
+      "provider": "openrouter",
+      "model": "openrouter/free",
+      "thinking": "low"
+    },
+    "maximum_tier": "T1",
+    "is_read_only": true
+  },
+  "policy": {
+    "calibration_repeats_per_case": 1,
+    "qualification_repeats_per_case": 3,
+    "promotion_count": 2,
+    "minimum_score": 8,
+    "calibration_minimum_reliability_basis_points": 8000,
+    "qualification_minimum_reliability_basis_points": 10000,
+    "maximum_catalog_age_seconds": 7200,
+    "spending_limit_millionths_of_dollar": 10000000,
+    "is_provider_limit_enforced": true
+  }
+}

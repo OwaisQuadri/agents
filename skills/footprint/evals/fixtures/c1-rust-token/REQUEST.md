@@ -1,0 +1,1 @@
+Use `token.rs` as the current representation. Keep the stated instance count at 10,000,000. The source-file limit is four gigabytes. Preserve token length by recomputation from source boundaries. Compile and run the probe before and after. Put the exact probe output and the applied moves in `REPORT.md`.

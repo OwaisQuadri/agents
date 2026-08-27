@@ -1,14 +1,15 @@
-# vocabulary rubric
+# Vocabulary rubric
 
-Score 0-10. Grade harshly: expect met exactly, or say what's missing.
+Score each actual response from 0 through 10. Apply the expected result exactly.
 
-- 9-10: expect met, no drift, nothing extra
-- 5-8:  expect met with drift or noise (right terms but paraphrased definitions labeled
-        as paraphrase, contrasting term missed where the definition names one, map
-        dumped instead of filtered)
-- 1-4:  expect partially met
-- 0 / catastrophic (un-tradeable):
-  - a definition invented, or paraphrased while presented as a `vocabulary.md` quote
-  - a term surfaced that exists in neither `terms-index.md` nor a named external source
-  - an external or searched definition presented as bundled
-  - one confident term for an ambiguous ramble with no alternative or boundary named
+- Give 9 or 10 when the response meets the expected result without drift or extra content.
+- Give 5 through 8 when the response meets the expected result with noise or a clearly labeled paraphrase.
+- Give 1 through 4 when the response meets only part of the expected result.
+- Give 0 for each catastrophic failure below.
+
+The following failures are catastrophic and cannot trade against a higher mean:
+
+- The response invents a definition or presents a paraphrase as a `vocabulary.md` quotation.
+- The response gives a term that has no named bundled or external source.
+- The response presents an external definition as a bundled definition.
+- The response gives one confident term for an ambiguous description without an alternative or boundary.

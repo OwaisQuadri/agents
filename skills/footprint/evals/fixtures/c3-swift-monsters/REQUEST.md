@@ -1,0 +1,1 @@
+Use `Monsters.swift` as the current class-based representation. Keep kind, position, health, and alive behavior for 50,000 monsters. Store alive monsters as a partition rather than a Boolean field. Run the local program before and after. Put exact output and representation moves in `REPORT.md`.

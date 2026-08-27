@@ -1,0 +1,1 @@
+**Tabular nums** — A font feature that gives every digit the same width so numbers in columns stay aligned as they change. Essential for prices, stats, and any data that updates.

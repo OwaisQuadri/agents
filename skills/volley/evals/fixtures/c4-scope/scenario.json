@@ -1,0 +1,1 @@
+{"case":"c4","request":"fix only the failing parser test","step":"targeted-fix","step_shape":"one-command","estimate_seconds":8,"estimate_is_clear":true,"foreground_result":"fixed failing parser test; 3 unrelated lint errors remain","unasked_step":"lint-fix","open_jobs":[]}

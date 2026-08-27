@@ -1,0 +1,11 @@
+{
+  "tiers": {
+    "T1": {"model": "tiny"},
+    "T2": {"model": "cheap"},
+    "T3": {"model": "standard"}
+  },
+  "agents": {
+    "h6-agent": "T3",
+    "other-agent": "T1"
+  }
+}

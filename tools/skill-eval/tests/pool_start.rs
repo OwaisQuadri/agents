@@ -79,8 +79,59 @@ macro_rules! pool_start_tests {
             }
 
             #[test]
+            fn preallocates_every_thinking_level_for_fourth_entrant() {
+                let mut runtime = FakeRuntime::new();
+                let mut fourth = pool_model(Tier::T2, 3);
+                fourth.thinking = "medium".to_owned();
+                runtime
+                    .plan
+                    .entrants
+                    .get_mut(&Tier::T2)
+                    .unwrap()
+                    .push(PoolEntrant {
+                        thinking_levels: vec![
+                            "low".to_owned(),
+                            "medium".to_owned(),
+                            "high".to_owned(),
+                        ],
+                        retained_lower_thinking_level: None,
+                        model: fourth,
+                        candidate_timeout_seconds: None,
+                        catalog_observed_at: Timestamp(
+                            "2026-08-24T12:00:00-0400".to_owned(),
+                        ),
+                    });
+                let persisted = runtime.persisted.clone();
+                let mut progress = FakePoolProgress::new(persisted);
+
+                let state = start_pool_qualification(
+                    pool_request(vec![Tier::T2], true),
+                    &mut runtime,
+                    &mut progress,
+                )
+                .unwrap();
+
+                assert_eq!(state.child_runs.len(), 12);
+                let fourth_children = state
+                    .child_runs
+                    .iter()
+                    .filter(|child| child.entrant_index == 3)
+                    .collect::<Vec<_>>();
+                assert_eq!(fourth_children.len(), 6);
+                for thinking_index in 0..3 {
+                    for stage in [$crate::model::PoolStage::Calibration, $crate::model::PoolStage::Qualification] {
+                        assert!(fourth_children.iter().any(|child| {
+                            child.thinking_index == thinking_index && child.stage == stage
+                        }));
+                    }
+                }
+            }
+
+            #[test]
             fn live_start_runs_only_first_exact_calibration_child_to_terminal_report() {
                 let mut runtime = FakeRuntime::new();
+                runtime.plan.entrants.get_mut(&Tier::T2).unwrap()[0]
+                    .candidate_timeout_seconds = Some(37);
                 let persisted = runtime.persisted.clone();
                 let mut progress = FakePoolProgress::new(persisted);
 
@@ -97,7 +148,7 @@ macro_rules! pool_start_tests {
                 assert!(state.child_runs[1..]
                     .iter()
                     .all(|child| child.status == PoolChildStatus::Pending));
-                assert_eq!(state.spent_millionths_of_dollar, 7);
+                assert_eq!(state.spent_millionths_of_dollar, 3);
                 assert_eq!(runtime.model_calls, 2);
                 assert!(runtime.is_preallocated_at_first_model_call);
                 assert!(progress.is_persisted_before_emit);
@@ -136,6 +187,7 @@ macro_rules! pool_start_tests {
                         | RunEvent::DecisionRecorded { .. }
                 )));
                 assert_eq!(runtime.execute_models, vec![pool_model(Tier::T2, 0)]);
+                assert_eq!(runtime.candidate_timeouts, vec![Some(37)]);
                 assert_eq!(runtime.started_run_ids, vec![child_id]);
             }
 
@@ -174,7 +226,7 @@ macro_rules! pool_start_tests {
             }
 
             #[test]
-            fn ordinary_start_keeps_configured_reference_and_fallback_route() {
+            fn ordinary_start_uses_exact_qualification_routes() {
                 let mut runtime = FakeRuntime::new();
                 let mut progress = FakeProgress;
                 let request = QualifyRequest {
@@ -196,11 +248,28 @@ macro_rules! pool_start_tests {
                 let report = start_qualification(request, &mut runtime, &mut progress).unwrap();
 
                 assert_eq!(report.status, RunStatus::AwaitingDecision);
-                assert_eq!(runtime.exact_calls.get(), 0);
-                assert!(runtime.candidate_calls.get() >= 2);
+                assert!(runtime.exact_calls.get() > 0);
+                assert_eq!(runtime.candidate_calls.get(), 2);
+                let frozen_routes = runtime.runs[&report.run_id]
+                    .iter()
+                    .find_map(|event| match event {
+                        RunEvent::RunStarted { configuration, .. } => {
+                            Some(&configuration.qualification_routes)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_eq!(
+                    frozen_routes[&Tier::T1],
+                    vec![route_model(Tier::T1, 0)]
+                );
+                assert_eq!(
+                    frozen_routes[&Tier::T4],
+                    vec![route_model(Tier::T4, 0)]
+                );
                 assert!(runtime.runs[&report.run_id].iter().any(|event| matches!(
                     event,
-                    RunEvent::TrialStarted { models, .. } if models.len() == 2
+                    RunEvent::TrialStarted { models, .. } if models.len() == 1
                 )));
             }
 
@@ -381,6 +450,7 @@ macro_rules! pool_start_tests {
                 candidate_calls: Cell<usize>,
                 model_calls: usize,
                 execute_models: Vec<ModelIdentity>,
+                candidate_timeouts: Vec<Option<u32>>,
                 started_run_ids: Vec<RunId>,
                 is_preallocated_at_first_model_call: bool,
                 freshness_error: bool,
@@ -395,12 +465,17 @@ macro_rules! pool_start_tests {
                             (
                                 tier,
                                 (0..3)
-                                    // TODO(AGNT-0032.T103): Add neutral one-level thinking lists to start fixtures.
-                                    .map(|index| PoolEntrant {
-                                        model: pool_model(tier, index),
-                                        catalog_observed_at: Timestamp(
-                                            "2026-08-24T12:00:00-0400".to_owned(),
-                                        ),
+                                    .map(|index| {
+                                        let model = pool_model(tier, index);
+                                        PoolEntrant {
+                                            thinking_levels: vec![model.thinking.clone()],
+                                            retained_lower_thinking_level: None,
+                                            model,
+                                            candidate_timeout_seconds: None,
+                                            catalog_observed_at: Timestamp(
+                                                "2026-08-24T12:00:00-0400".to_owned(),
+                                            ),
+                                        }
                                     })
                                     .collect(),
                             )
@@ -420,7 +495,8 @@ macro_rules! pool_start_tests {
                                 qualification_repeats_per_case: 3,
                                 promotion_count: 2,
                                 minimum_score: 7,
-                                minimum_reliability_basis_points: 9_000,
+                                calibration_minimum_reliability_basis_points: 8_000,
+                                qualification_minimum_reliability_basis_points: 10_000,
                                 maximum_catalog_age_seconds: 3_600,
                                 spending_limit_millionths_of_dollar: 10_000_000,
                                 is_provider_limit_enforced: true,
@@ -435,6 +511,7 @@ macro_rules! pool_start_tests {
                         candidate_calls: Cell::new(0),
                         model_calls: 0,
                         execute_models: Vec::new(),
+                        candidate_timeouts: Vec::new(),
                         started_run_ids: Vec::new(),
                         is_preallocated_at_first_model_call: false,
                         freshness_error: false,
@@ -488,6 +565,14 @@ macro_rules! pool_start_tests {
                 fn candidates(&self, tier: Tier) -> Result<Vec<ModelIdentity>, SkillEvalError> {
                     self.candidate_calls.set(self.candidate_calls.get() + 1);
                     Ok(vec![route_model(tier, 0), route_model(tier, 1)])
+                }
+
+                fn qualification_routes(
+                    &self,
+                    tier: Tier,
+                ) -> Result<Vec<ModelIdentity>, SkillEvalError> {
+                    self.candidate_calls.set(self.candidate_calls.get() + 1);
+                    Ok(vec![route_model(tier, 0)])
                 }
 
                 fn exact_candidate(
@@ -561,9 +646,11 @@ macro_rules! pool_start_tests {
                     _case: &CaseDefinition,
                     model: &ModelIdentity,
                     harness: &HarnessIdentity,
+                    candidate_timeout_seconds: Option<u32>,
                 ) -> Result<CandidateArtifact, SkillEvalError> {
                     self.model_calls += 1;
                     self.execute_models.push(model.clone());
+                    self.candidate_timeouts.push(candidate_timeout_seconds);
                     self.started_run_ids.push(run_id.clone());
                     self.is_preallocated_at_first_model_call = self
                         .persisted

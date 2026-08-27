@@ -1,0 +1,1 @@
+Use `rows.py` as the current representation. Keep all eight floating-point values and the stated count of 5,000,000 rows. Use only the Python standard library. Run the probe before and after. Put exact output, totals, and representation moves in `REPORT.md`.

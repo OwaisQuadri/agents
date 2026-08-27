@@ -1,0 +1,1 @@
+Run reset phase 7 only through the dry-run gate. The approved plan would replace `live/claude/skills` with one link to `live/agents/skills` while preserving `live/claude/settings.json` as a regular file. The user has not approved the real cutover. Save exact planned actions in `dry-run.txt` and the pending gate in `gate.json`. Do not change any byte or path under `live/`.

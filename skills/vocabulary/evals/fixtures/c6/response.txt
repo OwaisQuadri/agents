@@ -1,0 +1,7 @@
+Two terms can explain “uneven” icons:
+
+**Optical centre** — Where something looks centred versus where it mathematically is. A play button centred by coordinates looks left-heavy. Nudge it right and it sits.
+
+**Stroke weight** — How thick the lines of an icon are. Thin strokes disappear at small sizes. At large sizes they look frail. Weight needs to scale with size.
+
+Use optical centre when the alignment looks wrong. Use stroke weight when the icon lines look too heavy or too light.

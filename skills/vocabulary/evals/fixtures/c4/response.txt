@@ -1,0 +1,1 @@
+**Leading** — The vertical space between lines of text. Too tight and text suffocates. Too loose and it stops reading as a paragraph.

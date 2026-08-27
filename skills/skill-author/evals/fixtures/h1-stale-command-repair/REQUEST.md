@@ -1,0 +1,1 @@
+Rewrite the existing `deploy-preview` skill. The supplied tool evidence says that `previewctl start` no longer exists. The supported command is `previewctl create`. Preserve the safety prohibition and the existing recipe marker. Add the complete support scaffold if it is absent.

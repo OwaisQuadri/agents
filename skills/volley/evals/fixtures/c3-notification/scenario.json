@@ -1,0 +1,1 @@
+{"case":"c3","request":"report this completion notification only","step":"notification","step_shape":"notification","estimate_seconds":1,"estimate_is_clear":true,"notification":{"handle":"job-test-27","result":"test suite passed: 184 tests"},"open_jobs":[{"handle":"job-test-27","what":"run the test suite"}]}

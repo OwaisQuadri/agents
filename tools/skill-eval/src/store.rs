@@ -4,7 +4,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Component, Path, PathBuf};
 
 use crate::model::{
-    CandidateArtifact, HarnessIdentity, ModelIdentity, RunEvent, RunId, SkillEvalError, TrialKey,
+    ArtifactDiscovery, ArtifactName, CandidateArtifact, HarnessIdentity, ModelIdentity,
+    QualificationPurpose, RunConfiguration, RunEvent, RunId, SkillEvalError, Tier, TrialKey,
     TrialRecord, TrialSelector,
 };
 use crate::ports::RunStore;
@@ -19,6 +20,23 @@ impl FileRunStore {
     pub(crate) fn new(root: impl AsRef<Path>) -> Result<Self, SkillEvalError> {
         let root = root.as_ref();
         fs::create_dir_all(root).map_err(|error| io_error(root, error))?;
+        let root = fs::canonicalize(root).map_err(|error| io_error(root, error))?;
+        Ok(Self { root })
+    }
+
+    /// Opens an existing run store without creating a path.
+    ///
+    /// The input is an existing directory. The output is a read-capable run store rooted at its
+    /// canonical path. It returns an error for missing or non-directory paths and performs no write.
+    pub(crate) fn open(root: impl AsRef<Path>) -> Result<Self, SkillEvalError> {
+        let root = root.as_ref();
+        let metadata = fs::symlink_metadata(root).map_err(|error| io_error(root, error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(SkillEvalError::InvalidConfiguration(format!(
+                "run root {} is not a real directory",
+                root.display()
+            )));
+        }
         let root = fs::canonicalize(root).map_err(|error| io_error(root, error))?;
         Ok(Self { root })
     }
@@ -170,8 +188,11 @@ impl RunStore for FileRunStore {
             {
                 if found.is_some() {
                     return Err(SkillEvalError::InvalidConfiguration(format!(
-                        "trial selector for artifact {:?}, case {:?}, and attempt {} is not unique",
-                        selector.artifact.0, selector.case.0, selector.attempt
+                        "trial selector for artifact {:?}, route {}, case {:?}, and attempt {} is not unique",
+                        selector.artifact.0,
+                        selector.route_index,
+                        selector.case.0,
+                        selector.attempt
                     )));
                 }
                 found = Some(record);
@@ -180,8 +201,11 @@ impl RunStore for FileRunStore {
         })?;
         found.ok_or_else(|| {
             SkillEvalError::NotFound(format!(
-                "completed trial for artifact {:?}, case {:?}, and attempt {} was not found",
-                selector.artifact.0, selector.case.0, selector.attempt
+                "completed trial for artifact {:?}, route {}, case {:?}, and attempt {} was not found",
+                selector.artifact.0,
+                selector.route_index,
+                selector.case.0,
+                selector.attempt
             ))
         })
     }
@@ -197,7 +221,12 @@ pub(crate) fn inspect_trial(
 struct SequenceState {
     run_id: RunId,
     is_started: bool,
+    is_terminal: bool,
     line_count: u64,
+    configuration: Option<RunConfiguration>,
+    is_discovered: bool,
+    pool_candidate: Option<ModelIdentity>,
+    pool_completions: BTreeMap<ArtifactName, Tier>,
     trials: BTreeMap<TrialKey, TrialState>,
 }
 
@@ -206,7 +235,12 @@ impl SequenceState {
         Self {
             run_id,
             is_started: false,
+            is_terminal: false,
             line_count: 0,
+            configuration: None,
+            is_discovered: false,
+            pool_candidate: None,
+            pool_completions: BTreeMap::new(),
             trials: BTreeMap::new(),
         }
     }
@@ -220,7 +254,6 @@ impl SequenceState {
             })
     }
 
-    // TODO(AGNT-0032.T88): Validate pool-child completion purpose, trial coverage, and terminal ordering.
     fn accept(
         &mut self,
         event: &RunEvent,
@@ -229,6 +262,12 @@ impl SequenceState {
         runs_root: &Path,
     ) -> Result<(), SkillEvalError> {
         validate_event_identity(event, &self.run_id, run_directory, runs_root, line)?;
+        if self.is_terminal {
+            return Err(invalid_sequence(
+                line,
+                "event follows terminal pool completion",
+            ));
+        }
 
         match event {
             RunEvent::RunStarted { .. } if self.is_started => {
@@ -240,7 +279,10 @@ impl SequenceState {
                     "run_started must be the first event",
                 ));
             }
-            RunEvent::RunStarted { .. } => self.is_started = true,
+            RunEvent::RunStarted { configuration, .. } => {
+                self.is_started = true;
+                self.configuration = Some(configuration.clone());
+            }
             _ if !self.is_started => {
                 return Err(invalid_sequence(
                     line,
@@ -262,6 +304,7 @@ impl SequenceState {
                 if self.trials.contains_key(key) {
                     return Err(invalid_sequence(line, "duplicate trial_started event"));
                 }
+                self.validate_pool_trial_start(key, models, line)?;
                 self.trials.insert(
                     key.clone(),
                     TrialState::Started {
@@ -305,7 +348,7 @@ impl SequenceState {
                 }
                 self.trials.insert(
                     candidate.key.clone(),
-                    TrialState::CandidateExecuted(candidate.clone()),
+                    TrialState::CandidateExecuted(Box::new(candidate.clone())),
                 );
             }
             RunEvent::TrialCompleted { record, .. } => {
@@ -332,10 +375,216 @@ impl SequenceState {
                 self.trials
                     .insert(record.key.clone(), TrialState::Completed);
             }
+            RunEvent::DiscoveryCompleted { artifacts, .. } => {
+                self.accept_discovery(artifacts, line)?;
+            }
+            RunEvent::PoolChildCompleted { artifact, tier, .. } => {
+                self.accept_pool_completion(artifact, *tier, line)?;
+            }
+            RunEvent::TierEvaluated { .. }
+            | RunEvent::BoundaryFound { .. }
+            | RunEvent::ReviewRequired { .. }
+            | RunEvent::DecisionRecorded { .. }
+                if self.is_model_pool() =>
+            {
+                return Err(invalid_sequence(
+                    line,
+                    "model-pool child cannot contain tier, boundary, review, or decision events",
+                ));
+            }
             _ => {}
         }
 
         self.line_count = line;
+        Ok(())
+    }
+
+    fn is_model_pool(&self) -> bool {
+        self.configuration.as_ref().is_some_and(|configuration| {
+            configuration.policy.purpose == QualificationPurpose::ModelPool
+        })
+    }
+
+    fn accept_discovery(
+        &mut self,
+        artifacts: &[ArtifactDiscovery],
+        line: u64,
+    ) -> Result<(), SkillEvalError> {
+        if self.is_discovered {
+            return Err(invalid_sequence(
+                line,
+                "duplicate discovery_completed event",
+            ));
+        }
+        if self.is_model_pool() {
+            let configuration = self.configuration.as_ref().ok_or_else(|| {
+                invalid_sequence(line, "model-pool discovery has no run configuration")
+            })?;
+            let expected = configuration
+                .artifacts
+                .iter()
+                .map(|artifact| ArtifactDiscovery {
+                    artifact: artifact.name.clone(),
+                    kind: artifact.kind,
+                    revision: artifact.revision.clone(),
+                    cases: artifact
+                        .cases
+                        .iter()
+                        .map(|case| crate::model::CaseDiscovery {
+                            id: case.id.clone(),
+                            drive: case.execution.drive.clone(),
+                            is_holdout: case.is_holdout,
+                        })
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            if artifacts != expected {
+                return Err(invalid_sequence(
+                    line,
+                    "model-pool discovery differs from the frozen exam",
+                ));
+            }
+        }
+        self.is_discovered = true;
+        Ok(())
+    }
+
+    fn validate_pool_trial_start(
+        &mut self,
+        key: &TrialKey,
+        models: &[ModelIdentity],
+        line: u64,
+    ) -> Result<(), SkillEvalError> {
+        if !self.is_model_pool() {
+            return Ok(());
+        }
+        if !self.is_discovered {
+            return Err(invalid_sequence(
+                line,
+                "model-pool trial requires discovery",
+            ));
+        }
+        let configuration = self
+            .configuration
+            .as_ref()
+            .ok_or_else(|| invalid_sequence(line, "model-pool trial has no run configuration"))?;
+        let Some(tier) = configuration.policy.candidate_tiers.first().copied() else {
+            return Err(invalid_sequence(
+                line,
+                "model-pool run has no exact candidate tier",
+            ));
+        };
+        if configuration.policy.candidate_tiers.len() != 1
+            || key.tier != tier
+            || key.route_index != 0
+            || models.len() != 1
+            || models[0].tier != tier
+        {
+            return Err(invalid_sequence(
+                line,
+                "model-pool trial must use one exact candidate route",
+            ));
+        }
+        let artifact = configuration
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.name == key.artifact)
+            .ok_or_else(|| invalid_sequence(line, "model-pool trial names an unknown artifact"))?;
+        let is_expected = artifact.cases.iter().any(|case| {
+            !case.is_holdout
+                && case.id == key.case
+                && key.attempt > 0
+                && key.attempt <= configuration.policy.repeats_per_case
+        });
+        if !is_expected || self.pool_completions.contains_key(&key.artifact) {
+            return Err(invalid_sequence(
+                line,
+                "model-pool trial is outside the expected exact trial set",
+            ));
+        }
+        match &self.pool_candidate {
+            Some(candidate) if candidate != &models[0] => Err(invalid_sequence(
+                line,
+                "model-pool trial changed its exact candidate identity",
+            )),
+            Some(_) => Ok(()),
+            None => {
+                self.pool_candidate = Some(models[0].clone());
+                Ok(())
+            }
+        }
+    }
+
+    fn accept_pool_completion(
+        &mut self,
+        artifact: &ArtifactName,
+        tier: Tier,
+        line: u64,
+    ) -> Result<(), SkillEvalError> {
+        if !self.is_model_pool() {
+            return Err(invalid_sequence(
+                line,
+                "pool_child_completed requires model-pool purpose",
+            ));
+        }
+        if !self.is_discovered {
+            return Err(invalid_sequence(
+                line,
+                "pool_child_completed requires discovery",
+            ));
+        }
+        if self.pool_completions.contains_key(artifact) {
+            return Err(invalid_sequence(
+                line,
+                "duplicate pool_child_completed event",
+            ));
+        }
+        if self
+            .trials
+            .values()
+            .any(|trial| matches!(trial, TrialState::CandidateExecuted(_)))
+        {
+            return Err(invalid_sequence(
+                line,
+                "pool_child_completed has a pending candidate checkpoint",
+            ));
+        }
+        let configuration = self
+            .configuration
+            .as_ref()
+            .ok_or_else(|| invalid_sequence(line, "pool completion has no run configuration"))?;
+        if configuration.policy.candidate_tiers != [tier] {
+            return Err(invalid_sequence(
+                line,
+                "pool_child_completed tier differs from the exact candidate tier",
+            ));
+        }
+        let definition = configuration
+            .artifacts
+            .iter()
+            .find(|definition| definition.name == *artifact)
+            .ok_or_else(|| {
+                invalid_sequence(line, "pool_child_completed names an unknown artifact")
+            })?;
+        for case in definition.cases.iter().filter(|case| !case.is_holdout) {
+            for attempt in 1..=configuration.policy.repeats_per_case {
+                let key = TrialKey {
+                    artifact: artifact.clone(),
+                    tier,
+                    route_index: 0,
+                    case: case.id.clone(),
+                    attempt,
+                };
+                if !matches!(self.trials.get(&key), Some(TrialState::Completed)) {
+                    return Err(invalid_sequence(
+                        line,
+                        "pool_child_completed is missing an expected trial",
+                    ));
+                }
+            }
+        }
+        self.pool_completions.insert(artifact.clone(), tier);
+        self.is_terminal = self.pool_completions.len() == configuration.artifacts.len();
         Ok(())
     }
 }
@@ -345,7 +594,7 @@ enum TrialState {
         models: Vec<ModelIdentity>,
         harness: HarnessIdentity,
     },
-    CandidateExecuted(CandidateArtifact),
+    CandidateExecuted(Box<CandidateArtifact>),
     Completed,
 }
 
@@ -470,6 +719,7 @@ fn candidate_matches_record(candidate: &CandidateArtifact, record: &TrialRecord)
 fn is_selected(record: &TrialRecord, selector: &TrialSelector) -> bool {
     record.key.artifact == selector.artifact
         && record.key.tier == selector.tier
+        && record.key.route_index == selector.route_index
         && record.key.case == selector.case
         && record.key.attempt == selector.attempt
 }
@@ -496,10 +746,11 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::model::{
-        ArtifactName, CandidateArtifact, CaseId, HarnessIdentity, ModelIdentity, PauseReason,
-        QualificationPolicy, QualificationPurpose, RunConfiguration, RunEvent, RunId, RunMode,
-        SkillEvalError, Tier, Timestamp, TrialKey, TrialRecord, TrialSelector, TrialUsage,
-        TrialVerdict,
+        ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName, CandidateArtifact,
+        CaseDefinition, CaseDiscovery, CaseDrive, CaseId, ExecutionDefinition, HarnessIdentity,
+        ModelIdentity, PauseReason, QualificationPolicy, QualificationPurpose, RunConfiguration,
+        RunEvent, RunId, RunMode, SkillEvalError, Tier, TierDestination, Timestamp, TrialKey,
+        TrialRecord, TrialSelector, TrialUsage, TrialVerdict,
     };
     use crate::ports::RunStore;
 
@@ -541,6 +792,22 @@ mod tests {
         let bytes = fs::read(directory.path().join("run-1/events.jsonl")).unwrap();
         assert_eq!(bytes.iter().filter(|byte| **byte == b'\n').count(), 4);
         assert_eq!(bytes.last(), Some(&b'\n'));
+    }
+
+    #[test]
+    fn legacy_run_started_event_defaults_frozen_routes_to_empty() {
+        let mut value = serde_json::to_value(run_started(&RunId("run-1".to_owned()))).unwrap();
+        value["configuration"]
+            .as_object_mut()
+            .unwrap()
+            .remove("qualification_routes");
+
+        let event = serde_json::from_value::<RunEvent>(value).unwrap();
+
+        let RunEvent::RunStarted { configuration, .. } = event else {
+            unreachable!();
+        };
+        assert!(configuration.qualification_routes.is_empty());
     }
 
     #[test]
@@ -641,6 +908,83 @@ mod tests {
         assert_invalid_at(
             store.append(&run_id, &candidate_executed(&wrong_harness)),
             3,
+        );
+    }
+
+    #[test]
+    fn pool_completion_requires_exact_complete_trials_and_rejects_wrong_identity() {
+        let directory = TestDirectory::new("pool-completion");
+        let run_id = RunId("pool-child".to_string());
+        let mut first = trial_record();
+        first.key.attempt = 1;
+        let mut second = trial_record();
+        second.key.attempt = 2;
+        let mut store = FileRunStore::new(directory.path()).unwrap();
+        store.append(&run_id, &pool_run_started(&run_id)).unwrap();
+        store.append(&run_id, &pool_discovery()).unwrap();
+        store.append(&run_id, &pool_trial_started(&first)).unwrap();
+        store.append(&run_id, &candidate_executed(&first)).unwrap();
+        store.append(&run_id, &trial_completed(&first)).unwrap();
+
+        assert_invalid_at(store.append(&run_id, &pool_completed(Tier::T2)), 6);
+        let mut wrong_tier = pool_trial_started(&second);
+        let RunEvent::TrialStarted { key, models, .. } = &mut wrong_tier else {
+            unreachable!();
+        };
+        key.tier = Tier::T3;
+        models[0].tier = Tier::T3;
+        assert_invalid_at(store.append(&run_id, &wrong_tier), 6);
+
+        store.append(&run_id, &pool_trial_started(&second)).unwrap();
+        store.append(&run_id, &candidate_executed(&second)).unwrap();
+        assert_invalid_at(store.append(&run_id, &pool_completed(Tier::T2)), 8);
+        store.append(&run_id, &trial_completed(&second)).unwrap();
+
+        let mut wrong_completion = pool_completed(Tier::T3);
+        assert_invalid_at(store.append(&run_id, &wrong_completion), 9);
+        let RunEvent::PoolChildCompleted { artifact, tier, .. } = &mut wrong_completion else {
+            unreachable!();
+        };
+        *artifact = ArtifactName("unknown".to_owned());
+        *tier = Tier::T2;
+        assert_invalid_at(store.append(&run_id, &wrong_completion), 9);
+
+        store.append(&run_id, &pool_completed(Tier::T2)).unwrap();
+        assert_invalid_at(store.append(&run_id, &pool_completed(Tier::T2)), 10);
+        assert_invalid_at(
+            store.append(
+                &run_id,
+                &RunEvent::RunPaused {
+                    at: timestamp(),
+                    reason: PauseReason::Infrastructure {
+                        message: "late".to_owned(),
+                    },
+                },
+            ),
+            10,
+        );
+    }
+
+    #[test]
+    fn pool_completion_rejects_artifact_purpose_and_missing_discovery() {
+        let directory = TestDirectory::new("pool-purpose");
+        let artifact_run = RunId("artifact-run".to_owned());
+        let mut artifact_store = FileRunStore::new(directory.path()).unwrap();
+        artifact_store
+            .append(&artifact_run, &run_started(&artifact_run))
+            .unwrap();
+        assert_invalid_at(
+            artifact_store.append(&artifact_run, &pool_completed(Tier::T2)),
+            2,
+        );
+
+        let missing_discovery = RunId("missing-discovery".to_owned());
+        artifact_store
+            .append(&missing_discovery, &pool_run_started(&missing_discovery))
+            .unwrap();
+        assert_invalid_at(
+            artifact_store.append(&missing_discovery, &pool_completed(Tier::T2)),
+            2,
         );
     }
 
@@ -747,8 +1091,75 @@ mod tests {
                     noninferiority_margin: 0.1,
                     confidence_level: 0.95,
                 },
+                qualification_routes: Default::default(),
                 created_at: timestamp(),
             },
+        }
+    }
+
+    fn pool_run_started(run_id: &RunId) -> RunEvent {
+        let mut event = run_started(run_id);
+        let RunEvent::RunStarted { configuration, .. } = &mut event else {
+            unreachable!();
+        };
+        configuration.policy.purpose = QualificationPurpose::ModelPool;
+        configuration.policy.candidate_tiers = vec![Tier::T2];
+        configuration.policy.reference_tier = Tier::T1;
+        configuration.policy.repeats_per_case = 2;
+        configuration.artifacts = vec![ArtifactDefinition {
+            name: ArtifactName("create-pr".to_owned()),
+            kind: ArtifactKind::Skill,
+            root: PathBuf::from("create-pr"),
+            revision: "abc".to_owned(),
+            required_destinations: vec![TierDestination::SkillMinimum],
+            current_tiers: Vec::new(),
+            cases: vec![CaseDefinition {
+                id: CaseId("c1".to_owned()),
+                input: "input".to_owned(),
+                expect: "expect".to_owned(),
+                source: "fixture".to_owned(),
+                is_holdout: false,
+                support_files: Vec::new(),
+                execution: ExecutionDefinition {
+                    drive: CaseDrive::Response,
+                    allowed_tools: Vec::new(),
+                    timeout_seconds: 10,
+                },
+            }],
+        }];
+        event
+    }
+
+    fn pool_discovery() -> RunEvent {
+        RunEvent::DiscoveryCompleted {
+            at: timestamp(),
+            artifacts: vec![ArtifactDiscovery {
+                artifact: ArtifactName("create-pr".to_owned()),
+                kind: ArtifactKind::Skill,
+                revision: "abc".to_owned(),
+                cases: vec![CaseDiscovery {
+                    id: CaseId("c1".to_owned()),
+                    drive: CaseDrive::Response,
+                    is_holdout: false,
+                }],
+            }],
+        }
+    }
+
+    fn pool_completed(tier: Tier) -> RunEvent {
+        RunEvent::PoolChildCompleted {
+            at: timestamp(),
+            artifact: ArtifactName("create-pr".to_owned()),
+            tier,
+        }
+    }
+
+    fn pool_trial_started(record: &TrialRecord) -> RunEvent {
+        RunEvent::TrialStarted {
+            at: timestamp(),
+            key: record.key.clone(),
+            models: vec![record.model.clone()],
+            harness: record.harness.clone(),
         }
     }
 
@@ -796,6 +1207,7 @@ mod tests {
             key: TrialKey {
                 artifact: ArtifactName("create-pr".to_string()),
                 tier: Tier::T2,
+                route_index: 0,
                 case: CaseId("c1".to_string()),
                 attempt: 2,
             },
@@ -848,6 +1260,7 @@ mod tests {
             run_id: run_id.clone(),
             artifact: ArtifactName("create-pr".to_string()),
             tier: Tier::T2,
+            route_index: 0,
             case: CaseId("c1".to_string()),
             attempt: 2,
         }

@@ -1,0 +1,1 @@
+Rewrite the existing `alert-triage` skill. Two usage failures show that its topic trigger fires during general error discussion. The observed valid uses all involve repeated service alerts. Keep one skill. Preserve the existing recipe marker. Add the complete support scaffold if it is absent.

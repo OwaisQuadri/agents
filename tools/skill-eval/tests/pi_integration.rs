@@ -7,12 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+// TODO(AGNT-0032.T154): Verify first-party identities, guards, retries, and no candidate timeout.
 const OPT_IN: &str = "SKILL_EVAL_H4_REAL_PI";
 const CREDENTIAL: &str = "OPENROUTER_API_KEY";
 const CANDIDATE_PROVIDER: &str = "openrouter";
-const CANDIDATE_MODEL: &str = "nvidia/nemotron-nano-9b-v2:free";
+const CANDIDATE_MODEL: &str = "google/gemini-3.7-flash";
 const JUDGE_PROVIDER: &str = "openrouter";
-const JUDGE_MODEL: &str = "liquid/lfm-2.5-2.6b:free";
+const JUDGE_MODEL: &str = "openai/gpt-5.6-sol-pro";
 
 // TODO(AGNT-0032.T15): Prove one bounded real Pi qualification after provider capacity returns.
 #[test]
@@ -162,20 +163,38 @@ fn ordinary_skill_trial() {
     let artifact = PathBuf::from(record["artifact_path"].as_str().unwrap());
     let transcript = PathBuf::from(record["transcript_path"].as_str().unwrap());
     let canonical_runs = fs::canonicalize(&runs).unwrap();
-    assert!(artifact.is_file());
+    assert!(artifact.is_dir());
     assert!(transcript.is_file());
     assert!(artifact.starts_with(&canonical_runs));
     assert!(transcript.starts_with(&canonical_runs));
     assert_eq!(
-        fs::read_to_string(&artifact).unwrap().trim(),
+        fs::read_to_string(artifact.parent().unwrap().join("response.txt"))
+            .unwrap()
+            .trim(),
         "H4 fixture complete"
     );
     assert_eq!(
-        fs::read_to_string(artifact.parent().unwrap().join("fixture/result.txt"))
+        fs::read_to_string(artifact.join("result.txt"))
             .unwrap()
             .trim(),
         "H4 disposable result"
     );
+    let judge_evidence = artifact.parent().unwrap().join("judge-evidence");
+    let attempts = fs::read_dir(&judge_evidence)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 1);
+    let judge_packet = &attempts[0];
+    assert!(judge_packet.join("artifact/result.txt").is_file());
+    assert!(judge_packet.join("response.txt").is_file());
+    assert!(judge_packet.join("rubric.md").is_file());
+    assert!(judge_packet.join("checks.json").is_file());
+    assert!(judge_packet.join("locked-read.ts").is_file());
+    assert!(judge_packet.join("judge-transcript.jsonl").is_file());
+    let sanitized = fs::read_to_string(judge_packet.join("transcript.jsonl")).unwrap();
+    assert!(!sanitized.contains(CANDIDATE_PROVIDER));
+    assert!(!sanitized.contains(CANDIDATE_MODEL));
 
     assert_eq!(record["model"]["provider"], CANDIDATE_PROVIDER);
     assert_eq!(record["model"]["model"], CANDIDATE_MODEL);
@@ -190,6 +209,8 @@ fn ordinary_skill_trial() {
             .as_u64()
             .is_some_and(|elapsed| elapsed > 0)
     );
+    assert_eq!(record["judge_model"]["provider"], JUDGE_PROVIDER);
+    assert_eq!(record["judge_model"]["model"], JUDGE_MODEL);
     assert_ne!(
         (
             record["model"]["provider"].as_str(),
@@ -202,19 +223,26 @@ fn ordinary_skill_trial() {
     );
     assert!(token_count(&record["judge_usage"]) > 0);
     assert!(
+        record["judge_usage"]["tool_calls"]
+            .as_u64()
+            .is_some_and(|calls| calls > 0)
+    );
+    assert!(
         record["judge_usage"]["elapsed_milliseconds"]
             .as_u64()
             .is_some_and(|elapsed| elapsed > 0)
     );
 
     let transcript_events = json_lines(&fs::read(&transcript).unwrap());
+    let transcript_tool_calls = transcript_events
+        .iter()
+        .filter(|event| event["type"] == "tool_execution_start")
+        .count();
     assert_eq!(
-        transcript_events
-            .iter()
-            .filter(|event| event["type"] == "tool_execution_start")
-            .count(),
-        1
+        u64::try_from(transcript_tool_calls).unwrap(),
+        record["candidate_usage"]["tool_calls"].as_u64().unwrap()
     );
+    assert!(transcript_tool_calls >= 2);
     assert!(transcript_events.iter().any(|event| {
         event["type"] == "message_end" && event["message"]["role"] == "assistant"
     }));
@@ -228,7 +256,7 @@ fn routing_configuration() -> Vec<u8> {
             "T2": route(CANDIDATE_PROVIDER, CANDIDATE_MODEL, "low"),
             "T3": route(CANDIDATE_PROVIDER, CANDIDATE_MODEL, "low"),
             "T4": route(CANDIDATE_PROVIDER, CANDIDATE_MODEL, "low"),
-            "T5": route(JUDGE_PROVIDER, JUDGE_MODEL, "low")
+            "T5": route(JUDGE_PROVIDER, JUDGE_MODEL, "medium")
         },
         "judge": "T5"
     }))

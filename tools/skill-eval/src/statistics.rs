@@ -2,10 +2,11 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, ModelIdentity, PoolEntrant,
-    PoolEntrantEvidence, PoolPolicy, PoolStage, QualificationBoundary, QualificationPolicy,
-    RankedPool, SkillEvalError, ThinkingDecision, Tier, TierEvidence, TierStatus, TrialRecord,
-    TrialUsage,
+    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, FrontierCellEvidence, FrontierEntrant,
+    FrontierModelProgress, FrontierModelReport, FrontierPolicy, FrontierPoolMembership,
+    FrontierTierSuite, ModelIdentity, PoolEntrant, PoolEntrantEvidence, PoolPolicy, PoolStage,
+    QualificationBoundary, QualificationPolicy, RankedPool, SkillEvalError, ThinkingDecision, Tier,
+    TierEvidence, TierStatus, TrialRecord, TrialUsage,
 };
 
 pub(crate) fn evaluate_calibration(
@@ -202,8 +203,12 @@ fn evaluate_pool_evidence(
         estimate: mean_score,
         upper: mean_score,
     };
+    let minimum_reliability_basis_points = match stage {
+        PoolStage::Calibration => policy.calibration_minimum_reliability_basis_points,
+        PoolStage::Qualification => policy.qualification_minimum_reliability_basis_points,
+    };
     let is_passing = mean_score >= f64::from(policy.minimum_score) / 10.0
-        && reliability_basis_points >= u64::from(policy.minimum_reliability_basis_points)
+        && reliability_basis_points >= u64::from(minimum_reliability_basis_points)
         && catastrophic_trials == 0;
     let harnesses = expected_cases
         .iter()
@@ -244,7 +249,8 @@ fn validate_calibration_policy(policy: &PoolPolicy) -> Result<(), SkillEvalError
         || policy.qualification_repeats_per_case == 0
         || policy.promotion_count != 2
         || policy.minimum_score > 10
-        || policy.minimum_reliability_basis_points > 10_000
+        || policy.calibration_minimum_reliability_basis_points > 10_000
+        || policy.qualification_minimum_reliability_basis_points != 10_000
         || policy.spending_limit_millionths_of_dollar == 0
         || !policy.is_provider_limit_enforced
     {
@@ -253,33 +259,387 @@ fn validate_calibration_policy(policy: &PoolPolicy) -> Result<(), SkillEvalError
     Ok(())
 }
 
-// TODO(AGNT-0032.T104): Select each model's lowest passing bounded thinking level.
-pub(crate) fn select_thinking_level(
-    _entrant: &PoolEntrant,
-    _evidence: &[PoolEntrantEvidence],
+pub(crate) fn select_qualification_thinking_level(
+    entrant: &PoolEntrant,
+    calibration: &[PoolEntrantEvidence],
+    qualification: &[PoolEntrantEvidence],
 ) -> Result<ThinkingDecision, SkillEvalError> {
-    unimplemented!("AGNT-0032.T104")
+    validate_thinking_entrant(entrant)?;
+    if calibration.iter().any(|item| {
+        item.harnesses.len() != 5 || item.completed_trials != 5 || item.expected_trials != 5
+    }) {
+        return Err(invalid(
+            "qualification requires calibration evidence from five complete cases",
+        ));
+    }
+    let calibrated = validate_thinking_evidence(entrant, calibration)?;
+    if calibrated.len() != entrant.thinking_levels.len()
+        || calibrated
+            .iter()
+            .enumerate()
+            .any(|(expected, (actual, _))| expected != *actual)
+    {
+        return Err(invalid(
+            "qualification requires complete cheapest-to-strongest calibration evidence",
+        ));
+    }
+    let attempted = validate_qualification_thinking_evidence(entrant, qualification)?;
+    let Some(retained_index) = retained_lower_index(entrant)? else {
+        return select_normal_qualification_thinking_level(entrant, &calibrated, &attempted);
+    };
+    select_retained_qualification_thinking_level(entrant, &calibrated, &attempted, retained_index)
+}
+
+fn select_normal_qualification_thinking_level(
+    entrant: &PoolEntrant,
+    calibrated: &[(usize, bool)],
+    attempted: &[(usize, bool)],
+) -> Result<ThinkingDecision, SkillEvalError> {
+    let start_index = calibrated
+        .iter()
+        .position(|(_, is_passing)| *is_passing)
+        .ok_or_else(|| invalid("qualification requires at least one calibration pass"))?;
+    validate_contiguous_qualification_attempts(attempted, start_index)?;
+    if attempted
+        .last()
+        .is_some_and(|(_, is_reliable)| *is_reliable)
+    {
+        return complete_thinking_decision(
+            entrant,
+            attempted.last().map(|(index, _)| *index),
+            None,
+        );
+    }
+    let next_index = start_index
+        .checked_add(attempted.len())
+        .ok_or_else(|| invalid("qualification thinking evidence index overflow"))?;
+    if next_index < entrant.thinking_levels.len() {
+        next_thinking_decision(next_index, None)
+    } else {
+        complete_thinking_decision(entrant, None, None)
+    }
+}
+
+fn select_retained_qualification_thinking_level(
+    entrant: &PoolEntrant,
+    calibrated: &[(usize, bool)],
+    attempted: &[(usize, bool)],
+    retained_index: usize,
+) -> Result<ThinkingDecision, SkillEvalError> {
+    let is_lower_screen_passing = calibrated[retained_index].1;
+    let lower_attempt = attempted
+        .first()
+        .filter(|(index, _)| *index == retained_index);
+    if !is_lower_screen_passing && attempted.iter().any(|(index, _)| *index == retained_index) {
+        return Err(invalid(
+            "retained lower qualification evidence requires a passing lower screen",
+        ));
+    }
+    if is_lower_screen_passing && lower_attempt.is_none() {
+        if !attempted.is_empty() {
+            return Err(invalid(
+                "retained lower qualification evidence must precede stronger evidence",
+            ));
+        }
+        return next_thinking_decision(retained_index, None);
+    }
+
+    let retained_lower = lower_attempt
+        .filter(|(_, is_reliable)| *is_reliable)
+        .map(|_| thinking_identity(entrant, retained_index))
+        .transpose()?;
+    let stronger_attempts = if lower_attempt.is_some() {
+        &attempted[1..]
+    } else {
+        attempted
+    };
+    if stronger_attempts
+        .iter()
+        .any(|(index, _)| *index <= retained_index)
+    {
+        return Err(invalid(
+            "retained qualification evidence uses a wrong lower level",
+        ));
+    }
+    let stronger_start = calibrated
+        .iter()
+        .skip(retained_index + 1)
+        .find(|(_, is_passing)| *is_passing)
+        .map(|(index, _)| *index);
+    let Some(stronger_start) = stronger_start else {
+        if stronger_attempts.is_empty() {
+            return complete_thinking_decision(entrant, None, retained_lower);
+        }
+        return Err(invalid(
+            "retained qualification evidence has no stronger screening pass",
+        ));
+    };
+    validate_contiguous_qualification_attempts(stronger_attempts, stronger_start)?;
+    if stronger_attempts
+        .last()
+        .is_some_and(|(_, is_reliable)| *is_reliable)
+    {
+        return complete_thinking_decision(
+            entrant,
+            stronger_attempts.last().map(|(index, _)| *index),
+            retained_lower,
+        );
+    }
+    let next_index = stronger_start
+        .checked_add(stronger_attempts.len())
+        .ok_or_else(|| invalid("qualification thinking evidence index overflow"))?;
+    if next_index < entrant.thinking_levels.len() {
+        next_thinking_decision(next_index, retained_lower)
+    } else {
+        complete_thinking_decision(entrant, None, retained_lower)
+    }
+}
+
+fn validate_contiguous_qualification_attempts(
+    attempted: &[(usize, bool)],
+    start_index: usize,
+) -> Result<(), SkillEvalError> {
+    for (offset, &(index, is_fully_reliable)) in attempted.iter().enumerate() {
+        let expected = start_index
+            .checked_add(offset)
+            .ok_or_else(|| invalid("qualification thinking evidence index overflow"))?;
+        if index != expected {
+            return Err(invalid(
+                "qualification evidence must start at the cheapest calibration pass and advance contiguously",
+            ));
+        }
+        if is_fully_reliable && offset + 1 != attempted.len() {
+            return Err(invalid(
+                "qualification evidence cannot continue after a fully reliable result",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn select_thinking_level(
+    entrant: &PoolEntrant,
+    evidence: &[PoolEntrantEvidence],
+) -> Result<ThinkingDecision, SkillEvalError> {
+    validate_thinking_entrant(entrant)?;
+    let attempted = validate_thinking_evidence(entrant, evidence)?;
+    for (expected_index, &(index, _)) in attempted.iter().enumerate() {
+        if index != expected_index {
+            return Err(invalid(
+                "thinking evidence must be contiguous from the cheapest level",
+            ));
+        }
+    }
+
+    if attempted.len() < entrant.thinking_levels.len() {
+        return next_thinking_decision(attempted.len(), None);
+    }
+
+    let selected_index = attempted.iter().position(|(_, is_passing)| *is_passing);
+    complete_thinking_decision(entrant, selected_index, None)
+}
+
+fn validate_thinking_entrant(entrant: &PoolEntrant) -> Result<(), SkillEvalError> {
+    const PI_THINKING_LEVELS: [&str; 7] =
+        ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+    if entrant.thinking_levels.is_empty()
+        || entrant.thinking_levels.len() > PI_THINKING_LEVELS.len()
+    {
+        return Err(invalid(
+            "pool entrant must declare one to seven thinking levels",
+        ));
+    }
+
+    let mut previous_rank = None;
+    let mut start_index = None;
+    for (index, level) in entrant.thinking_levels.iter().enumerate() {
+        let rank = PI_THINKING_LEVELS
+            .iter()
+            .position(|supported| *supported == level)
+            .ok_or_else(|| invalid("pool entrant has an unsupported thinking level"))?;
+        if previous_rank.is_some_and(|previous| rank <= previous) {
+            return Err(invalid(
+                "pool entrant thinking levels must be unique and ordered cheapest to strongest",
+            ));
+        }
+        if level == &entrant.model.thinking && start_index.replace(index).is_some() {
+            return Err(invalid(
+                "pool entrant starting thinking must appear exactly once",
+            ));
+        }
+        previous_rank = Some(rank);
+    }
+
+    start_index
+        .ok_or_else(|| invalid("pool entrant starting thinking must appear exactly once"))?;
+    retained_lower_index(entrant).map(|_| ())
+}
+
+fn retained_lower_index(entrant: &PoolEntrant) -> Result<Option<usize>, SkillEvalError> {
+    let Some(retained) = &entrant.retained_lower_thinking_level else {
+        return Ok(None);
+    };
+    let matching = entrant
+        .thinking_levels
+        .iter()
+        .enumerate()
+        .filter(|(_, level)| *level == retained)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return Err(invalid(
+            "retained lower thinking level must appear exactly once",
+        ));
+    }
+    let index = matching[0];
+    if index + 1 >= entrant.thinking_levels.len() {
+        return Err(invalid(
+            "retained lower thinking level must be below a declared stronger level",
+        ));
+    }
+    Ok(Some(index))
+}
+
+fn validate_thinking_evidence(
+    entrant: &PoolEntrant,
+    evidence: &[PoolEntrantEvidence],
+) -> Result<Vec<(usize, bool)>, SkillEvalError> {
+    validate_thinking_stage_evidence(entrant, evidence, PoolStage::Calibration, |item| {
+        item.is_passing
+    })
+}
+
+fn validate_qualification_thinking_evidence(
+    entrant: &PoolEntrant,
+    evidence: &[PoolEntrantEvidence],
+) -> Result<Vec<(usize, bool)>, SkillEvalError> {
+    if evidence.iter().any(|item| {
+        item.harnesses.len() != 5 || item.completed_trials != 15 || item.expected_trials != 15
+    }) {
+        return Err(invalid(
+            "qualification thinking evidence must contain five complete cases and 15 trials",
+        ));
+    }
+    validate_thinking_stage_evidence(entrant, evidence, PoolStage::Qualification, |item| {
+        is_fully_reliable(item)
+    })
+}
+
+fn validate_thinking_stage_evidence(
+    entrant: &PoolEntrant,
+    evidence: &[PoolEntrantEvidence],
+    stage: PoolStage,
+    result: impl Fn(&PoolEntrantEvidence) -> bool,
+) -> Result<Vec<(usize, bool)>, SkillEvalError> {
+    let mut attempted = Vec::with_capacity(evidence.len());
+    let mut attempted_indices = BTreeSet::new();
+
+    for item in evidence {
+        if item.stage != stage {
+            return Err(invalid("thinking evidence uses the wrong stage"));
+        }
+        if item.requested_model != item.effective_model {
+            return Err(invalid(
+                "thinking evidence requested and effective identities differ",
+            ));
+        }
+        if item.requested_model.tier != entrant.model.tier
+            || item.requested_model.provider != entrant.model.provider
+            || item.requested_model.model != entrant.model.model
+        {
+            return Err(invalid("thinking evidence belongs to a foreign model"));
+        }
+        let index = entrant
+            .thinking_levels
+            .iter()
+            .position(|level| level == &item.requested_model.thinking)
+            .ok_or_else(|| invalid("thinking evidence uses an undeclared thinking level"))?;
+        if !attempted_indices.insert(index) {
+            return Err(invalid("thinking evidence contains a duplicate level"));
+        }
+        if is_same_model(&item.judge_model, &item.effective_model) {
+            return Err(invalid("thinking evidence candidate cannot judge itself"));
+        }
+        if item.harnesses.is_empty()
+            || item.expected_trials == 0
+            || item.completed_trials != item.expected_trials
+            || item.failed_trials > item.completed_trials
+            || item.catastrophic_trials > item.completed_trials
+            || (item.is_passing && item.catastrophic_trials != 0)
+        {
+            return Err(invalid("thinking evidence has impossible trial structure"));
+        }
+        if !is_valid_interval(&item.score) {
+            return Err(invalid("thinking evidence has invalid score metrics"));
+        }
+        let mut expected_total_usage = item.candidate_usage.clone();
+        add_usage(&mut expected_total_usage, &item.judge_usage)?;
+        if expected_total_usage != item.total_usage {
+            return Err(invalid("thinking evidence has inconsistent total usage"));
+        }
+        attempted.push((index, result(item)));
+    }
+
+    Ok(attempted)
+}
+
+fn is_fully_reliable(evidence: &PoolEntrantEvidence) -> bool {
+    evidence.is_passing
+        && evidence.completed_trials == 15
+        && evidence.expected_trials == 15
+        && evidence.failed_trials == 0
+        && evidence.catastrophic_trials == 0
+}
+
+fn next_thinking_decision(
+    index: usize,
+    retained_lower: Option<ModelIdentity>,
+) -> Result<ThinkingDecision, SkillEvalError> {
+    let next_thinking_index =
+        u8::try_from(index).map_err(|_| invalid("thinking evidence index overflow"))?;
+    Ok(ThinkingDecision {
+        selected: None,
+        retained_lower,
+        next_thinking_index: Some(next_thinking_index),
+        is_complete: false,
+    })
+}
+
+fn thinking_identity(entrant: &PoolEntrant, index: usize) -> Result<ModelIdentity, SkillEvalError> {
+    let thinking = entrant
+        .thinking_levels
+        .get(index)
+        .ok_or_else(|| invalid("thinking selection index overflow"))?;
+    let mut model = entrant.model.clone();
+    model.thinking.clone_from(thinking);
+    Ok(model)
+}
+
+fn complete_thinking_decision(
+    entrant: &PoolEntrant,
+    selected_index: Option<usize>,
+    retained_lower: Option<ModelIdentity>,
+) -> Result<ThinkingDecision, SkillEvalError> {
+    let selected = selected_index
+        .map(|index| thinking_identity(entrant, index))
+        .transpose()?;
+    Ok(ThinkingDecision {
+        selected,
+        retained_lower,
+        next_thinking_index: None,
+        is_complete: true,
+    })
 }
 
 pub(crate) fn rank_pool(
     tier: Tier,
+    entrants: &[PoolEntrant],
     calibration: &[PoolEntrantEvidence],
     qualification: &[PoolEntrantEvidence],
     policy: &PoolPolicy,
 ) -> Result<RankedPool, SkillEvalError> {
     validate_calibration_policy(policy)?;
-    let promotion_count = usize::from(policy.promotion_count);
-    if calibration.len() != 3 {
-        return Err(invalid(
-            "pool calibration must contain exactly three entrants",
-        ));
-    }
-    if qualification.len() > promotion_count {
-        return Err(invalid(
-            "pool qualification contains more than two finalists",
-        ));
-    }
-
     validate_pool_stage(
         calibration,
         tier,
@@ -287,18 +647,6 @@ pub(crate) fn rank_pool(
         policy.calibration_repeats_per_case,
         policy,
     )?;
-
-    let mut passing = calibration
-        .iter()
-        .filter(|evidence| evidence.is_passing)
-        .collect::<Vec<_>>();
-    passing.sort_by(|left, right| compare_pool_evidence(left, right));
-    let promoted = passing
-        .into_iter()
-        .take(promotion_count)
-        .map(|evidence| evidence.requested_model.clone())
-        .collect::<Vec<_>>();
-
     validate_pool_stage(
         qualification,
         tier,
@@ -306,42 +654,196 @@ pub(crate) fn rank_pool(
         policy.qualification_repeats_per_case,
         policy,
     )?;
-    for evidence in qualification {
-        if !promoted.contains(&evidence.requested_model) {
+    if entrants.len() < 3 {
+        return Err(invalid(
+            "pool calibration must contain at least three complete models",
+        ));
+    }
+    let mut configured_bases = BTreeSet::new();
+    let mut configured_calibration = Vec::new();
+    for entrant in entrants {
+        validate_thinking_entrant(entrant)?;
+        if entrant.model.tier != tier
+            || !configured_bases.insert((
+                entrant.model.provider.as_str(),
+                entrant.model.model.as_str(),
+            ))
+        {
             return Err(invalid(
-                "pool qualification contains a non-promoted entrant",
+                "pool entrants contain a foreign or duplicate model",
             ));
         }
+        configured_calibration.extend(entrant.thinking_levels.iter().map(|thinking| {
+            let mut identity = entrant.model.clone();
+            identity.thinking.clone_from(thinking);
+            identity
+        }));
+    }
+    if calibration
+        .iter()
+        .map(|item| &item.requested_model)
+        .ne(configured_calibration.iter())
+    {
+        return Err(invalid(
+            "pool calibration does not match the complete frozen entrant plan",
+        ));
+    }
+    let mut previous_qualification_entrant = None;
+    for item in qualification {
+        let entrant_index = entrants
+            .iter()
+            .position(|entrant| is_same_base_identity(&item.requested_model, &entrant.model))
+            .ok_or_else(|| invalid("pool qualification contains a foreign model"))?;
+        if previous_qualification_entrant.is_some_and(|previous| entrant_index < previous) {
+            return Err(invalid(
+                "pool qualification does not match frozen entrant order",
+            ));
+        }
+        previous_qualification_entrant = Some(entrant_index);
     }
 
-    let is_complete = promoted.len() == promotion_count
-        && qualification.len() == promotion_count
-        && qualification.iter().all(|evidence| evidence.is_passing)
-        && promoted.iter().all(|model| {
-            qualification
+    let mut promoted = Vec::new();
+    let mut retained_lower_routes = Vec::new();
+    let mut finalists = Vec::new();
+    let mut is_every_walk_complete = true;
+    let mut is_qualification_gap = false;
+    for entrant in entrants {
+        let calibration_evidence = evidence_for_model(calibration, &entrant.model);
+        let screening = select_thinking_level(entrant, &calibration_evidence)?;
+        if !screening.is_complete {
+            return Err(invalid("pool calibration evidence is incomplete"));
+        }
+        let qualification_evidence = evidence_for_model(qualification, &entrant.model);
+        if is_qualification_gap && !qualification_evidence.is_empty() {
+            return Err(invalid(
+                "pool qualification skips an incomplete frozen entrant",
+            ));
+        }
+        let start_index = qualification_start_index(entrant, &calibration_evidence)?;
+        let is_lower_goal = retained_lower_index(entrant)?
+            .is_some_and(|index| calibration_evidence[index].is_passing);
+        if start_index.is_none() && !is_lower_goal {
+            if !qualification_evidence.is_empty() {
+                return Err(invalid(
+                    "pool qualification contains a model without an authorized calibration pass",
+                ));
+            }
+            continue;
+        }
+        if let Some(index) = start_index {
+            promoted.push(thinking_identity(entrant, index)?);
+        }
+        let decision =
+            rank_qualification_decision(entrant, &calibration_evidence, &qualification_evidence)?;
+        is_every_walk_complete &= decision.is_complete;
+        is_qualification_gap |= !decision.is_complete;
+        if let Some(retained) = decision.retained_lower {
+            let evidence = qualification_evidence
                 .iter()
-                .any(|evidence| evidence.requested_model == *model)
-        });
-    let ranked = if is_complete {
-        let mut finalists = qualification.iter().collect::<Vec<_>>();
-        finalists.sort_by(|left, right| compare_pool_evidence(left, right));
+                .find(|item| item.requested_model == retained)
+                .ok_or_else(|| invalid("retained lower identity has no qualification evidence"))?;
+            if !is_fully_reliable(evidence) {
+                return Err(invalid("retained lower identity is not fully reliable"));
+            }
+            retained_lower_routes.push(retained);
+        }
+        if let Some(selected) = decision.selected {
+            let evidence = qualification_evidence
+                .iter()
+                .find(|item| item.requested_model == selected)
+                .ok_or_else(|| invalid("ranked identity has no qualification evidence"))?;
+            if !is_fully_reliable(evidence) {
+                return Err(invalid("ranked identity is not fully reliable"));
+            }
+            finalists.push(evidence.clone());
+        }
+    }
+    if qualification.iter().any(|item| {
+        !entrants
+            .iter()
+            .any(|entrant| is_same_base_identity(&item.requested_model, &entrant.model))
+    }) {
+        return Err(invalid("pool qualification contains a foreign model"));
+    }
+
+    let ranked = if is_every_walk_complete {
+        finalists.sort_by(compare_pool_evidence);
         finalists
             .into_iter()
             .map(|evidence| evidence.requested_model.clone())
-            .collect()
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
+    let is_complete = is_every_walk_complete && ranked.len() >= usize::from(policy.promotion_count);
 
-    // TODO(AGNT-0032.T103): Initialize empty thinking selections before adaptive ranking.
     Ok(RankedPool {
         tier,
         calibration: calibration.to_vec(),
+        thinking_selections: Vec::new(),
+        retained_lower_routes,
         promoted,
         qualification: qualification.to_vec(),
         ranked,
         is_complete,
     })
+}
+
+fn rank_qualification_decision(
+    entrant: &PoolEntrant,
+    calibration: &[PoolEntrantEvidence],
+    qualification: &[PoolEntrantEvidence],
+) -> Result<ThinkingDecision, SkillEvalError> {
+    if calibration.iter().all(|item| {
+        item.harnesses.len() == 5 && item.completed_trials == 5 && item.expected_trials == 5
+    }) {
+        return select_qualification_thinking_level(entrant, calibration, qualification);
+    }
+    if entrant.thinking_levels.len() != 1 || entrant.retained_lower_thinking_level.is_some() {
+        return Err(invalid(
+            "qualification requires calibration evidence from five complete cases",
+        ));
+    }
+    let attempted = validate_qualification_thinking_evidence(entrant, qualification)?;
+    match attempted.as_slice() {
+        [] => next_thinking_decision(0, None),
+        [(0, true)] => complete_thinking_decision(entrant, Some(0), None),
+        [(0, false)] => complete_thinking_decision(entrant, None, None),
+        _ => Err(invalid("fixed qualification evidence has invalid shape")),
+    }
+}
+
+pub(crate) fn qualification_start_index(
+    entrant: &PoolEntrant,
+    calibration: &[PoolEntrantEvidence],
+) -> Result<Option<usize>, SkillEvalError> {
+    let calibrated = validate_thinking_evidence(entrant, calibration)?;
+    if calibrated.len() != entrant.thinking_levels.len() {
+        return Err(invalid(
+            "qualification requires complete calibration evidence",
+        ));
+    }
+    let start = retained_lower_index(entrant)?.map_or(0, |index| index + 1);
+    Ok(calibrated
+        .iter()
+        .skip(start)
+        .find(|(_, is_passing)| *is_passing)
+        .map(|(index, _)| *index))
+}
+
+fn evidence_for_model(
+    evidence: &[PoolEntrantEvidence],
+    model: &ModelIdentity,
+) -> Vec<PoolEntrantEvidence> {
+    evidence
+        .iter()
+        .filter(|item| is_same_base_identity(&item.requested_model, model))
+        .cloned()
+        .collect()
+}
+
+fn is_same_base_identity(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.tier == right.tier && left.provider == right.provider && left.model == right.model
 }
 
 fn validate_pool_stage(
@@ -408,8 +910,12 @@ fn validate_pool_stage(
         let reliability_numerator = u64::from(passing_trials)
             .checked_mul(10_000)
             .ok_or_else(|| invalid("pool evidence reliability arithmetic overflow"))?;
+        let minimum_reliability_basis_points = match item.stage {
+            PoolStage::Calibration => policy.calibration_minimum_reliability_basis_points,
+            PoolStage::Qualification => policy.qualification_minimum_reliability_basis_points,
+        };
         let reliability_floor = u64::from(item.completed_trials)
-            .checked_mul(u64::from(policy.minimum_reliability_basis_points))
+            .checked_mul(u64::from(minimum_reliability_basis_points))
             .ok_or_else(|| invalid("pool evidence reliability arithmetic overflow"))?;
         if item.is_passing
             && (item.score.estimate < f64::from(policy.minimum_score) / 10.0
@@ -884,6 +1390,52 @@ fn invalid(message: &str) -> SkillEvalError {
     SkillEvalError::InvalidConfiguration(message.to_string())
 }
 
+// TODO(AGNT-0032.T143): Evaluate cells, advance models, and rank active pools.
+/// Evaluates one exact model-tier-thinking cell under the frozen frontier policy.
+///
+/// The inputs are one tier suite, exact model, trial records, and policy. The output is cell evidence.
+///
+/// # Errors
+///
+/// Returns an error for incomplete groups, invalid trials, critical failure, or statistical overflow.
+pub(crate) fn evaluate_frontier_cell(
+    _suite: &FrontierTierSuite,
+    _model: &ModelIdentity,
+    _trials: &[TrialRecord],
+    _policy: &FrontierPolicy,
+) -> Result<FrontierCellEvidence, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Selects the next tier and thinking level for one frontier model.
+///
+/// The inputs are a frozen entrant, current progress, and terminal cells. The output is new progress.
+///
+/// # Errors
+///
+/// Returns an error for identity drift, nonmonotonic progress, missing evidence, or invalid level order.
+pub(crate) fn advance_frontier_model(
+    _entrant: &FrontierEntrant,
+    _progress: &FrontierModelProgress,
+    _cells: &[FrontierCellEvidence],
+) -> Result<FrontierModelProgress, SkillEvalError> {
+    unimplemented!()
+}
+
+/// Ranks qualified routes and marks each tier's active routes.
+///
+/// The inputs are terminal model reports and active-pool size. The output is ranked memberships by tier.
+///
+/// # Errors
+///
+/// Returns an error for incomplete evidence, duplicate routes, invalid usage, or a zero pool size.
+pub(crate) fn rank_frontier_pools(
+    _models: &[FrontierModelReport],
+    _active_pool_size: u8,
+) -> Result<BTreeMap<Tier, Vec<FrontierPoolMembership>>, SkillEvalError> {
+    unimplemented!()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -1148,6 +1700,7 @@ mod tests {
             key: TrialKey {
                 artifact: ArtifactName("artifact".to_string()),
                 tier,
+                route_index: 0,
                 case: CaseId(case.to_string()),
                 attempt,
             },

@@ -1,0 +1,13 @@
+{
+  "tiers": {
+    "T5": {
+      "pi": "anthropic/unavailable-primary",
+      "fallbacks": [
+        "openai-codex/gpt-5.3-codex-spark",
+        "anthropic/claude-opus-5"
+      ],
+      "thinking": "high"
+    }
+  },
+  "judge": "T5"
+}

@@ -1,0 +1,1 @@
+{"case":"c7","request":"answer six times seven","step":"arithmetic","step_shape":"response","estimate_seconds":1,"estimate_is_clear":true,"foreground_result":"42","open_jobs":[{"handle":"job-build-11","what":"build release artifacts"},{"handle":"job-tests-12","what":"run integration tests"}]}

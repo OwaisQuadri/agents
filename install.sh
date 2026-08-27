@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# TODO(AGNT-0032.T16): build and link the skill-eval command
 # install.sh — config reset installer. symlinks and one cargo build, never rm. see docs/reset-spec.md
 # usage: ./install.sh [--dry-run] [--test]
 # HOME_TARGET sandboxes every write below (default: the real $HOME). Point it at a scratch
@@ -124,6 +123,53 @@ if ! command -v jq >/dev/null 2>&1; then
 elif [[ ! -f "$TIERS" ]]; then
   echo "warn: $TIERS not found, skipping agent generation and the model-tier sync" >&2
 else
+  ROUTING_VALIDATION_JQ='
+    def only_keys($allowed): ((keys - $allowed) | length) == 0;
+    def route_key: type == "string" and test("^[a-z0-9]+(-[a-z0-9]+)*$");
+    def segment: type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._:+@-]*$");
+    def identifier: type == "string" and (split("/") | length) >= 2 and all(split("/")[]; segment);
+    def tier: . as $value | type == "string" and (["T1", "T2", "T3", "T4", "T5"] | index($value) != null);
+    def thinking: . as $value | type == "string" and (["off", "minimal", "low", "medium", "high", "xhigh", "max"] | index($value) != null);
+    def unique_route: ([.pi] + .fallbacks) as $route | ($route | unique | length) == ($route | length);
+    def tier_route:
+      type == "object"
+      and only_keys(["pi", "fallbacks", "thinking"])
+      and (.pi | identifier)
+      and (.fallbacks | type == "array" and all(.[]; identifier))
+      and (.thinking | thinking)
+      and unique_route;
+    def capability_route:
+      type == "object"
+      and only_keys(["pi", "fallbacks", "thinking"])
+      and has("pi")
+      and (.pi | identifier)
+      and ((.fallbacks // []) | type == "array" and all(.[]; identifier))
+      and ((has("thinking") | not) or (.thinking | thinking))
+      and (([.pi] + (.fallbacks // [])) as $route | ($route | unique | length) == ($route | length));
+    def control:
+      type == "object"
+      and only_keys(["pi", "maximum_tier", "is_read_only"])
+      and (.pi | identifier)
+      and .maximum_tier == "T1"
+      and (.is_read_only | type == "boolean" and . == true);
+    . as $config
+    | type == "object"
+    and only_keys(["tiers", "orchestrator", "judge", "capabilities", "unranked_controls", "agents", "untiered"])
+    and all(["tiers", "orchestrator", "judge", "capabilities", "unranked_controls", "agents", "untiered"][]; . as $key | $config | has($key))
+    and (.tiers | type == "object" and length > 0 and all(to_entries[]; (.key | tier) and (.value | tier_route)))
+    and all(["T1", "T2", "T3", "T4", "T5"][]; . as $tier | $config.tiers[$tier] != null)
+    and (.orchestrator | tier) and (.tiers[.orchestrator] != null)
+    and (.judge | tier) and (.tiers[.judge] != null)
+    and (.capabilities | type == "object" and all(to_entries[]; (.key | route_key) and (.value | capability_route)))
+    and (.unranked_controls | type == "object" and all(to_entries[]; (.key | route_key) and (.value | control)))
+    and (([.unranked_controls[].pi] | unique | length) == ([.unranked_controls[].pi] | length))
+    and ([.unranked_controls[].pi] as $controls | ([.tiers[] | ([.pi] + .fallbacks)[]] | all(. as $route | $controls | index($route) | not)))
+    and (.agents | type == "object" and all(to_entries[]; (.key | route_key) and (.value | tier) and ($config.tiers[.value] != null)))
+    and (.untiered | type == "object" and all(to_entries[]; (.key | route_key) and (.value | type == "string" and test("\\S"))))
+  '
+  jq -e "$ROUTING_VALIDATION_JQ" "$TIERS" >/dev/null 2>&1 \
+    || { echo "FATAL: $TIERS has malformed or unsafe routing configuration" >&2; exit 1; }
+
   if [[ ! -f "$PI_MODELS_SOURCE" ]]; then
     echo "warn: $PI_MODELS_SOURCE not found, skipping managed model overrides" >&2
   elif [[ -f "$PI_MODELS_CONFIG" ]] && jq -e --slurpfile managed "$PI_MODELS_SOURCE" \
@@ -207,6 +253,15 @@ else
   # repetition rather than by a list. Subagents get the whole ordered list.
   TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
       .value as $tier | { key: $tier.pi, value: $tier.fallbacks[0] }))
+    | .capabilityRoutes = ($t.capabilities | with_entries(
+        .value as $route
+        | .value = { model: $route.pi, fallbackModels: ($route.fallbacks // []) }
+          + (if $route | has("thinking") then { thinking: $route.thinking } else {} end)))
+    | .unrankedControls = ($t.unranked_controls | with_entries(
+        .value as $control
+        | .value = { model: $control.pi,
+                     maximumTier: $control.maximum_tier,
+                     isReadOnly: $control.is_read_only }))
     | .subagents = ((.subagents // {})
     | .defaultModel = $t.tiers[$t.orchestrator].pi
     | .defaultThinking = $t.tiers[$t.orchestrator].thinking
@@ -236,8 +291,8 @@ fi
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
 #    because each one sits in a path that is waited on: ste-check in the reply path,
 #    no-ai-attribution in the PreToolUse path ahead of every commit,
-#    session-stats as an on-demand command the user runs by name
-for tool in ste-check no-ai-attribution session-stats; do
+#    session-stats and skill-eval as on-demand commands the user runs by name
+for tool in ste-check no-ai-attribution session-stats skill-eval; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then
@@ -386,16 +441,16 @@ else
   # shellPath is the shell preference; warnings.anthropicExtraUsage=false suppresses pi's
   # Anthropic extra-usage billing warning on subscription auth.
   if [[ -f "$PI_SETTINGS" ]] && jq -e --arg s "$ZSH_PATH" \
-    '.shellPath == $s and .warnings.anthropicExtraUsage == false' "$PI_SETTINGS" >/dev/null 2>&1; then
-    plan "ok   $PI_SETTINGS shell -> $ZSH_PATH, anthropic warning off"
+    '.shellPath == $s and .externalEditor == "nvim" and .warnings.anthropicExtraUsage == false' "$PI_SETTINGS" >/dev/null 2>&1; then
+    plan "ok   $PI_SETTINGS shell -> $ZSH_PATH, editor -> nvim, anthropic warning off"
   else
     backup "$PI_SETTINGS"
-    plan "set  $PI_SETTINGS shell -> $ZSH_PATH, anthropic warning off"
+    plan "set  $PI_SETTINGS shell -> $ZSH_PATH, editor -> nvim, anthropic warning off"
     if (( IS_DRY == 0 )); then
       CURRENT='{}'
       [[ -f "$PI_SETTINGS" ]] && CURRENT="$(cat "$PI_SETTINGS")"
       UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" \
-        '.shellPath = $s | .warnings.anthropicExtraUsage = false')" \
+        '.shellPath = $s | .externalEditor = "nvim" | .warnings.anthropicExtraUsage = false')" \
         || { echo "FATAL: $PI_SETTINGS is not valid JSON" >&2; exit 1; }
       printf '%s\n' "$UPDATED" > "$PI_SETTINGS"
     fi

@@ -1,0 +1,3 @@
+identifier=lake
+state=waiting
+count=80

@@ -1,0 +1,1 @@
+{"case":"c2","request":"report the current git branch","step":"branch","step_shape":"one-command","estimate_seconds":1,"estimate_is_clear":true,"foreground_result":"map/AGNT-0032","open_jobs":[]}

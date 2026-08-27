@@ -1,0 +1,4 @@
+{"id":"classification","input":"mechanical: classify the sample","responsibility":"bounded_mechanical"}
+{"id":"direction","input":"human-decision: choose a direction","responsibility":"human_decision"}
+{"id":"publish","input":"irreversible-action: publish the result","responsibility":"irreversible_action"}
+{"id":"accept","input":"final-verification: accept the result","responsibility":"final_verification"}

@@ -1,0 +1,24 @@
+#!/bin/zsh
+set -eu
+
+if [[ "${1:-}" == "--list-models" ]]; then
+  print 'provider model context max-out thinking images'
+  print 'openrouter openrouter/free 100000 10000 yes no'
+  print 'openai-codex gpt-5.6-luna 100000 10000 yes no'
+  print 'openai-codex gpt-5.3-codex-spark 100000 10000 yes no'
+  print 'anthropic claude-haiku-4-5 100000 10000 yes no'
+  print 'anthropic claude-sonnet-5 100000 10000 yes no'
+  print 'openai-codex gpt-5.6-terra 100000 10000 yes no'
+  print 'anthropic claude-opus-5 100000 10000 yes no'
+  print 'openai-codex gpt-5.6-sol 100000 10000 yes no'
+  print 'anthropic claude-fable-5 100000 10000 yes no'
+  exit 0
+fi
+
+if [[ "${1:-}" == "--version" ]]; then
+  print 'synthetic-pi-h6'
+  exit 0
+fi
+
+print -u2 'H6 forbids live model execution'
+exit 64

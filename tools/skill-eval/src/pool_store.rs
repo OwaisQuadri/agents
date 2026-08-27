@@ -5,10 +5,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::model::{
-    PoolChildRun, PoolChildStatus, PoolRunId, PoolRunState, PoolRunStatus, PoolStage, RankedPool,
-    SkillEvalError, Tier,
+    ModelIdentity, PoolChildRun, PoolChildStatus, PoolEntrant, PoolRunId, PoolRunState,
+    PoolRunStatus, PoolStage, RankedPool, SkillEvalError, Tier,
 };
 use crate::ports::PoolStore;
+use crate::statistics::{
+    qualification_start_index, rank_pool, select_qualification_thinking_level,
+    select_thinking_level,
+};
 
 const POOLS_DIRECTORY: &str = "pools";
 const SNAPSHOT_NAME: &str = "state.json";
@@ -117,12 +121,46 @@ impl FilePoolStore {
     fn read_snapshot(&self, run_id: &PoolRunId) -> Result<(PoolRunState, Vec<u8>), SkillEvalError> {
         let path = self.existing_snapshot_path(run_id)?;
         let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        let mut value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
             invalid(format!(
                 "pool snapshot {} is malformed: {error}",
                 path.display()
             ))
         })?;
+        if let Some(entrants) = value
+            .get_mut("configuration")
+            .and_then(|configuration| configuration.get_mut("entrants"))
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for tier_entrants in entrants
+                .values_mut()
+                .filter_map(serde_json::Value::as_array_mut)
+            {
+                for entrant in tier_entrants
+                    .iter_mut()
+                    .filter_map(serde_json::Value::as_object_mut)
+                {
+                    entrant
+                        .entry("candidate_timeout_seconds")
+                        .or_insert(serde_json::Value::Null);
+                    entrant
+                        .entry("retained_lower_thinking_level")
+                        .or_insert(serde_json::Value::Null);
+                }
+            }
+        }
+        if let Some(pools) = value
+            .get_mut("pools")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            for pool in pools
+                .iter_mut()
+                .filter_map(serde_json::Value::as_object_mut)
+            {
+                pool.entry("retained_lower_routes")
+                    .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+            }
+        }
         let state: PoolRunState = serde_json::from_value(value.clone()).map_err(|error| {
             invalid(format!(
                 "pool snapshot {} is malformed: {error}",
@@ -303,6 +341,19 @@ fn validate_state(state: &PoolRunState, is_initial: bool) -> Result<(), SkillEva
         ));
     }
 
+    for (tier, entrants) in &state.configuration.entrants {
+        for entrant in entrants {
+            if entrant.model.tier != *tier
+                || entrant.candidate_timeout_seconds == Some(0)
+                || select_thinking_level(entrant, &[]).is_err()
+            {
+                return Err(invalid(
+                    "pool configuration contains invalid entrant thinking levels",
+                ));
+            }
+        }
+    }
+
     let mut slots = BTreeSet::new();
     let mut run_ids = BTreeSet::new();
     for child in &state.child_runs {
@@ -312,11 +363,20 @@ fn validate_state(state: &PoolRunState, is_initial: bool) -> Result<(), SkillEva
                 "pool state contains a child for an unselected tier",
             ));
         }
-        let entrant_count = state.configuration.entrants[&child.tier].len();
-        if usize::from(child.entrant_index) >= entrant_count {
-            return Err(invalid("pool state contains an out-of-range child entrant"));
+        let entrant = state.configuration.entrants[&child.tier]
+            .get(usize::from(child.entrant_index))
+            .ok_or_else(|| invalid("pool state contains an out-of-range child entrant"))?;
+        if usize::from(child.thinking_index) >= entrant.thinking_levels.len() {
+            return Err(invalid(
+                "pool state contains an out-of-range child thinking index",
+            ));
         }
-        if !slots.insert((child.tier, child.entrant_index, stage_number(child.stage))) {
+        if !slots.insert((
+            child.tier,
+            child.entrant_index,
+            child.thinking_index,
+            stage_number(child.stage),
+        )) {
             return Err(invalid("pool state contains duplicate child slots"));
         }
         if !run_ids.insert(child.run_id.0.as_str()) {
@@ -326,12 +386,17 @@ fn validate_state(state: &PoolRunState, is_initial: bool) -> Result<(), SkillEva
         }
     }
     for tier in &state.selected_tiers {
-        for entrant_index in 0..state.configuration.entrants[tier].len() {
+        for (entrant_index, entrant) in state.configuration.entrants[tier].iter().enumerate() {
             let entrant_index = u8::try_from(entrant_index)
                 .map_err(|_| invalid("pool state has too many entrants for child slots"))?;
-            for stage in [PoolStage::Calibration, PoolStage::Qualification] {
-                if !slots.contains(&(*tier, entrant_index, stage_number(stage))) {
-                    return Err(invalid("pool state has an unallocated child run"));
+            for thinking_index in 0..entrant.thinking_levels.len() {
+                let thinking_index = u8::try_from(thinking_index)
+                    .map_err(|_| invalid("pool state has too many thinking levels"))?;
+                for stage in [PoolStage::Calibration, PoolStage::Qualification] {
+                    if !slots.contains(&(*tier, entrant_index, thinking_index, stage_number(stage)))
+                    {
+                        return Err(invalid("pool state has an unallocated child run"));
+                    }
                 }
             }
         }
@@ -397,83 +462,315 @@ fn validate_pools(state: &PoolRunState) -> Result<(), SkillEvalError> {
                 "pool state contains a duplicate or unselected ranked pool",
             ));
         }
-        let configured = state.configuration.entrants[&pool.tier]
+        let entrants = &state.configuration.entrants[&pool.tier];
+        let configured = entrants
             .iter()
-            .map(|entrant| &entrant.model)
+            .flat_map(configured_thinking_identities)
             .collect::<Vec<_>>();
         if pool.calibration.iter().any(|evidence| {
             evidence.stage != PoolStage::Calibration
                 || evidence.requested_model != evidence.effective_model
-                || !configured.contains(&&evidence.requested_model)
+                || !configured.contains(&evidence.requested_model)
         }) || pool.qualification.iter().any(|evidence| {
             evidence.stage != PoolStage::Qualification
                 || evidence.requested_model != evidence.effective_model
-                || !pool.promoted.contains(&evidence.requested_model)
+                || !configured.contains(&evidence.requested_model)
         }) || pool
-            .promoted
+            .thinking_selections
             .iter()
+            .chain(&pool.retained_lower_routes)
+            .chain(&pool.promoted)
             .chain(&pool.ranked)
-            .any(|model| !configured.contains(&model))
+            .any(|model| !configured.contains(model))
         {
             return Err(invalid(
                 "ranked pool contains drifting or unconfigured model identity",
             ));
         }
-        if has_duplicate_models(&pool.promoted)
-            || has_duplicate_models(&pool.ranked)
-            || pool
-                .ranked
-                .iter()
-                .any(|model| !pool.promoted.contains(model))
+        if is_evidence_list_duplicated(&pool.calibration)
+            || is_evidence_list_duplicated(&pool.qualification)
+            || is_base_model_list_duplicated(&pool.thinking_selections)
+            || is_base_model_list_duplicated(&pool.retained_lower_routes)
+            || is_model_list_duplicated(&pool.promoted)
+            || is_model_list_duplicated(&pool.ranked)
+            || pool.ranked.iter().any(|model| {
+                !pool
+                    .promoted
+                    .iter()
+                    .any(|promoted| is_same_base_model(promoted, model))
+            })
         {
             return Err(invalid(
                 "ranked pool contains duplicate or unpromoted identity",
             ));
         }
-        let promotion_count = usize::from(state.configuration.policy.promotion_count);
-        if pool.promoted.len() > promotion_count
-            || pool.ranked.len() > promotion_count
-            || (pool.is_complete && pool.ranked.len() != promotion_count)
+        let mut prior_selection_index = None;
+        for selection in &pool.thinking_selections {
+            let entrant_index = entrants
+                .iter()
+                .position(|entrant| is_same_base_model(&entrant.model, selection))
+                .ok_or_else(|| invalid("thinking selection belongs to an unconfigured model"))?;
+            if prior_selection_index.is_some_and(|prior| entrant_index <= prior) {
+                return Err(invalid(
+                    "thinking selections do not follow configured model order",
+                ));
+            }
+            prior_selection_index = Some(entrant_index);
+            let evidence = pool
+                .calibration
+                .iter()
+                .filter(|item| is_same_base_model(&item.requested_model, selection))
+                .cloned()
+                .collect::<Vec<_>>();
+            let decision = select_thinking_level(&entrants[entrant_index], &evidence)?;
+            if !decision.is_complete || decision.selected.as_ref() != Some(selection) {
+                return Err(invalid(
+                    "thinking selection is not backed by complete calibration evidence",
+                ));
+            }
+        }
+        let mut expected_selections = Vec::new();
+        let mut expected_promoted = Vec::new();
+        let mut is_calibration_complete = true;
+        for entrant in entrants {
+            let calibration = pool
+                .calibration
+                .iter()
+                .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+                .cloned()
+                .collect::<Vec<_>>();
+            let screening = select_thinking_level(entrant, &calibration)?;
+            is_calibration_complete &= screening.is_complete;
+            if let Some(selected) = &screening.selected {
+                expected_selections.push(selected.clone());
+            }
+            if screening.is_complete
+                && let Some(index) = qualification_start_index(entrant, &calibration)?
+            {
+                let mut selected = entrant.model.clone();
+                selected
+                    .thinking
+                    .clone_from(&entrant.thinking_levels[index]);
+                expected_promoted.push(selected);
+            }
+            if screening.selected.is_none()
+                && entrant.retained_lower_thinking_level.is_none()
+                && pool
+                    .qualification
+                    .iter()
+                    .any(|item| is_same_base_model(&item.requested_model, &entrant.model))
+            {
+                return Err(invalid(
+                    "qualification evidence belongs to a model without a calibration pass",
+                ));
+            }
+        }
+        if !expected_selections.starts_with(&pool.thinking_selections) {
+            return Err(invalid(
+                "thinking selections hide or invent a calibration passer",
+            ));
+        }
+        if !pool.promoted.is_empty()
+            && (!is_calibration_complete
+                || pool.thinking_selections != expected_selections
+                || pool.promoted != expected_promoted)
         {
             return Err(invalid(
-                "ranked pool has an invalid promotion or completion count",
+                "promotion entrants do not contain every calibration passer",
+            ));
+        }
+        if (!pool.qualification.is_empty() || !pool.ranked.is_empty() || pool.is_complete)
+            && (pool.thinking_selections != expected_selections
+                || pool.promoted != expected_promoted)
+        {
+            return Err(invalid(
+                "qualification evidence exists before entrants are frozen",
+            ));
+        }
+        if is_calibration_complete
+            && (!pool.promoted.is_empty()
+                || !pool.qualification.is_empty()
+                || !pool.retained_lower_routes.is_empty()
+                || pool.is_complete)
+        {
+            for entrant in entrants {
+                let calibration = pool
+                    .calibration
+                    .iter()
+                    .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if qualification_eligible_indices(entrant, &calibration)?.is_empty() {
+                    continue;
+                }
+                let qualification = pool
+                    .qualification
+                    .iter()
+                    .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                select_qualification_thinking_level(entrant, &calibration, &qualification)?;
+            }
+            let expected = rank_pool(
+                pool.tier,
+                entrants,
+                &pool.calibration,
+                &pool.qualification,
+                &state.configuration.policy,
+            )?;
+            if expected.promoted != pool.promoted
+                || expected.retained_lower_routes != pool.retained_lower_routes
+                || expected.ranked != pool.ranked
+                || pool.is_complete != expected.is_complete
+            {
+                return Err(invalid(
+                    "ranked pool hides a finalist or contains unreliable identity",
+                ));
+            }
+        } else if !pool.ranked.is_empty() || pool.is_complete {
+            return Err(invalid(
+                "ranked pool is complete without qualification entrants",
             ));
         }
     }
     Ok(())
 }
 
-// TODO(AGNT-0032.T106): Validate skipped unneeded thinking and unpromoted children.
 fn validate_skipped_children(state: &PoolRunState) -> Result<(), SkillEvalError> {
     for child in &state.child_runs {
         if child.status != PoolChildStatus::Skipped {
             continue;
         }
-        if child.stage != PoolStage::Qualification {
-            return Err(invalid("only qualification children can be skipped"));
-        }
-        let entrant =
-            &state.configuration.entrants[&child.tier][usize::from(child.entrant_index)].model;
-        let promotion_count = usize::from(state.configuration.policy.promotion_count);
-        let is_backed_by_promotion = state.pools.iter().any(|pool| {
-            pool.tier == child.tier
-                && pool.promoted.len() == promotion_count
-                && !pool.promoted.contains(entrant)
-        });
-        if !is_backed_by_promotion {
-            return Err(invalid(
-                "skipped qualification child is not backed by its promoted pair",
-            ));
+        let requested = requested_child_model(state, child)?;
+        let pool = state.pools.iter().find(|pool| pool.tier == child.tier);
+        let is_backed = match child.stage {
+            PoolStage::Calibration => false,
+            PoolStage::Qualification => pool.is_some_and(|pool| {
+                is_qualification_skip_backed(state, pool, child, &requested).unwrap_or(false)
+            }),
+        };
+        if !is_backed {
+            return Err(invalid(match child.stage {
+                PoolStage::Calibration => {
+                    "skipped calibration thinking child is not backed by a complete decision"
+                }
+                PoolStage::Qualification => {
+                    "skipped qualification child is not backed by its qualification decision"
+                }
+            }));
         }
     }
     Ok(())
 }
 
-fn has_duplicate_models(models: &[crate::model::ModelIdentity]) -> bool {
+fn is_qualification_skip_backed(
+    state: &PoolRunState,
+    pool: &RankedPool,
+    child: &PoolChildRun,
+    _requested: &ModelIdentity,
+) -> Result<bool, SkillEvalError> {
+    let entrant = &state.configuration.entrants[&child.tier][usize::from(child.entrant_index)];
+    let calibration = pool
+        .calibration
+        .iter()
+        .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+        .cloned()
+        .collect::<Vec<_>>();
+    let eligible = qualification_eligible_indices(entrant, &calibration)?;
+    if !eligible.contains(&usize::from(child.thinking_index)) {
+        return Ok(true);
+    }
+    let qualification = pool
+        .qualification
+        .iter()
+        .filter(|item| is_same_base_model(&item.requested_model, &entrant.model))
+        .cloned()
+        .collect::<Vec<_>>();
+    let decision = select_qualification_thinking_level(entrant, &calibration, &qualification)?;
+    let selected_index = decision.selected.as_ref().and_then(|selected| {
+        entrant
+            .thinking_levels
+            .iter()
+            .position(|level| level == &selected.thinking)
+    });
+    Ok(selected_index.is_some_and(|selected| usize::from(child.thinking_index) > selected))
+}
+
+fn qualification_eligible_indices(
+    entrant: &PoolEntrant,
+    calibration: &[crate::model::PoolEntrantEvidence],
+) -> Result<BTreeSet<usize>, SkillEvalError> {
+    let mut eligible = BTreeSet::new();
+    if let Some(retained) = &entrant.retained_lower_thinking_level {
+        let retained_index = entrant
+            .thinking_levels
+            .iter()
+            .position(|level| level == retained)
+            .ok_or_else(|| invalid("retained lower thinking level is undeclared"))?;
+        if calibration
+            .iter()
+            .any(|evidence| evidence.requested_model.thinking == *retained && evidence.is_passing)
+        {
+            eligible.insert(retained_index);
+        }
+    }
+    if let Some(start) = qualification_start_index(entrant, calibration)? {
+        eligible.extend(start..entrant.thinking_levels.len());
+    }
+    Ok(eligible)
+}
+
+fn configured_thinking_identities(
+    entrant: &PoolEntrant,
+) -> impl Iterator<Item = ModelIdentity> + '_ {
+    entrant.thinking_levels.iter().map(|thinking| {
+        let mut identity = entrant.model.clone();
+        identity.thinking.clone_from(thinking);
+        identity
+    })
+}
+
+fn requested_child_model(
+    state: &PoolRunState,
+    child: &PoolChildRun,
+) -> Result<ModelIdentity, SkillEvalError> {
+    let entrant = state.configuration.entrants[&child.tier]
+        .get(usize::from(child.entrant_index))
+        .ok_or_else(|| invalid("pool child entrant index is out of range"))?;
+    let thinking = entrant
+        .thinking_levels
+        .get(usize::from(child.thinking_index))
+        .ok_or_else(|| invalid("pool child thinking index is out of range"))?;
+    let mut requested = entrant.model.clone();
+    requested.thinking.clone_from(thinking);
+    Ok(requested)
+}
+
+fn is_same_base_model(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.tier == right.tier && left.provider == right.provider && left.model == right.model
+}
+
+fn is_base_model_list_duplicated(models: &[ModelIdentity]) -> bool {
+    models.iter().enumerate().any(|(index, model)| {
+        models[..index]
+            .iter()
+            .any(|prior| is_same_base_model(prior, model))
+    })
+}
+
+fn is_model_list_duplicated(models: &[ModelIdentity]) -> bool {
     models
         .iter()
         .enumerate()
         .any(|(index, model)| models[..index].contains(model))
+}
+
+fn is_evidence_list_duplicated(evidence: &[crate::model::PoolEntrantEvidence]) -> bool {
+    evidence.iter().enumerate().any(|(index, item)| {
+        evidence[..index]
+            .iter()
+            .any(|prior| prior.requested_model == item.requested_model)
+    })
 }
 
 fn validate_transition(stored: &PoolRunState, next: &PoolRunState) -> Result<(), SkillEvalError> {
@@ -532,7 +829,13 @@ fn validate_pool_progress(
     for (old, new) in stored.iter().zip(next) {
         if old.tier != new.tier
             || !new.calibration.starts_with(&old.calibration)
+            || !new
+                .thinking_selections
+                .starts_with(&old.thinking_selections)
             || !new.qualification.starts_with(&old.qualification)
+            || !new
+                .retained_lower_routes
+                .starts_with(&old.retained_lower_routes)
             || (!old.promoted.is_empty() && new.promoted != old.promoted)
             || (!old.ranked.is_empty() && new.ranked != old.ranked)
             || (old.is_complete && !new.is_complete)
@@ -545,11 +848,11 @@ fn validate_pool_progress(
     Ok(())
 }
 
-// TODO(AGNT-0032.T105): Include thinking index in frozen child identity and transitions.
-fn child_identity(child: &PoolChildRun) -> (Tier, u8, u8, &str) {
+fn child_identity(child: &PoolChildRun) -> (Tier, u8, u8, u8, &str) {
     (
         child.tier,
         child.entrant_index,
+        child.thinking_index,
         stage_number(child.stage),
         &child.run_id.0,
     )
@@ -568,16 +871,7 @@ fn is_legal_child_transition(
     state: &PoolRunState,
 ) -> bool {
     if old.status == PoolChildStatus::Pending && next.status == PoolChildStatus::Skipped {
-        if next.stage != PoolStage::Qualification {
-            return false;
-        }
-        let entrant =
-            &state.configuration.entrants[&next.tier][usize::from(next.entrant_index)].model;
-        return state.pools.iter().any(|pool| {
-            pool.tier == next.tier
-                && pool.promoted.len() == usize::from(state.configuration.policy.promotion_count)
-                && !pool.promoted.contains(entrant)
-        });
+        return validate_skipped_children(state).is_ok();
     }
 
     matches!(
