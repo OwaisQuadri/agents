@@ -397,6 +397,24 @@ pub(crate) struct FrontierSuiteReviewSet {
     pub(crate) records: Vec<FrontierCaseReviewRecord>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierSuiteConstructionPolicy {
+    pub(crate) required_tiers: Vec<Tier>,
+    pub(crate) minimum_unique_cases_per_tier: u16,
+    pub(crate) minimum_reviewers_per_case: u8,
+    pub(crate) group_weights_basis_points: BTreeMap<FrontierCaseGroup, u16>,
+    pub(crate) is_unanimous_eligibility_required: bool,
+    pub(crate) is_cross_tier_reuse_allowed: bool,
+    pub(crate) is_calibration_anchor_counted_toward_minimum: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct FrontierSuiteConstructionPlan {
+    pub(crate) version: u64,
+    pub(crate) artifact_roots: Vec<PathBuf>,
+    pub(crate) policy: FrontierSuiteConstructionPolicy,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FrontierSuiteProposalStatus {
@@ -419,6 +437,7 @@ pub(crate) struct FrontierSuiteProposal {
     pub(crate) version: u64,
     pub(crate) inventory_sha256: String,
     pub(crate) review_set_sha256: String,
+    pub(crate) policy: FrontierSuiteConstructionPolicy,
     pub(crate) proposed_tiers: BTreeMap<Tier, FrontierTierSuite>,
     pub(crate) calibration_anchors: Vec<FrontierCaseKey>,
     pub(crate) tier_capacity: BTreeMap<Tier, FrontierTierCapacity>,
@@ -1525,6 +1544,23 @@ pub(crate) enum CliCommand {
     PoolReplacement {
         run_id: PoolRunId,
         entrant_index: u8,
+    },
+    FrontierSuiteInventory {
+        plan_path: PathBuf,
+        output: PathBuf,
+    },
+    FrontierSuitePropose {
+        plan_path: PathBuf,
+        inventory_path: PathBuf,
+        review_set_path: PathBuf,
+        output: PathBuf,
+    },
+    FrontierSuiteCheck {
+        proposal_path: PathBuf,
+    },
+    FrontierSuiteApply {
+        proposal_path: PathBuf,
+        output: PathBuf,
     },
     FrontierPreview {
         plan_path: PathBuf,
