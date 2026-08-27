@@ -1,3 +1,4 @@
+// TODO(AGNT-0032.T145): Return explicit actions and reserve trial cost before dispatch.
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{

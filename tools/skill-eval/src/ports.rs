@@ -182,7 +182,6 @@ pub(crate) trait FrontierProgressSink {
     fn emit_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError>;
 }
 
-// TODO(AGNT-0032.T144): Implement durable frontier state, trial, inspection, and baseline ports.
 pub(crate) trait FrontierRuntime: QualificationRuntime {
     /// Loads and validates one frozen frontier plan and its reviewed suite.
     ///

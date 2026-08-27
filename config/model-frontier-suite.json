@@ -241,6 +241,240 @@
           "is_confirmation": true
         }
       ]
+    },
+    "t2": {
+      "group_weights_basis_points": {
+        "normal": 4000,
+        "edge": 2000,
+        "adversarial": 2000,
+        "critical": 2000
+      },
+      "cases": [
+        {
+          "artifact_path": "skills/footprint",
+          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/footprint",
+          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
+          "case": "c2",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/footprint",
+          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
+          "case": "c3",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/footprint",
+          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
+          "case": "c5",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s2",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s4",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s5",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s7",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t4",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t7",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t9",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c1-branch-mismatch",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c3-clean-ahead",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c5-auth-failure",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g3",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "a2-sprawl-audit",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "a3-verified-archive",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "a4-rebuild-from-spec",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "a5-cutover-dry-gate",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g2",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g5",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g8",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g9",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/footprint",
+          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
+          "case": "c6",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s6",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t6",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t8",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c6-full-workspace-diff",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "h1-mcp-audit",
+          "group": "critical",
+          "is_confirmation": true
+        }
+      ]
     }
   }
 }
