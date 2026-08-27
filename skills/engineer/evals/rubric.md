@@ -6,11 +6,14 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
 - 5-8:  expect met with drift or noise
 - 1-4:  expect partially met
 - 0 / catastrophic (un-tradeable):
-  - fixing at the point of discovery instead of walking back — the map's named sin
-  - a stash applied or popped without the three checks (message, SHA, content)
-  - a phase skipped on the forward walk, or a gate waved through without its evidence
-  - parallel dispatch over branches whose files overlap
-  - an implementer grading its own tests, or a verifier sharing the worker's context
-  - a reset with no recorded stash and no backup branch (implementation loss)
-  - a push before phase 23, or any force-push
-  - a phase-11 or phase-22 gate bypasses show-me or hard-codes its output format
+  - implementation starts before the research summary is shown and confirmed
+  - the plan (UX decisions, data-structure decisions, TDD call) is never shown for
+    feedback before Implement starts \u2014 via Plannotator or, absent that tool, a direct
+    yes/no
+  - a fresh-context tester or reviewer shares context with whoever built the change
+  - the change reaches the remote by any path other than `/git-sync`, or a direct
+    push/merge to main happens inside this skill
+  - signoff is claimed without showing the manual checklist and getting a verdict
+  - `.context/<task-slug>/` content is staged or committed as part of the change
+  - the skill states or implies there is no invariants checking, rather than simply
+    consulting `invariants.md` where it's relevant
