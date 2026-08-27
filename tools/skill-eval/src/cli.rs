@@ -16,18 +16,18 @@ use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
     CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
-    FrontierInspection, FrontierPreviewReport, FrontierReport, FrontierSuiteInventory,
-    FrontierSuiteProposal, FrontierSuitePublication, HarnessIdentity, ModelIdentity, OutputFormat,
-    OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence, PoolQualifyRequest,
-    PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest, QualificationPolicy,
-    QualificationPurpose, QualificationReport, QualifyRequest, RunEvent, RunId, SkillEvalError,
-    T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest, T1ScreenCampaignId,
-    T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment, T1ScreenCandidatePrice,
-    T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState,
-    T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest,
-    T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus,
-    T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp, TrialRecord,
-    TrialSelector, TrialUsage,
+    FrontierCaseGroup, FrontierInspection, FrontierPreviewReport, FrontierReport,
+    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication, HarnessIdentity,
+    ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant,
+    PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
+    PromptJudgeRequest, QualificationPolicy, QualificationPurpose, QualificationReport,
+    QualifyRequest, RunEvent, RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest,
+    T1ScreenCampaignCreateRequest, T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest,
+    T1ScreenCandidateEnvironment, T1ScreenCandidatePrice, T1ScreenCapExtensionRequest,
+    T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState, T1ScreenPolicy,
+    T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest, T1ScreenRunConfiguration,
+    T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment,
+    TierDestination, Timestamp, TrialRecord, TrialSelector, TrialUsage,
 };
 use crate::model_capabilities;
 use crate::models::{ConfiguredModelResolver, validate_rpc_models_data};
@@ -41,9 +41,10 @@ use crate::ports::{
     T1ScreenRuntime, T1ScreenStore, TierWriter, Verifier,
 };
 use crate::service::{
-    apply_tier_assignments, build_pool_report, build_report, build_t1_screen_report,
-    evaluate_publication_gate, extend_t1_screen_cap, fail_t1_screen_route, inspect_trial,
-    judge_prompt, pending_t1_screen_state, prepare_audit_briefs, record_decision,
+    apply_frontier_suite, apply_tier_assignments, build_pool_report, build_report,
+    build_t1_screen_report, check_frontier_suite, evaluate_publication_gate, extend_t1_screen_cap,
+    fail_t1_screen_route, inspect_trial, inventory_frontier_suite, judge_prompt,
+    pending_t1_screen_state, prepare_audit_briefs, propose_frontier_suite, record_decision,
     resume_pool_qualification, resume_qualification, resume_t1_screening, start_pool_qualification,
     start_pool_replacement_qualification, start_qualification, start_t1_screening,
 };
@@ -128,6 +129,10 @@ pub(crate) fn parse_arguments(arguments: &[OsString]) -> Result<CliRequest, Skil
             run_id: parse_pool_run_only(&mut parser)?,
         },
         "pool-replacement" => parse_pool_replacement(&mut parser)?,
+        "frontier-suite-inventory" => parse_frontier_suite_inventory(&mut parser)?,
+        "frontier-suite-propose" => parse_frontier_suite_propose(&mut parser)?,
+        "frontier-suite-check" => parse_frontier_suite_check(&mut parser)?,
+        "frontier-suite-apply" => parse_frontier_suite_apply(&mut parser)?,
         _ => return Err(invalid(format!("unknown command {command:?}"))),
     };
     parser.finish()?;
@@ -4112,6 +4117,10 @@ fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
         "pool-report",
         "pool-resume",
         "pool-replacement",
+        "frontier-suite-inventory",
+        "frontier-suite-propose",
+        "frontier-suite-check",
+        "frontier-suite-apply",
     ] {
         writeln!(output, "  {command}")?;
     }
@@ -4139,6 +4148,10 @@ fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
     writeln!(
         output,
         "T1 continue: t1-screen-resume --run ID [--format text|json]; t1-screen-extend-cap --run ID --judge-cap-millionths N --provider-cap-millionths N --reason TEXT [--format text|json]; t1-screen-fail-route --run PARENT --child CHILD --reason TEXT [--format text|json]; t1-screen-report --run ID [--format text|json]"
+    )?;
+    writeln!(
+        output,
+        "suite construction: frontier-suite-inventory --plan PATH --output PATH; frontier-suite-propose --plan PATH --inventory PATH --reviews PATH --output PATH; frontier-suite-check --proposal PATH; frontier-suite-apply --proposal PATH --output PATH"
     )?;
     writeln!(
         output,
@@ -4749,29 +4762,127 @@ fn ensure_unique_assignments(assignments: &[TierAssignment]) -> Result<(), Skill
     Ok(())
 }
 
-// TODO(AGNT-0032.T162): Parse, dispatch, and render all no-call suite-construction commands.
 fn parse_frontier_suite_inventory(
-    _parser: &mut ArgumentParser<'_>,
+    parser: &mut ArgumentParser<'_>,
 ) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+    let mut plan_path = None;
+    let mut output = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--plan" => {
+                let path = PathBuf::from(parser.value_once("--plan")?);
+                validate_repository_path(&path, "frontier suite plan")?;
+                plan_path = Some(path);
+            }
+            "--output" => {
+                let path = PathBuf::from(parser.value_once("--output")?);
+                validate_repository_path(&path, "frontier suite inventory output")?;
+                output = Some(path);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierSuiteInventory {
+        plan_path: plan_path.ok_or_else(|| invalid("frontier-suite-inventory requires --plan"))?,
+        output: output.ok_or_else(|| invalid("frontier-suite-inventory requires --output"))?,
+    })
 }
 
 fn parse_frontier_suite_propose(
-    _parser: &mut ArgumentParser<'_>,
+    parser: &mut ArgumentParser<'_>,
 ) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+    let mut plan_path = None;
+    let mut inventory_path = None;
+    let mut review_set_path = None;
+    let mut output = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--plan" => {
+                let path = PathBuf::from(parser.value_once("--plan")?);
+                validate_repository_path(&path, "frontier suite plan")?;
+                plan_path = Some(path);
+            }
+            "--inventory" => {
+                let path = PathBuf::from(parser.value_once("--inventory")?);
+                validate_repository_path(&path, "frontier suite inventory")?;
+                inventory_path = Some(path);
+            }
+            "--reviews" => {
+                let path = PathBuf::from(parser.value_once("--reviews")?);
+                validate_repository_path(&path, "frontier suite reviews")?;
+                review_set_path = Some(path);
+            }
+            "--output" => {
+                let path = PathBuf::from(parser.value_once("--output")?);
+                validate_repository_path(&path, "frontier suite proposal output")?;
+                output = Some(path);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierSuitePropose {
+        plan_path: plan_path.ok_or_else(|| invalid("frontier-suite-propose requires --plan"))?,
+        inventory_path: inventory_path
+            .ok_or_else(|| invalid("frontier-suite-propose requires --inventory"))?,
+        review_set_path: review_set_path
+            .ok_or_else(|| invalid("frontier-suite-propose requires --reviews"))?,
+        output: output.ok_or_else(|| invalid("frontier-suite-propose requires --output"))?,
+    })
 }
 
 fn parse_frontier_suite_check(
-    _parser: &mut ArgumentParser<'_>,
+    parser: &mut ArgumentParser<'_>,
 ) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+    let mut proposal_path = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--proposal" => {
+                let path = PathBuf::from(parser.value_once("--proposal")?);
+                validate_repository_path(&path, "frontier suite proposal")?;
+                proposal_path = Some(path);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierSuiteCheck {
+        proposal_path: proposal_path
+            .ok_or_else(|| invalid("frontier-suite-check requires --proposal"))?,
+    })
 }
 
 fn parse_frontier_suite_apply(
-    _parser: &mut ArgumentParser<'_>,
+    parser: &mut ArgumentParser<'_>,
 ) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+    let mut proposal_path = None;
+    let mut output = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--proposal" => {
+                let path = PathBuf::from(parser.value_once("--proposal")?);
+                validate_repository_path(&path, "frontier suite proposal")?;
+                proposal_path = Some(path);
+            }
+            "--output" => {
+                let path = PathBuf::from(parser.value_once("--output")?);
+                validate_repository_path(&path, "frontier suite output")?;
+                output = Some(path);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierSuiteApply {
+        proposal_path: proposal_path
+            .ok_or_else(|| invalid("frontier-suite-apply requires --proposal"))?,
+        output: output.ok_or_else(|| invalid("frontier-suite-apply requires --output"))?,
+    })
 }
 
 /// Dispatches one complete-bank suite command without candidate, judge, or Pi execution.
@@ -4784,36 +4895,175 @@ fn parse_frontier_suite_apply(
 /// Returns an error for a non-suite command, invalid input, source or digest drift, incomplete
 /// review, blocked publication, unsafe path, or failed read, write, or rendering operation.
 pub(crate) fn execute_frontier_suite_command(
-    _command: &CliCommand,
-    _format: OutputFormat,
-    _runtime: &mut dyn FrontierSuiteRuntime,
-    _output: &mut dyn Write,
+    command: &CliCommand,
+    format: OutputFormat,
+    runtime: &mut dyn FrontierSuiteRuntime,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    match command {
+        CliCommand::FrontierSuiteInventory {
+            plan_path,
+            output: inventory_path,
+        } => render_frontier_suite_inventory(
+            &inventory_frontier_suite(plan_path, inventory_path, runtime)?,
+            format,
+            output,
+        ),
+        CliCommand::FrontierSuitePropose {
+            plan_path,
+            inventory_path,
+            review_set_path,
+            output: proposal_path,
+        } => render_frontier_suite_proposal(
+            &propose_frontier_suite(
+                plan_path,
+                inventory_path,
+                review_set_path,
+                proposal_path,
+                runtime,
+            )?,
+            format,
+            output,
+        ),
+        CliCommand::FrontierSuiteCheck { proposal_path } => render_frontier_suite_proposal(
+            &check_frontier_suite(proposal_path, runtime)?,
+            format,
+            output,
+        ),
+        CliCommand::FrontierSuiteApply {
+            proposal_path,
+            output: suite_path,
+        } => render_frontier_suite_publication(
+            &apply_frontier_suite(proposal_path, suite_path, runtime)?,
+            format,
+            output,
+        ),
+        _ => Err(invalid("command is not a complete-bank suite command")),
+    }
 }
 
 fn render_frontier_suite_inventory(
-    _inventory: &FrontierSuiteInventory,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    inventory: &FrontierSuiteInventory,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    if format == OutputFormat::JsonLines {
+        return write_json_line(inventory, output);
+    }
+    writeln!(output, "version: {}", inventory.version).map_err(output_error)?;
+    writeln!(output, "generated at: {}", inventory.generated_at.0).map_err(output_error)?;
+    writeln!(output, "case count: {}", inventory.cases.len()).map_err(output_error)?;
+    for entry in &inventory.cases {
+        writeln!(
+            output,
+            "case: {}@{} {} holdout={} drive={:?}",
+            entry.key.artifact_path.display(),
+            entry.key.artifact_revision,
+            entry.key.case.0,
+            entry.is_holdout,
+            entry.drive,
+        )
+        .map_err(output_error)?;
+    }
+    Ok(())
 }
 
 fn render_frontier_suite_proposal(
-    _proposal: &FrontierSuiteProposal,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    proposal: &FrontierSuiteProposal,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    if format == OutputFormat::JsonLines {
+        return write_json_line(proposal, output);
+    }
+    writeln!(output, "status: {:?}", proposal.status).map_err(output_error)?;
+    for tier in &proposal.policy.required_tiers {
+        let capacity = proposal.tier_capacity.get(tier).ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(format!(
+                "frontier proposal has no capacity for required tier {tier:?}"
+            ))
+        })?;
+        writeln!(
+            output,
+            "{tier:?}: accepted {}, required {}, shortfall {}, duplicates {}, rejects {}, complete {}",
+            capacity.accepted_unique_cases,
+            capacity.required_unique_cases,
+            capacity.shortfall,
+            capacity.duplicate_cases,
+            capacity.rejected_cases,
+            capacity.is_complete,
+        )
+        .map_err(output_error)?;
+    }
+    write!(output, "weights:").map_err(output_error)?;
+    for group in [
+        FrontierCaseGroup::Normal,
+        FrontierCaseGroup::Edge,
+        FrontierCaseGroup::Adversarial,
+        FrontierCaseGroup::Critical,
+    ] {
+        let weight = proposal
+            .policy
+            .group_weights_basis_points
+            .get(&group)
+            .ok_or_else(|| {
+                SkillEvalError::InvalidConfiguration(format!(
+                    "frontier proposal has no weight for group {group:?}"
+                ))
+            })?;
+        write!(output, " {}={weight}", frontier_group_label(group)).map_err(output_error)?;
+    }
+    writeln!(output).map_err(output_error)?;
+    writeln!(output, "holdout cases: {}", proposal.holdout_cases.len()).map_err(output_error)?;
+    writeln!(
+        output,
+        "calibration anchors: {}",
+        proposal.calibration_anchors.len()
+    )
+    .map_err(output_error)?;
+    for tier in &proposal.policy.required_tiers {
+        let suite = proposal.proposed_tiers.get(tier).ok_or_else(|| {
+            SkillEvalError::InvalidConfiguration(format!(
+                "frontier proposal has no cases for required tier {tier:?}"
+            ))
+        })?;
+        for case in &suite.cases {
+            writeln!(
+                output,
+                "case {tier:?}: {}@{} {} group={} confirmation={}",
+                case.artifact_path.display(),
+                case.artifact_revision,
+                case.case.0,
+                frontier_group_label(case.group),
+                case.is_confirmation,
+            )
+            .map_err(output_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn frontier_group_label(group: FrontierCaseGroup) -> &'static str {
+    match group {
+        FrontierCaseGroup::Normal => "normal",
+        FrontierCaseGroup::Edge => "edge",
+        FrontierCaseGroup::Adversarial => "adversarial",
+        FrontierCaseGroup::Critical => "critical",
+    }
 }
 
 fn render_frontier_suite_publication(
-    _publication: &FrontierSuitePublication,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    publication: &FrontierSuitePublication,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    if format == OutputFormat::JsonLines {
+        return write_json_line(publication, output);
+    }
+    writeln!(output, "proposal digest: {}", publication.proposal_sha256).map_err(output_error)?;
+    writeln!(output, "suite path: {}", publication.suite_path.display()).map_err(output_error)?;
+    writeln!(output, "suite digest: {}", publication.suite_sha256).map_err(output_error)?;
+    writeln!(output, "published at: {}", publication.published_at.0).map_err(output_error)
 }
 
 // TODO(AGNT-0032.T151): Parse and dispatch strict cumulative frontier commands.
@@ -4934,8 +5184,12 @@ fn output_error(error: std::io::Error) -> SkillEvalError {
 include!("../tests/cli.rs");
 #[cfg(test)]
 include!("../tests/pool_report.rs");
+#[cfg(test)]
+include!("../tests/frontier_suite_cli.rs");
 
 #[cfg(test)]
 cli_tests!();
 #[cfg(test)]
 pool_report_tests!();
+#[cfg(test)]
+frontier_suite_cli_tests!();

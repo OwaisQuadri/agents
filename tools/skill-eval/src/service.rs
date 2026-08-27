@@ -3,6 +3,9 @@ use std::path::{Component, Path};
 
 use sha2::{Digest, Sha256};
 
+#[path = "frontier_source.rs"]
+mod frontier_suite_source;
+
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
@@ -35,6 +38,10 @@ use crate::statistics::{
 };
 use crate::t1_screen_store::{
     candidate_environment_manifest_digest, t1_screen_effective_caps, validate_t1_screen_state,
+};
+use frontier_suite_source::{
+    build_frontier_suite_inventory, build_frontier_suite_proposal,
+    validate_frontier_suite_review_set,
 };
 
 /// Builds the immutable pending form of a stored T1 screen for the T117 resume contract.
@@ -6177,7 +6184,6 @@ pub(crate) fn find_boundary(
     crate::statistics::find_boundary(evidence, policy)
 }
 
-// TODO(AGNT-0032.T162): Order complete-bank inventory, proposal, checks, and ready publication.
 /// Inventories the complete executable case bank for offline review.
 ///
 /// The inputs are construction-plan and output paths plus a suite runtime. The output is the saved
@@ -6188,11 +6194,19 @@ pub(crate) fn find_boundary(
 /// Returns an error for invalid policy, unsafe paths, source drift, duplicate identity, missing
 /// fixture, unsupported drive, or failed atomic write.
 pub(crate) fn inventory_frontier_suite(
-    _plan_path: &Path,
-    _output_path: &Path,
-    _runtime: &mut dyn FrontierSuiteRuntime,
+    plan_path: &Path,
+    output_path: &Path,
+    runtime: &mut dyn FrontierSuiteRuntime,
 ) -> Result<FrontierSuiteInventory, SkillEvalError> {
-    unimplemented!()
+    let plan = runtime.load_frontier_suite_construction_plan(plan_path)?;
+    let artifacts = plan
+        .artifact_roots
+        .iter()
+        .map(|root| runtime.load(root))
+        .collect::<Result<Vec<_>, _>>()?;
+    let inventory = build_frontier_suite_inventory(&plan, &artifacts, &runtime.now())?;
+    runtime.save_frontier_suite_inventory(output_path, &inventory)?;
+    Ok(inventory)
 }
 
 /// Builds and saves one all-tier proposal from complete offline reviews.
@@ -6205,13 +6219,19 @@ pub(crate) fn inventory_frontier_suite(
 /// Returns an error for unsafe paths, digest or source drift, incomplete reviews, invalid policy,
 /// reviewer disagreement, cross-tier reuse, invalid weights, or failed atomic write.
 pub(crate) fn propose_frontier_suite(
-    _plan_path: &Path,
-    _inventory_path: &Path,
-    _review_set_path: &Path,
-    _output_path: &Path,
-    _runtime: &mut dyn FrontierSuiteRuntime,
+    plan_path: &Path,
+    inventory_path: &Path,
+    review_set_path: &Path,
+    output_path: &Path,
+    runtime: &mut dyn FrontierSuiteRuntime,
 ) -> Result<FrontierSuiteProposal, SkillEvalError> {
-    unimplemented!()
+    let plan = runtime.load_frontier_suite_construction_plan(plan_path)?;
+    let inventory = runtime.load_frontier_suite_inventory(inventory_path)?;
+    let reviews = runtime.load_frontier_suite_review_set(review_set_path)?;
+    validate_frontier_suite_review_set(&plan, &inventory, &reviews)?;
+    let proposal = build_frontier_suite_proposal(&plan, &inventory, &reviews)?;
+    runtime.save_frontier_suite_proposal(output_path, &proposal)?;
+    Ok(proposal)
 }
 
 /// Loads and revalidates one proposal for capacity reporting.
@@ -6224,10 +6244,10 @@ pub(crate) fn propose_frontier_suite(
 /// Returns an error for an unsafe path, malformed proposal, broken digest, stale source, invalid
 /// capacity arithmetic, or policy drift.
 pub(crate) fn check_frontier_suite(
-    _proposal_path: &Path,
-    _runtime: &dyn FrontierSuiteRuntime,
+    proposal_path: &Path,
+    runtime: &dyn FrontierSuiteRuntime,
 ) -> Result<FrontierSuiteProposal, SkillEvalError> {
-    unimplemented!()
+    runtime.load_frontier_suite_proposal(proposal_path)
 }
 
 /// Atomically publishes the complete suite from one ready proposal.
@@ -6240,11 +6260,13 @@ pub(crate) fn check_frontier_suite(
 /// Returns an error for a blocked or stale proposal, unsafe path, short tier, duplicate case,
 /// changed source, invalid weights, or failed atomic replacement.
 pub(crate) fn apply_frontier_suite(
-    _proposal_path: &Path,
-    _output_path: &Path,
-    _runtime: &mut dyn FrontierSuiteRuntime,
+    proposal_path: &Path,
+    output_path: &Path,
+    runtime: &mut dyn FrontierSuiteRuntime,
 ) -> Result<FrontierSuitePublication, SkillEvalError> {
-    unimplemented!()
+    let proposal = runtime.load_frontier_suite_proposal(proposal_path)?;
+    let published_at = runtime.now();
+    runtime.apply_frontier_suite_proposal(&proposal, output_path, &published_at)
 }
 
 // TODO(AGNT-0032.T146): Build the guarded no-call frontier preview.
