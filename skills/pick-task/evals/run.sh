@@ -1,5 +1,5 @@
 #!/bin/zsh
-# run.sh — engineer eval runner
+# run.sh — pick-task eval runner
 # usage: ./run.sh [candidate-skill.md]   (non-holdout slice; defaults to ../SKILL.md)
 #        ./run.sh --holdout [skill.md]   (held-out slice)
 set -euo pipefail
@@ -32,8 +32,8 @@ case_text = "\n\n".join(
     f"ID: {case['id']}\nSITUATION: {case['input']}\nEXPECT: {case['expect']}" for case in cases
 )
 prompt = f"""Grade these eval cases for a skill. For each case, produce the PLAN the skill
-would follow (which step it starts at, what it dispatches, what gates it stops for,
-what it hands off versus does itself), then grade that plan against EXPECT per the
+would follow (the question(s) it would ask first, the candidates it would surface, any
+backend check, the final pick and why), then grade that plan against EXPECT per the
 rubric. Reply with only a JSON array, one object per case in the given order:
 [{{"id": "<id>", "score": <integer 0-10>, "failure_mode": "<short tag>" or null}}]
 

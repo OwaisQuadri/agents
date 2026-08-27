@@ -88,6 +88,27 @@ while IFS= read -r line; do
         emit "$id" 0 '"silent-partial"'
       fi
       ;;
+    c6)
+      if has "codebase_dispatches" && has "'Explore'" && has "Promise.all"; then
+        emit "$id" 5 null
+      else
+        emit "$id" 0 '"codebase-fanout-missing"'
+      fi
+      ;;
+    c7)
+      if has "INCLUDE_CODEBASE" && has "includeCodebase"; then
+        emit "$id" 5 null
+      else
+        emit "$id" 0 '"codebase-flag-missing"'
+      fi
+      ;;
+    c8)
+      if has "never invent a codebase angle"; then
+        emit "$id" 5 null
+      else
+        emit "$id" 1 '"plan-node-hardcoded-codebase-rule"'
+      fi
+      ;;
     *)
       emit "$id" 1 '"unknown-case"'
       ;;

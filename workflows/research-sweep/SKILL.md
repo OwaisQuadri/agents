@@ -1,14 +1,15 @@
 ---
 name: research-sweep
-description: Use to answer one research question by fanning out fresh-context web-research-summarizer dispatches over distinct angles, gap-checking with an independent critic, and filling what it finds missing — returns cited findings blocks plus a fan-in count; the caller synthesizes. Skip for a single-fact lookup the caller settles in a few tool calls, for repository or codebase questions (built-in Explore owns those), and when the caller already knows the exact angles and needs only one researcher (dispatch the agent directly).
+description: Use to answer one research question by fanning out fresh-context web (academic, news, design/UX(user experience)) and codebase dispatches over distinct angles, gap-checking with an independent critic, and filling what it finds missing — returns cited findings blocks plus a fan-in count; the caller synthesizes. This is the one research artifact engineer and ideate call. Skip for a single-fact lookup the caller settles in a few tool calls, and when the caller already knows the exact angles and needs only one researcher (dispatch the agent or Explore directly).
 ---
 
 # research-sweep
 
-The sweep topology over the [[web-research-summarizer]] agent. The agent is the node;
-this is the graph. Proven on the 2026-07-31 mobile-testing-tool sweep, where the
-critic caught a live contradiction between two researchers (Maestro physical-iOS
-support) and three gap-fill dispatches resolved it.
+The sweep topology over the [[web-research-summarizer]] agent and, since 2026-08-27,
+the built-in Explore agent for codebase angles. The agent is the node; this is the
+graph. Proven on the 2026-07-31 mobile-testing-tool sweep, where the critic caught a
+live contradiction between two researchers (Maestro physical-iOS support) and three
+gap-fill dispatches resolved it.
 
 ## GRAPH SPEC
 
@@ -17,16 +18,19 @@ workflow
 
 GOAL:     answer one research question with per-claim-cited findings blocks the
           caller can act on without opening the sources
-FAN OUT:  a plan node turns the goal into 3-6 self-contained dispatches, then one
-          web-research-summarizer per dispatch, all in parallel
+FAN OUT:  a plan node turns the goal into 3-6 self-contained web dispatches (angles
+          span web/academic/news/design-UX as the goal warrants) plus 0-2 codebase
+          dispatches when the goal touches this repo; web dispatches run on
+          web-research-summarizer, codebase dispatches run on Explore — one combined
+          parallel wave, no barrier between the two kinds
 MERGE:    plain code collects the findings blocks — no model, zero tokens
 VERIFY:   a fresh-context completeness critic reads the goal + blocks only, never a
-          researcher's transcript; each researcher's own contract anchors every claim
-          to a URL fetched that run
+          researcher's transcript; each web researcher's own contract anchors every
+          claim to a URL fetched that run
 LOOP:     one gap-fill round, at most 3 dispatches named by the critic, then stop
-RULE:     every claim line carries a source URL + date; stale sources flagged
-CAP:      6 planned + 3 fill researchers; 11 agents total counting the plan node
-          and the critic
+RULE:     every web claim line carries a source URL + date; stale sources flagged
+CAP:      6 planned web + 2 codebase + 3 fill researchers; 13 agents total counting
+          the plan node and the critic
 ON FAIL:  any dispatch that returns nothing is named in the report by label, never
           dropped silently; a dead critic is reported as coverage-unverified
 REPORT:   findings blocks + critic notes + expected vs returned counts + missing labels
@@ -41,13 +45,19 @@ Run via the Workflow tool:
 
 ```
 Workflow({ scriptPath: "<repo>/workflows/research-sweep/research-sweep.workflow.js",
-           args: { goal: "<the research question>", max_researchers: 6 } })
+           args: { goal: "<the research question>", max_researchers: 6,
+                    includeCodebase: true, max_codebase: 2 } })
 ```
 
 - `goal` — the research question, specific enough that "answered" is checkable.
   REQUIRED; a run without it returns `missing input: goal` and spawns nothing. A bare
   string as `args` is treated as the goal.
-- `max_researchers` — optional cap on planned dispatches, clamped to 6.
+- `max_researchers` — optional cap on planned WEB dispatches, clamped to 6.
+- `includeCodebase` — optional, defaults `true`. Set `false` for a purely external
+  question with nothing to check against this repo.
+- `max_codebase` — optional cap on planned codebase dispatches, clamped to 2. The plan
+  node still decides whether the goal needs any codebase angle at all — it returns an
+  empty `codebase_dispatches` array rather than inventing one a goal doesn't need.
 
 ## output contract
 
@@ -64,6 +74,18 @@ logging section; this workflow's own log line is separate and covers the sweep.
   dead researchers were wrapped into truthy blocks before the null-filter, so the fan-in
   guard could report a partial set as complete; results now stay null until counted, the
   plan node is guarded, and the never-binding total cap was dropped.
+- 2026-08-27, codebase fan-out added, during the `engineer` skill's debloat split. Old
+  engineer phases 02 (research) + 03 (ux-research) folded into one call to this workflow
+  for both engineer and the new `ideate` skill; the owner asked for one research artifact
+  spanning web/academic/news/design/UX and codebase angles rather than one skill doing
+  web research and a separate phase doing repo research by hand. The plan node now emits
+  a second `codebase_dispatches` array (0-2 items, routed to the built-in Explore agent)
+  alongside its existing web dispatches, run in the same wave — a real fan-out, not a
+  second barrier. The critic and fill round are unchanged; gap-fill stays web-only since
+  a codebase gap almost always surfaces as a missing web-side claim, not a missing repo
+  read. Named web angles (academic, news, design/UX) moved from implicit (the plan node
+  free-formed them) to an explicit prompt hint, per the owner's own phrasing of what this
+  artifact should cover.
 
 ## logging
 

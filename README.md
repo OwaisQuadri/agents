@@ -58,7 +58,9 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `skill-author` / `agent-author` / `workflow-author` | deep authoring craft per artifact type |
 | `agent-config-reset` | audit a sprawling agent setup and, gated on approval, reset it |
 | `create-pr` | commit, push, and open the pull request |
-| `engineer` | the exact 23-phase map for agent coding work: ticket to PR, every loop through one walk-back rule |
+| `engineer` | research → plan → implement → test → signoff → close for one picked task, gated at plan review and signoff, landed through `git-sync` |
+| `pick-task` | interactively grills you and lands on one task to work on, from an existing backend or a hand-off to `ideate` |
+| `ideate` | brainstorm and file new work: research, lateral reframing, grilling, then a human-gated filing step |
 | `hq` | front door over every project: gates-first digest, worktree-isolated dispatch, drill-down into any project agent; two-stage launchd heartbeat keeps quiet cycles at zero tokens |
 | `bro` | re-explains the last reply in plain words when it lost you; jargon goes, facts stay verbatim, no length cap |
 | `byline` | de-slops prose that ships under your name: commits, PR bodies, tickets, READMEs; facts stay verbatim |
@@ -83,7 +85,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 
 | workflow | job |
 | --- | --- |
-| `research-sweep` | answer one research question: fan out researchers over distinct angles, gap-check with an independent critic, fill what's missing |
+| `research-sweep` | answer one research question: fan out web (academic/news/design/UX) and codebase researchers over distinct angles, gap-check with an independent critic, fill what's missing |
 
 ## Herdr state
 

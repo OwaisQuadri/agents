@@ -18,7 +18,7 @@ skills/git-sync/evals/candidates/
 
 tools/*/target/
 
-.map/AGNT-*/
+.context/
 
 .install-test-home/
 

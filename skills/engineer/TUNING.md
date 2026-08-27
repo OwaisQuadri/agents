@@ -3,7 +3,50 @@
 The GEPA loop's inputs and outputs for this skill. `SKILL.md` never loads it. Open it when you
 tune the map, and not when you walk a ticket.
 
-## accepted mutations
+## 2026-08-27 — the debloat split
+
+The 23-phase map below (everything from "the phase index" through "HUMAN GATE E") is
+RETIRED. `phases/`, `invariants.md` (the skill's own generic seed list), and
+`inspiration-seed.md` are deleted from this directory. The owner's framing: the skill
+had grown too bloated to run day to day, and the walk-back machinery specifically
+"wasted the most time." Split into four artifacts through `/ai-author`:
+
+- `skills/pick-task/` — old phase 01's ticket selection, made interactive/grilled
+  instead of roadmap-read, and made standalone so it can run without engineer.
+- `skills/ideate/` — old phases 21-22 (roadmap/tickets), now combining the research
+  workflow, `lateral-syntactic-drift` reframing, and pick-task's grilling style.
+- `workflows/research-sweep/` — extended (not forked) to add a codebase-research fan-out
+  alongside its existing web fan-out; absorbs old phases 02 (research) + 03
+  (ux-research). See its own TUNING.md.
+- `skills/engineer/` (this file) — rewritten to six steps: Research → Plan → Implement
+  → Test → Signoff → Close, no walk-back, no state.json, no manifest/snapshot gate
+  protocol. `.map/<TICKET-ID>/` → `.context/<task-slug>/`, gitignored. Plan's gate
+  routes through `plannotator_submit_plan` when available — the same write/submit/
+  revise-on-denial loop this very split was planned and approved through — falling
+  back to a plain shown-plan-plus-yes gate otherwise. Data-structure and UX decisions
+  stay named human-attention points (owner: "still requiring human gates at the most
+  volatile parts") but live as sections of one plan file rather than separate
+  gate-letter protocols. Eval run, 2026-08-27: `evals/run.sh` (pi -p primary, codex
+  exec fallback) — non-holdout mean 10.00 over 6 cases, holdout e7 at 10. Zero
+  catastrophic. Implementation's mandatory DAG/task-graph pipeline (old
+  phases 08-12) is gone; `/task-graph` is repositioned as roadmap-graph tooling only,
+  invoked ad hoc from Implement for a task large enough to earn the coordination cost.
+  Invariants checking has no dedicated phase or mechanism anymore, but `invariants.md`
+  (moved to repo root) is still read during Plan — constraints apply the way they'd
+  apply for any competent engineer, not as a named absent phase.
+
+Shared repo-level state relocated out of `.map/`, which no longer exists: `roadmap.json`
+and `invariants.md` moved to the repo root (tracked); `inspiration.md` moved to
+`skills/ideate/` (tracked, ideate is its only consumer); `.map/ideation/*.md` was
+deleted rather than migrated (owner's call). `.gitignore` swapped `.map/AGNT-*/` for
+`.context/`.
+
+The 23-phase spine below is kept as historical record — it documents real, hard-won
+fixes (gate F, gate S, walk-forward consecutiveness, the phase-16 branch-namespace
+bug) that a future redesign facing the same failure modes should read before
+reinventing the same mistake. None of it is live.
+
+## accepted mutations (retired spine, kept for history)
 
 - 2026-08-20, the spine gained a `## routing` section. Owner's ask, with his routing research
   in hand (research/pi-harness-routing-research-fable-opus.md): integrate optimized model routing, and
