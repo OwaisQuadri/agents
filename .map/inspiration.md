@@ -14,3 +14,5 @@
 - magit (Emacs) status buffer: one keyboard-driven buffer where files are collapsible sections — TAB unfolds a file into its hunks in place, so the list survives while the patch is read; no view switch. Adopted for the Pi live-diff overlay at Gate UX on 2026-08-19 (AGNT-0015). https://magit.vc/manual/magit/Sections.html
 
 - Braintrust experiment comparison: align identical cases across model experiments, lead with improvement or regression, and keep score, cost, latency, errors, and per-case evidence available beneath the comparison. Adopted for the model qualification staircase at Gate UX on 2026-08-22 (AGNT-0032). https://www.braintrust.dev/docs/evaluate/compare-experiments
+
+- MLflow model evaluation and champion-challenger management: preserve comparable model runs, admit challengers against saved incumbents, and keep specialist capability evidence separate from the general rank. Adopted for the bottom-up model challenger contract at Gate UX on 2026-08-27 (AGNT-0032). https://mlflow.org/docs/latest/ml/evaluation/
