@@ -1,3 +1,4 @@
+onboarding = false
 [keys]
 # new_worktree keeps its default prefix+shift+g
 focus_agent = "ctrl+1..9"
@@ -18,4 +19,8 @@ show_agent_labels_on_pane_borders = true
 agent_panel_sort = "priority"
 
 [ui.sound]
-enabled = false
+enabled = true
+
+[theme]
+name = "one-dark"
+auto_switch = false
