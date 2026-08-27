@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "analyzed_at": "2026-08-27T05:39:42-0400",
+  "suite_sha256": "90bb74ba24a332c949db6e75d1568487a47274ea0dcd8461aa512d6fc15f90fb",
+  "policy": {
+    "tiers": 5,
+    "minimum_unique_cases_per_tier": 30,
+    "is_cross_tier_reuse_counted_toward_minimum": false,
+    "is_response_only_case_eligible_above_t3": false
+  },
+  "accepted_lower_tiers": {
+    "t1_cases": 33,
+    "t1_semantic_sha256": "65e3b3ca9cb0e4db5c062fe978d97f03d20c12ca4385f32e273939c3687f846d",
+    "t2_cases": 32,
+    "t2_semantic_sha256": "6ea59bf8c70f082d1cc8a40ef04c730c0c2d014085bf380f3f58662455c4fbcb",
+    "t3_cases": 32,
+    "t3_semantic_sha256": "be5e89c62a64fffad578ab2941ee4619a7e64281ab4f5e089682d0cdf3adcb92"
+  },
+  "capacity": {
+    "non_lower_executable_candidates": 90,
+    "honest_unique_above_t3_cases": 8,
+    "required_t4_cases": 30,
+    "t4_shortfall": 22,
+    "rejected_non_lower_cases": 82,
+    "current_t4_entries": 30,
+    "current_t4_exact_t2_duplicates": 16,
+    "current_t4_structurally_unique_entries": 14
+  },
+  "honest_unique_above_t3_cases": [
+    "agents/code-reviewer:c1",
+    "agents/spec-tester:s5",
+    "agents/spec-tester:s7",
+    "skills/git-sync:g1",
+    "skills/git-sync:g6",
+    "skills/git-sync:g7",
+    "skills/git-sync:g10",
+    "skills/rust-style:c2"
+  ],
+  "current_t4_exact_t2_duplicates": [
+    "skills/agent-config-reset:a2-sprawl-audit",
+    "skills/agent-config-reset:a3-verified-archive",
+    "skills/agent-config-reset:a4-rebuild-from-spec",
+    "skills/agent-config-reset:a5-cutover-dry-gate",
+    "skills/agent-config-reset:h1-mcp-audit",
+    "skills/footprint:c1",
+    "skills/footprint:c2",
+    "skills/footprint:c3",
+    "skills/footprint:c5",
+    "skills/footprint:c6",
+    "skills/git-sync:g2",
+    "skills/git-sync:g3",
+    "skills/git-sync:g5",
+    "skills/git-sync:g8",
+    "skills/git-sync:g9",
+    "skills/simplify:s7"
+  ],
+  "classification": {
+    "accepted": "Executable evidence above T3 through adversarial security or state testing, destructive-operation proof, broad publication recovery, or unsafe-code review.",
+    "rejected": "Exact lower-tier duplicate, response-only, routing-only, missing-input, prose-only, blocked, or at most T3 difficulty.",
+    "verdict": "blocked"
+  },
+  "execution": {
+    "is_candidate_called": false,
+    "is_judge_called": false,
+    "is_model_called": false,
+    "is_real_pi_called": false,
+    "is_network_called": false,
+    "source_loader_mode": "dry_run",
+    "source_loader_runs_root": "/tmp/agnt-0032-t140-suite.wA8xMc/runs"
+  }
+}
