@@ -2,7 +2,10 @@
 
 mod audit;
 mod cli;
-// TODO(AGNT-0032.T136): Register the cumulative frontier modules.
+mod frontier_report;
+mod frontier_scheduler;
+mod frontier_source;
+mod frontier_store;
 mod judge;
 mod model;
 mod model_capabilities;

@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "tiers": {
+    "t1": {
+      "group_weights_basis_points": {
+        "normal": 4000,
+        "edge": 2000,
+        "adversarial": 2000,
+        "critical": 2000
+      },
+      "cases": [
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b2",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b3",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b4",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b5",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b6",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r2",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r4",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r5",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b7",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b8",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r3",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r6",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r7",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r8",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m5",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b9",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b10",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r9",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m4",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m6",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m7",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/log-summarizer",
+          "artifact_revision": "fnv1a64:900405c744ed4933",
+          "case": "c2",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/log-summarizer",
+          "artifact_revision": "fnv1a64:900405c744ed4933",
+          "case": "c3",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b11",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/byline",
+          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
+          "case": "b14",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r10",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/bro",
+          "artifact_revision": "fnv1a64:499d068b54482315",
+          "case": "r13",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m11",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/mouthpiece",
+          "artifact_revision": "fnv1a64:f038ee57534fe901",
+          "case": "m23",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/log-summarizer",
+          "artifact_revision": "fnv1a64:900405c744ed4933",
+          "case": "c6",
+          "group": "critical",
+          "is_confirmation": true
+        }
+      ]
+    }
+  }
+}

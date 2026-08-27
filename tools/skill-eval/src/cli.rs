@@ -997,6 +997,7 @@ fn parse_judge(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalE
     })
 }
 
+// TODO(AGNT-0032.T136): Add side-effect-free arms for all seven frontier commands.
 pub(crate) fn execute_command(
     request: CliRequest,
     runtime: &mut dyn PoolRuntime,

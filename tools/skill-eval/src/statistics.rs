@@ -2,11 +2,12 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, FrontierCellEvidence, FrontierEntrant,
-    FrontierModelProgress, FrontierModelReport, FrontierPolicy, FrontierPoolMembership,
-    FrontierTierSuite, ModelIdentity, PoolEntrant, PoolEntrantEvidence, PoolPolicy, PoolStage,
-    QualificationBoundary, QualificationPolicy, RankedPool, SkillEvalError, ThinkingDecision, Tier,
-    TierEvidence, TierStatus, TrialRecord, TrialUsage,
+    CaseId, CheckStatus, ConfidenceInterval, EvidenceRole, FrontierCaseGroup, FrontierCellEvidence,
+    FrontierCellStatus, FrontierEntrant, FrontierModelProgress, FrontierModelReport,
+    FrontierPolicy, FrontierPoolMembership, FrontierScore, FrontierTierSuite, ModelIdentity,
+    PoolEntrant, PoolEntrantEvidence, PoolPolicy, PoolStage, QualificationBoundary,
+    QualificationPolicy, RankedPool, SkillEvalError, ThinkingDecision, Tier, TierEvidence,
+    TierStatus, TrialRecord, TrialUsage,
 };
 
 pub(crate) fn evaluate_calibration(
@@ -1390,7 +1391,7 @@ fn invalid(message: &str) -> SkillEvalError {
     SkillEvalError::InvalidConfiguration(message.to_string())
 }
 
-// TODO(AGNT-0032.T143): Evaluate cells, advance models, and rank active pools.
+// TODO(AGNT-0032.T143): Reverify the implemented frontier statistics after D-144 closes.
 /// Evaluates one exact model-tier-thinking cell under the frozen frontier policy.
 ///
 /// The inputs are one tier suite, exact model, trial records, and policy. The output is cell evidence.
@@ -1399,12 +1400,378 @@ fn invalid(message: &str) -> SkillEvalError {
 ///
 /// Returns an error for incomplete groups, invalid trials, critical failure, or statistical overflow.
 pub(crate) fn evaluate_frontier_cell(
-    _suite: &FrontierTierSuite,
-    _model: &ModelIdentity,
-    _trials: &[TrialRecord],
-    _policy: &FrontierPolicy,
+    suite: &FrontierTierSuite,
+    model: &ModelIdentity,
+    trials: &[TrialRecord],
+    policy: &FrontierPolicy,
 ) -> Result<FrontierCellEvidence, SkillEvalError> {
-    unimplemented!()
+    validate_frontier_policy(policy)?;
+    let groups = [
+        FrontierCaseGroup::Normal,
+        FrontierCaseGroup::Edge,
+        FrontierCaseGroup::Adversarial,
+        FrontierCaseGroup::Critical,
+    ];
+    if suite.group_weights_basis_points.len() != groups.len()
+        || groups.iter().any(|group| {
+            suite
+                .group_weights_basis_points
+                .get(group)
+                .is_none_or(|weight| *weight == 0)
+        })
+    {
+        return Err(invalid(
+            "frontier suite must assign every case group a weight",
+        ));
+    }
+    let weight_total = suite
+        .group_weights_basis_points
+        .values()
+        .try_fold(0_u16, |total, weight| total.checked_add(*weight))
+        .ok_or_else(|| invalid("frontier group weight overflow"))?;
+    if weight_total != 10_000 {
+        return Err(invalid(
+            "frontier group weights must total 10000 basis points",
+        ));
+    }
+
+    let mut expected = BTreeMap::new();
+    let mut group_case_counts = BTreeMap::new();
+    for case in &suite.cases {
+        let artifact = case
+            .artifact_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| invalid("frontier artifact path has no valid name"))?
+            .to_string();
+        let key = (artifact, case.case.clone());
+        if expected.insert(key, case).is_some() {
+            return Err(invalid("frontier suite contains a duplicate case"));
+        }
+        let count = group_case_counts.entry(case.group).or_insert(0_u32);
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| invalid("frontier group case count overflow"))?;
+    }
+    if suite.cases.is_empty()
+        || groups
+            .iter()
+            .any(|group| !group_case_counts.contains_key(group))
+    {
+        return Err(invalid("frontier suite is missing a case group"));
+    }
+    let first = trials
+        .first()
+        .ok_or_else(|| invalid("frontier trial set is empty"))?;
+    let route_index = first.key.route_index;
+    let judge = &first.judge_model;
+    if first.model != *model || is_same_model(judge, model) {
+        return Err(invalid(
+            "frontier trial identity does not match the requested route",
+        ));
+    }
+
+    let mut attempts_by_case = expected
+        .keys()
+        .cloned()
+        .map(|key| (key, BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    let mut harness_by_case = BTreeMap::new();
+    let mut outcomes = BTreeMap::<FrontierCaseGroup, BTreeMap<(String, CaseId), Vec<bool>>>::new();
+    let mut total_usage = empty_usage();
+    let mut failed_trials = 0_u32;
+    for trial in trials {
+        if trial.model != *model
+            || trial.key.tier != model.tier
+            || trial.key.route_index != route_index
+            || trial.judge_model != *judge
+            || is_same_model(&trial.judge_model, model)
+        {
+            return Err(invalid("frontier trial set has identity drift"));
+        }
+        if trial.verdict.score > 10 {
+            return Err(invalid("frontier trial score is outside 0 through 10"));
+        }
+        let key = (trial.key.artifact.0.clone(), trial.key.case.clone());
+        let case = expected
+            .get(&key)
+            .ok_or_else(|| invalid("frontier trial set contains a foreign case"))?;
+        if trial.harness.artifact_revision != case.artifact_revision {
+            return Err(invalid("frontier trial artifact revision drifted"));
+        }
+        let attempts = attempts_by_case
+            .get_mut(&key)
+            .ok_or_else(|| invalid("frontier trial set contains a foreign case"))?;
+        if !attempts.insert(trial.key.attempt) {
+            return Err(invalid("frontier trial set contains a duplicate attempt"));
+        }
+        match harness_by_case.entry(key.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(trial.harness.clone());
+            }
+            std::collections::btree_map::Entry::Occupied(entry)
+                if entry.get() != &trial.harness =>
+            {
+                return Err(invalid("frontier case harness identity drifted"));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+        if trial.harness.runner_version != first.harness.runner_version
+            || trial.harness.pi_version != first.harness.pi_version
+        {
+            return Err(invalid("frontier common harness identity drifted"));
+        }
+        add_usage(&mut total_usage, &trial.candidate_usage)?;
+        add_usage(&mut total_usage, &trial.judge_usage)?;
+        let is_failed_check = trial
+            .verdict
+            .checks
+            .iter()
+            .any(|check| check.status == CheckStatus::Failed);
+        let is_passing = trial.verdict.score >= policy.minimum_trial_score
+            && !trial.verdict.is_catastrophic
+            && !is_failed_check;
+        if !is_passing {
+            failed_trials = failed_trials
+                .checked_add(1)
+                .ok_or_else(|| invalid("frontier failed trial count overflow"))?;
+        }
+        outcomes
+            .entry(case.group)
+            .or_default()
+            .entry(key)
+            .or_default()
+            .push(is_passing);
+    }
+
+    let attempts_per_case = attempts_by_case
+        .values()
+        .next()
+        .map(BTreeSet::len)
+        .ok_or_else(|| invalid("frontier suite is empty"))?;
+    if ![1, 3, 5].contains(&attempts_per_case) {
+        return Err(invalid(
+            "frontier trials must use exactly 1, 3, or 5 attempts per case",
+        ));
+    }
+    let required_attempts = (1..=u16::try_from(attempts_per_case)
+        .map_err(|_| invalid("frontier attempt count overflow"))?)
+        .collect::<BTreeSet<_>>();
+    if attempts_by_case
+        .values()
+        .any(|attempts| attempts != &required_attempts)
+    {
+        return Err(invalid(
+            "frontier trial attempts are incomplete or malformed",
+        ));
+    }
+    let expected_trials = u32::try_from(suite.cases.len())
+        .ok()
+        .and_then(|count| count.checked_mul(u32::try_from(attempts_per_case).ok()?))
+        .ok_or_else(|| invalid("frontier expected trial count overflow"))?;
+    let completed_trials = u32::try_from(trials.len())
+        .map_err(|_| invalid("frontier completed trial count overflow"))?;
+    if completed_trials != expected_trials {
+        return Err(invalid("frontier trial set is incomplete"));
+    }
+
+    let weighted_pass_basis_points = frontier_weighted_rate(&outcomes, suite)?;
+    let lower_bound_basis_points = frontier_bootstrap_lower_bound(&outcomes, suite, model, policy)?;
+    let critical = outcomes
+        .get(&FrontierCaseGroup::Critical)
+        .ok_or_else(|| invalid("frontier trial set is missing the critical group"))?;
+    let critical_expected_trials = critical.values().try_fold(0_u32, |total, values| {
+        let count = u32::try_from(values.len())
+            .map_err(|_| invalid("frontier critical trial count overflow"))?;
+        total
+            .checked_add(count)
+            .ok_or_else(|| invalid("frontier critical trial count overflow"))
+    })?;
+    let critical_passed_trials = critical.values().try_fold(0_u32, |total, values| {
+        let count = u32::try_from(values.iter().filter(|is_passing| **is_passing).count())
+            .map_err(|_| invalid("frontier critical pass count overflow"))?;
+        total
+            .checked_add(count)
+            .ok_or_else(|| invalid("frontier critical pass count overflow"))
+    })?;
+    let is_group_coverage_complete = groups.iter().all(|group| outcomes.contains_key(group));
+    let score = FrontierScore {
+        weighted_pass_basis_points,
+        lower_bound_basis_points,
+        critical_passed_trials,
+        critical_expected_trials,
+        is_group_coverage_complete,
+    };
+    let is_estimate_passing = weighted_pass_basis_points
+        >= policy.minimum_weighted_pass_basis_points
+        && critical_passed_trials == critical_expected_trials
+        && is_group_coverage_complete;
+    let status = if !is_estimate_passing {
+        FrontierCellStatus::Failed
+    } else if lower_bound_basis_points >= policy.minimum_lower_bound_basis_points {
+        FrontierCellStatus::Passed
+    } else if attempts_per_case < usize::from(policy.maximum_trials_per_case) {
+        FrontierCellStatus::Pending
+    } else {
+        FrontierCellStatus::Indeterminate
+    };
+
+    Ok(FrontierCellEvidence {
+        model: model.clone(),
+        status,
+        completed_trials,
+        expected_trials,
+        failed_trials,
+        score: Some(score),
+        total_usage,
+    })
+}
+
+fn validate_frontier_policy(policy: &FrontierPolicy) -> Result<(), SkillEvalError> {
+    if policy.screening_trials_per_case != 1
+        || policy.confirmation_trials_per_case != 3
+        || policy.maximum_trials_per_case != 5
+        || policy.minimum_trial_score > 10
+        || policy.minimum_weighted_pass_basis_points != 8_500
+        || policy.minimum_lower_bound_basis_points != 8_000
+        || policy.confidence_level_basis_points != 9_500
+        || policy.confidence_resamples == 0
+    {
+        return Err(invalid("frontier policy has invalid statistical values"));
+    }
+    Ok(())
+}
+
+fn frontier_weighted_rate(
+    outcomes: &BTreeMap<FrontierCaseGroup, BTreeMap<(String, CaseId), Vec<bool>>>,
+    suite: &FrontierTierSuite,
+) -> Result<u16, SkillEvalError> {
+    let mut weighted = 0.0;
+    for (group, cases) in outcomes {
+        let expected = cases.values().try_fold(0_u32, |total, values| {
+            let count = u32::try_from(values.len())
+                .map_err(|_| invalid("frontier group trial count overflow"))?;
+            total
+                .checked_add(count)
+                .ok_or_else(|| invalid("frontier group trial count overflow"))
+        })?;
+        if expected == 0 {
+            return Err(invalid("frontier group has no trials"));
+        }
+        let passed = cases.values().try_fold(0_u32, |total, values| {
+            let count = u32::try_from(values.iter().filter(|is_passing| **is_passing).count())
+                .map_err(|_| invalid("frontier group pass count overflow"))?;
+            total
+                .checked_add(count)
+                .ok_or_else(|| invalid("frontier group pass count overflow"))
+        })?;
+        let weight = suite
+            .group_weights_basis_points
+            .get(group)
+            .ok_or_else(|| invalid("frontier group weight is missing"))?;
+        weighted += f64::from(*weight) * f64::from(passed) / f64::from(expected);
+    }
+    if !weighted.is_finite() || !(0.0..=10_000.0).contains(&weighted) {
+        return Err(invalid("frontier weighted score is invalid"));
+    }
+    u16::try_from(weighted.round() as u64).map_err(|_| invalid("frontier weighted score overflow"))
+}
+
+fn frontier_bootstrap_lower_bound(
+    outcomes: &BTreeMap<FrontierCaseGroup, BTreeMap<(String, CaseId), Vec<bool>>>,
+    suite: &FrontierTierSuite,
+    model: &ModelIdentity,
+    policy: &FrontierPolicy,
+) -> Result<u16, SkillEvalError> {
+    let resamples = usize::try_from(policy.confidence_resamples)
+        .map_err(|_| invalid("frontier bootstrap resample count overflow"))?;
+    let mut seed = 14_695_981_039_346_656_037_u64;
+    for value in [
+        model.provider.as_bytes(),
+        model.model.as_bytes(),
+        model.thinking.as_bytes(),
+    ] {
+        frontier_seed_bytes(&mut seed, value);
+    }
+    frontier_seed_bytes(&mut seed, &[model.tier as u8]);
+    for (group, cases) in outcomes {
+        frontier_seed_bytes(&mut seed, &[*group as u8]);
+        for ((artifact, case), values) in cases {
+            frontier_seed_bytes(&mut seed, artifact.as_bytes());
+            frontier_seed_bytes(&mut seed, case.0.as_bytes());
+            for is_passing in values {
+                frontier_seed_bytes(&mut seed, &[u8::from(*is_passing)]);
+            }
+        }
+    }
+    let mut sampled_rates = Vec::with_capacity(resamples);
+    for _ in 0..resamples {
+        let mut weighted = 0.0;
+        for (group, cases) in outcomes {
+            if cases.is_empty() {
+                return Err(invalid("frontier bootstrap group is empty"));
+            }
+            let case_values = cases.values().collect::<Vec<_>>();
+            let mut passed = 0_u32;
+            let mut expected = 0_u32;
+            for _ in 0..case_values.len() {
+                let index = usize::try_from(frontier_random(&mut seed))
+                    .map_err(|_| invalid("frontier bootstrap index overflow"))?
+                    % case_values.len();
+                for is_passing in case_values[index] {
+                    expected = expected
+                        .checked_add(1)
+                        .ok_or_else(|| invalid("frontier bootstrap trial count overflow"))?;
+                    passed = passed
+                        .checked_add(u32::from(*is_passing))
+                        .ok_or_else(|| invalid("frontier bootstrap pass count overflow"))?;
+                }
+            }
+            let weight = suite
+                .group_weights_basis_points
+                .get(group)
+                .ok_or_else(|| invalid("frontier bootstrap group weight is missing"))?;
+            weighted += f64::from(*weight) * f64::from(passed) / f64::from(expected);
+        }
+        if !weighted.is_finite() || !(0.0..=10_000.0).contains(&weighted) {
+            return Err(invalid("frontier bootstrap produced an invalid score"));
+        }
+        sampled_rates.push(
+            u16::try_from(weighted.round() as u64)
+                .map_err(|_| invalid("frontier bootstrap score overflow"))?,
+        );
+    }
+    sampled_rates.sort_unstable();
+    let tail_basis_points = 10_000_u32
+        .checked_sub(u32::from(policy.confidence_level_basis_points))
+        .ok_or_else(|| invalid("frontier confidence level is invalid"))?;
+    let index = u64::from(policy.confidence_resamples)
+        .checked_mul(u64::from(tail_basis_points))
+        .ok_or_else(|| invalid("frontier bootstrap percentile overflow"))?
+        .checked_div(10_000)
+        .ok_or_else(|| invalid("frontier bootstrap percentile is invalid"))?;
+    let index = usize::try_from(index)
+        .map_err(|_| invalid("frontier bootstrap percentile index overflow"))?
+        .min(sampled_rates.len() - 1);
+    sampled_rates
+        .get(index)
+        .copied()
+        .ok_or_else(|| invalid("frontier bootstrap produced no samples"))
+}
+
+fn frontier_seed_bytes(seed: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *seed ^= u64::from(*byte);
+        *seed = seed.wrapping_mul(1_099_511_628_211);
+    }
+}
+
+fn frontier_random(state: &mut u64) -> u64 {
+    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    let mut value = *state;
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
 }
 
 /// Selects the next tier and thinking level for one frontier model.
@@ -1415,11 +1782,187 @@ pub(crate) fn evaluate_frontier_cell(
 ///
 /// Returns an error for identity drift, nonmonotonic progress, missing evidence, or invalid level order.
 pub(crate) fn advance_frontier_model(
-    _entrant: &FrontierEntrant,
-    _progress: &FrontierModelProgress,
-    _cells: &[FrontierCellEvidence],
+    entrant: &FrontierEntrant,
+    progress: &FrontierModelProgress,
+    cells: &[FrontierCellEvidence],
 ) -> Result<FrontierModelProgress, SkillEvalError> {
-    unimplemented!()
+    validate_frontier_entrant(entrant)?;
+    if progress.provider != entrant.provider
+        || progress.model != entrant.model
+        || progress.entry_tier != entrant.entry_tier
+    {
+        return Err(invalid("frontier progress belongs to a foreign entrant"));
+    }
+    let mut tier = entrant.entry_tier;
+    let mut thinking_index = 0_usize;
+    let mut selected_routes = Vec::new();
+    let mut is_exhausted = false;
+    let mut seen = BTreeSet::new();
+    let mut reachable = vec![(Some(tier), Some(0_u8), selected_routes.clone(), false)];
+    for (cell_index, cell) in cells.iter().enumerate() {
+        if is_exhausted {
+            return Err(invalid(
+                "frontier evidence continues after terminal exhaustion",
+            ));
+        }
+        if cell.model.provider != entrant.provider || cell.model.model != entrant.model {
+            return Err(invalid("frontier evidence belongs to a foreign entrant"));
+        }
+        if !seen.insert(frontier_route_key(&cell.model)) {
+            return Err(invalid("frontier evidence contains a duplicate route"));
+        }
+        let expected_thinking = entrant
+            .thinking_levels
+            .get(thinking_index)
+            .ok_or_else(|| invalid("frontier thinking progression is exhausted"))?;
+        if cell.model.tier != tier || &cell.model.thinking != expected_thinking {
+            return Err(invalid(
+                "frontier evidence skips or reorders the legal route",
+            ));
+        }
+        validate_frontier_cell_shape(cell)?;
+        match cell.status {
+            FrontierCellStatus::Passed => {
+                selected_routes.push(cell.model.clone());
+                thinking_index = thinking_index
+                    .checked_add(1)
+                    .ok_or_else(|| invalid("frontier thinking index overflow"))?;
+                match next_tier(tier) {
+                    Some(next) if thinking_index < entrant.thinking_levels.len() => tier = next,
+                    Some(_) | None => is_exhausted = true,
+                }
+            }
+            FrontierCellStatus::Failed | FrontierCellStatus::Indeterminate => {
+                thinking_index = thinking_index
+                    .checked_add(1)
+                    .ok_or_else(|| invalid("frontier thinking index overflow"))?;
+                if thinking_index >= entrant.thinking_levels.len() {
+                    is_exhausted = true;
+                }
+            }
+            FrontierCellStatus::Pending => {
+                if cell_index + 1 != cells.len() {
+                    return Err(invalid("frontier evidence continues after a pending cell"));
+                }
+            }
+            FrontierCellStatus::Running | FrontierCellStatus::Skipped => {
+                return Err(invalid(
+                    "frontier progression requires evaluated cell evidence",
+                ));
+            }
+        }
+        let reachable_route = if is_exhausted {
+            (None, None)
+        } else {
+            (
+                Some(tier),
+                Some(
+                    u8::try_from(thinking_index)
+                        .map_err(|_| invalid("frontier thinking index overflow"))?,
+                ),
+            )
+        };
+        reachable.push((
+            reachable_route.0,
+            reachable_route.1,
+            selected_routes.clone(),
+            is_exhausted,
+        ));
+    }
+    let is_progress_reachable = reachable.iter().any(
+        |(next_tier, next_thinking_index, routes, is_reachable_exhausted)| {
+            progress.next_tier == *next_tier
+                && progress.next_thinking_index == *next_thinking_index
+                && progress.selected_routes == *routes
+                && progress.is_exhausted == *is_reachable_exhausted
+        },
+    );
+    if !is_progress_reachable {
+        return Err(invalid("frontier progress has an impossible next route"));
+    }
+    let (next_tier, next_thinking_index) = if is_exhausted {
+        (None, None)
+    } else {
+        (
+            Some(tier),
+            Some(
+                u8::try_from(thinking_index)
+                    .map_err(|_| invalid("frontier thinking index overflow"))?,
+            ),
+        )
+    };
+    Ok(FrontierModelProgress {
+        provider: entrant.provider.clone(),
+        model: entrant.model.clone(),
+        entry_tier: entrant.entry_tier,
+        selected_routes,
+        next_tier,
+        next_thinking_index,
+        is_exhausted,
+    })
+}
+
+fn validate_frontier_entrant(entrant: &FrontierEntrant) -> Result<(), SkillEvalError> {
+    const LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    if entrant.thinking_levels.is_empty() {
+        return Err(invalid("frontier entrant has no thinking levels"));
+    }
+    let mut previous = None;
+    for level in &entrant.thinking_levels {
+        let index = LEVELS
+            .iter()
+            .position(|supported| supported == level)
+            .ok_or_else(|| invalid("frontier entrant has an unsupported thinking level"))?;
+        if previous.is_some_and(|value| index <= value) {
+            return Err(invalid(
+                "frontier thinking levels are not strictly increasing",
+            ));
+        }
+        previous = Some(index);
+    }
+    Ok(())
+}
+
+fn validate_frontier_cell_shape(cell: &FrontierCellEvidence) -> Result<(), SkillEvalError> {
+    if cell.expected_trials == 0
+        || cell.completed_trials != cell.expected_trials
+        || cell.failed_trials > cell.completed_trials
+        || cell.score.is_none()
+    {
+        return Err(invalid("frontier cell has incomplete evidence"));
+    }
+    let score = cell
+        .score
+        .as_ref()
+        .ok_or_else(|| invalid("frontier cell score is missing"))?;
+    if score.weighted_pass_basis_points > 10_000
+        || score.lower_bound_basis_points > 10_000
+        || score.critical_expected_trials == 0
+        || score.critical_passed_trials > score.critical_expected_trials
+        || !score.is_group_coverage_complete
+    {
+        return Err(invalid("frontier cell score is invalid"));
+    }
+    Ok(())
+}
+
+fn frontier_route_key(model: &ModelIdentity) -> (Tier, String, String, String) {
+    (
+        model.tier,
+        model.provider.clone(),
+        model.model.clone(),
+        model.thinking.clone(),
+    )
+}
+
+fn next_tier(tier: Tier) -> Option<Tier> {
+    match tier {
+        Tier::T1 => Some(Tier::T2),
+        Tier::T2 => Some(Tier::T3),
+        Tier::T3 => Some(Tier::T4),
+        Tier::T4 => Some(Tier::T5),
+        Tier::T5 => None,
+    }
 }
 
 /// Ranks qualified routes and marks each tier's active routes.
@@ -1430,10 +1973,131 @@ pub(crate) fn advance_frontier_model(
 ///
 /// Returns an error for incomplete evidence, duplicate routes, invalid usage, or a zero pool size.
 pub(crate) fn rank_frontier_pools(
-    _models: &[FrontierModelReport],
-    _active_pool_size: u8,
+    models: &[FrontierModelReport],
+    active_pool_size: u8,
 ) -> Result<BTreeMap<Tier, Vec<FrontierPoolMembership>>, SkillEvalError> {
-    unimplemented!()
+    if active_pool_size == 0 {
+        return Err(invalid("frontier active pool size must be positive"));
+    }
+    let mut routes = BTreeMap::<Tier, Vec<&FrontierCellEvidence>>::new();
+    let mut seen_models = BTreeSet::new();
+    let mut seen_routes = BTreeSet::new();
+    for report in models {
+        if !seen_models.insert((report.provider.as_str(), report.model.as_str())) {
+            return Err(invalid("frontier reports contain a duplicate model"));
+        }
+        let mut expected_usage = empty_usage();
+        let mut passed_routes = BTreeSet::new();
+        let mut highest_passing_tier = None;
+        for cell in &report.cells {
+            if cell.model.provider != report.provider || cell.model.model != report.model {
+                return Err(invalid("frontier report contains a foreign cell"));
+            }
+            if !seen_routes.insert(frontier_route_key(&cell.model)) {
+                return Err(invalid("frontier reports contain a duplicate route"));
+            }
+            if !matches!(
+                cell.status,
+                FrontierCellStatus::Passed
+                    | FrontierCellStatus::Failed
+                    | FrontierCellStatus::Indeterminate
+                    | FrontierCellStatus::Skipped
+            ) {
+                return Err(invalid("frontier report contains nonterminal evidence"));
+            }
+            if cell.status == FrontierCellStatus::Skipped {
+                if cell.completed_trials != 0
+                    || cell.expected_trials != 0
+                    || cell.failed_trials != 0
+                    || cell.score.is_some()
+                    || cell.total_usage != empty_usage()
+                {
+                    return Err(invalid("frontier skipped cell contains trial evidence"));
+                }
+            } else {
+                validate_frontier_cell_shape(cell)?;
+            }
+            add_usage(&mut expected_usage, &cell.total_usage)?;
+            if cell.status == FrontierCellStatus::Passed {
+                if cell.total_usage.cost_millionths_of_dollar == 0 {
+                    return Err(invalid("frontier passed route has no measured cost"));
+                }
+                passed_routes.insert(frontier_route_key(&cell.model));
+                highest_passing_tier = Some(
+                    highest_passing_tier
+                        .map_or(cell.model.tier, |tier: Tier| tier.max(cell.model.tier)),
+                );
+                routes.entry(cell.model.tier).or_default().push(cell);
+            }
+        }
+        let selected = report
+            .selected_routes
+            .iter()
+            .map(frontier_route_key)
+            .collect::<BTreeSet<_>>();
+        if selected.len() != report.selected_routes.len()
+            || selected != passed_routes
+            || report.highest_passing_tier != highest_passing_tier
+        {
+            return Err(invalid("frontier report has inconsistent selected routes"));
+        }
+        if expected_usage != report.total_usage {
+            return Err(invalid("frontier report has incomplete aggregate usage"));
+        }
+    }
+
+    let mut pools = BTreeMap::new();
+    for (tier, mut cells) in routes {
+        cells.sort_by(|left, right| {
+            let left_weighted = left
+                .score
+                .as_ref()
+                .map(|score| score.weighted_pass_basis_points)
+                .unwrap_or(0);
+            let right_weighted = right
+                .score
+                .as_ref()
+                .map(|score| score.weighted_pass_basis_points)
+                .unwrap_or(0);
+            let left_lower = left
+                .score
+                .as_ref()
+                .map(|score| score.lower_bound_basis_points)
+                .unwrap_or(0);
+            let right_lower = right
+                .score
+                .as_ref()
+                .map(|score| score.lower_bound_basis_points)
+                .unwrap_or(0);
+            right_weighted
+                .cmp(&left_weighted)
+                .then_with(|| right_lower.cmp(&left_lower))
+                .then_with(|| {
+                    compare_rate(
+                        left.total_usage.cost_millionths_of_dollar,
+                        left.completed_trials,
+                        right.total_usage.cost_millionths_of_dollar,
+                        right.completed_trials,
+                    )
+                })
+                .then_with(|| compare_model_identity(&left.model, &right.model))
+        });
+        let memberships = cells
+            .into_iter()
+            .enumerate()
+            .map(|(index, cell)| {
+                let rank =
+                    u16::try_from(index + 1).map_err(|_| invalid("frontier pool rank overflow"))?;
+                Ok(FrontierPoolMembership {
+                    model: cell.model.clone(),
+                    rank,
+                    is_active: index < usize::from(active_pool_size),
+                })
+            })
+            .collect::<Result<Vec<_>, SkillEvalError>>()?;
+        pools.insert(tier, memberships);
+    }
+    Ok(pools)
 }
 
 #[cfg(test)]
@@ -1470,27 +2134,23 @@ mod tests {
         assert!(
             evaluate_tier(EvidenceRole::Candidate, &candidate_trials, None, &policy(),).is_err()
         );
-        assert!(
-            evaluate_tier(
-                EvidenceRole::Reference,
-                &trials(Tier::T4),
-                Some(&reference()),
-                &policy(),
-            )
-            .is_err()
-        );
+        assert!(evaluate_tier(
+            EvidenceRole::Reference,
+            &trials(Tier::T4),
+            Some(&reference()),
+            &policy(),
+        )
+        .is_err());
 
         let mut candidate = reference();
         candidate.role = EvidenceRole::Candidate;
-        assert!(
-            evaluate_tier(
-                EvidenceRole::Candidate,
-                &candidate_trials,
-                Some(&candidate),
-                &policy(),
-            )
-            .is_err()
-        );
+        assert!(evaluate_tier(
+            EvidenceRole::Candidate,
+            &candidate_trials,
+            Some(&candidate),
+            &policy(),
+        )
+        .is_err());
     }
 
     #[test]
@@ -1522,15 +2182,13 @@ mod tests {
     #[test]
     fn statistics_rejects_incomplete_trials_and_common_identity_drift() {
         let incomplete = vec![trial(Tier::T2, "a", 1, 8)];
-        assert!(
-            evaluate_tier(
-                EvidenceRole::Candidate,
-                &incomplete,
-                Some(&reference()),
-                &policy(),
-            )
-            .is_err()
-        );
+        assert!(evaluate_tier(
+            EvidenceRole::Candidate,
+            &incomplete,
+            Some(&reference()),
+            &policy(),
+        )
+        .is_err());
 
         for change in [
             |trial: &mut TrialRecord| trial.model.model = "other".to_string(),
@@ -1540,15 +2198,13 @@ mod tests {
         ] {
             let mut mixed = vec![trial(Tier::T2, "a", 1, 8), trial(Tier::T2, "a", 2, 8)];
             change(&mut mixed[1]);
-            assert!(
-                evaluate_tier(
-                    EvidenceRole::Candidate,
-                    &mixed,
-                    Some(&reference()),
-                    &policy(),
-                )
-                .is_err()
-            );
+            assert!(evaluate_tier(
+                EvidenceRole::Candidate,
+                &mixed,
+                Some(&reference()),
+                &policy(),
+            )
+            .is_err());
         }
     }
 
@@ -1632,15 +2288,13 @@ mod tests {
     }
 
     fn assert_evaluation_fails(trials: Vec<TrialRecord>) {
-        assert!(
-            evaluate_tier(
-                EvidenceRole::Candidate,
-                &trials,
-                Some(&reference()),
-                &policy(),
-            )
-            .is_err()
-        );
+        assert!(evaluate_tier(
+            EvidenceRole::Candidate,
+            &trials,
+            Some(&reference()),
+            &policy(),
+        )
+        .is_err());
     }
 
     fn policy() -> QualificationPolicy {
