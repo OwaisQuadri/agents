@@ -8,11 +8,22 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::model::{
-    Decision, FrontierBaseline, FrontierBaselineLedger, FrontierCellStatus,
-    FrontierEvidenceIdentity, FrontierInspection, FrontierRunId, FrontierRunState,
-    FrontierRunStatus, FrontierSuite, FrontierTrialSelector, SkillEvalError, TrialRecord,
+    Decision, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup, FrontierCaseKey,
+    FrontierCaseReviewDecision, FrontierCellStatus, FrontierEvidenceIdentity, FrontierInspection,
+    FrontierRunId, FrontierRunState, FrontierRunStatus, FrontierSuite,
+    FrontierSuiteConstructionPlan, FrontierSuiteConstructionPolicy, FrontierSuiteInventory,
+    FrontierSuiteProposal, FrontierSuiteProposalStatus, FrontierSuitePublication,
+    FrontierSuiteReviewSet, FrontierTrialSelector, SkillEvalError, Tier, Timestamp, TrialRecord,
     TrialUsage,
 };
+
+#[cfg(test)]
+#[path = "frontier_source.rs"]
+mod test_frontier_source;
+#[cfg(not(test))]
+use crate::frontier_source;
+#[cfg(test)]
+use test_frontier_source as frontier_source;
 
 const FRONTIER_ROOT: [&str; 3] = [".map", "skill-eval", "frontier"];
 const SNAPSHOT_NAME: &str = "state.json";
@@ -21,7 +32,6 @@ const TRANSACTION_NAME: &str = ".baseline-transaction.json";
 const LEDGER_VERSION: u64 = 1;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-// TODO(AGNT-0032.T161): Add atomic complete-bank inventory, proposal, and ready-suite storage.
 pub(crate) struct FileFrontierStore {
     repository_root: PathBuf,
     frontier_root: PathBuf,
@@ -204,6 +214,96 @@ impl FileFrontierStore {
         }
     }
 
+    pub(crate) fn load_frontier_suite_construction_plan(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteConstructionPlan, SkillEvalError> {
+        let plan = self.load_suite_evidence(path, "frontier suite construction plan")?;
+        validate_suite_plan(&plan)?;
+        Ok(plan)
+    }
+
+    pub(crate) fn load_frontier_suite_inventory(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteInventory, SkillEvalError> {
+        let inventory = self.load_suite_evidence(path, "frontier suite inventory")?;
+        validate_suite_inventory(&inventory)?;
+        Ok(inventory)
+    }
+
+    pub(crate) fn load_frontier_suite_review_set(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteReviewSet, SkillEvalError> {
+        let reviews = self.load_suite_evidence(path, "frontier suite review set")?;
+        validate_suite_reviews(&reviews)?;
+        Ok(reviews)
+    }
+
+    pub(crate) fn load_frontier_suite_proposal(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierSuiteProposal, SkillEvalError> {
+        let proposal = self.load_suite_evidence(path, "frontier suite proposal")?;
+        validate_suite_proposal(&proposal)?;
+        Ok(proposal)
+    }
+
+    pub(crate) fn save_frontier_suite_inventory(
+        &mut self,
+        path: &Path,
+        inventory: &FrontierSuiteInventory,
+    ) -> Result<(), SkillEvalError> {
+        validate_suite_inventory(inventory)?;
+        let bytes = json_bytes(inventory, "frontier suite inventory")?;
+        self.save_immutable_suite_evidence(
+            path,
+            &bytes,
+            "frontier suite inventory",
+            FrontierFailurePoint::Inventory,
+            FrontierFailurePoint::InventoryAfterLink,
+        )
+    }
+
+    pub(crate) fn save_frontier_suite_proposal(
+        &mut self,
+        path: &Path,
+        proposal: &FrontierSuiteProposal,
+    ) -> Result<(), SkillEvalError> {
+        validate_suite_proposal(proposal)?;
+        let bytes = json_bytes(proposal, "frontier suite proposal")?;
+        self.save_immutable_suite_evidence(
+            path,
+            &bytes,
+            "frontier suite proposal",
+            FrontierFailurePoint::Proposal,
+            FrontierFailurePoint::ProposalAfterLink,
+        )
+    }
+
+    pub(crate) fn apply_frontier_suite_proposal(
+        &mut self,
+        proposal: &FrontierSuiteProposal,
+        output: &Path,
+        published_at: &Timestamp,
+    ) -> Result<FrontierSuitePublication, SkillEvalError> {
+        if published_at.0.trim().is_empty() {
+            return Err(invalid("frontier suite publication time is empty"));
+        }
+        let suite = frontier_source::frontier_suite_from_ready_proposal(proposal)?;
+        let proposal_bytes = json_bytes(proposal, "frontier suite proposal")?;
+        let suite_bytes = json_bytes(&suite, "frontier suite")?;
+        let destination = safe_suite_destination(&self.repository_root, output)?;
+        self.replace_suite_bytes(&destination, &suite_bytes)?;
+        Ok(FrontierSuitePublication {
+            proposal_sha256: hex_digest(&proposal_bytes),
+            suite_path: output.to_path_buf(),
+            suite_sha256: hex_digest(&suite_bytes),
+            published_at: published_at.clone(),
+        })
+    }
+
     pub(crate) fn load_frontier_baselines(
         &self,
         path: &Path,
@@ -283,6 +383,92 @@ impl FileFrontierStore {
         self.write_transaction(&transaction)?;
         self.fail(FrontierFailurePoint::Journal)?;
         self.finish_transaction(&transaction)
+    }
+
+    fn load_suite_evidence<T>(&self, path: &Path, kind: &str) -> Result<T, SkillEvalError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+    {
+        let path = safe_repository_path(&self.repository_root, path, true)?;
+        read_strict_json(&path, kind)
+    }
+
+    fn save_immutable_suite_evidence(
+        &mut self,
+        path: &Path,
+        bytes: &[u8],
+        kind: &str,
+        failure: FrontierFailurePoint,
+        after_link_failure: FrontierFailurePoint,
+    ) -> Result<(), SkillEvalError> {
+        let destination = safe_suite_destination(&self.repository_root, path)?;
+        match fs::read(&destination) {
+            Ok(stored) if stored == bytes => return Ok(()),
+            Ok(_) => {
+                return Err(invalid(format!(
+                    "{kind} destination has conflicting evidence"
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(&destination, error)),
+        }
+        let temporary = write_temporary_bytes(&destination, bytes)?;
+        if let Err(error) = self.fail(failure).and_then(|()| {
+            fs::hard_link(&temporary, &destination).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    invalid(format!("{kind} destination was written concurrently"))
+                } else {
+                    io_error(&destination, error)
+                }
+            })
+        }) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        let directory = destination.parent().expect("safe path has a parent");
+        let result = self
+            .fail(after_link_failure)
+            .and_then(|()| sync_directory(directory))
+            .and_then(|()| fs::remove_file(&temporary).map_err(|error| io_error(&temporary, error)))
+            .and_then(|()| sync_directory(directory));
+        if let Err(error) = result {
+            return Err(rollback_result(
+                "frontier immutable authority",
+                error,
+                rollback_immutable_authority(&destination, &temporary, directory),
+            ));
+        }
+        Ok(())
+    }
+
+    fn replace_suite_bytes(
+        &mut self,
+        destination: &Path,
+        bytes: &[u8],
+    ) -> Result<(), SkillEvalError> {
+        let prior = match fs::read(destination) {
+            Ok(stored) if stored == bytes => return Ok(()),
+            Ok(stored) => Some(stored),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error(destination, error)),
+        };
+        let temporary = write_temporary_bytes(destination, bytes)?;
+        if let Err(error) = self.fail(FrontierFailurePoint::Suite).and_then(|()| {
+            fs::rename(&temporary, destination).map_err(|error| io_error(destination, error))
+        }) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        let directory = destination.parent().expect("safe path has a parent");
+        if let Err(error) = self
+            .fail(FrontierFailurePoint::SuiteAfterRename)
+            .and_then(|()| sync_directory(directory))
+        {
+            let rollback = rollback_suite_authority(destination, prior.as_deref(), directory);
+            let _ = fs::remove_file(&temporary);
+            return Err(rollback_result("frontier suite authority", error, rollback));
+        }
+        Ok(())
     }
 
     fn read_state(
@@ -460,6 +646,12 @@ pub(crate) enum FrontierFailurePoint {
     Journal,
     State,
     Ledger,
+    Inventory,
+    InventoryAfterLink,
+    Proposal,
+    ProposalAfterLink,
+    Suite,
+    SuiteAfterRename,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -470,6 +662,286 @@ struct BaselineTransaction {
     old_ledger_sha256: String,
     state_bytes: Vec<u8>,
     ledger_bytes: Vec<u8>,
+}
+
+fn validate_suite_plan(plan: &FrontierSuiteConstructionPlan) -> Result<(), SkillEvalError> {
+    if plan.version != 1 || plan.artifact_roots.is_empty() {
+        return Err(invalid(
+            "frontier suite construction plan version or roots are invalid",
+        ));
+    }
+    let mut roots = BTreeSet::new();
+    for root in &plan.artifact_roots {
+        validate_suite_relative_path(root, "frontier construction artifact root")?;
+        if !roots.insert(root) {
+            return Err(invalid(
+                "frontier construction artifact roots are duplicate",
+            ));
+        }
+    }
+    validate_suite_policy(&plan.policy)
+}
+
+fn validate_suite_inventory(inventory: &FrontierSuiteInventory) -> Result<(), SkillEvalError> {
+    if inventory.version != 1 || inventory.generated_at.0.trim().is_empty() {
+        return Err(invalid(
+            "frontier suite inventory version or generation time is invalid",
+        ));
+    }
+    let mut previous = None;
+    for entry in &inventory.cases {
+        validate_suite_key(&entry.key, "frontier inventory case")?;
+        if previous.is_some_and(|key| key >= &entry.key) {
+            return Err(invalid(
+                "frontier inventory cases are duplicate or unsorted",
+            ));
+        }
+        validate_suite_drive(&entry.drive)?;
+        previous = Some(&entry.key);
+    }
+    Ok(())
+}
+
+fn validate_suite_drive(drive: &crate::model::CaseDrive) -> Result<(), SkillEvalError> {
+    match drive {
+        crate::model::CaseDrive::Response => Err(invalid(
+            "frontier inventory contains unsupported response drive",
+        )),
+        crate::model::CaseDrive::Fixture {
+            source,
+            verify_commands,
+        } => {
+            validate_loaded_suite_path(source, "frontier inventory fixture")?;
+            for command in verify_commands {
+                validate_suite_command(command)?;
+            }
+            Ok(())
+        }
+        crate::model::CaseDrive::ExistingHarness { command } => validate_suite_command(command),
+    }
+}
+
+fn validate_suite_command(command: &crate::model::CommandDefinition) -> Result<(), SkillEvalError> {
+    if command.program.trim().is_empty()
+        || command.program.contains('\0')
+        || command.arguments.iter().any(|value| value.contains('\0'))
+    {
+        return Err(invalid("frontier inventory command is invalid"));
+    }
+    if let Some(directory) = &command.working_directory {
+        validate_loaded_suite_path(directory, "frontier inventory working directory")?;
+    }
+    Ok(())
+}
+
+fn validate_loaded_suite_path(path: &Path, kind: &str) -> Result<(), SkillEvalError> {
+    if path.as_os_str().is_empty()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+        || path.to_string_lossy().chars().any(char::is_control)
+    {
+        return Err(invalid(format!("{kind} path is unsafe")));
+    }
+    Ok(())
+}
+
+fn validate_suite_reviews(reviews: &FrontierSuiteReviewSet) -> Result<(), SkillEvalError> {
+    if reviews.version != 1 {
+        return Err(invalid("frontier suite review-set version is invalid"));
+    }
+    validate_digest(&reviews.inventory_sha256)?;
+    let mut previous: Option<(&FrontierCaseKey, &str)> = None;
+    for record in &reviews.records {
+        validate_suite_key(&record.key, "frontier review case")?;
+        if record.reviewer.trim().is_empty() || record.reviewed_at.0.trim().is_empty() {
+            return Err(invalid(
+                "frontier review has an invalid reviewer or review time",
+            ));
+        }
+        let identity = (&record.key, record.reviewer.as_str());
+        if previous.is_some_and(|stored| stored >= identity) {
+            return Err(invalid("frontier reviews are duplicate or unsorted"));
+        }
+        let evidence = match &record.decision {
+            FrontierCaseReviewDecision::Eligible {
+                relative_difficulty_basis_points,
+                evidence,
+                ..
+            } => {
+                if !(1..=10_000).contains(relative_difficulty_basis_points) {
+                    return Err(invalid("frontier review difficulty is invalid"));
+                }
+                evidence
+            }
+            FrontierCaseReviewDecision::Rejected { evidence, .. } => evidence,
+        };
+        if evidence.is_empty() || evidence.iter().any(|item| item.trim().is_empty()) {
+            return Err(invalid("frontier review evidence is invalid"));
+        }
+        previous = Some(identity);
+    }
+    Ok(())
+}
+
+fn validate_suite_proposal(proposal: &FrontierSuiteProposal) -> Result<(), SkillEvalError> {
+    if proposal.version != 1 {
+        return Err(invalid("frontier suite proposal version is invalid"));
+    }
+    validate_digest(&proposal.inventory_sha256)?;
+    validate_digest(&proposal.review_set_sha256)?;
+    validate_suite_policy(&proposal.policy)?;
+    validate_sorted_suite_keys(
+        &proposal.calibration_anchors,
+        "frontier calibration anchors",
+    )?;
+    validate_sorted_suite_keys(&proposal.holdout_cases, "frontier holdout cases")?;
+    if proposal.proposed_tiers.len() != proposal.policy.required_tiers.len()
+        || proposal.tier_capacity.len() != proposal.policy.required_tiers.len()
+    {
+        return Err(invalid(
+            "frontier proposal does not contain every required tier",
+        ));
+    }
+    let holdouts = proposal.holdout_cases.iter().collect::<BTreeSet<_>>();
+    let anchors = proposal.calibration_anchors.iter().collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut rejected_cases = None;
+    let mut is_ready = true;
+    for tier in &proposal.policy.required_tiers {
+        let suite = proposal
+            .proposed_tiers
+            .get(tier)
+            .ok_or_else(|| invalid("frontier proposal is missing a required tier"))?;
+        validate_suite_weights(&suite.group_weights_basis_points)?;
+        if suite.group_weights_basis_points != proposal.policy.group_weights_basis_points {
+            return Err(invalid("frontier proposal tier weights drift from policy"));
+        }
+        let capacity = proposal
+            .tier_capacity
+            .get(tier)
+            .ok_or_else(|| invalid("frontier proposal is missing tier capacity"))?;
+        let mut unique = BTreeSet::new();
+        let mut groups = BTreeSet::new();
+        for reference in &suite.cases {
+            let key = FrontierCaseKey {
+                artifact_path: reference.artifact_path.clone(),
+                artifact_revision: reference.artifact_revision.clone(),
+                case: reference.case.clone(),
+            };
+            validate_suite_key(&key, "frontier proposal case")?;
+            unique.insert(key.clone());
+            groups.insert(reference.group);
+            if !seen.insert(key.clone()) {
+                return Err(invalid("frontier proposal reuses a case across tiers"));
+            }
+            if anchors.contains(&key) {
+                return Err(invalid("frontier proposal counts a calibration anchor"));
+            }
+            if reference.is_confirmation && !holdouts.contains(&key) {
+                return Err(invalid(
+                    "frontier proposal confirmation is absent from holdouts",
+                ));
+            }
+        }
+        let accepted = u16::try_from(unique.len())
+            .map_err(|_| invalid("frontier proposal case count overflow"))?;
+        let total = u16::try_from(suite.cases.len())
+            .map_err(|_| invalid("frontier proposal case count overflow"))?;
+        let duplicate = total.saturating_sub(accepted);
+        let shortfall = proposal
+            .policy
+            .minimum_unique_cases_per_tier
+            .saturating_sub(accepted);
+        let is_complete = shortfall == 0 && groups.len() == 4;
+        if capacity.required_unique_cases != proposal.policy.minimum_unique_cases_per_tier
+            || capacity.accepted_unique_cases != accepted
+            || capacity.shortfall != shortfall
+            || capacity.duplicate_cases != duplicate
+            || capacity.is_complete != is_complete
+            || rejected_cases.is_some_and(|stored| stored != capacity.rejected_cases)
+        {
+            return Err(invalid(
+                "frontier proposal capacity is forged or inconsistent",
+            ));
+        }
+        rejected_cases = Some(capacity.rejected_cases);
+        is_ready &= is_complete;
+    }
+    if (proposal.status == FrontierSuiteProposalStatus::Ready) != is_ready {
+        return Err(invalid("frontier proposal status differs from capacity"));
+    }
+    if proposal.status == FrontierSuiteProposalStatus::Ready {
+        frontier_source::frontier_suite_from_ready_proposal(proposal)?;
+    }
+    Ok(())
+}
+
+fn validate_suite_policy(policy: &FrontierSuiteConstructionPolicy) -> Result<(), SkillEvalError> {
+    if policy.required_tiers != [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5]
+        || policy.minimum_unique_cases_per_tier < 30
+        || policy.minimum_reviewers_per_case < 2
+        || !policy.is_unanimous_eligibility_required
+        || policy.is_cross_tier_reuse_allowed
+        || policy.is_calibration_anchor_counted_toward_minimum
+    {
+        return Err(invalid("frontier suite construction policy is invalid"));
+    }
+    validate_suite_weights(&policy.group_weights_basis_points)
+}
+
+fn validate_suite_weights(
+    weights: &std::collections::BTreeMap<FrontierCaseGroup, u16>,
+) -> Result<(), SkillEvalError> {
+    let required = [
+        FrontierCaseGroup::Normal,
+        FrontierCaseGroup::Edge,
+        FrontierCaseGroup::Adversarial,
+        FrontierCaseGroup::Critical,
+    ];
+    let total = weights
+        .values()
+        .try_fold(0_u16, |sum, weight| sum.checked_add(*weight));
+    if weights.len() != required.len()
+        || required
+            .iter()
+            .any(|group| weights.get(group).is_none_or(|weight| *weight == 0))
+        || total != Some(10_000)
+    {
+        return Err(invalid("frontier suite group weights are invalid"));
+    }
+    Ok(())
+}
+
+fn validate_sorted_suite_keys(keys: &[FrontierCaseKey], kind: &str) -> Result<(), SkillEvalError> {
+    if keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(invalid(format!("{kind} are duplicate or unsorted")));
+    }
+    for key in keys {
+        validate_suite_key(key, kind)?;
+    }
+    Ok(())
+}
+
+fn validate_suite_key(key: &FrontierCaseKey, kind: &str) -> Result<(), SkillEvalError> {
+    validate_suite_relative_path(&key.artifact_path, kind)?;
+    if key.artifact_revision.trim().is_empty() || key.case.0.trim().is_empty() {
+        return Err(invalid(format!("{kind} identity is incomplete")));
+    }
+    Ok(())
+}
+
+fn validate_suite_relative_path(path: &Path, kind: &str) -> Result<(), SkillEvalError> {
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || path.to_string_lossy().chars().any(char::is_control)
+    {
+        return Err(invalid(format!("{kind} path is unsafe")));
+    }
+    Ok(())
 }
 
 fn validate_state(
@@ -1003,6 +1475,74 @@ fn replace_bytes_recoverable(
     Ok(())
 }
 
+pub(crate) fn rollback_result(
+    authority: &str,
+    initiating_error: SkillEvalError,
+    rollback: Result<(), SkillEvalError>,
+) -> SkillEvalError {
+    match rollback {
+        Ok(()) => initiating_error,
+        Err(rollback_error) => invalid(format!(
+            "{authority} rollback failed: {rollback_error:?}; initiating error: {initiating_error:?}"
+        )),
+    }
+}
+
+fn rollback_immutable_authority(
+    destination: &Path,
+    temporary: &Path,
+    directory: &Path,
+) -> Result<(), SkillEvalError> {
+    fs::remove_file(destination).map_err(|error| io_error(destination, error))?;
+    sync_directory(directory)?;
+    match fs::remove_file(temporary) {
+        Ok(()) => sync_directory(directory),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_error(temporary, error)),
+    }
+}
+
+fn rollback_suite_authority(
+    destination: &Path,
+    prior: Option<&[u8]>,
+    directory: &Path,
+) -> Result<(), SkillEvalError> {
+    match prior {
+        Some(bytes) => replace_bytes(destination, bytes),
+        None => {
+            fs::remove_file(destination).map_err(|error| io_error(destination, error))?;
+            sync_directory(directory)
+        }
+    }
+}
+
+fn write_temporary_bytes(path: &Path, bytes: &[u8]) -> Result<PathBuf, SkillEvalError> {
+    let directory = path
+        .parent()
+        .ok_or_else(|| invalid("frontier destination has no parent"))?;
+    fs::create_dir_all(directory).map_err(|error| io_error(directory, error))?;
+    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| invalid("frontier destination filename is invalid"))?;
+    let temporary = directory.join(format!(".{name}.{}.{sequence}.tmp", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)
+        .map_err(|error| io_error(&temporary, error))?;
+    if let Err(error) = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| io_error(&temporary, error))
+    {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(temporary)
+}
+
 fn replace_bytes(path: &Path, bytes: &[u8]) -> Result<(), SkillEvalError> {
     let directory = path
         .parent()
@@ -1095,6 +1635,24 @@ fn safe_repository_path(
             return Err(invalid("frontier repository path escapes its root"));
         }
         Ok(canonical_parent.join(path.file_name().expect("normal path has a filename")))
+    }
+}
+
+fn safe_suite_destination(
+    repository_root: &Path,
+    relative: &Path,
+) -> Result<PathBuf, SkillEvalError> {
+    let path = safe_repository_path(repository_root, relative, false)?;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(invalid("frontier suite destination is a symlink"))
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            Err(invalid("frontier suite destination is not a regular file"))
+        }
+        Ok(_) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(error) => Err(io_error(&path, error)),
     }
 }
 

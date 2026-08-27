@@ -183,7 +183,6 @@ pub(crate) trait FrontierProgressSink {
     fn emit_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError>;
 }
 
-// TODO(AGNT-0032.T161): Persist complete-bank evidence and atomically replace only a ready suite.
 pub(crate) trait FrontierSuiteRuntime: ArtifactSource + Clock {
     /// Loads one frozen complete-bank construction plan.
     ///
