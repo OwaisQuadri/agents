@@ -79,9 +79,11 @@ export async function startHerdrAgent(pi: ExtensionAPI, ctx: HerdrContext): Prom
 }
 
 export async function settleHerdrAgent(pi: ExtensionAPI, ctx: HerdrContext): Promise<void> {
-	const current = state();
-	current.activeAgentCount = Math.max(0, current.activeAgentCount - 1);
-	await report(pi, ctx, current.activeAgentCount === 0);
+	// agent_start can fire more than once per agent_settled (once per retry or queued
+	// continuation within one run), so settling zeroes the counter instead of
+	// decrementing it — a decrement can strand it above zero and pin "working" forever.
+	state().activeAgentCount = 0;
+	await report(pi, ctx, true);
 }
 
 export async function setHerdrBlocked(pi: ExtensionAPI, ctx: HerdrContext, isBlocked: boolean): Promise<void> {

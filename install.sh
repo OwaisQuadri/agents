@@ -72,6 +72,18 @@ link() {
   run ln -sfn "$target" "$lnk"
 }
 
+# link_config <source> <destination> <description> — symlinks a single managed config
+# file, skipping with a warning when the source is absent instead of failing the run.
+link_config() {
+  local src="$1" dest="$2" description="$3"
+  if [[ ! -f "$src" ]]; then
+    echo "warn: $src not found, skipping $description" >&2
+  else
+    run mkdir -p "$(dirname "$dest")"
+    link "$dest" "$src"
+  fi
+}
+
 retire_pi_extension() {
   local src="$1" retired_root dest
   [[ -e "$src" || -L "$src" ]] || return 0
@@ -427,23 +439,9 @@ else
   fi
 fi
 
-PI_THEME_SOURCE="$REPO_TARGET/pi/themes/owais.json"
-PI_THEME_DESTINATION="$HOME_TARGET/.pi/agent/themes/owais.json"
-if [[ ! -f "$PI_THEME_SOURCE" ]]; then
-  echo "warn: $PI_THEME_SOURCE not found, skipping Pi theme link" >&2
-else
-  run mkdir -p "$HOME_TARGET/.pi/agent/themes"
-  link "$PI_THEME_DESTINATION" "$PI_THEME_SOURCE"
-fi
-
-PI_TRANSCRIBE_SOURCE="$REPO_TARGET/config/pi-transcribe.json"
-PI_TRANSCRIBE_DESTINATION="$HOME_TARGET/.pi/agent/pi-transcribe.json"
-if [[ ! -f "$PI_TRANSCRIBE_SOURCE" ]]; then
-  echo "warn: $PI_TRANSCRIBE_SOURCE not found, skipping Pi transcription configuration link" >&2
-else
-  run mkdir -p "$HOME_TARGET/.pi/agent"
-  link "$PI_TRANSCRIBE_DESTINATION" "$PI_TRANSCRIBE_SOURCE"
-fi
+link_config "$REPO_TARGET/pi/themes/owais.json" "$HOME_TARGET/.pi/agent/themes/owais.json" "Pi theme link"
+link_config "$REPO_TARGET/config/herdr/config.toml" "$HOME_TARGET/.config/herdr/config.toml" "Herdr config link"
+link_config "$REPO_TARGET/config/pi-transcribe.json" "$HOME_TARGET/.pi/agent/pi-transcribe.json" "Pi transcription configuration link"
 
 if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 && "$(uname -s)" == "Darwin" ]]; then
   if ! command -v uv >/dev/null 2>&1; then
@@ -471,14 +469,7 @@ if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 ]]; then
   retire_to_trash "$HOME_TARGET/.pi/agent/extensions/spinner-preview.ts"
 fi
 
-WORLD_CLOCK_SOURCE="$REPO_TARGET/config/world-clock.json"
-WORLD_CLOCK_DESTINATION="$HOME_TARGET/.pi/agent/world-clock.json"
-if [[ ! -f "$WORLD_CLOCK_SOURCE" ]]; then
-  echo "warn: $WORLD_CLOCK_SOURCE not found, skipping world-clock configuration link" >&2
-else
-  run mkdir -p "$HOME_TARGET/.pi/agent"
-  link "$WORLD_CLOCK_DESTINATION" "$WORLD_CLOCK_SOURCE"
-fi
+link_config "$REPO_TARGET/config/world-clock.json" "$HOME_TARGET/.pi/agent/world-clock.json" "world-clock configuration link"
 
 PI_LEGACY_COMPACT_PATH="$HOME_TARGET/.pi/agent/extensions/compact-path.ts"
 if [[ -L "$PI_LEGACY_COMPACT_PATH" && "$(readlink "$PI_LEGACY_COMPACT_PATH")" == "$REPO_TARGET/pi/extensions/compact-path.ts" ]]; then
@@ -486,14 +477,7 @@ if [[ -L "$PI_LEGACY_COMPACT_PATH" && "$(readlink "$PI_LEGACY_COMPACT_PATH")" ==
   run rm "$PI_LEGACY_COMPACT_PATH"
 fi
 
-GHOSTTY_CONFIG_SOURCE="$REPO_TARGET/config/ghostty.config"
-GHOSTTY_CONFIG_DESTINATION="$HOME_TARGET/Library/Application Support/com.mitchellh.ghostty/config"
-if [[ ! -f "$GHOSTTY_CONFIG_SOURCE" ]]; then
-  echo "warn: $GHOSTTY_CONFIG_SOURCE not found, skipping Ghostty configuration link" >&2
-else
-  run mkdir -p "$(dirname "$GHOSTTY_CONFIG_DESTINATION")"
-  link "$GHOSTTY_CONFIG_DESTINATION" "$GHOSTTY_CONFIG_SOURCE"
-fi
+link_config "$REPO_TARGET/config/ghostty.config" "$HOME_TARGET/Library/Application Support/com.mitchellh.ghostty/config" "Ghostty configuration link"
 
 PI_MANAGED_SETTINGS="$REPO_TARGET/config/pi-settings.json"
 PI_SETTINGS="$HOME_TARGET/.pi/agent/settings.json"
