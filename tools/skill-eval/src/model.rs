@@ -440,6 +440,7 @@ pub(crate) struct FrontierSuiteProposal {
     pub(crate) policy: FrontierSuiteConstructionPolicy,
     pub(crate) proposed_tiers: BTreeMap<Tier, FrontierTierSuite>,
     pub(crate) calibration_anchors: Vec<FrontierCaseKey>,
+    pub(crate) holdout_cases: Vec<FrontierCaseKey>,
     pub(crate) tier_capacity: BTreeMap<Tier, FrontierTierCapacity>,
     pub(crate) status: FrontierSuiteProposalStatus,
 }
