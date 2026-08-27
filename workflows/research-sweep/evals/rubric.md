@@ -17,7 +17,11 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
 Topology properties graded on every case, per workflow-author:
 
 - no fake edges: plan→research and research→critic→fill are the only waits; round-1
-  researchers never wait on each other
+  researchers never wait on each other, and web/codebase round-1 dispatches run in one
+  combined wave rather than two sequential barriers
 - verifier context-isolation: critic reads goal + block texts only
 - fan-in guard: `returned` counted against `expected`, gaps named by label
-- CAP present: 6 planned, 3 fill, 10 total
+- CAP present: 6 planned web, 2 planned codebase, 3 fill, 13 total
+- codebase dispatches route to Explore, never to web-research-summarizer, and the plan
+  node decides their presence per-goal — an empty array for a purely external goal is
+  correct, not a defect
