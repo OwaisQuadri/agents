@@ -367,7 +367,6 @@ impl Fixture {
                         model: "judge".to_owned(),
                         thinking: "high".to_owned(),
                     },
-                    // TODO(AGNT-0032.T169): Restore the approved maximum trial-cost reservation fixture.
                     policy: FrontierPolicy {
                         screening_trials_per_case: 1,
                         confirmation_trials_per_case: 3,
@@ -381,6 +380,7 @@ impl Fixture {
                         maximum_infrastructure_attempts: 2,
                         maximum_catalog_age_seconds: 86_400,
                         active_pool_size: 5,
+                        maximum_trial_cost_millionths_of_dollar: 1,
                         spending_limit_millionths_of_dollar: 1_000,
                         is_provider_limit_enforced: true,
                         is_first_party_only: true,

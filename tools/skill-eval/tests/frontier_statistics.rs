@@ -327,7 +327,6 @@ fn trials(
         .collect()
 }
 
-// TODO(AGNT-0032.T169): Restore the approved maximum trial-cost reservation fixture.
 fn policy() -> FrontierPolicy {
     FrontierPolicy {
         screening_trials_per_case: 1,
@@ -342,6 +341,7 @@ fn policy() -> FrontierPolicy {
         maximum_infrastructure_attempts: 2,
         maximum_catalog_age_seconds: 3_600,
         active_pool_size: 5,
+        maximum_trial_cost_millionths_of_dollar: 1,
         spending_limit_millionths_of_dollar: 1_000_000,
         is_provider_limit_enforced: true,
         is_first_party_only: true,
