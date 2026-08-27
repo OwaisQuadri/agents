@@ -1,4 +1,3 @@
-// TODO(AGNT-0032.T143): Reverify all frontier statistics tests through Cargo.
 #![expect(
     dead_code,
     reason = "the test imports private production modules to exercise crate-private statistics"

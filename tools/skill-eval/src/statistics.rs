@@ -1391,7 +1391,6 @@ fn invalid(message: &str) -> SkillEvalError {
     SkillEvalError::InvalidConfiguration(message.to_string())
 }
 
-// TODO(AGNT-0032.T143): Reverify the implemented frontier statistics after D-144 closes.
 /// Evaluates one exact model-tier-thinking cell under the frozen frontier policy.
 ///
 /// The inputs are one tier suite, exact model, trial records, and policy. The output is cell evidence.
@@ -2134,23 +2133,27 @@ mod tests {
         assert!(
             evaluate_tier(EvidenceRole::Candidate, &candidate_trials, None, &policy(),).is_err()
         );
-        assert!(evaluate_tier(
-            EvidenceRole::Reference,
-            &trials(Tier::T4),
-            Some(&reference()),
-            &policy(),
-        )
-        .is_err());
+        assert!(
+            evaluate_tier(
+                EvidenceRole::Reference,
+                &trials(Tier::T4),
+                Some(&reference()),
+                &policy(),
+            )
+            .is_err()
+        );
 
         let mut candidate = reference();
         candidate.role = EvidenceRole::Candidate;
-        assert!(evaluate_tier(
-            EvidenceRole::Candidate,
-            &candidate_trials,
-            Some(&candidate),
-            &policy(),
-        )
-        .is_err());
+        assert!(
+            evaluate_tier(
+                EvidenceRole::Candidate,
+                &candidate_trials,
+                Some(&candidate),
+                &policy(),
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -2182,13 +2185,15 @@ mod tests {
     #[test]
     fn statistics_rejects_incomplete_trials_and_common_identity_drift() {
         let incomplete = vec![trial(Tier::T2, "a", 1, 8)];
-        assert!(evaluate_tier(
-            EvidenceRole::Candidate,
-            &incomplete,
-            Some(&reference()),
-            &policy(),
-        )
-        .is_err());
+        assert!(
+            evaluate_tier(
+                EvidenceRole::Candidate,
+                &incomplete,
+                Some(&reference()),
+                &policy(),
+            )
+            .is_err()
+        );
 
         for change in [
             |trial: &mut TrialRecord| trial.model.model = "other".to_string(),
@@ -2198,13 +2203,15 @@ mod tests {
         ] {
             let mut mixed = vec![trial(Tier::T2, "a", 1, 8), trial(Tier::T2, "a", 2, 8)];
             change(&mut mixed[1]);
-            assert!(evaluate_tier(
-                EvidenceRole::Candidate,
-                &mixed,
-                Some(&reference()),
-                &policy(),
-            )
-            .is_err());
+            assert!(
+                evaluate_tier(
+                    EvidenceRole::Candidate,
+                    &mixed,
+                    Some(&reference()),
+                    &policy(),
+                )
+                .is_err()
+            );
         }
     }
 
@@ -2288,13 +2295,15 @@ mod tests {
     }
 
     fn assert_evaluation_fails(trials: Vec<TrialRecord>) {
-        assert!(evaluate_tier(
-            EvidenceRole::Candidate,
-            &trials,
-            Some(&reference()),
-            &policy(),
-        )
-        .is_err());
+        assert!(
+            evaluate_tier(
+                EvidenceRole::Candidate,
+                &trials,
+                Some(&reference()),
+                &policy(),
+            )
+            .is_err()
+        );
     }
 
     fn policy() -> QualificationPolicy {
