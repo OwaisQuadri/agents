@@ -9,6 +9,7 @@ const protectedRelativePaths = [
 	[".claude", "skills"],
 	[".codex", "AGENTS.md"],
 	[".codex", "skills"],
+	[".config", "herdr", "config.toml"],
 	[".pi", "agent", "agents"],
 	[".pi", "agent", "extensions"],
 	[".pi", "agent", "settings.json"],

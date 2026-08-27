@@ -1,0 +1,21 @@
+[keys]
+# new_worktree keeps its default prefix+shift+g
+focus_agent = "ctrl+1..9"
+
+[[keys.command]]
+key = "prefix+shift+o"
+type = "popup"
+command = "/Users/owaisquadri/Documents/agents/herdr/worktree-picker.zsh"
+description = "open any workspace/worktree"
+width = "70%"
+height = "60%"
+
+[ui.toast]
+delivery = "system"
+
+[ui]
+show_agent_labels_on_pane_borders = true
+agent_panel_sort = "priority"
+
+[ui.sound]
+enabled = false

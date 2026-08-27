@@ -436,6 +436,15 @@ else
   link "$PI_THEME_DESTINATION" "$PI_THEME_SOURCE"
 fi
 
+HERDR_CONFIG_SOURCE="$REPO_TARGET/config/herdr/config.toml"
+HERDR_CONFIG_DESTINATION="$HOME_TARGET/.config/herdr/config.toml"
+if [[ ! -f "$HERDR_CONFIG_SOURCE" ]]; then
+  echo "warn: $HERDR_CONFIG_SOURCE not found, skipping Herdr config link" >&2
+else
+  run mkdir -p "$HOME_TARGET/.config/herdr"
+  link "$HERDR_CONFIG_DESTINATION" "$HERDR_CONFIG_SOURCE"
+fi
+
 PI_TRANSCRIBE_SOURCE="$REPO_TARGET/config/pi-transcribe.json"
 PI_TRANSCRIBE_DESTINATION="$HOME_TARGET/.pi/agent/pi-transcribe.json"
 if [[ ! -f "$PI_TRANSCRIBE_SOURCE" ]]; then

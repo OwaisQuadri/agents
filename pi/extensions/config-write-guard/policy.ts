@@ -7,7 +7,7 @@ type BashToolInput = { command: string };
 
 function pathReferencePattern(home: string): RegExp {
 	const escapedHome = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	return new RegExp(`(?:${escapedHome}|\\$HOME|\\$\\{HOME\\}|~)/(?:\\.agents|\\.claude|\\.codex|\\.pi)(?:/|\\b)`);
+	return new RegExp(`(?:${escapedHome}|\\$HOME|\\$\\{HOME\\}|~)/(?:\\.agents|\\.claude|\\.codex|\\.pi|\\.config/herdr)(?:/|\\b)`);
 }
 
 /**
