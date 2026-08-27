@@ -397,6 +397,7 @@ pub(crate) struct FrontierPolicy {
     pub(crate) maximum_infrastructure_attempts: u8,
     pub(crate) maximum_catalog_age_seconds: u32,
     pub(crate) active_pool_size: u8,
+    pub(crate) maximum_trial_cost_millionths_of_dollar: u64,
     pub(crate) spending_limit_millionths_of_dollar: u64,
     pub(crate) is_provider_limit_enforced: bool,
     pub(crate) is_first_party_only: bool,
@@ -499,6 +500,24 @@ pub(crate) enum FrontierRunStatus {
     Accepted,
     Rejected,
     Failed,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum FrontierScheduleAction {
+    Dispatch {
+        model: ModelIdentity,
+        key: TrialKey,
+        infrastructure_attempt: u8,
+        reserved_cost_millionths_of_dollar: u64,
+    },
+    Pause {
+        reason: PoolPauseReason,
+    },
+    Complete,
+    Terminal {
+        status: FrontierRunStatus,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
