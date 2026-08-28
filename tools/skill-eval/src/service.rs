@@ -3,6 +3,8 @@ use std::path::{Component, Path};
 
 use sha2::{Digest, Sha256};
 
+#[path = "frontier_scheduler.rs"]
+mod frontier_scheduler;
 #[path = "frontier_source.rs"]
 mod frontier_suite_source;
 
@@ -11,22 +13,24 @@ use crate::model::{
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
     CandidateArtifact, CandidateEnvironmentEntry, CaseDiscovery, CaseId, Decision, DecisionRecord,
     EvidenceRole, FrontierApplyReport, FrontierCaseGroup, FrontierConfidenceMethod,
-    FrontierDecisionRequest, FrontierEntrant, FrontierInspection, FrontierPlan, FrontierPolicy,
-    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite,
-    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication, JudgeInput,
-    ModelIdentity, ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant,
-    PoolPauseReason, PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState,
-    PoolRunStatus, PoolStage, PromptJudgeRequest, PromptJudgeResult, PublicationGate,
-    PublicationStatus, QualificationBoundary, QualificationPolicy, QualificationPurpose,
-    QualificationReport, QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState,
-    RunStatus, SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence,
-    T1ScreenAttemptReport, T1ScreenCallRange, T1ScreenCampaignState, T1ScreenCampaignStatus,
-    T1ScreenCapExtension, T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun,
-    T1ScreenChildStatus, T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason,
-    T1ScreenRankedRoute, T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport,
-    T1ScreenRouteFailure, T1ScreenRouteFailureRequest, T1ScreenRunId, T1ScreenRunState,
-    T1ScreenRunStatus, Tier, TierAssignment, TierDestination, TierEvidence, TierStatus, Timestamp,
-    TrialKey, TrialRecord, TrialSelector, TrialUsage,
+    FrontierDecisionRequest, FrontierEntrant, FrontierInfrastructureEvent, FrontierInspection,
+    FrontierModelProgress, FrontierPlan, FrontierPolicy, FrontierPreviewReport, FrontierReport,
+    FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
+    FrontierScheduleAction, FrontierSuite, FrontierSuiteInventory, FrontierSuiteProposal,
+    FrontierSuitePublication, FrontierTrialSelector, JudgeInput, ModelIdentity,
+    ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant, PoolPauseReason,
+    PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage,
+    PromptJudgeRequest, PromptJudgeResult, PublicationGate, PublicationStatus,
+    QualificationBoundary, QualificationPolicy, QualificationPurpose, QualificationReport,
+    QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus,
+    SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence, T1ScreenAttemptReport,
+    T1ScreenCallRange, T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
+    T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun, T1ScreenChildStatus,
+    T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason, T1ScreenRankedRoute,
+    T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport, T1ScreenRouteFailure,
+    T1ScreenRouteFailureRequest, T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, Tier,
+    TierAssignment, TierDestination, TierEvidence, TierStatus, Timestamp, TrialKey, TrialRecord,
+    TrialSelector, TrialUsage,
 };
 use crate::ports::{
     Clock, FrontierProgressSink, FrontierRuntime, FrontierSuiteRuntime, PoolProgressSink,
@@ -6704,7 +6708,6 @@ fn frontier_preview_invalid(message: impl Into<String>) -> SkillEvalError {
     SkillEvalError::InvalidConfiguration(format!("frontier preview: {}", message.into()))
 }
 
-// TODO(AGNT-0032.T147): Start and resume the exact cumulative frontier lifecycle.
 /// Creates and advances one cumulative first-party frontier run.
 ///
 /// The inputs are a frozen plan path, runtime, and progress sink. The output is saved state.
@@ -6713,11 +6716,58 @@ fn frontier_preview_invalid(message: impl Into<String>) -> SkillEvalError {
 ///
 /// Returns an error for invalid authority, storage, identity, candidate, judge, or infrastructure state.
 pub(crate) fn start_frontier(
-    _plan_path: &Path,
-    _runtime: &mut dyn FrontierRuntime,
-    _progress: &mut dyn FrontierProgressSink,
+    plan_path: &Path,
+    runtime: &mut dyn FrontierRuntime,
+    progress: &mut dyn FrontierProgressSink,
 ) -> Result<FrontierRunState, SkillEvalError> {
-    unimplemented!()
+    let (plan, suite) = runtime.load_frontier_plan(plan_path)?;
+    let now = runtime.now();
+    validate_frontier_preview_inputs(&plan, &suite, &now)?;
+    validate_frontier_execution_inputs(&plan, &suite, runtime)?;
+    let counts = frontier_tier_case_counts(&suite)?;
+    let (_, _, maximum_trials) = frontier_trial_bounds(&plan.entrants, &counts, &plan.policy)?;
+    let maximum_spending = maximum_trials
+        .checked_mul(plan.policy.maximum_trial_cost_millionths_of_dollar)
+        .ok_or_else(|| frontier_lifecycle_invalid("maximum spending arithmetic overflow"))?;
+    if plan.policy.spending_limit_millionths_of_dollar < maximum_spending {
+        return Err(frontier_lifecycle_invalid(
+            "owner spending authority is below the guarded maximum",
+        ));
+    }
+    let plan_sha256 = frontier_plan_digest(&plan)?;
+    let run_id = runtime.next_frontier_run_id()?;
+    let models = plan
+        .entrants
+        .iter()
+        .map(|entrant| FrontierModelProgress {
+            provider: entrant.provider.clone(),
+            model: entrant.model.clone(),
+            entry_tier: entrant.entry_tier,
+            selected_routes: Vec::new(),
+            next_tier: Some(entrant.entry_tier),
+            next_thinking_index: Some(0),
+            is_exhausted: false,
+        })
+        .collect();
+    let state = FrontierRunState {
+        configuration: FrontierRunConfiguration {
+            run_id,
+            created_at: now,
+            plan_path: plan_path.to_path_buf(),
+            plan_sha256,
+            plan,
+        },
+        status: FrontierRunStatus::Pending,
+        models,
+        cells: Vec::new(),
+        infrastructure_events: Vec::new(),
+        pause: None,
+        decision: None,
+        spent_millionths_of_dollar: 0,
+    };
+    runtime.create_frontier(&state)?;
+    progress.emit_frontier(&state)?;
+    continue_frontier(state, suite, Vec::new(), runtime, progress)
 }
 
 /// Continues one saved cumulative frontier without repeating terminal work.
@@ -6728,11 +6778,732 @@ pub(crate) fn start_frontier(
 ///
 /// Returns an error for resume drift, invalid state, quota, storage, or execution failure.
 pub(crate) fn resume_frontier(
-    _run_id: &FrontierRunId,
-    _runtime: &mut dyn FrontierRuntime,
-    _progress: &mut dyn FrontierProgressSink,
+    run_id: &FrontierRunId,
+    runtime: &mut dyn FrontierRuntime,
+    progress: &mut dyn FrontierProgressSink,
 ) -> Result<FrontierRunState, SkillEvalError> {
-    unimplemented!()
+    let mut state = runtime.load_frontier(run_id)?;
+    if state.configuration.run_id != *run_id {
+        return Err(frontier_lifecycle_drift("run identity"));
+    }
+    if matches!(
+        state.status,
+        FrontierRunStatus::AwaitingDecision
+            | FrontierRunStatus::Accepted
+            | FrontierRunStatus::Rejected
+            | FrontierRunStatus::Failed
+    ) {
+        return Err(frontier_lifecycle_invalid(
+            "terminal frontier run cannot resume",
+        ));
+    }
+    let (plan, suite) = runtime.load_frontier_plan(&state.configuration.plan_path)?;
+    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+    if plan != state.configuration.plan
+        || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
+    {
+        return Err(frontier_lifecycle_drift("frozen plan or plan digest"));
+    }
+    validate_frontier_execution_inputs(&plan, &suite, runtime)?;
+    let trials = load_frontier_trials(&state, &suite, runtime)?;
+    let stored = state.clone();
+    reconcile_frontier_evidence(&mut state, &suite, &trials)?;
+    validate_frontier_saved_authority(&state, &plan, &suite, &trials)?;
+    if state != stored {
+        save_frontier_and_emit(runtime, progress, &state)?;
+    }
+
+    if state.status == FrontierRunStatus::Paused {
+        match state.pause.as_ref() {
+            Some(PoolPauseReason::Quota { .. }) => {
+                state.status = FrontierRunStatus::Running;
+                state.pause = None;
+                save_frontier_and_emit(runtime, progress, &state)?;
+            }
+            Some(PoolPauseReason::Infrastructure { .. })
+                if frontier_pause_is_retryable(&state, &plan) =>
+            {
+                state.status = FrontierRunStatus::Running;
+                state.pause = None;
+                save_frontier_and_emit(runtime, progress, &state)?;
+            }
+            Some(PoolPauseReason::Infrastructure { .. })
+            | Some(PoolPauseReason::SpendingLimit { .. }) => return Ok(state),
+            None => return Err(frontier_lifecycle_invalid("paused run has no reason")),
+        }
+    }
+    continue_frontier(state, suite, trials, runtime, progress)
+}
+
+fn continue_frontier(
+    mut state: FrontierRunState,
+    suite: FrontierSuite,
+    mut trials: Vec<TrialRecord>,
+    runtime: &mut dyn FrontierRuntime,
+    progress: &mut dyn FrontierProgressSink,
+) -> Result<FrontierRunState, SkillEvalError> {
+    if state.status == FrontierRunStatus::Pending {
+        state.status = FrontierRunStatus::Running;
+        save_frontier_and_emit(runtime, progress, &state)?;
+    }
+    loop {
+        let schedulable = canonical_frontier_schedulable_state(&state);
+        match frontier_scheduler::next_frontier_trial(
+            &schedulable.configuration.plan,
+            &suite,
+            &schedulable,
+            &trials,
+        )? {
+            FrontierScheduleAction::Dispatch {
+                model,
+                key,
+                infrastructure_attempt,
+                reserved_cost_millionths_of_dollar,
+            } => match execute_frontier_trial(
+                &state,
+                &suite,
+                &model,
+                &key,
+                reserved_cost_millionths_of_dollar,
+                runtime,
+            ) {
+                Ok(trial) => {
+                    runtime.save_frontier_trial(&state.configuration.run_id, &trial)?;
+                    let completed_model = trial.model.clone();
+                    trials.push(trial);
+                    trials.sort_by(|left, right| left.key.cmp(&right.key));
+                    update_frontier_progress(&mut state, &suite, &trials, &completed_model)?;
+                    save_frontier_and_emit(runtime, progress, &state)?;
+                }
+                Err(SkillEvalError::Quota { model, reset_at }) => {
+                    state.status = FrontierRunStatus::Paused;
+                    state.pause = Some(PoolPauseReason::Quota { model, reset_at });
+                    save_frontier_and_emit(runtime, progress, &state)?;
+                    return Ok(state);
+                }
+                Err(
+                    error @ (SkillEvalError::InvalidArguments(_)
+                    | SkillEvalError::InvalidConfiguration(_)),
+                ) => return Err(error),
+                Err(error) => {
+                    state
+                        .infrastructure_events
+                        .push(FrontierInfrastructureEvent {
+                            model,
+                            artifact: key.artifact,
+                            case: key.case,
+                            attempt: key.attempt,
+                            infrastructure_attempt,
+                            message: format!("{error:?}"),
+                            occurred_at: runtime.now(),
+                        });
+                    state.status = FrontierRunStatus::Paused;
+                    state.pause = Some(PoolPauseReason::Infrastructure {
+                        message: format!("{error:?}"),
+                    });
+                    save_frontier_and_emit(runtime, progress, &state)?;
+                    return Ok(state);
+                }
+            },
+            FrontierScheduleAction::Pause { reason } => {
+                if state.status != FrontierRunStatus::Paused
+                    || state.pause.as_ref() != Some(&reason)
+                {
+                    state.status = FrontierRunStatus::Paused;
+                    state.pause = Some(reason);
+                    save_frontier_and_emit(runtime, progress, &state)?;
+                }
+                return Ok(state);
+            }
+            FrontierScheduleAction::Complete => {
+                validate_frontier_complete(&state, &suite, &trials)?;
+                state.status = FrontierRunStatus::AwaitingDecision;
+                state.pause = None;
+                save_frontier_and_emit(runtime, progress, &state)?;
+                return Ok(state);
+            }
+            FrontierScheduleAction::Terminal { status } => {
+                if status != state.status {
+                    return Err(frontier_lifecycle_drift("terminal scheduler status"));
+                }
+                return Ok(state);
+            }
+        }
+    }
+}
+
+fn execute_frontier_trial(
+    state: &FrontierRunState,
+    suite: &FrontierSuite,
+    model: &ModelIdentity,
+    key: &TrialKey,
+    reservation: u64,
+    runtime: &mut dyn FrontierRuntime,
+) -> Result<TrialRecord, SkillEvalError> {
+    require_frontier_first_party(&model.provider)?;
+    if reservation == 0
+        || reservation
+            != state
+                .configuration
+                .plan
+                .policy
+                .maximum_trial_cost_millionths_of_dollar
+        || state
+            .spent_millionths_of_dollar
+            .checked_add(reservation)
+            .is_none_or(|spend| {
+                spend
+                    > state
+                        .configuration
+                        .plan
+                        .policy
+                        .spending_limit_millionths_of_dollar
+            })
+        || runtime.exact_candidate(model)? != *model
+    {
+        return Err(frontier_lifecycle_drift(
+            "dispatch route or spending reservation",
+        ));
+    }
+    let (artifact, case, harness) = frontier_case_context(suite, key, runtime)?;
+    let judge = runtime.judge(state.configuration.plan.judge.tier, Some(model))?;
+    if judge != state.configuration.plan.judge
+        || judge.provider == model.provider && judge.model == model.model
+    {
+        return Err(frontier_lifecycle_drift("frozen judge identity"));
+    }
+    require_frontier_first_party(&judge.provider)?;
+    let run_id = RunId(state.configuration.run_id.0.clone());
+    let candidate = runtime.execute(&run_id, key, &artifact, &case, model, &harness, None)?;
+    if candidate.key != *key || candidate.model != *model || candidate.harness != harness {
+        return Err(frontier_lifecycle_drift("candidate result identity"));
+    }
+    let checks = runtime.verify(&case, &candidate)?;
+    let judged = runtime.grade(
+        &judge,
+        &JudgeInput {
+            candidate: candidate.clone(),
+            expect: case.expect.clone(),
+            rubric_path: artifact.root.join("evals/rubric.md"),
+            checks,
+        },
+    )?;
+    if judged.model != judge {
+        return Err(frontier_lifecycle_drift("judge result identity"));
+    }
+    let cost = candidate
+        .usage
+        .cost_millionths_of_dollar
+        .checked_add(judged.usage.cost_millionths_of_dollar)
+        .ok_or_else(|| frontier_lifecycle_invalid("trial cost arithmetic overflow"))?;
+    if cost > reservation {
+        return Err(frontier_lifecycle_invalid(
+            "trial cost exceeded its frozen reservation",
+        ));
+    }
+    Ok(TrialRecord {
+        key: key.clone(),
+        model: candidate.model.clone(),
+        harness: candidate.harness.clone(),
+        artifact_path: candidate.artifact_path,
+        transcript_path: candidate.transcript_path,
+        candidate_usage: candidate.usage,
+        judge_model: judged.model,
+        judge_usage: judged.usage,
+        verdict: judged.verdict,
+    })
+}
+
+fn frontier_case_context(
+    suite: &FrontierSuite,
+    key: &TrialKey,
+    runtime: &dyn FrontierRuntime,
+) -> Result<
+    (
+        ArtifactDefinition,
+        crate::model::CaseDefinition,
+        crate::model::HarnessIdentity,
+    ),
+    SkillEvalError,
+> {
+    let reference = suite
+        .tiers
+        .get(&key.tier)
+        .and_then(|tier| {
+            tier.cases.iter().find(|reference| {
+                reference.case == key.case
+                    && reference
+                        .artifact_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        == Some(key.artifact.0.as_str())
+            })
+        })
+        .ok_or_else(|| frontier_lifecycle_drift("scheduled suite case"))?;
+    let artifact = runtime.load(&reference.artifact_path)?;
+    if artifact.revision != reference.artifact_revision {
+        return Err(frontier_lifecycle_drift("artifact source revision"));
+    }
+    let case = artifact
+        .cases
+        .iter()
+        .find(|case| case.id == key.case)
+        .cloned()
+        .ok_or_else(|| frontier_lifecycle_drift("case source identity"))?;
+    let harness = runtime.identity(&artifact, &case.execution)?;
+    if harness.artifact_revision != reference.artifact_revision {
+        return Err(frontier_lifecycle_drift("harness source identity"));
+    }
+    Ok((artifact, case, harness))
+}
+
+fn validate_frontier_execution_inputs(
+    plan: &FrontierPlan,
+    suite: &FrontierSuite,
+    runtime: &dyn FrontierRuntime,
+) -> Result<(), SkillEvalError> {
+    for entrant in &plan.entrants {
+        for (index, thinking) in entrant.thinking_levels.iter().enumerate() {
+            for tier in frontier_reachable_tiers(entrant.entry_tier, index) {
+                let model = ModelIdentity {
+                    provider: entrant.provider.clone(),
+                    model: entrant.model.clone(),
+                    tier,
+                    thinking: thinking.clone(),
+                };
+                if runtime.exact_candidate(&model)? != model {
+                    return Err(frontier_lifecycle_drift("exact candidate capability"));
+                }
+                if runtime.judge(plan.judge.tier, Some(&model))? != plan.judge {
+                    return Err(frontier_lifecycle_drift("judge route"));
+                }
+            }
+        }
+    }
+    for tier_suite in suite.tiers.values() {
+        for reference in &tier_suite.cases {
+            let artifact = runtime.load(&reference.artifact_path)?;
+            if artifact.revision != reference.artifact_revision {
+                return Err(frontier_lifecycle_drift("artifact source revision"));
+            }
+            let case = artifact
+                .cases
+                .iter()
+                .find(|case| case.id == reference.case)
+                .ok_or_else(|| frontier_lifecycle_drift("case source identity"))?;
+            let harness = runtime.identity(&artifact, &case.execution)?;
+            if harness.artifact_revision != reference.artifact_revision {
+                return Err(frontier_lifecycle_drift("harness source identity"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn load_frontier_trials(
+    state: &FrontierRunState,
+    suite: &FrontierSuite,
+    runtime: &dyn FrontierRuntime,
+) -> Result<Vec<TrialRecord>, SkillEvalError> {
+    let mut trials = Vec::new();
+    for entrant in &state.configuration.plan.entrants {
+        for (thinking_index, thinking) in entrant.thinking_levels.iter().enumerate() {
+            for tier in frontier_reachable_tiers(entrant.entry_tier, thinking_index) {
+                let tier_suite = suite
+                    .tiers
+                    .get(&tier)
+                    .ok_or_else(|| frontier_lifecycle_drift("suite tier"))?;
+                for reference in &tier_suite.cases {
+                    let artifact = reference
+                        .artifact_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| frontier_lifecycle_drift("artifact identity"))?;
+                    for attempt in
+                        1..=u16::from(state.configuration.plan.policy.maximum_trials_per_case)
+                    {
+                        let selector = FrontierTrialSelector {
+                            run_id: state.configuration.run_id.clone(),
+                            provider: entrant.provider.clone(),
+                            model: entrant.model.clone(),
+                            tier,
+                            thinking: thinking.clone(),
+                            artifact: ArtifactName(artifact.to_owned()),
+                            case: reference.case.clone(),
+                            attempt,
+                        };
+                        match runtime.inspect_frontier(&selector) {
+                            Ok(FrontierInspection::Trial { trial }) => {
+                                validate_loaded_frontier_trial(&selector, &trial, suite, runtime)?;
+                                trials.push(trial);
+                            }
+                            Ok(FrontierInspection::Infrastructure { .. })
+                            | Err(SkillEvalError::NotFound(_)) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                }
+            }
+        }
+    }
+    trials.sort_by(|left, right| left.key.cmp(&right.key));
+    Ok(trials)
+}
+
+fn validate_loaded_frontier_trial(
+    selector: &FrontierTrialSelector,
+    trial: &TrialRecord,
+    suite: &FrontierSuite,
+    runtime: &dyn FrontierRuntime,
+) -> Result<(), SkillEvalError> {
+    if trial.model.provider != selector.provider
+        || trial.model.model != selector.model
+        || trial.model.tier != selector.tier
+        || trial.model.thinking != selector.thinking
+        || trial.key.artifact != selector.artifact
+        || trial.key.tier != selector.tier
+        || trial.key.case != selector.case
+        || trial.key.attempt != selector.attempt
+    {
+        return Err(frontier_lifecycle_drift("stored trial identity"));
+    }
+    let (_, _, harness) = frontier_case_context(suite, &trial.key, runtime)?;
+    if trial.harness != harness {
+        return Err(frontier_lifecycle_drift("stored trial harness identity"));
+    }
+    Ok(())
+}
+
+fn update_frontier_progress(
+    state: &mut FrontierRunState,
+    suite: &FrontierSuite,
+    trials: &[TrialRecord],
+    completed_model: &ModelIdentity,
+) -> Result<(), SkillEvalError> {
+    let tier_suite = suite
+        .tiers
+        .get(&completed_model.tier)
+        .ok_or_else(|| frontier_lifecycle_drift("trial suite tier"))?;
+    let route_trials = trials
+        .iter()
+        .filter(|trial| trial.model == *completed_model)
+        .cloned()
+        .collect::<Vec<_>>();
+    let case_count = tier_suite.cases.len();
+    if case_count == 0 || !route_trials.len().is_multiple_of(case_count) {
+        state.spent_millionths_of_dollar = frontier_spend(trials)?;
+        return Ok(());
+    }
+    let attempts = route_trials.len() / case_count;
+    if [1, 3, 5].contains(&attempts) {
+        let evidence = crate::statistics::evaluate_frontier_cell(
+            tier_suite,
+            completed_model,
+            &route_trials,
+            &state.configuration.plan.policy,
+        )?;
+        if evidence.status != crate::model::FrontierCellStatus::Pending {
+            if state.cells.iter().any(|cell| cell.model == evidence.model) {
+                return Err(frontier_lifecycle_invalid(
+                    "duplicate terminal cell evidence",
+                ));
+            }
+            state.cells.push(evidence);
+            let entrant_index = state
+                .configuration
+                .plan
+                .entrants
+                .iter()
+                .position(|entrant| {
+                    entrant.provider == completed_model.provider
+                        && entrant.model == completed_model.model
+                })
+                .ok_or_else(|| frontier_lifecycle_drift("trial entrant"))?;
+            let entrant = &state.configuration.plan.entrants[entrant_index];
+            let cells = state
+                .cells
+                .iter()
+                .filter(|cell| {
+                    cell.model.provider == entrant.provider && cell.model.model == entrant.model
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            state.models[entrant_index] = crate::statistics::advance_frontier_model(
+                entrant,
+                &state.models[entrant_index],
+                &cells,
+            )?;
+        }
+    }
+    state.spent_millionths_of_dollar = frontier_spend(trials)?;
+    Ok(())
+}
+
+fn reconcile_frontier_evidence(
+    state: &mut FrontierRunState,
+    suite: &FrontierSuite,
+    trials: &[TrialRecord],
+) -> Result<(), SkillEvalError> {
+    let (models, cells, spend) = reconstruct_frontier_authority(state, suite, trials)?;
+    if state.models == models && state.cells == cells && state.spent_millionths_of_dollar == spend {
+        return Ok(());
+    }
+    if !is_recoverable_frontier_save_lag(state, suite, trials)? {
+        return Err(frontier_lifecycle_drift(
+            "persisted model progress or aggregate evidence",
+        ));
+    }
+    state.models = models;
+    state.cells = cells;
+    state.spent_millionths_of_dollar = spend;
+    Ok(())
+}
+
+fn reconstruct_frontier_authority(
+    state: &FrontierRunState,
+    suite: &FrontierSuite,
+    trials: &[TrialRecord],
+) -> Result<
+    (
+        Vec<FrontierModelProgress>,
+        Vec<crate::model::FrontierCellEvidence>,
+        u64,
+    ),
+    SkillEvalError,
+> {
+    let mut models = initial_frontier_models(&state.configuration.plan);
+    let mut cells = Vec::new();
+    let mut entrants = state.configuration.plan.entrants.clone();
+    entrants.sort_by_key(|entrant| {
+        (
+            entrant.entry_tier,
+            entrant.provider.clone(),
+            entrant.model.clone(),
+        )
+    });
+    for entrant in entrants {
+        let progress_index = models
+            .iter()
+            .position(|progress| {
+                progress.provider == entrant.provider && progress.model == entrant.model
+            })
+            .ok_or_else(|| frontier_lifecycle_drift("model progress"))?;
+        loop {
+            let progress = &models[progress_index];
+            if progress.is_exhausted {
+                break;
+            }
+            let tier = progress
+                .next_tier
+                .ok_or_else(|| frontier_lifecycle_drift("next tier"))?;
+            let thinking_index = usize::from(
+                progress
+                    .next_thinking_index
+                    .ok_or_else(|| frontier_lifecycle_drift("next thinking level"))?,
+            );
+            let model = ModelIdentity {
+                provider: entrant.provider.clone(),
+                model: entrant.model.clone(),
+                tier,
+                thinking: entrant
+                    .thinking_levels
+                    .get(thinking_index)
+                    .cloned()
+                    .ok_or_else(|| frontier_lifecycle_drift("thinking level"))?,
+            };
+            let route_trials = trials
+                .iter()
+                .filter(|trial| trial.model == model)
+                .cloned()
+                .collect::<Vec<_>>();
+            let tier_suite = suite
+                .tiers
+                .get(&tier)
+                .ok_or_else(|| frontier_lifecycle_drift("suite tier"))?;
+            if route_trials.is_empty()
+                || !route_trials.len().is_multiple_of(tier_suite.cases.len())
+                || ![1, 3, 5].contains(&(route_trials.len() / tier_suite.cases.len()))
+            {
+                break;
+            }
+            let evidence = crate::statistics::evaluate_frontier_cell(
+                tier_suite,
+                &model,
+                &route_trials,
+                &state.configuration.plan.policy,
+            )?;
+            if evidence.status == crate::model::FrontierCellStatus::Pending {
+                break;
+            }
+            cells.push(evidence);
+            let entrant_cells = cells
+                .iter()
+                .filter(|cell| {
+                    cell.model.provider == entrant.provider && cell.model.model == entrant.model
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            models[progress_index] = crate::statistics::advance_frontier_model(
+                &entrant,
+                &models[progress_index],
+                &entrant_cells,
+            )?;
+        }
+    }
+    Ok((models, cells, frontier_spend(trials)?))
+}
+
+fn is_recoverable_frontier_save_lag(
+    state: &FrontierRunState,
+    suite: &FrontierSuite,
+    trials: &[TrialRecord],
+) -> Result<bool, SkillEvalError> {
+    let mut recoverable_count = 0_u8;
+    for omitted_index in 0..trials.len() {
+        let mut prior_trials = trials.to_vec();
+        let durable_trial = prior_trials.remove(omitted_index);
+        let (prior_models, prior_cells, prior_spend) =
+            reconstruct_frontier_authority(state, suite, &prior_trials)?;
+        if state.models != prior_models
+            || state.cells != prior_cells
+            || state.spent_millionths_of_dollar != prior_spend
+        {
+            continue;
+        }
+        let mut prior_state = state.clone();
+        prior_state.models = prior_models;
+        prior_state.cells = prior_cells;
+        prior_state.spent_millionths_of_dollar = prior_spend;
+        prior_state.status = FrontierRunStatus::Running;
+        prior_state.pause = None;
+        let schedulable = canonical_frontier_schedulable_state(&prior_state);
+        if matches!(
+            frontier_scheduler::next_frontier_trial(
+                &schedulable.configuration.plan,
+                suite,
+                &schedulable,
+                &prior_trials,
+            )?,
+            FrontierScheduleAction::Dispatch { model, key, .. }
+                if model == durable_trial.model && key == durable_trial.key
+        ) {
+            recoverable_count = recoverable_count
+                .checked_add(1)
+                .ok_or_else(|| frontier_lifecycle_invalid("save lag count overflow"))?;
+        }
+    }
+    Ok(recoverable_count == 1)
+}
+
+fn validate_frontier_saved_authority(
+    state: &FrontierRunState,
+    plan: &FrontierPlan,
+    suite: &FrontierSuite,
+    trials: &[TrialRecord],
+) -> Result<(), SkillEvalError> {
+    if state.decision.is_some()
+        || state.spent_millionths_of_dollar != frontier_spend(trials)?
+        || state.models.len() != plan.entrants.len()
+    {
+        return Err(frontier_lifecycle_drift("saved authority or spend"));
+    }
+    let mut schedulable = canonical_frontier_schedulable_state(state);
+    schedulable.status = FrontierRunStatus::Running;
+    schedulable.pause = None;
+    let action = frontier_scheduler::next_frontier_trial(plan, suite, &schedulable, trials)?;
+    if state.status == FrontierRunStatus::Pending && !trials.is_empty()
+        || state.status == FrontierRunStatus::Running
+            && matches!(action, FrontierScheduleAction::Terminal { .. })
+    {
+        return Err(frontier_lifecycle_drift("saved lifecycle"));
+    }
+    Ok(())
+}
+
+fn validate_frontier_complete(
+    state: &FrontierRunState,
+    suite: &FrontierSuite,
+    trials: &[TrialRecord],
+) -> Result<(), SkillEvalError> {
+    let schedulable = canonical_frontier_schedulable_state(state);
+    if !matches!(
+        frontier_scheduler::next_frontier_trial(
+            &schedulable.configuration.plan,
+            suite,
+            &schedulable,
+            trials,
+        )?,
+        FrontierScheduleAction::Complete
+    ) || state.models.iter().any(|model| !model.is_exhausted)
+    {
+        return Err(frontier_lifecycle_invalid(
+            "frontier completion lacks expected durable evidence",
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_frontier_schedulable_state(state: &FrontierRunState) -> FrontierRunState {
+    let mut schedulable = state.clone();
+    schedulable.models = initial_frontier_models(&schedulable.configuration.plan);
+    schedulable
+}
+
+fn initial_frontier_models(plan: &FrontierPlan) -> Vec<FrontierModelProgress> {
+    plan.entrants
+        .iter()
+        .map(|entrant| FrontierModelProgress {
+            provider: entrant.provider.clone(),
+            model: entrant.model.clone(),
+            entry_tier: entrant.entry_tier,
+            selected_routes: Vec::new(),
+            next_tier: Some(entrant.entry_tier),
+            next_thinking_index: Some(0),
+            is_exhausted: false,
+        })
+        .collect()
+}
+
+fn frontier_spend(trials: &[TrialRecord]) -> Result<u64, SkillEvalError> {
+    trials.iter().try_fold(0_u64, |total, trial| {
+        total
+            .checked_add(trial.candidate_usage.cost_millionths_of_dollar)
+            .and_then(|value| value.checked_add(trial.judge_usage.cost_millionths_of_dollar))
+            .ok_or_else(|| frontier_lifecycle_invalid("frontier spending arithmetic overflow"))
+    })
+}
+
+fn frontier_pause_is_retryable(state: &FrontierRunState, plan: &FrontierPlan) -> bool {
+    state.infrastructure_events.last().is_some_and(|event| {
+        event.infrastructure_attempt < plan.policy.maximum_infrastructure_attempts
+    })
+}
+
+fn frontier_plan_digest(plan: &FrontierPlan) -> Result<String, SkillEvalError> {
+    let bytes = serde_json::to_vec(plan).map_err(|error| {
+        frontier_lifecycle_invalid(format!("plan digest serialization failed: {error}"))
+    })?;
+    Ok(Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn save_frontier_and_emit(
+    runtime: &mut dyn FrontierRuntime,
+    progress: &mut dyn FrontierProgressSink,
+    state: &FrontierRunState,
+) -> Result<(), SkillEvalError> {
+    runtime.save_frontier(state)?;
+    progress.emit_frontier(state)
+}
+
+fn frontier_lifecycle_invalid(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("frontier lifecycle: {}", message.into()))
+}
+
+fn frontier_lifecycle_drift(identity: &str) -> SkillEvalError {
+    frontier_lifecycle_invalid(format!("{identity} drifted"))
 }
 
 // TODO(AGNT-0032.T148): Build the cross-tier report and exact inspection.
@@ -6816,6 +7587,8 @@ include!("../tests/pool_qualification.rs");
 #[cfg(test)]
 include!("../tests/frontier_preview.rs");
 #[cfg(test)]
+include!("../tests/frontier_lifecycle.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -6835,6 +7608,8 @@ pool_resume_tests!();
 pool_qualification_tests!();
 #[cfg(test)]
 frontier_preview_tests!();
+#[cfg(test)]
+frontier_lifecycle_tests!();
 
 #[cfg(test)]
 mod state {
