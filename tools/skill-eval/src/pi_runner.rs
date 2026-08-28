@@ -20,24 +20,25 @@ use crate::ports::CandidateRunner;
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const ANTHROPIC_AUTH_REVISION: &str = "c6605e2db9ad3e783c3fe8b23d269848e0981d26";
 const MAX_PI_EVENT_BYTES: usize = 64 * 1024 * 1024;
+const EFFECTIVE_IDENTITY_EVENT: &str = "skill-eval-effective-identity";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ProcessRequest {
-    program: String,
-    arguments: Vec<String>,
-    working_directory: PathBuf,
-    timeout: Option<Duration>,
+pub(crate) struct ProcessRequest {
+    pub(crate) program: String,
+    pub(crate) arguments: Vec<String>,
+    pub(crate) working_directory: PathBuf,
+    pub(crate) timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ProcessOutput {
-    exit_code: Option<i32>,
-    standard_output: Vec<u8>,
-    standard_error: Vec<u8>,
-    is_timed_out: bool,
+pub(crate) struct ProcessOutput {
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) standard_output: Vec<u8>,
+    pub(crate) standard_error: Vec<u8>,
+    pub(crate) is_timed_out: bool,
 }
 
-trait Process {
+pub(crate) trait Process {
     fn run(&mut self, request: &ProcessRequest) -> io::Result<ProcessOutput>;
 }
 
@@ -176,7 +177,7 @@ impl PiCandidateRunner<SystemProcess> {
 }
 
 impl<P> PiCandidateRunner<P> {
-    fn with_process(output_root: PathBuf, process: P) -> Self {
+    pub(crate) fn with_process(output_root: PathBuf, process: P) -> Self {
         Self {
             output_root,
             process,
@@ -184,7 +185,6 @@ impl<P> PiCandidateRunner<P> {
     }
 }
 
-// TODO(AGNT-0032.T154): Guard first-party frontier execution before launching Pi.
 impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
     fn execute(
         &mut self,
@@ -200,6 +200,15 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
         validate_trial(key, artifact, case, model, harness)?;
         if candidate_timeout_seconds == Some(0) {
             return Err(invalid("candidate timeout must be greater than zero"));
+        }
+        let is_frontier_execution = run_id.0.starts_with("frontier-");
+        if is_frontier_execution {
+            validate_frontier_provider(model)?;
+            if candidate_timeout_seconds.is_some() {
+                return Err(invalid(
+                    "frontier Pi candidates must not have a wall-clock timeout",
+                ));
+            }
         }
         let output_root = fs::canonicalize(&self.output_root)
             .map_err(|error| io_error(&self.output_root, error))?;
@@ -282,6 +291,22 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
             }
         };
 
+        if is_frontier_execution && !parsed.is_thinking_observed {
+            return Err(invalid(
+                "frontier Pi response did not report its effective thinking level",
+            ));
+        }
+        if is_frontier_execution && parsed.model != *model {
+            return Err(invalid(format!(
+                "frontier Pi effective identity {}/{}/{} differs from requested {}/{}/{}",
+                parsed.model.provider,
+                parsed.model.model,
+                parsed.model.thinking,
+                model.provider,
+                model.model,
+                model.thinking,
+            )));
+        }
         if let Some((quota_model, reset_at)) = quota_pause(&parsed, &output) {
             return Err(SkillEvalError::Quota {
                 model: quota_model,
@@ -343,6 +368,16 @@ fn validate_trial(
     validate_safety(&case.input)?;
     validate_tools(case)?;
     validate_artifact_paths(artifact)?;
+    Ok(())
+}
+
+fn validate_frontier_provider(model: &ModelIdentity) -> Result<(), SkillEvalError> {
+    if !matches!(model.provider.as_str(), "anthropic" | "openai-codex") {
+        return Err(invalid(format!(
+            "frontier Pi execution requires an exact first-party provider, got {:?}",
+            model.provider
+        )));
+    }
     Ok(())
 }
 
@@ -587,6 +622,12 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", enableAll);
   pi.on("before_agent_start", () => {
     enableAll();
+    pi.sendMessage({
+      customType: "skill-eval-effective-identity",
+      content: "",
+      display: false,
+      details: { thinking: pi.getThinkingLevel() },
+    }, { triggerTurn: false });
     pi.appendEntry("skill-eval-tool-inventory", {
       tools: pi.getActiveTools().slice().sort(),
     });
@@ -749,6 +790,7 @@ fn git_output(root: &Path, arguments: &[&str]) -> Result<String, SkillEvalError>
 struct ParsedTrial {
     response: String,
     model: ModelIdentity,
+    is_thinking_observed: bool,
     usage: TrialUsage,
     error_message: Option<String>,
 }
@@ -764,6 +806,7 @@ fn parse_events(
         message: format!("Pi event stream is not UTF-8: {error}"),
     })?;
     let mut final_message = None;
+    let mut effective_thinking = None;
     let mut usage = TrialUsage {
         input_tokens: 0,
         output_tokens: 0,
@@ -791,6 +834,25 @@ fn parse_events(
         };
         match event.get("type").and_then(Value::as_str) {
             Some("turn_end") => usage.turns = checked_increment(usage.turns, index)?,
+            Some("message_end")
+                if event.pointer("/message/role").and_then(Value::as_str) == Some("custom")
+                    && event.pointer("/message/customType").and_then(Value::as_str)
+                        == Some(EFFECTIVE_IDENTITY_EVENT) =>
+            {
+                let thinking = event
+                    .pointer("/message/details/thinking")
+                    .and_then(Value::as_str)
+                    .filter(|thinking| !thinking.is_empty())
+                    .ok_or_else(|| {
+                        invalid_event(index, "effective identity event has no thinking level")
+                    })?;
+                if effective_thinking.replace(thinking.to_owned()).is_some() {
+                    return Err(invalid_event(
+                        index,
+                        "effective identity event is duplicated",
+                    ));
+                }
+            }
             Some("tool_execution_start") => {
                 usage.tool_calls = checked_increment(usage.tool_calls, index)?;
             }
@@ -811,6 +873,7 @@ fn parse_events(
             return Ok(ParsedTrial {
                 response: String::new(),
                 model: requested_model.clone(),
+                is_thinking_observed: false,
                 usage,
                 error_message: None,
             });
@@ -820,7 +883,8 @@ fn parse_events(
             message: "Pi event stream has no authoritative assistant message_end".to_owned(),
         });
     };
-    let model = completed_model(&message, requested_model)?;
+    let is_thinking_observed = effective_thinking.is_some();
+    let model = completed_model(&message, requested_model, effective_thinking.as_deref())?;
     let response = final_text(&message, 0)?;
     let error_message = if message.get("stopReason").and_then(Value::as_str) == Some("error") {
         Some(
@@ -836,6 +900,7 @@ fn parse_events(
     Ok(ParsedTrial {
         response,
         model,
+        is_thinking_observed,
         usage,
         error_message,
     })
@@ -893,6 +958,7 @@ fn add_token(
 fn completed_model(
     message: &Value,
     requested: &ModelIdentity,
+    effective_thinking: Option<&str>,
 ) -> Result<ModelIdentity, SkillEvalError> {
     let provider = message
         .get("provider")
@@ -907,7 +973,7 @@ fn completed_model(
         tier: requested.tier,
         provider: provider.to_owned(),
         model: model.to_owned(),
-        thinking: requested.thinking.clone(),
+        thinking: effective_thinking.unwrap_or(&requested.thinking).to_owned(),
     })
 }
 
@@ -1111,6 +1177,10 @@ mod tests {
         RunId("run-1".to_owned())
     }
 
+    fn frontier_run_id() -> RunId {
+        RunId("frontier-run-1".to_owned())
+    }
+
     fn key() -> TrialKey {
         TrialKey {
             artifact: ArtifactName("fixture-skill".to_owned()),
@@ -1172,6 +1242,250 @@ mod tests {
         }
     }
 
+    fn frontier_model(provider: &str) -> ModelIdentity {
+        ModelIdentity {
+            tier: Tier::T2,
+            provider: provider.to_owned(),
+            model: "frontier-model".to_owned(),
+            thinking: "high".to_owned(),
+        }
+    }
+
+    fn exact_output(fixture: &str, model: &ModelIdentity) -> String {
+        format!(
+            "{{\"type\":\"message_end\",\"message\":{{\"role\":\"custom\",\"customType\":\"{EFFECTIVE_IDENTITY_EVENT}\",\"content\":\"\",\"display\":false,\"details\":{{\"thinking\":\"{}\"}}}}}}\n{}",
+            model.thinking,
+            fixture
+                .replace("routed-provider", &model.provider)
+                .replace("actual-model", &model.model)
+        )
+    }
+
+    #[test]
+    fn frontier_first_party_identity_is_exact_and_unbounded() {
+        for provider in ["anthropic", "openai-codex"] {
+            let directory = TestDirectory::new(provider);
+            let artifact_root = directory.path().join("artifact");
+            fs::create_dir(&artifact_root).unwrap();
+            let artifact = skill(&artifact_root);
+            let model = frontier_model(provider);
+            let output = exact_output(include_str!("../tests/fixtures/pi/success.jsonl"), &model);
+            let mut runner = PiCandidateRunner::with_process(
+                directory.path().join("runs"),
+                FakeProcess::returning(&output),
+            );
+
+            let candidate = runner
+                .execute(
+                    &frontier_run_id(),
+                    &key(),
+                    &artifact,
+                    &response_case(&[]),
+                    &model,
+                    &harness(),
+                    None,
+                )
+                .unwrap();
+
+            assert_eq!(candidate.model, model);
+            assert_eq!(runner.process.requests.len(), 1);
+            let request = &runner.process.requests[0];
+            assert_eq!(request.timeout, None);
+            let provider_model = format!("{provider}/frontier-model");
+            assert!(
+                request
+                    .arguments
+                    .windows(2)
+                    .any(|pair| { pair[0] == "--model" && pair[1] == provider_model })
+            );
+            assert!(
+                request
+                    .arguments
+                    .windows(2)
+                    .any(|pair| pair == ["--thinking", "high"])
+            );
+        }
+    }
+
+    #[test]
+    fn frontier_candidate_timeout_fails_before_launch() {
+        let directory = TestDirectory::new("frontier-timeout");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let mut runner = PiCandidateRunner::with_process(
+            directory.path().join("runs"),
+            FakeProcess::returning(include_str!("../tests/fixtures/pi/success.jsonl")),
+        );
+
+        let error = runner
+            .execute(
+                &frontier_run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &frontier_model("anthropic"),
+                &harness(),
+                Some(30),
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SkillEvalError::InvalidConfiguration(message)
+                if message.contains("must not have a wall-clock timeout")
+        ));
+        assert!(runner.process.requests.is_empty());
+    }
+
+    #[test]
+    fn frontier_non_first_party_provider_fails_before_launch() {
+        for provider in ["openrouter", "openai", "extension"] {
+            let directory = TestDirectory::new(provider);
+            let artifact_root = directory.path().join("artifact");
+            fs::create_dir(&artifact_root).unwrap();
+            let artifact = skill(&artifact_root);
+            let mut runner = PiCandidateRunner::with_process(
+                directory.path().join("runs"),
+                FakeProcess::returning(include_str!("../tests/fixtures/pi/success.jsonl")),
+            );
+
+            let error = runner
+                .execute(
+                    &frontier_run_id(),
+                    &key(),
+                    &artifact,
+                    &response_case(&[]),
+                    &frontier_model(provider),
+                    &harness(),
+                    None,
+                )
+                .unwrap_err();
+
+            assert!(matches!(error, SkillEvalError::InvalidConfiguration(_)));
+            assert!(runner.process.requests.is_empty());
+        }
+    }
+
+    #[test]
+    fn frontier_effective_identity_drift_returns_no_candidate() {
+        let directory = TestDirectory::new("frontier-identity-drift");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let requested = frontier_model("openai-codex");
+        let effective = ModelIdentity {
+            provider: "anthropic".to_owned(),
+            model: "other-model".to_owned(),
+            ..requested.clone()
+        };
+        let output = exact_output(
+            include_str!("../tests/fixtures/pi/success.jsonl"),
+            &effective,
+        );
+        let mut runner = PiCandidateRunner::with_process(
+            directory.path().join("runs"),
+            FakeProcess::returning(&output),
+        );
+
+        let error = runner
+            .execute(
+                &frontier_run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &requested,
+                &harness(),
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SkillEvalError::InvalidConfiguration(message)
+                if message.contains("effective identity")
+        ));
+        assert_eq!(runner.process.requests.len(), 1);
+        let runs_root = fs::canonicalize(directory.path().join("runs")).unwrap();
+        let response = trial_directory(&runs_root, &frontier_run_id(), &key())
+            .unwrap()
+            .join("response.txt");
+        assert!(!response.exists());
+    }
+
+    #[test]
+    fn frontier_missing_effective_thinking_returns_no_candidate() {
+        let directory = TestDirectory::new("frontier-thinking-absent");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let requested = frontier_model("openai-codex");
+        let output = include_str!("../tests/fixtures/pi/success.jsonl")
+            .replace("routed-provider", &requested.provider)
+            .replace("actual-model", &requested.model);
+        let mut runner = PiCandidateRunner::with_process(
+            directory.path().join("runs"),
+            FakeProcess::returning(&output),
+        );
+
+        let error = runner
+            .execute(
+                &frontier_run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &requested,
+                &harness(),
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SkillEvalError::InvalidConfiguration(message)
+                if message.contains("did not report its effective thinking level")
+        ));
+    }
+
+    #[test]
+    fn frontier_effective_thinking_drift_returns_no_candidate() {
+        let directory = TestDirectory::new("frontier-thinking-drift");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let requested = frontier_model("openai-codex");
+        let effective = ModelIdentity {
+            thinking: "low".to_owned(),
+            ..requested.clone()
+        };
+        let output = exact_output(
+            include_str!("../tests/fixtures/pi/success.jsonl"),
+            &effective,
+        );
+        let mut runner = PiCandidateRunner::with_process(
+            directory.path().join("runs"),
+            FakeProcess::returning(&output),
+        );
+
+        let error = runner
+            .execute(
+                &frontier_run_id(),
+                &key(),
+                &artifact,
+                &response_case(&[]),
+                &requested,
+                &harness(),
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            SkillEvalError::InvalidConfiguration(message)
+                if message.contains("effective identity")
+        ));
+    }
+
     #[test]
     fn candidate_has_no_wall_clock_limit() {
         let directory = TestDirectory::new("candidate-timeout-process");
@@ -1215,6 +1529,8 @@ mod tests {
             requests: Vec::new(),
         };
         let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
+        let mut frontier_model = model();
+        frontier_model.provider = "openai-codex".to_owned();
 
         let error = runner
             .execute(
@@ -1222,7 +1538,7 @@ mod tests {
                 &key(),
                 &artifact,
                 &response_case(&[]),
-                &model(),
+                &frontier_model,
                 &harness(),
                 None,
             )

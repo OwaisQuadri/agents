@@ -1,0 +1,62 @@
+#!/bin/zsh
+set -eu
+
+log=${FAKE_PI_LOG:?}
+print -r -- "args:$*" >> "$log"
+
+for name in HOME PI_CODING_AGENT_DIR PI_CODING_AGENT_SESSION_DIR XDG_CONFIG_HOME XDG_CACHE_HOME XDG_DATA_HOME TMPDIR PI_SKIP_VERSION_CHECK PI_TELEMETRY; do
+  print -r -- "env:$name=${(P)name-}" >> "$log"
+done
+print -r -- "cwd:$PWD" >> "$log"
+
+if [[ "${1:-}" == "--list-models" ]]; then
+  print 'provider model context max-out thinking images'
+  print 'anthropic frontier-anthropic 200K 64K yes no'
+  print 'anthropic frontier-judge 200K 64K yes no'
+  print 'openai-codex frontier-codex 200K 64K yes no'
+  print 'openrouter frontier-proxy 200K 64K yes no'
+  exit 0
+fi
+
+if [[ "${1:-}" == "--version" ]]; then
+  print 'synthetic-frontier-pi-1'
+  exit 0
+fi
+
+if [[ "$*" == '--mode rpc --no-session --no-context-files --no-extensions' ]]; then
+  request=$(<&0)
+  print -r -- "stdin:$request" >> "$log"
+  print '{"id":"skill-eval-models","type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"anthropic","id":"frontier-anthropic","reasoning":true},{"provider":"anthropic","id":"frontier-judge","reasoning":true},{"provider":"openai-codex","id":"frontier-codex","reasoning":true},{"provider":"openrouter","id":"frontier-proxy","reasoning":true}]}}'
+  exit 0
+fi
+
+provider_model=''
+thinking=''
+while (( $# > 0 )); do
+  case "$1" in
+    --model)
+      provider_model=$2
+      shift 2
+      ;;
+    --thinking)
+      thinking=$2
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [[ -z "$provider_model" || -z "$thinking" ]]; then
+  print -u2 'fake frontier Pi requires --model and --thinking'
+  exit 64
+fi
+if [[ "${FAKE_PI_OUTCOME:-quota}" == "infrastructure" ]]; then
+  print -u2 'synthetic frontier infrastructure failure'
+  exit 75
+fi
+provider=${provider_model%%/*}
+model=${provider_model#*/}
+print -r -- "candidate:$provider/$model/$thinking" >> "$log"
+print -r -- '{"type":"message_end","message":{"role":"custom","customType":"skill-eval-effective-identity","content":"","display":false,"details":{"thinking":"'"$thinking"'"}}}'
+print -r -- '{"type":"message_end","message":{"role":"assistant","content":[],"api":"fixture","provider":"'"$provider"'","model":"'"$model"'","responseModel":"'"$model"'","usage":{"input":1,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":1,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","errorMessage":"usage limit; reset_at=2027-08-01T12:00:00-04:00","timestamp":1}}'
