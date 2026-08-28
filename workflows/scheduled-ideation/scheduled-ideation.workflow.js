@@ -54,7 +54,7 @@ const plan = await agent(
 
 Design exactly 2 mining dispatches (codebase, read-only) plus between 1 and ${MAX_TOOL_RADAR} tool-radar dispatches (web), each self-contained: the agent receiving it sees NOTHING but the five fields below, not this conversation.
 
-Both mining dispatches MUST include this exact reading-boundedness rule verbatim in their objective, because a Pi session transcript can run to many megabytes and an earlier live run aborted trying to read several in full: "Session transcripts live under ~/.pi/agent/sessions/ and can be multi-MB each. NEVER read a full session file. Use grep to find markers first (tool_use, error, cost, a skill/agent name), or read only the last ~200 lines (tail) of a session, or bounded offset/limit reads — never an unbounded whole-file read. The same per-file cap applies to any logs/usage.jsonl or run-history.jsonl found."
+Both mining dispatches MUST include this exact reading-boundedness rule verbatim in their objective, because a Pi session transcript can run to many megabytes and an earlier live run aborted trying to read several in full: "Session transcripts live under ~/.pi/agent/sessions/ and can be multi-MB each. NEVER read a full session file. Use grep to find markers first (tool_use, error, cost, a skill/agent name), or read only the last ~200 lines (tail) of a session, or bounded offset/limit reads — never an unbounded whole-file read. The same per-file cap applies to any logs/usage.jsonl or run-history.jsonl found. Repetition evidence is NOT limited to artifact usage logs -- grep the same handful of newest session transcripts for markers of repeated friction: a warning or error that recurs, a workaround or manual recovery step applied more than once, an operation that silently failed and needed re-doing. A marker that greps 2+ times across the window is measured evidence (you counted real occurrences), not an estimate -- cite each occurrence's rough marker text/timestamp as the evidence. Zero candidates stays a valid, honest result when nothing actually repeats."
 
 Mining dispatch 1 (category "skill", label "skill-evidence-sweep"): objective MUST instruct the agent to run the exact "bounded session evidence sweep" procedure from skills/ai-author/SKILL.md in this repo (read that file first, then follow its numbered steps 1-6 verbatim) and report the surviving candidates it proposes, each with its evidence and routing verdict. Step 5 of that procedure already routes each surviving candidate to whichever destination the evidence actually supports — a checker, a Pi extension, a skill, an agent, or a workflow — so the candidates returned are NOT limited to category "skill": instruct the agent explicitly to report each candidate's category as whatever that step concludes (skill|agent|workflow|checker|extension), never force-fit everything into "skill". source_guidance: "skills/ai-author/SKILL.md for the procedure; the ten newest parent Pi session transcripts and named artifacts' logs/usage.jsonl or run-history.jsonl for evidence, per that procedure's own window rule and the reading-boundedness rule above."
 
@@ -87,8 +87,8 @@ const categoryInstruction = d =>
     ? `category ("tool")`
     : `category (one of skill|agent|workflow|checker|extension — whichever your routing verdict actually concludes; do not force-fit into "${d.category}")`
 
-const dispatchPrompt = d =>
-  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
+const dispatchPrompt = (d, extra) =>
+  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}${extra ? `\n\n${extra}` : ''}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
 
 phase('Generate')
 // Mining ran on agentType 'Explore' (Haiku-tier) in the founding version; two real 2026-08-28
@@ -98,14 +98,26 @@ phase('Generate')
 // prompt tweaks can fix. Dropped agentType entirely: mining now runs on the same default
 // (session) model every other node here already uses successfully in every one of those
 // same runs -- Plan, Filter, and Digest never once failed.
-const [miningResults, toolResults] = await Promise.all([
-  parallel(mining.map(d => () =>
-    agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
-      .then(r => (r ? { label: d.label, candidates: r.candidates } : null)))),
-  parallel(toolRadar.map(d => () =>
-    agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', agentType: 'web-research-summarizer', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
-      .then(r => (r ? { label: d.label, candidates: r.candidates } : null)))),
-])
+//
+// Mining runs BEFORE tool-radar now, as a genuine barrier rather than a fake one: tool-radar
+// needs mining's actual real-evidence content to ground its rationale in this repo's own
+// observed usage rather than generic trending-tool descriptions (2026-08-28 live runs kept
+// surfacing "seems useful for a terminal multiplexer" reasoning with no connection to any
+// specific measured friction). This costs wall-clock versus one combined wave, which is the
+// correct trade per workflow-author's own barrier rule: stage N here genuinely needs stage
+// N-1's cross-item content, not just its own independent inputs.
+const miningResults = await parallel(mining.map(d => () =>
+  agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
+    .then(r => (r ? { label: d.label, candidates: r.candidates } : null))))
+
+const minedCandidates = miningResults.filter(Boolean).flatMap(r => r.candidates || [])
+const usageGrounding = minedCandidates.length
+  ? `Real recurring friction measured in this repo's own session evidence this run:\n${minedCandidates.map(c => `- [${c.category}] ${c.name}: ${c.evidence}`).join('\n')}\n\nYour rationale for any tool candidate MUST explicitly name which of these it addresses, or state plainly "addresses no measured friction this run" and instead ground the fit in this repo's specific, real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking) rather than a generic "would be useful" claim. A rationale that ignores this entirely will be dropped in filtering.`
+  : `Mining found zero measured recurring friction this run (a valid, honest result). Your rationale for any tool candidate must still ground fit in this repo's specific, real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking), never a generic "would be useful" claim with no connection to this repo's actual work.`
+
+const toolResults = await parallel(toolRadar.map(d => () =>
+  agent(dispatchPrompt(d, usageGrounding), { label: d.label, phase: 'Generate', agentType: 'web-research-summarizer', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
+    .then(r => (r ? { label: d.label, candidates: r.candidates } : null))))
 
 const generateResults = [...miningResults, ...toolResults].filter(Boolean)
 const generateMissing = allDispatches.map(d => d.label).filter(l => !generateResults.some(r => r.label === l))
@@ -120,7 +132,7 @@ phase('Filter')
 const filtered = await agent(
   `You are a fresh-context filter for a daily candidate-ideation run. You were not involved in generating these candidates and have never seen the sessions or searches that produced them — judge only what's written here.
 
-Below are ${rawCandidates.length} raw candidates across six possible categories (skill/agent/workflow/checker/extension/tool), from a personal agents repo's daily ideation sweep. Score each on: (1) evidence strength — is the rationale backed by a measured, cited fact (a real repetition count, a real cost, a real URL fetched this run) rather than a vibe or an estimate; (2) relevance — would this repo's owner plausibly act on it; (3) actionability — is there a concrete next step, not just a vague observation. This directly guards against a documented 2026 failure mode: AI-generated noise overwhelming a human reviewer. When in doubt, drop it — a short, high-signal list beats a long noisy one.
+Below are ${rawCandidates.length} raw candidates across six possible categories (skill/agent/workflow/checker/extension/tool), from a personal agents repo's daily ideation sweep. Score each on: (1) evidence strength — is the rationale backed by a measured, cited fact (a real repetition count, a real cost, a real URL fetched this run) rather than a vibe or an estimate; (2) relevance — would this repo's owner plausibly act on it; (3) actionability — is there a concrete next step, not just a vague observation. For any candidate with category "tool": drop it unless its rationale explicitly names a specific measured friction item it addresses, or explicitly grounds fit in this repo's real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking) — drop anything that reads as a generic "this tool seems useful" claim with no connection to this repo's actual work. This directly guards against a documented 2026 failure mode: AI-generated noise overwhelming a human reviewer. When in doubt, drop it — a short, high-signal list beats a long noisy one.
 
 Return only the survivors, capped at ${MAX_DIGEST_CANDIDATES}, ranked best first, plus how many you dropped and the single main reason (e.g. "6 dropped: unmeasured/estimated evidence").
 
