@@ -282,9 +282,11 @@ fi
 #    session-stats as an on-demand command the user runs by name,
 #    logpath-check in the pi/extensions/logpath-guard tool_call path ahead of every bash
 #    write to a logs/usage.jsonl path (also runnable by name for the static SKILL.md scan),
+#    preferred-cli-guard in the pi/extensions/preferred-cli-guard tool_call path ahead of
+#    every bash call, blocking a literal find/grep invocation in favor of fd/rg,
 #    warnings-check in the PreToolUse path ahead of every commit that stages a .rs file
 #    under tools/, alongside no-ai-attribution on the same hook
-for tool in ste-check no-ai-attribution session-stats logpath-check warnings-check; do
+for tool in ste-check no-ai-attribution session-stats logpath-check preferred-cli-guard warnings-check; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then

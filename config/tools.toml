@@ -71,6 +71,22 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "preferred-cli-guard"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/preferred-cli-guard.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "preferred-cli-guard-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/preferred-cli-guard"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "usage-limit-continue"
 platforms = ["macos", "linux"]
 commands = []
