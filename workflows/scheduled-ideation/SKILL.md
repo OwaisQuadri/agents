@@ -27,19 +27,28 @@ FAN OUT:  a plan node designs exactly 2 mining dispatches (skill-evidence-sweep,
           session evidence sweep procedure by reference, run on the default session
           model — the founding version ran these on the lighter-weight Explore
           agent, which two real 2026-08-28 live runs both aborted mid-task against
-          Pi's session-transcript directory, unrelated to content size) plus 1-3
-          tool-radar dispatches (run on web-research-summarizer, angle/source
-          rotated daily so consecutive runs don't repeat the same search) — one
-          combined parallel wave
+          Pi's session-transcript directory, unrelated to content size) in one
+          parallel wave, THEN 1-3 tool-radar dispatches (run on
+          web-research-summarizer, angle/source rotated daily) in a second wave —
+          a genuine barrier, not a fake one: tool-radar is handed mining's actual
+          real-evidence findings as grounding text and its dispatch objective
+          requires naming which specific friction item a candidate addresses (or
+          explicitly grounding fit in this repo's real stack instead), because
+          2026-08-28 live runs kept surfacing generic "seems useful" tool reasoning
+          with no connection to any measured usage
 MERGE:    plain code collects every dispatch's raw candidate array — no model, zero
           tokens
 VERIFY:   a fresh-context filter agent, never having seen the generating dispatches'
           own reasoning, scores every raw candidate on evidence strength, relevance,
-          and actionability, and drops anything unmeasured or vague — the direct
+          and actionability, drops any tool candidate whose rationale ignores the
+          grounding block, and drops anything else unmeasured or vague — the direct
           answer to 2026 reporting on AI-generated noise overwhelming reviewers
 RULE:     every candidate's evidence is a measured fact (a real repetition count, a
           real cost, a real URL fetched that run) — never an estimate; ai-author's own
-          "do not estimate" rule, inherited by reference
+          "do not estimate" rule, inherited by reference. Mining evidence is not
+          limited to artifact usage logs: a marker that greps 2+ times across the
+          session window (a recurring warning, a repeated manual workaround) is
+          measured evidence too, since it's a counted occurrence, not a guess.
 CAP:      2 mining + 3 tool-radar dispatches; digest capped at 10 survivors
 ON FAIL:  any dispatch that returns nothing is named in the report by label, never
           dropped silently; zero raw candidates is a valid, honestly-reported result

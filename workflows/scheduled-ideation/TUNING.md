@@ -48,6 +48,29 @@ The GEPA(Genetic-Pareto prompt evolution) loop's inputs and outputs for this wor
   to match — c5 previously asserted mining routes to Explore, which would now be wrong
   on its own terms. A third live run is the next real signal.
 
+- 2026-08-28, third real-run correction, same evening: the abort was fixed (verified
+  live — mining completed with `ok:true` instead of aborting), but the owner flagged two
+  real quality gaps after inspecting the actual digest: (1) mining's own instructions only
+  pointed it at named-artifact usage.jsonl/run-history.jsonl, which don't exist for the
+  kind of recurring operational friction (a `get_subagent_result` cleanup requiring manual
+  temp-path recovery, 3x this session alone; a `tool-sync` cache mismatch on every
+  `install.sh` run) that actually repeats in session transcript content — mining had no
+  instruction to grep for that, so it satisficed on "zero, unmeasured" rather than doing
+  the legwork; (2) tool-radar candidates read as generic "trending tool, seems useful for
+  a terminal multiplexer" with no connection to this repo's actual observed usage, because
+  it searched blind with no real-evidence grounding to cross-reference against. Fixed both:
+  mining's reading-boundedness rule now explicitly instructs grepping transcripts for
+  repeated-friction markers (2+ occurrences across the session window counts as measured,
+  not estimated); the Generate phase is now two waves instead of one combined wave —
+  mining runs first, its real candidate evidence is synthesized into a grounding block, and
+  every tool-radar dispatch receives that block with a hard requirement to name which
+  specific friction item its rationale addresses (or explicitly ground fit in this repo's
+  real stack instead of a generic claim). The Filter node now drops any tool candidate that
+  ignores the grounding block. This is a genuine barrier per workflow-author's own rule (a
+  real cross-item dependency), not a fake one — it costs wall-clock versus the prior single
+  wave, which is the correct trade here. A fourth live run, read end to end by the owner, is
+  the next real signal.
+
 ## deferred
 
 - No persistent dedup across daily runs yet — two consecutive days could surface the

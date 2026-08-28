@@ -108,6 +108,35 @@ while IFS= read -r line; do
         emit "$id" 1 '"empty-heading-not-guarded"'
       fi
       ;;
+    c8)
+      if has "NOT limited to artifact usage logs" && has "greps 2\+ times" \
+        && has "is measured evidence"; then
+        emit "$id" 5 null
+      else
+        emit "$id" 0 '"friction-hunting-instruction-missing"'
+      fi
+      ;;
+    c9)
+      # Mining must fully resolve (await parallel(mining.map...)) before toolRadar.map is
+      # ever referenced, and mining/toolRadar must each be their own single parallel() wave,
+      # never dispatch-by-dispatch sequential (no per-dispatch await inside a loop).
+      MINING_IDX="$(printf '%s' "$src" | grep -n 'await parallel(mining.map' | head -1 | cut -d: -f1)"
+      TOOLRADAR_IDX="$(printf '%s' "$src" | grep -n 'parallel(toolRadar.map' | head -1 | cut -d: -f1)"
+      if [ -n "$MINING_IDX" ] && [ -n "$TOOLRADAR_IDX" ] && [ "$MINING_IDX" -lt "$TOOLRADAR_IDX" ] \
+        && has "usageGrounding"; then
+        emit "$id" 5 null
+      else
+        emit "$id" 0 '"barrier-sequencing-missing"'
+      fi
+      ;;
+    c10)
+      if has "addresses no measured friction this run" && has "MUST explicitly name which of these" \
+        && has "agent\(dispatchPrompt\(d, usageGrounding\)"; then
+        emit "$id" 5 null
+      else
+        emit "$id" 0 '"grounding-not-passed-to-toolradar"'
+      fi
+      ;;
     *)
       emit "$id" 1 '"unknown-case"'
       ;;
