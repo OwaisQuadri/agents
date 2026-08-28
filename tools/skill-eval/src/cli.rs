@@ -3382,7 +3382,7 @@ impl FrontierRuntime for ConcreteRuntime {
             }
         }
         require_first_party_provider(&plan.judge.provider)?;
-        if self.models.judge(plan.judge.tier, None)? != plan.judge {
+        if self.models.exact_candidate(&plan.judge)? != plan.judge {
             return Err(invalid("frontier judge identity changed during resolution"));
         }
         Ok((plan, suite))

@@ -7009,7 +7009,7 @@ fn execute_frontier_trial(
         ));
     }
     let (artifact, case, harness) = frontier_case_context(suite, key, runtime)?;
-    let judge = runtime.judge(state.configuration.plan.judge.tier, Some(model))?;
+    let judge = runtime.exact_candidate(&state.configuration.plan.judge)?;
     if judge != state.configuration.plan.judge
         || judge.provider == model.provider && judge.model == model.model
     {
@@ -7117,11 +7117,11 @@ fn validate_frontier_execution_inputs(
                 if runtime.exact_candidate(&model)? != model {
                     return Err(frontier_lifecycle_drift("exact candidate capability"));
                 }
-                if runtime.judge(plan.judge.tier, Some(&model))? != plan.judge {
-                    return Err(frontier_lifecycle_drift("judge route"));
-                }
             }
         }
+    }
+    if runtime.exact_candidate(&plan.judge)? != plan.judge {
+        return Err(frontier_lifecycle_drift("exact judge capability"));
     }
     for tier_suite in suite.tiers.values() {
         for reference in &tier_suite.cases {

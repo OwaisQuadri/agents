@@ -243,7 +243,7 @@ macro_rules! frontier_lifecycle_tests {
                     _judge_tier: Tier,
                     _candidate: Option<&ModelIdentity>,
                 ) -> Result<ModelIdentity, SkillEvalError> {
-                    Ok(judge())
+                    panic!("frontier used the incumbent tier judge instead of the frozen judge")
                 }
             }
 
