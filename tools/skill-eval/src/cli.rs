@@ -5899,37 +5899,591 @@ fn frontier_apply_unavailable() -> SkillEvalError {
     )
 }
 
-// TODO(AGNT-0032.T152): Render preview, matrix, inspection, and apply outputs.
 fn render_frontier_preview(
-    _report: &FrontierPreviewReport,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    report: &FrontierPreviewReport,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    validate_frontier_preview(report)?;
+    if format == OutputFormat::JsonLines {
+        return write_json_line(report, output);
+    }
+    writeln!(output, "suite capacity:").map_err(output_error)?;
+    for tier in frontier_tiers() {
+        writeln!(
+            output,
+            "  {}: {} cases",
+            tier_label(tier),
+            report.tier_case_counts[&tier]
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(
+        output,
+        "guards: capacity=passed; owner_approval_required={}",
+        report.is_owner_approval_required
+    )
+    .map_err(output_error)?;
+    writeln!(output, "plan sha256: {}", report.plan_sha256).map_err(output_error)?;
+    writeln!(output, "routes: {}", report.route_count).map_err(output_error)?;
+    writeln!(
+        output,
+        "candidate calls: minimum {}, maximum {}",
+        report.candidate_calls.minimum, report.candidate_calls.maximum
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "judge calls: minimum {}, maximum {}",
+        report.judge_calls.minimum, report.judge_calls.maximum
+    )
+    .map_err(output_error)?;
+    writeln!(
+        output,
+        "maximum spending: {} millionths of a dollar",
+        report.maximum_spending_millionths_of_dollar
+    )
+    .map_err(output_error)
 }
 
 fn render_frontier_report(
-    _report: &FrontierReport,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    report: &FrontierReport,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    validate_frontier_report(report)?;
+    if format == OutputFormat::JsonLines {
+        return write_json_line(report, output);
+    }
+    render_frontier_matrix(report, output)?;
+    writeln!(
+        output,
+        "frontier {}: {:?}; spent {} millionths of a dollar",
+        report.run_id.0, report.status, report.spent_millionths_of_dollar
+    )
+    .map_err(output_error)?;
+    if let Some(pause) = &report.pause {
+        writeln!(output, "infrastructure/pause: {pause:?}").map_err(output_error)?;
+    }
+    if let Some(decision) = &report.decision {
+        writeln!(
+            output,
+            "decision: {:?}; reason {}; at {}",
+            decision.decision, decision.reason, decision.decided_at.0
+        )
+        .map_err(output_error)?;
+    }
+    for model in &report.models {
+        writeln!(
+            output,
+            "model {}/{}: highest {}; baseline {:?}",
+            model.provider,
+            model.model,
+            model.highest_passing_tier.map_or("none", tier_label),
+            model.baseline_change
+        )
+        .map_err(output_error)?;
+        writeln!(
+            output,
+            "  selected routes: {}",
+            frontier_route_list(&model.selected_routes)
+        )
+        .map_err(output_error)?;
+        let memberships = model
+            .pool_memberships
+            .iter()
+            .map(|(tier, membership)| {
+                format!(
+                    "{} rank {} active={}",
+                    tier_label(*tier),
+                    membership.rank,
+                    membership.is_active
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            output,
+            "  pool memberships: {}",
+            if memberships.is_empty() {
+                "none"
+            } else {
+                &memberships
+            }
+        )
+        .map_err(output_error)?;
+        render_frontier_usage("  total usage", &model.total_usage, output)?;
+        for cell in &model.cells {
+            write!(
+                output,
+                "  cell {} {}: {:?}; trials {}/{}; failures {}",
+                tier_label(cell.model.tier),
+                cell.model.thinking,
+                cell.status,
+                cell.completed_trials,
+                cell.expected_trials,
+                cell.failed_trials
+            )
+            .map_err(output_error)?;
+            if let Some(score) = &cell.score {
+                write!(
+                    output,
+                    "; weighted {}; lower {}; critical {}/{}; coverage={}",
+                    score.weighted_pass_basis_points,
+                    score.lower_bound_basis_points,
+                    score.critical_passed_trials,
+                    score.critical_expected_trials,
+                    score.is_group_coverage_complete
+                )
+                .map_err(output_error)?;
+            }
+            writeln!(output).map_err(output_error)?;
+            render_frontier_usage("    usage", &cell.total_usage, output)?;
+        }
+    }
+    Ok(())
 }
 
 fn render_frontier_inspection(
-    _inspection: &FrontierInspection,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    inspection: &FrontierInspection,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    validate_frontier_inspection(inspection)?;
+    if format == OutputFormat::JsonLines {
+        return write_json_line(inspection, output);
+    }
+    let value = serde_json::to_string_pretty(inspection)
+        .map_err(|error| malformed_frontier_render(format!("inspection serialization: {error}")))?;
+    writeln!(output, "frontier inspection:").map_err(output_error)?;
+    writeln!(output, "{value}").map_err(output_error)
 }
 
 fn render_frontier_apply(
-    _report: &FrontierApplyReport,
-    _format: OutputFormat,
-    _output: &mut dyn Write,
+    report: &FrontierApplyReport,
+    format: OutputFormat,
+    output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
-    unimplemented!()
+    validate_frontier_apply(report)?;
+    if format == OutputFormat::JsonLines {
+        return write_json_line(report, output);
+    }
+    writeln!(output, "frontier apply {}:", report.run_id.0).map_err(output_error)?;
+    for tier in frontier_tiers() {
+        writeln!(
+            output,
+            "  {}: {}",
+            tier_label(tier),
+            frontier_route_list(&report.active_routes[&tier])
+        )
+        .map_err(output_error)?;
+    }
+    writeln!(
+        output,
+        "status: {}",
+        if report.is_changed {
+            "changed"
+        } else {
+            "no-op"
+        }
+    )
+    .map_err(output_error)
+}
+
+fn render_frontier_matrix(
+    report: &FrontierReport,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    writeln!(
+        output,
+        "| Model | off | minimal | low | medium | high | xhigh | max |"
+    )
+    .map_err(output_error)?;
+    writeln!(output, "| --- | --- | --- | --- | --- | --- | --- | --- |").map_err(output_error)?;
+    for model in &report.models {
+        let mut cells = vec![String::new(); RESULT_MATRIX_LEVELS.len()];
+        for cell in &model.cells {
+            let index = frontier_thinking_level_index(&cell.model.thinking)?;
+            cells[index] = match cell.status {
+                crate::model::FrontierCellStatus::Passed => {
+                    format!("P{}", frontier_tier_number(cell.model.tier))
+                }
+                crate::model::FrontierCellStatus::Failed => {
+                    format!("F{}", frontier_tier_number(cell.model.tier))
+                }
+                crate::model::FrontierCellStatus::Indeterminate => {
+                    format!("I{}", frontier_tier_number(cell.model.tier))
+                }
+                crate::model::FrontierCellStatus::Pending
+                | crate::model::FrontierCellStatus::Skipped => String::new(),
+                crate::model::FrontierCellStatus::Running => {
+                    return Err(malformed_frontier_render("running cell is not renderable"));
+                }
+            };
+        }
+        writeln!(
+            output,
+            "| {}/{} | {} |",
+            model.provider,
+            model.model,
+            cells.join(" | ")
+        )
+        .map_err(output_error)?;
+    }
+    Ok(())
+}
+
+fn validate_frontier_preview(report: &FrontierPreviewReport) -> Result<(), SkillEvalError> {
+    if !is_sha256(&report.plan_sha256)
+        || report.tier_case_counts.len() != frontier_tiers().len()
+        || frontier_tiers().iter().any(|tier| {
+            report
+                .tier_case_counts
+                .get(tier)
+                .is_none_or(|count| *count < 30)
+        })
+        || report.route_count == 0
+        || report.candidate_calls.minimum == 0
+        || report.candidate_calls.minimum > report.candidate_calls.maximum
+        || report.judge_calls != report.candidate_calls
+        || report.maximum_spending_millionths_of_dollar == 0
+        || !report.is_owner_approval_required
+    {
+        return Err(malformed_frontier_render("preview guards are incomplete"));
+    }
+    Ok(())
+}
+
+fn validate_frontier_report(report: &FrontierReport) -> Result<(), SkillEvalError> {
+    if report.run_id.0.trim().is_empty() || report.models.is_empty() {
+        return Err(malformed_frontier_render("report identity is incomplete"));
+    }
+    match report.status {
+        crate::model::FrontierRunStatus::Paused if report.pause.is_none() => {
+            return Err(malformed_frontier_render("paused report has no pause"));
+        }
+        crate::model::FrontierRunStatus::Accepted => {
+            validate_frontier_decision(report, Decision::Accepted)?;
+        }
+        crate::model::FrontierRunStatus::Rejected => {
+            validate_frontier_decision(report, Decision::Rejected)?;
+        }
+        _ if report.decision.is_some() => {
+            return Err(malformed_frontier_render("report decision is forged"));
+        }
+        _ => {}
+    }
+    if report.status != crate::model::FrontierRunStatus::Paused && report.pause.is_some() {
+        return Err(malformed_frontier_render("report pause is forged"));
+    }
+
+    let mut models = BTreeSet::new();
+    let mut pool_ranks = BTreeMap::<Tier, BTreeSet<u16>>::new();
+    for model in &report.models {
+        if model.provider.trim().is_empty()
+            || model.model.trim().is_empty()
+            || !models.insert((model.provider.as_str(), model.model.as_str()))
+            || model.cells.is_empty()
+        {
+            return Err(malformed_frontier_render(
+                "model identity is incomplete or duplicated",
+            ));
+        }
+        let mut levels = BTreeSet::new();
+        let mut selected_routes = Vec::new();
+        let mut highest_passing_tier = None;
+        let mut total_usage = zero_usage();
+        for cell in &model.cells {
+            frontier_thinking_level_index(&cell.model.thinking)?;
+            if cell.model.provider != model.provider
+                || cell.model.model != model.model
+                || !levels.insert(cell.model.thinking.as_str())
+                || cell.failed_trials > cell.completed_trials
+                || cell.completed_trials > cell.expected_trials
+            {
+                return Err(malformed_frontier_render(
+                    "frontier cell identity is invalid",
+                ));
+            }
+            match cell.status {
+                crate::model::FrontierCellStatus::Passed
+                | crate::model::FrontierCellStatus::Failed
+                | crate::model::FrontierCellStatus::Indeterminate => {
+                    validate_frontier_score(cell)?;
+                }
+                crate::model::FrontierCellStatus::Pending
+                | crate::model::FrontierCellStatus::Skipped => {
+                    if cell.score.is_some()
+                        || cell.completed_trials != 0
+                        || cell.expected_trials != 0
+                        || cell.failed_trials != 0
+                        || cell.total_usage != zero_usage()
+                    {
+                        return Err(malformed_frontier_render("blank cell contains evidence"));
+                    }
+                }
+                crate::model::FrontierCellStatus::Running => {
+                    return Err(malformed_frontier_render("running cell is not renderable"));
+                }
+            }
+            if cell.status == crate::model::FrontierCellStatus::Passed {
+                selected_routes.push(cell.model.clone());
+                highest_passing_tier = Some(
+                    highest_passing_tier
+                        .map_or(cell.model.tier, |tier: Tier| tier.max(cell.model.tier)),
+                );
+            }
+            add_frontier_usage(&mut total_usage, &cell.total_usage)?;
+        }
+        if selected_routes != model.selected_routes
+            || highest_passing_tier != model.highest_passing_tier
+            || total_usage != model.total_usage
+        {
+            return Err(malformed_frontier_render(
+                "model summary differs from its cells",
+            ));
+        }
+        for (tier, membership) in &model.pool_memberships {
+            if membership.model.provider != model.provider
+                || membership.model.model != model.model
+                || membership.model.tier != *tier
+                || membership.rank == 0
+                || !selected_routes.contains(&membership.model)
+                || !pool_ranks.entry(*tier).or_default().insert(membership.rank)
+            {
+                return Err(malformed_frontier_render("pool membership is invalid"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_frontier_decision(
+    report: &FrontierReport,
+    expected: Decision,
+) -> Result<(), SkillEvalError> {
+    if report.decision.as_ref().is_none_or(|decision| {
+        decision.decision != expected
+            || decision.reason.trim().is_empty()
+            || decision.decided_at.0.trim().is_empty()
+    }) {
+        return Err(malformed_frontier_render(
+            "terminal report decision is incomplete",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_frontier_score(
+    cell: &crate::model::FrontierCellEvidence,
+) -> Result<(), SkillEvalError> {
+    if cell.completed_trials == 0
+        || cell.completed_trials != cell.expected_trials
+        || cell.score.as_ref().is_none_or(|score| {
+            score.weighted_pass_basis_points > 10_000
+                || score.lower_bound_basis_points > 10_000
+                || score.critical_passed_trials > score.critical_expected_trials
+                || score.critical_expected_trials > cell.completed_trials
+        })
+    {
+        return Err(malformed_frontier_render(
+            "terminal cell evidence is incomplete",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_frontier_inspection(inspection: &FrontierInspection) -> Result<(), SkillEvalError> {
+    match inspection {
+        FrontierInspection::Trial { trial } => {
+            frontier_thinking_level_index(&trial.model.thinking)?;
+            if trial.key.artifact.0.trim().is_empty()
+                || trial.key.case.0.trim().is_empty()
+                || trial.key.attempt == 0
+                || trial.key.tier != trial.model.tier
+                || trial.model.provider.trim().is_empty()
+                || trial.model.model.trim().is_empty()
+                || trial.harness.runner_version.trim().is_empty()
+                || trial.harness.pi_version.trim().is_empty()
+                || trial.harness.artifact_revision.trim().is_empty()
+                || trial.harness.tool_policy_digest.trim().is_empty()
+                || trial.artifact_path.as_os_str().is_empty()
+                || trial.transcript_path.as_os_str().is_empty()
+                || trial.judge_model.provider.trim().is_empty()
+                || trial.judge_model.model.trim().is_empty()
+                || trial.judge_model.thinking.trim().is_empty()
+                || trial.verdict.score > 10
+                || trial
+                    .verdict
+                    .checks
+                    .iter()
+                    .any(|check| check.name.trim().is_empty())
+            {
+                return Err(malformed_frontier_render("trial inspection is incomplete"));
+            }
+        }
+        FrontierInspection::Infrastructure { event } => {
+            frontier_thinking_level_index(&event.model.thinking)?;
+            if event.model.provider.trim().is_empty()
+                || event.model.model.trim().is_empty()
+                || event.artifact.0.trim().is_empty()
+                || event.case.0.trim().is_empty()
+                || event.attempt == 0
+                || event.infrastructure_attempt == 0
+                || event.message.trim().is_empty()
+                || event.occurred_at.0.trim().is_empty()
+            {
+                return Err(malformed_frontier_render(
+                    "infrastructure inspection is incomplete",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_frontier_apply(report: &FrontierApplyReport) -> Result<(), SkillEvalError> {
+    if report.run_id.0.trim().is_empty() || report.active_routes.len() != frontier_tiers().len() {
+        return Err(malformed_frontier_render("apply identity is incomplete"));
+    }
+    let mut routes = BTreeSet::new();
+    for tier in frontier_tiers() {
+        let tier_routes = report
+            .active_routes
+            .get(&tier)
+            .ok_or_else(|| malformed_frontier_render("apply tier is missing"))?;
+        if tier_routes.is_empty() {
+            return Err(malformed_frontier_render("apply tier has no active route"));
+        }
+        for route in tier_routes {
+            frontier_thinking_level_index(&route.thinking)?;
+            if route.tier != tier
+                || route.provider.trim().is_empty()
+                || route.model.trim().is_empty()
+                || !routes.insert((
+                    route.provider.as_str(),
+                    route.model.as_str(),
+                    route.tier,
+                    route.thinking.as_str(),
+                ))
+            {
+                return Err(malformed_frontier_render("active route is invalid"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_frontier_usage(
+    label: &str,
+    usage: &TrialUsage,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    writeln!(
+        output,
+        "{label}: input {}; output {}; cache read {}; cache write {}; turns {}; tools {}; latency {} ms; cost {} millionths",
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cache_read_tokens,
+        usage.cache_write_tokens,
+        usage.turns,
+        usage.tool_calls,
+        usage.elapsed_milliseconds,
+        usage.cost_millionths_of_dollar
+    )
+    .map_err(output_error)
+}
+
+fn frontier_route_list(routes: &[ModelIdentity]) -> String {
+    if routes.is_empty() {
+        return "none".to_owned();
+    }
+    routes
+        .iter()
+        .map(model_label)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn frontier_tiers() -> [Tier; 5] {
+    [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5]
+}
+
+fn frontier_tier_number(tier: Tier) -> u8 {
+    match tier {
+        Tier::T1 => 1,
+        Tier::T2 => 2,
+        Tier::T3 => 3,
+        Tier::T4 => 4,
+        Tier::T5 => 5,
+    }
+}
+
+fn frontier_thinking_level_index(level: &str) -> Result<usize, SkillEvalError> {
+    RESULT_MATRIX_LEVELS
+        .iter()
+        .position(|candidate| *candidate == level)
+        .ok_or_else(|| malformed_frontier_render("unknown frontier thinking level"))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn zero_usage() -> TrialUsage {
+    TrialUsage {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        turns: 0,
+        tool_calls: 0,
+        elapsed_milliseconds: 0,
+        cost_millionths_of_dollar: 0,
+    }
+}
+
+fn add_frontier_usage(total: &mut TrialUsage, usage: &TrialUsage) -> Result<(), SkillEvalError> {
+    total.input_tokens = total
+        .input_tokens
+        .checked_add(usage.input_tokens)
+        .ok_or_else(|| malformed_frontier_render("input token total overflowed"))?;
+    total.output_tokens = total
+        .output_tokens
+        .checked_add(usage.output_tokens)
+        .ok_or_else(|| malformed_frontier_render("output token total overflowed"))?;
+    total.cache_read_tokens = total
+        .cache_read_tokens
+        .checked_add(usage.cache_read_tokens)
+        .ok_or_else(|| malformed_frontier_render("cache read total overflowed"))?;
+    total.cache_write_tokens = total
+        .cache_write_tokens
+        .checked_add(usage.cache_write_tokens)
+        .ok_or_else(|| malformed_frontier_render("cache write total overflowed"))?;
+    total.turns = total
+        .turns
+        .checked_add(usage.turns)
+        .ok_or_else(|| malformed_frontier_render("turn total overflowed"))?;
+    total.tool_calls = total
+        .tool_calls
+        .checked_add(usage.tool_calls)
+        .ok_or_else(|| malformed_frontier_render("tool call total overflowed"))?;
+    total.elapsed_milliseconds = total
+        .elapsed_milliseconds
+        .checked_add(usage.elapsed_milliseconds)
+        .ok_or_else(|| malformed_frontier_render("latency total overflowed"))?;
+    total.cost_millionths_of_dollar = total
+        .cost_millionths_of_dollar
+        .checked_add(usage.cost_millionths_of_dollar)
+        .ok_or_else(|| malformed_frontier_render("cost total overflowed"))?;
+    Ok(())
+}
+
+fn malformed_frontier_render(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!(
+        "malformed frontier render state: {}",
+        message.into()
+    ))
 }
 
 fn set_decision(current: &mut Option<Decision>, value: Decision) -> Result<(), SkillEvalError> {
@@ -5993,6 +6547,8 @@ include!("../tests/frontier_suite_cli.rs");
 include!("../tests/frontier_runtime.rs");
 #[cfg(test)]
 include!("../tests/frontier_cli.rs");
+#[cfg(test)]
+include!("../tests/frontier_render.rs");
 
 #[cfg(test)]
 cli_tests!();
@@ -6004,3 +6560,5 @@ frontier_suite_cli_tests!();
 frontier_runtime_tests!();
 #[cfg(test)]
 frontier_cli_tests!();
+#[cfg(test)]
+frontier_render_tests!();
