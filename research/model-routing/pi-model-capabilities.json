@@ -1,6 +1,6 @@
 {
   "snapshot_version": 1,
-  "observed_at_unix_seconds": 1787803284,
+  "observed_at_unix_seconds": 1787948399,
   "pi_version": "0.84.3",
   "probe_commands": [
     {
@@ -39,9 +39,9 @@
     }
   ],
   "counts": {
-    "union": 374,
-    "all_extension_list": 374,
-    "core_rpc": 374,
+    "union": 384,
+    "all_extension_list": 384,
+    "core_rpc": 384,
     "list_only": 0,
     "rpc_only": 0,
     "moving_aliases": 12
@@ -2338,14 +2338,14 @@
         "high"
       ],
       "context_window": 163840,
-      "maximum_output": 147456,
+      "maximum_output": 65536,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.26,
-        "output": 0.38,
-        "cacheRead": 0.13,
+        "input": 0.269,
+        "output": 0.4,
+        "cacheRead": 0.1345,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2397,9 +2397,9 @@
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.0826,
-        "output": 0.1652,
-        "cacheRead": 0.01652,
+        "input": 0.088606,
+        "output": 0.177212,
+        "cacheRead": 0.017721,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2423,9 +2423,9 @@
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.06,
-        "output": 0.12,
-        "cacheRead": 0.012,
+        "input": 0.07,
+        "output": 0.14,
+        "cacheRead": 0.014,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -2450,7 +2450,7 @@
       ],
       "pricing_per_million_tokens": {
         "input": 0.03,
-        "output": 0.075,
+        "output": 0.1,
         "cacheRead": 0.007,
         "cacheWrite": 0.0
       },
@@ -2522,15 +2522,15 @@
         "high",
         "xhigh"
       ],
-      "context_window": 1048575,
-      "maximum_output": 943717,
+      "context_window": 1048576,
+      "maximum_output": 384000,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 1.122,
-        "output": 3.366,
-        "cacheRead": 0.0374,
+        "input": 0.66,
+        "output": 1.98,
+        "cacheRead": 0.022,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -3571,6 +3571,34 @@
     },
     {
       "provider": "openrouter",
+      "model": "inclusionai/ling-3.0-flash-fin:free",
+      "display_name": "Ling 3.0 Flash Fin (free)",
+      "reasoning": true,
+      "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "context_window": 262144,
+      "maximum_output": 32768,
+      "input_modes": [
+        "text"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.0,
+        "output": 0.0,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
       "model": "kwaipilot/kat-coder-air-v2.5",
       "display_name": "Kwaipilot: KAT-Coder-Air V2.5",
       "reasoning": false,
@@ -4209,6 +4237,30 @@
     },
     {
       "provider": "openrouter",
+      "model": "mistralai/codestral-2508:batch",
+      "display_name": "Mistral: Codestral 2508 (batch)",
+      "reasoning": false,
+      "supported_pi_thinking_levels": [
+        "off"
+      ],
+      "context_window": 256000,
+      "maximum_output": 204800,
+      "input_modes": [
+        "text"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.3,
+        "output": 0.9,
+        "cacheRead": 0.03,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
       "model": "mistralai/devstral-2512",
       "display_name": "Mistral: Devstral 2 2512",
       "reasoning": false,
@@ -4308,6 +4360,31 @@
     },
     {
       "provider": "openrouter",
+      "model": "mistralai/ministral-8b-2512:batch",
+      "display_name": "Mistral: Ministral 3 8B 2512 (batch)",
+      "reasoning": false,
+      "supported_pi_thinking_levels": [
+        "off"
+      ],
+      "context_window": 262144,
+      "maximum_output": 209715,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.15,
+        "output": 0.15,
+        "cacheRead": 0.015,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
       "model": "mistralai/mistral-large",
       "display_name": "Mistral Large",
       "reasoning": false,
@@ -4358,6 +4435,31 @@
       "provider": "openrouter",
       "model": "mistralai/mistral-large-2512",
       "display_name": "Mistral: Mistral Large 3 2512",
+      "reasoning": false,
+      "supported_pi_thinking_levels": [
+        "off"
+      ],
+      "context_window": 262144,
+      "maximum_output": 209715,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.5,
+        "output": 1.5,
+        "cacheRead": 0.05,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
+      "model": "mistralai/mistral-large-2512:batch",
+      "display_name": "Mistral: Mistral Large 3 2512 (batch)",
       "reasoning": false,
       "supported_pi_thinking_levels": [
         "off"
@@ -4432,8 +4534,59 @@
     },
     {
       "provider": "openrouter",
+      "model": "mistralai/mistral-medium-3-5:batch",
+      "display_name": "Mistral: Mistral Medium 3.5 (batch)",
+      "reasoning": true,
+      "supported_pi_thinking_levels": [
+        "off",
+        "high"
+      ],
+      "context_window": 262144,
+      "maximum_output": 209715,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.75,
+        "output": 3.75,
+        "cacheRead": 0.0,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
       "model": "mistralai/mistral-medium-3.1",
       "display_name": "Mistral: Mistral Medium 3.1",
+      "reasoning": false,
+      "supported_pi_thinking_levels": [
+        "off"
+      ],
+      "context_window": 131072,
+      "maximum_output": 104857,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.4,
+        "output": 2.0,
+        "cacheRead": 0.04,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
+      "model": "mistralai/mistral-medium-3.1:batch",
+      "display_name": "Mistral: Mistral Medium 3.1 (batch)",
       "reasoning": false,
       "supported_pi_thinking_levels": [
         "off"
@@ -4507,6 +4660,32 @@
       "provider": "openrouter",
       "model": "mistralai/mistral-small-2603",
       "display_name": "Mistral: Mistral Small 4",
+      "reasoning": true,
+      "supported_pi_thinking_levels": [
+        "off",
+        "high"
+      ],
+      "context_window": 262144,
+      "maximum_output": 209715,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.15,
+        "output": 0.6,
+        "cacheRead": 0.015,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
+      "model": "mistralai/mistral-small-2603:batch",
+      "display_name": "Mistral: Mistral Small 4 (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
@@ -4753,9 +4932,9 @@
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.67,
+        "input": 0.66,
         "output": 3.4,
-        "cacheRead": 0.19,
+        "cacheRead": 0.18,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -4769,13 +4948,14 @@
       "display_name": "MoonshotAI: Kimi K2.7 Code (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
         "minimal",
         "low",
         "medium",
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 235929,
+      "maximum_output": 4096,
       "input_modes": [
         "text",
         "image"
@@ -4918,14 +5098,14 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 235929,
+      "maximum_output": 228000,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
         "input": 0.05,
         "output": 0.2,
-        "cacheRead": 0.03,
+        "cacheRead": 0.025,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -5052,15 +5232,15 @@
         "medium",
         "high"
       ],
-      "context_window": 512288,
-      "maximum_output": 461059,
+      "context_window": 262144,
+      "maximum_output": 16384,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.6,
-        "output": 3.6,
-        "cacheRead": 0.2,
+        "input": 0.5,
+        "output": 2.2,
+        "cacheRead": 0.1,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -5133,14 +5313,14 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 131072,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.08,
-        "output": 0.2,
-        "cacheRead": 0.04,
+        "input": 0.1,
+        "output": 0.25,
+        "cacheRead": 0.05,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -5811,6 +5991,7 @@
       "display_name": "OpenAI: GPT-5 Codex (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
         "minimal",
         "low",
         "medium",
@@ -5867,6 +6048,7 @@
       "display_name": "OpenAI: GPT-5 Mini (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
         "minimal",
         "low",
         "medium",
@@ -5923,6 +6105,7 @@
       "display_name": "OpenAI: GPT-5 Nano (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
         "minimal",
         "low",
         "medium",
@@ -5976,6 +6159,10 @@
       "display_name": "OpenAI: GPT-5 Pro (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
         "high"
       ],
       "context_window": 400000,
@@ -6113,6 +6300,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high"
@@ -6249,6 +6437,9 @@
       "display_name": "OpenAI: GPT-5.2 Pro (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
         "medium",
         "high",
         "xhigh"
@@ -6277,6 +6468,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6393,6 +6585,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6451,6 +6644,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6506,6 +6700,9 @@
       "display_name": "OpenAI: GPT-5.4 Pro (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
         "medium",
         "high",
         "xhigh"
@@ -6534,6 +6731,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6618,6 +6816,9 @@
       "display_name": "OpenAI: GPT-5.5 Pro (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
         "medium",
         "high",
         "xhigh"
@@ -6646,6 +6847,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6735,6 +6937,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6765,6 +6968,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6855,6 +7059,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6885,6 +7090,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -6975,6 +7181,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -7005,6 +7212,7 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
+        "minimal",
         "low",
         "medium",
         "high",
@@ -7034,6 +7242,7 @@
       "display_name": "OpenAI: GPT-5 (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
         "minimal",
         "low",
         "medium",
@@ -7412,6 +7621,10 @@
       "display_name": "OpenAI: o3 Mini High (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
         "high"
       ],
       "context_window": 200000,
@@ -7605,6 +7818,10 @@
       "display_name": "OpenAI: o4 Mini High (batch)",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
         "high"
       ],
       "context_window": 200000,
@@ -8059,14 +8276,14 @@
         "off"
       ],
       "context_window": 262144,
-      "maximum_output": 16384,
+      "maximum_output": 235929,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.09,
-        "output": 0.55,
-        "cacheRead": 0.0,
+        "input": 0.0875,
+        "output": 0.35,
+        "cacheRead": 0.0175,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -8656,14 +8873,14 @@
         "high"
       ],
       "context_window": 262144,
-      "maximum_output": 235929,
+      "maximum_output": 81920,
       "input_modes": [
         "text",
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.26,
-        "output": 2.08,
+        "input": 0.29,
+        "output": 2.4,
         "cacheRead": 0.0,
         "cacheWrite": 0.0
       },
@@ -8923,8 +9140,8 @@
         "image"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.14,
-        "output": 1.0,
+        "input": 0.1,
+        "output": 0.9,
         "cacheRead": 0.05,
         "cacheWrite": 0.0
       },
@@ -9115,8 +9332,8 @@
         "medium",
         "xhigh"
       ],
-      "context_window": 1048576,
-      "maximum_output": 131072,
+      "context_window": 1000000,
+      "maximum_output": 262144,
       "input_modes": [
         "text"
       ],
@@ -9153,6 +9370,35 @@
         "output": 2.55,
         "cacheRead": 0.085,
         "cacheWrite": 0.53125
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
+      "model": "qwen/qwen3.8-flash",
+      "display_name": "Qwen: Qwen3.8 Flash",
+      "reasoning": true,
+      "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
+        "low",
+        "medium",
+        "high"
+      ],
+      "context_window": 1000000,
+      "maximum_output": 131072,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.15,
+        "output": 0.47,
+        "cacheRead": 0.016,
+        "cacheWrite": 0.2
       },
       "is_in_all_extension_list": true,
       "is_in_core_rpc": true,
@@ -9320,9 +9566,11 @@
       "display_name": "Ox Alpha",
       "reasoning": true,
       "supported_pi_thinking_levels": [
+        "off",
+        "minimal",
         "low",
-        "high",
-        "max"
+        "medium",
+        "high"
       ],
       "context_window": 1048576,
       "maximum_output": 131072,
@@ -9440,6 +9688,32 @@
         "input": 0.18,
         "output": 0.6,
         "cacheRead": 0.06,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
+      "model": "tencent/hy4-preview",
+      "display_name": "Tencent: Hy4 preview",
+      "reasoning": true,
+      "supported_pi_thinking_levels": [
+        "off",
+        "low",
+        "high"
+      ],
+      "context_window": 1048576,
+      "maximum_output": 64000,
+      "input_modes": [
+        "text"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.834,
+        "output": 2.501,
+        "cacheRead": 0.042,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -9999,15 +10273,15 @@
         "medium",
         "high"
       ],
-      "context_window": 202752,
-      "maximum_output": 131072,
+      "context_window": 198000,
+      "maximum_output": 16384,
       "input_modes": [
         "text"
       ],
       "pricing_per_million_tokens": {
-        "input": 0.5,
-        "output": 2.0,
-        "cacheRead": 0.1,
+        "input": 0.43,
+        "output": 1.75,
+        "cacheRead": 0.08,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
@@ -10217,11 +10491,13 @@
       "reasoning": true,
       "supported_pi_thinking_levels": [
         "off",
-        "high",
-        "xhigh"
+        "minimal",
+        "low",
+        "medium",
+        "high"
       ],
       "context_window": 1048575,
-      "maximum_output": 943717,
+      "maximum_output": 4096,
       "input_modes": [
         "text"
       ],
@@ -10281,6 +10557,33 @@
         "input": 1.4,
         "output": 4.4,
         "cacheRead": 0.26,
+        "cacheWrite": 0.0
+      },
+      "is_in_all_extension_list": true,
+      "is_in_core_rpc": true,
+      "is_moving_alias": false,
+      "is_exact_qualification_evidence": true
+    },
+    {
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "display_name": "Z.ai: GLM 5.3 Flash",
+      "reasoning": true,
+      "supported_pi_thinking_levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "context_window": 1048576,
+      "maximum_output": 131072,
+      "input_modes": [
+        "text",
+        "image"
+      ],
+      "pricing_per_million_tokens": {
+        "input": 0.075,
+        "output": 0.25,
+        "cacheRead": 0.015,
         "cacheWrite": 0.0
       },
       "is_in_all_extension_list": true,
