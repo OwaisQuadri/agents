@@ -83,9 +83,10 @@ everything else from it.
 - Pi: the installer GENERATES `~/.pi/agent/agents/<name>.md` from that definition. Same body, tool
   names mapped to pi's registry (`Glob` to `find`, `WebSearch` to `web_search`), and no
   model line at all. Subagents receive a tier's whole ordered `fallbacks` list through
-  `subagents.agentOverrides`. The session map takes the first entry only, because the
-  session walks one hop per limit and re-enters on the new model. An unmapped tool aborts
-  the install rather than dropping a capability grant in silence.
+  `subagents.agentOverrides`. The session map holds every model in that ordered chain,
+  keyed to the model that comes next, because the session walks one hop per limit and
+  re-enters on the new model, then looks that new model up again on its own next limit. An
+  unmapped tool aborts the install rather than dropping a capability grant in silence.
 - Claude Code: no override layer exists, so the frontmatter must carry a model alias. The
   installer DERIVES that alias rather than reading a declared one. It walks the tier's
   chain for the first Anthropic model and takes the family word out of the id. A chain
@@ -105,9 +106,11 @@ code-reviewer seat gives the final coherence verdict and stays T4.
   no session fallback, so `pi/extensions/usage-limit-continue.ts` does it. On a usage limit
   it reads the flat `modelTierFallbacks` map that the installer compiles into pi settings.
   It then calls `setModel` on the tier's backup, and the session continues.
-- The chain ends by itself. Only tier primaries are keys in that map, so a session walks
-  one hop per limit and stops on a peer that has no entry. Every hop holds its tier except
-  two. T1 has no free peer and rises to T2, and T5 has no peer and drops to T4.
+- The chain ends by itself. Every model in a tier's ordered chain (primary, then each
+  fallback in turn) is a key in that map, pointing at the next model in the same chain, so
+  a session walks one hop per limit and keeps walking as each new model hits its own limit
+  in turn, stopping only on a peer that has no entry. Every hop holds its tier except two.
+  T1 has no free peer and rises to T2, and T5 has no peer and drops to T4.
 - When the chain runs out, the session waits on the model that RETURNS FIRST, not the one
   that failed last. The extension records each abandoned model with its reset, schedules
   the resume at the soonest of them, and sets the session back to that model. A model
