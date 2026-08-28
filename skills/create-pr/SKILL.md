@@ -8,8 +8,8 @@ metadata:
 # create-pr
 
 JOB: turn the branch's pending work into an open PR: commit, push, gh pr create
-IN:  a PR request, usually a Conductor PR-instructions attachment naming a target branch; a git repo on a work branch, tree possibly dirty
-OUT: an open PR URL reported with commit SHAs plus every surprise (branch-name mismatch, files left uncommitted); zero attribution lines
+IN:  a PR request, usually a Conductor PR-instructions attachment naming a target branch; a git repo on a work branch, tree possibly dirty; optionally, a list of backend ticket ids (e.g. GitHub Issue numbers) this PR closes
+OUT: an open PR URL reported with commit SHAs plus every surprise (branch-name mismatch, files left uncommitted); zero attribution lines; a `Closes #<id>` line in the body for every closing ticket id given
 
 ## hard rules
 
@@ -25,7 +25,7 @@ OUT: an open PR URL reported with commit SHAs plus every surprise (branch-name m
 3. clean tree and zero commits ahead: stop and ask, there is no diff to open. Done when work exists or the user has been asked.
 4. push: `git push -u origin HEAD`, or to the existing upstream when it tracks a different name or remote. Done when the push succeeds.
 5. review the full PR diff: `mcp__conductor__GetWorkspaceDiff` inside Conductor, else `git diff <target>...HEAD`. Done when every changed file in the diff is accounted for in the description draft, not just this session's edits.
-6. create: `gh pr create --base <target>`, title under 80 characters, body under five sentences saying what changed and why, unless instructed otherwise. When step 1 found an open PR, update it with `gh pr edit` and say so instead. Verify `gh pr view --json body` shows no attribution footer, else fix via `gh pr edit --body`. Done when gh prints the PR URL and the verify passed.
+6. create: `gh pr create --base <target>`, title under 80 characters, body under five sentences saying what changed and why, unless instructed otherwise. When the caller named GitHub Issue ids to close, append one `Closes #<id>` line per id to the body — this is the keyword that makes the merge auto-close the issue, so its presence gets verified, not just typed from memory. When step 1 found an open PR, update it with `gh pr edit` and say so instead. Verify `gh pr view --json body` shows no attribution footer, else fix via `gh pr edit --body`. Done when gh prints the PR URL, every closing line is present, and the verify passed.
 7. report: PR URL, commit SHAs, both verify results, and the surprises queued in steps 1-3. A failed step ships its output and a question for the user, never a claimed success. Done when the report carries all four.
 
 ## evals
