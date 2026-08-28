@@ -72,8 +72,12 @@ while [ "$elapsed" -lt "$POLL_TAB_TIMEOUT_S" ]; do
   if [ -n "$AGENT_TAB" ]; then
     PANES_JSON="$("$HERDR" pane list --workspace "$WORKSPACE_ID" 2>/dev/null || echo '{}')"
     for pane_id in $(printf '%s' "$PANES_JSON" | jq -r --arg tab "$AGENT_TAB" '.result.panes[]? | select(.tab_id == $tab) | .pane_id'); do
-      FG="$("$HERDR" pane process-info --pane "$pane_id" 2>/dev/null | jq -r '.result.process_info.foreground_processes[0].argv0 // empty' 2>/dev/null || echo '')"
-      if [ "$FG" = "pi" ]; then
+      # foreground_processes[0] is NOT reliably pi itself -- confirmed live: a donsetch
+      # (web-search extension) MCP child process sat at index 0 while the real pi process
+      # (argv0 "pi") sat at index 2 of the same array. Scan every entry in the foreground
+      # process group instead of trusting array order.
+      HAS_PI="$("$HERDR" pane process-info --pane "$pane_id" 2>/dev/null | jq -r '[.result.process_info.foreground_processes[]?.argv0] | any(. == "pi")' 2>/dev/null || echo 'false')"
+      if [ "$HAS_PI" = "true" ]; then
         AGENT_PANE="$pane_id"
         break 2
       fi
