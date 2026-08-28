@@ -1,6 +1,6 @@
 {
   "prefix": "AGNT",
-  "next_nnnn": 79,
+  "next_nnnn": 80,
   "tickets": [
     {
       "id": "AGNT-0001",
@@ -1245,6 +1245,22 @@
       "blame_phase": null,
       "created": "2026-08-23T20:58:00-0400",
       "priority": "med"
+    },
+    {
+      "id": "AGNT-0079",
+      "kind": "ticket",
+      "status": "todo",
+      "short": "Retry network-failed subagents after connection recovery",
+      "long": "When a subagent ends because its transport lost the network, preserve the failed dispatch and retry it automatically after connectivity recovers. Match only named connection failures such as fetch failed, never model, tool, test, user-stop, abort, or validation failures. Keep retries bounded and idempotent, do not duplicate a still-running or already-completed job, retain the first failure in the record, and surface the retry relationship. A user stop cancels any pending retry. Add deterministic tests for disconnect, recovery, repeated outage, cancellation, duplicate completion, and non-network failure. Decide whether the owned implementation belongs in the pinned pi-subagents package or a Pi lifecycle extension before changing the install pin.",
+      "deps": [],
+      "files": [
+        "config/tools.toml",
+        "pi/extensions/",
+        "tools/tool-sync/"
+      ],
+      "blame_phase": null,
+      "created": "2026-08-28T14:47:08-0400",
+      "priority": "high"
     }
   ]
 }
