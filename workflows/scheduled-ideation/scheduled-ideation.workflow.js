@@ -37,13 +37,9 @@ const DISPATCH_SCHEMA = {
 // it exist?" test) — this is what lets the digest literally answer "which linters, checks,
 // skills, agents, workflows, or other", instead of force-fitting everything non-agent into
 // a single generic "skill" or "tool" bucket.
-// A dedicated impactNote field was tried and dropped: a live 2026-08-28 run showed the
-// model omitting it from every single candidate across all 8 agent calls, even marked
-// required — this harness's structured-output validation doesn't strictly enforce
-// required fields nested inside an array item schema, so a field the model skips just
-// silently vanishes instead of forcing a retry. Folding the leverage statement into the
-// existing required `rationale` field (see dispatchPrompt below) is more reliable than a
-// field the model can quietly skip.
+// impactNote was tried as a required field and dropped: a live run showed the model
+// omitting it from every candidate anyway, since this harness doesn't enforce required
+// fields nested inside an array item schema. Folded into rationale's first sentence instead.
 const CANDIDATE_SCHEMA = {
   type: 'object',
   properties: {
@@ -141,12 +137,8 @@ if (!rawCandidates.length) {
 }
 
 phase('Filter')
-// This stage does two jobs the workflow-as-a-whole owns, not any one generating dispatch:
-// (1) compare every raw candidate — mined evidence AND external tool-radar research alike
-// — against what THIS repo's workspace already has, using real read/grep/bash access, so a
-// candidate that's already built or already an open issue never reaches the digest; (2) rank
-// what survives by actual leverage, not just evidence quality, so the digest leads with the
-// highest-impact move rather than an arbitrary or alphabetical order.
+// Repo-comparison and leverage ranking share one stage deliberately: both need every
+// candidate present at once, so splitting them would just re-run the same barrier twice.
 const filtered = await agent(
   `You are a fresh-context filter and ranker for a daily candidate-ideation run. You were not involved in generating these candidates and have never seen the sessions or searches that produced them — judge only what's written here plus what you verify yourself in the repo.
 
@@ -176,17 +168,12 @@ ${survivors.map((c, i) => `${i + 1}. [${c.category}] ${c.name} — ${c.rationale
 Raw generated: ${rawCandidates.length}. Survived filter: ${survivors.length}.${generateMissing.length ? ` Dispatches that returned nothing: ${generateMissing.join(', ')}.` : ''}`,
   { phase: 'Digest' })
 
-// Built in code, not left to model compliance: a live 2026-08-28 run showed the Digest
-// agent silently dropping the "lead with a Top lever section" instruction even when it was
-// spelled out in the prompt. `survivors` is already Filter's own rank-ordered array, so the
-// #1 lever is known data, not a judgment call — construct this section directly instead of
-// hoping the model notices the instruction again next time.
+// Built in code, not left to model compliance: a live run showed the Digest agent
+// skipping a "lead with Top lever" prompt instruction; survivors[0] is already known data.
 const topLeverBlock = survivors.length
   ? `## Top lever today\n\n**[${survivors[0].category}] ${survivors[0].name}**\n${survivors[0].rationale}\n\n`
   : ''
 const bodyDigest = digestAgent || `## Scheduled ideation\n\n(digest-writer node returned nothing; raw survivor list follows)\n\n${survivors.map(c => `- [${c.category}] ${c.name} — ${c.rationale}`).join('\n')}`
-// Insert the top-lever block right after the digest's own dated header line (its first
-// line), or at the very top if the digest text has no header line to key off of.
 const headerMatch = bodyDigest.match(/^# .*\n/)
 const finalDigest = headerMatch
   ? bodyDigest.slice(0, headerMatch[0].length) + '\n' + topLeverBlock + bodyDigest.slice(headerMatch[0].length)
