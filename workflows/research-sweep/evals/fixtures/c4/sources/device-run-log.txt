@@ -1,0 +1,3 @@
+2026-07-31T14:22:03-0400 maestro-mcp 1.8 start target=physical-ios
+2026-07-31T14:22:04-0400 error target_type_not_supported
+2026-07-31T14:22:04-0400 exit=2

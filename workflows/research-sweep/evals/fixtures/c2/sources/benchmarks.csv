@@ -1,0 +1,4 @@
+bundler,fixture,median_seconds,measured_on
+Rollup,local-large-app,8.4,2026-08-10
+webpack,local-large-app,12.8,2026-08-10
+esbuild,local-large-app,1.7,2026-08-10

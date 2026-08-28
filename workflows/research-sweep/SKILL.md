@@ -1,6 +1,8 @@
 ---
 name: research-sweep
 description: Use to answer one research question by fanning out fresh-context web-research-summarizer dispatches over distinct angles, gap-checking with an independent critic, and filling what it finds missing — returns cited findings blocks plus a fan-in count; the caller synthesizes. Skip for a single-fact lookup the caller settles in a few tool calls, for repository or codebase questions (built-in Explore owns those), and when the caller already knows the exact angles and needs only one researcher (dispatch the agent directly).
+metadata:
+  minimum-tier: T3
 ---
 
 # research-sweep

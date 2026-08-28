@@ -1,0 +1,19 @@
+{
+  "args": {
+    "goal": "compare the sample webhook runtimes on latency, retry behavior, and maintenance status"
+  },
+  "dispatch_inputs": [
+    {
+      "label": "latency",
+      "source": "sources/latency.csv"
+    },
+    {
+      "label": "retry-behavior",
+      "source": "sources/retries.md"
+    },
+    {
+      "label": "maintenance-status",
+      "source": "sources/maintenance.md"
+    }
+  ]
+}

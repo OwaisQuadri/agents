@@ -1,0 +1,10 @@
+{
+  "args": {
+    "goal": "decide whether the sample package cache should use time-based expiry or release-based invalidation"
+  },
+  "available_sources": [
+    "sources/cache-observations.md",
+    "sources/release-observations.md",
+    "sources/operator-observations.md"
+  ]
+}

@@ -1,0 +1,13 @@
+2026-08-27T11:42:10-0400 build started
+workspace: account-api
+checking account-api v2.4.0
+compiling account-types v2.4.0
+compiling account-api v2.4.0
+error[E0277]: the trait bound UserId: From<String> is not satisfied
+  --> src/account.rs:41:26
+   |
+41 |     let id: UserId = raw.into();
+   |                          ^^^^ the trait From<String> is not implemented for UserId
+note: required for String to implement Into<UserId>
+error: could not compile account-api due to 1 previous error
+build finished with exit code 101

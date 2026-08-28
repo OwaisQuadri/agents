@@ -1,0 +1,11 @@
+{
+  "args": {
+    "goal": "compare the three most-used JavaScript bundlers on build speed, plugin ecosystem, and maintenance status",
+    "max_researchers": 2
+  },
+  "available_sources": [
+    "sources/benchmarks.csv",
+    "sources/plugin-catalog.csv",
+    "sources/releases.csv"
+  ]
+}

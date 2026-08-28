@@ -1,0 +1,10 @@
+{
+  "args": {
+    "goal": "determine whether Maestro MCP supports testing on physical iOS devices"
+  },
+  "available_sources": [
+    "sources/product-page.md",
+    "sources/support-matrix.md",
+    "sources/device-run-log.txt"
+  ]
+}

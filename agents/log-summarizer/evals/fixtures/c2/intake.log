@@ -1,0 +1,7 @@
+2026-08-27T10:00:00-0400 intake worker started
+queue connection established
+received 12 records
+validated 12 records
+stored 12 records
+checkpoint committed
+intake worker completed with exit code 0

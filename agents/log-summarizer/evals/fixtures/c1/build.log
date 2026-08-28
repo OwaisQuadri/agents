@@ -1,0 +1,25 @@
+2026-08-27T09:14:02-0400 build started
+workspace: routing-service
+profile: debug
+checking dependencies
+resolved serde v1.0.219
+resolved tokio v1.47.1
+compiling proc-macro2 v1.0.101
+compiling quote v1.0.40
+compiling syn v2.0.106
+compiling serde v1.0.219
+compiling tokio v1.47.1
+compiling routing-core v0.8.0
+checking routing-service v0.8.0
+warning: unused import: std::fmt
+ --> src/router.rs:3:5
+  |
+3 | use std::fmt;
+  |     ^^^^^^^^
+error[E0308]: mismatched types
+  --> src/router.rs:88:17
+   |
+88 |         tier: route.name,
+   |               ^^^^^^^^^^ expected Tier, found String
+error: could not compile routing-service due to 1 previous error; 1 warning emitted
+build finished with exit code 101
