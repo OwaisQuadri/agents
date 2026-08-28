@@ -47,6 +47,32 @@ fn create_is_durable_and_rejects_collision_and_escape() {
 }
 
 #[test]
+fn create_accepts_semantic_plan_digest_for_pretty_json_and_rejects_drift() {
+    let fixture = Fixture::new();
+    let mut state = fixture.state();
+    let mut plan_bytes = serde_json::to_vec_pretty(&state.configuration.plan).unwrap();
+    plan_bytes.push(b'\n');
+    fs::write(fixture.root.join("plan.json"), plan_bytes).unwrap();
+    state.configuration.plan_sha256 =
+        digest(&serde_json::to_vec(&state.configuration.plan).unwrap());
+
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    store.create_frontier(&state).unwrap();
+
+    let drifted = Fixture::new();
+    let drifted_state = drifted.state();
+    let mut changed_plan = drifted_state.configuration.plan.clone();
+    changed_plan.policy.minimum_trial_score -= 1;
+    fs::write(
+        drifted.root.join("plan.json"),
+        serde_json::to_vec_pretty(&changed_plan).unwrap(),
+    )
+    .unwrap();
+    let mut drifted_store = FileFrontierStore::new(&drifted.root).unwrap();
+    assert!(drifted_store.create_frontier(&drifted_state).is_err());
+}
+
+#[test]
 fn save_accepts_legal_progress_and_rejects_regression_and_illegal_status() {
     let fixture = Fixture::new();
     let mut store = FileFrontierStore::new(&fixture.root).unwrap();

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::model::{
     Decision, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup, FrontierCaseKey,
     FrontierCaseReviewDecision, FrontierCellStatus, FrontierEvidenceIdentity, FrontierInspection,
-    FrontierRunId, FrontierRunState, FrontierRunStatus, FrontierSuite,
+    FrontierPlan, FrontierRunId, FrontierRunState, FrontierRunStatus, FrontierSuite,
     FrontierSuiteConstructionPlan, FrontierSuiteConstructionPolicy, FrontierSuiteInventory,
     FrontierSuiteProposal, FrontierSuiteProposalStatus, FrontierSuitePublication,
     FrontierSuiteReviewSet, FrontierTrialSelector, SkillEvalError, Tier, Timestamp, TrialRecord,
@@ -961,12 +961,11 @@ fn validate_state(
     is_initial: bool,
 ) -> Result<(), SkillEvalError> {
     validate_identifier(&state.configuration.run_id.0, "frontier run")?;
-    validate_evidence_path(
+    validate_plan_evidence_path(
         repository_root,
-        &FrontierEvidenceIdentity {
-            path: state.configuration.plan_path.clone(),
-            sha256: state.configuration.plan_sha256.clone(),
-        },
+        &state.configuration.plan_path,
+        &state.configuration.plan_sha256,
+        &state.configuration.plan,
     )?;
     validate_evidence_path(
         repository_root,
@@ -1317,6 +1316,33 @@ fn validate_ledger_successor(
     {
         return Err(invalid(
             "frontier baseline suffix has stale or conflicting authority",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_plan_evidence_path(
+    repository_root: &Path,
+    relative_path: &Path,
+    semantic_sha256: &str,
+    expected: &FrontierPlan,
+) -> Result<(), SkillEvalError> {
+    validate_digest(semantic_sha256)?;
+    let path = safe_repository_path(repository_root, relative_path, true)?;
+    let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+    if hex_digest(&bytes) == semantic_sha256 {
+        return Ok(());
+    }
+    let parsed: FrontierPlan = serde_json::from_slice(&bytes)
+        .map_err(|error| invalid(format!("frontier plan is malformed: {error}")))?;
+    if &parsed != expected {
+        return Err(invalid("frontier plan differs from stored authority"));
+    }
+    let semantic_bytes = serde_json::to_vec(&parsed)
+        .map_err(|error| invalid(format!("frontier plan serialization failed: {error}")))?;
+    if hex_digest(&semantic_bytes) != semantic_sha256 {
+        return Err(invalid(
+            "frontier plan semantic digest differs from stored identity",
         ));
     }
     Ok(())
