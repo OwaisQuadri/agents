@@ -24,6 +24,11 @@
             "type": "command",
             "command": "$HOME/.local/bin/no-ai-attribution",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/warnings-check",
+            "timeout": 30
           }
         ]
       }
