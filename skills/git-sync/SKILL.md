@@ -35,7 +35,7 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
 
 5. **Handle remote divergence.** Rebase unpublished local commits onto their current upstream when the upstream is ahead. Stop and name each conflict. Never resolve a conflict or use `git rebase --skip`. Do not rewrite commits that another person can use. Done when the branch can push without force, or the report names the blocker.
 
-6. **Create the PR.** Invoke `/create-pr` for the current branch and target main. The clean branch allows it to push and open or update the PR. Never reproduce its push procedure here. Done when `/create-pr` returns a verified PR URL, or its failure becomes the named refusal.
+6. **Create the PR.** Invoke `/create-pr` for the current branch and target main, forwarding any closing ticket ids the caller passed (e.g. engineer's `.context/branch-tickets.md`) so the PR body auto-closes them on merge. The clean branch allows it to push and open or update the PR. Never reproduce its push procedure here. Done when `/create-pr` returns a verified PR URL, or its failure becomes the named refusal.
 
 7. **Triage merged branches.** Run both commands after the PR step:
    ```sh
