@@ -10,22 +10,23 @@ use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
     CandidateArtifact, CandidateEnvironmentEntry, CaseDiscovery, CaseId, Decision, DecisionRecord,
-    EvidenceRole, FrontierApplyReport, FrontierDecisionRequest, FrontierInspection,
-    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuiteInventory,
-    FrontierSuiteProposal, FrontierSuitePublication, JudgeInput, ModelIdentity,
-    ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant, PoolPauseReason,
-    PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage,
-    PromptJudgeRequest, PromptJudgeResult, PublicationGate, PublicationStatus,
-    QualificationBoundary, QualificationPolicy, QualificationPurpose, QualificationReport,
-    QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus,
-    SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence, T1ScreenAttemptReport,
-    T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
-    T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun, T1ScreenChildStatus,
-    T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason, T1ScreenRankedRoute,
-    T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport, T1ScreenRouteFailure,
-    T1ScreenRouteFailureRequest, T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, Tier,
-    TierAssignment, TierDestination, TierEvidence, TierStatus, TrialKey, TrialRecord,
-    TrialSelector, TrialUsage,
+    EvidenceRole, FrontierApplyReport, FrontierCaseGroup, FrontierConfidenceMethod,
+    FrontierDecisionRequest, FrontierEntrant, FrontierInspection, FrontierPlan, FrontierPolicy,
+    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite,
+    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication, JudgeInput,
+    ModelIdentity, ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant,
+    PoolPauseReason, PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState,
+    PoolRunStatus, PoolStage, PromptJudgeRequest, PromptJudgeResult, PublicationGate,
+    PublicationStatus, QualificationBoundary, QualificationPolicy, QualificationPurpose,
+    QualificationReport, QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState,
+    RunStatus, SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence,
+    T1ScreenAttemptReport, T1ScreenCallRange, T1ScreenCampaignState, T1ScreenCampaignStatus,
+    T1ScreenCapExtension, T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun,
+    T1ScreenChildStatus, T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason,
+    T1ScreenRankedRoute, T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport,
+    T1ScreenRouteFailure, T1ScreenRouteFailureRequest, T1ScreenRunId, T1ScreenRunState,
+    T1ScreenRunStatus, Tier, TierAssignment, TierDestination, TierEvidence, TierStatus, Timestamp,
+    TrialKey, TrialRecord, TrialSelector, TrialUsage,
 };
 use crate::ports::{
     Clock, FrontierProgressSink, FrontierRuntime, FrontierSuiteRuntime, PoolProgressSink,
@@ -6269,7 +6270,6 @@ pub(crate) fn apply_frontier_suite(
     runtime.apply_frontier_suite_proposal(&proposal, output_path, &published_at)
 }
 
-// TODO(AGNT-0032.T146): Build the guarded no-call frontier preview.
 /// Validates one reviewed plan and projects its complete cumulative frontier.
 ///
 /// The inputs are a plan path and read-only runtime. The output is a no-call preview.
@@ -6278,10 +6278,430 @@ pub(crate) fn apply_frontier_suite(
 ///
 /// Returns an error for invalid suite, plan, capability, policy, identity, or source evidence.
 pub(crate) fn preview_frontier(
-    _plan_path: &Path,
-    _runtime: &dyn FrontierRuntime,
+    plan_path: &Path,
+    runtime: &dyn FrontierRuntime,
 ) -> Result<FrontierPreviewReport, SkillEvalError> {
-    unimplemented!()
+    let (plan, suite) = runtime.load_frontier_plan(plan_path)?;
+    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+
+    let tier_case_counts = frontier_tier_case_counts(&suite)?;
+    let (route_count, minimum_trials, maximum_trials) =
+        frontier_trial_bounds(&plan.entrants, &tier_case_counts, &plan.policy)?;
+    let maximum_spending_millionths_of_dollar = maximum_trials
+        .checked_mul(plan.policy.maximum_trial_cost_millionths_of_dollar)
+        .ok_or_else(|| frontier_preview_invalid("maximum spending arithmetic overflow"))?;
+    let plan_bytes = serde_json::to_vec(&plan).map_err(|error| {
+        frontier_preview_invalid(format!("plan digest serialization failed: {error}"))
+    })?;
+    let plan_sha256 = Sha256::digest(plan_bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+
+    Ok(FrontierPreviewReport {
+        plan_sha256,
+        tier_case_counts,
+        route_count,
+        candidate_calls: T1ScreenCallRange {
+            minimum: minimum_trials,
+            maximum: maximum_trials,
+        },
+        judge_calls: T1ScreenCallRange {
+            minimum: minimum_trials,
+            maximum: maximum_trials,
+        },
+        maximum_spending_millionths_of_dollar,
+        is_owner_approval_required: plan.policy.spending_limit_millionths_of_dollar
+            < maximum_spending_millionths_of_dollar,
+    })
+}
+
+fn validate_frontier_preview_inputs(
+    plan: &FrontierPlan,
+    suite: &FrontierSuite,
+    now: &Timestamp,
+) -> Result<(), SkillEvalError> {
+    if plan.version != 1 {
+        return Err(frontier_preview_invalid("plan version must be 1"));
+    }
+    if suite.version != 1
+        || plan.suite.version != suite.version
+        || plan.suite.path.as_os_str().is_empty()
+        || !is_frontier_digest(&plan.suite.sha256)
+    {
+        return Err(frontier_preview_invalid(
+            "suite identity or version is invalid",
+        ));
+    }
+    if plan.capabilities.version != 1
+        || plan.capabilities.path.as_os_str().is_empty()
+        || !is_frontier_digest(&plan.capabilities.sha256)
+        || plan.capabilities.observed_at_unix_seconds == 0
+        || plan.capabilities.pi_version.trim().is_empty()
+    {
+        return Err(frontier_preview_invalid(
+            "capability identity or version is invalid",
+        ));
+    }
+    validate_frontier_preview_policy(&plan.policy)?;
+    validate_frontier_preview_suite(suite)?;
+
+    let now_seconds = frontier_timestamp_seconds(&now.0, "runtime clock")?;
+    validate_frontier_age(
+        now_seconds,
+        plan.capabilities.observed_at_unix_seconds,
+        plan.policy.maximum_catalog_age_seconds,
+        "capability snapshot",
+    )?;
+    validate_frontier_entrants(plan, now_seconds)?;
+    validate_frontier_judge(plan)?;
+    Ok(())
+}
+
+fn validate_frontier_preview_policy(policy: &FrontierPolicy) -> Result<(), SkillEvalError> {
+    if policy.screening_trials_per_case != 1
+        || policy.confirmation_trials_per_case != 3
+        || policy.maximum_trials_per_case != 5
+        || policy.minimum_trial_score > 10
+        || policy.minimum_weighted_pass_basis_points != 8_500
+        || policy.minimum_lower_bound_basis_points != 8_000
+        || policy.confidence_level_basis_points != 9_500
+        || policy.confidence_method != FrontierConfidenceMethod::StratifiedBootstrap
+        || policy.confidence_resamples == 0
+        || policy.maximum_infrastructure_attempts != 2
+        || policy.maximum_catalog_age_seconds == 0
+        || policy.active_pool_size == 0
+        || !policy.is_provider_limit_enforced
+        || !policy.is_first_party_only
+    {
+        return Err(frontier_preview_invalid("policy is invalid"));
+    }
+    if policy.maximum_trial_cost_millionths_of_dollar == 0 {
+        return Err(frontier_preview_invalid("maximum trial cost is zero"));
+    }
+    Ok(())
+}
+
+fn validate_frontier_preview_suite(suite: &FrontierSuite) -> Result<(), SkillEvalError> {
+    const TIERS: [Tier; 5] = [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5];
+    const GROUPS: [FrontierCaseGroup; 4] = [
+        FrontierCaseGroup::Normal,
+        FrontierCaseGroup::Edge,
+        FrontierCaseGroup::Adversarial,
+        FrontierCaseGroup::Critical,
+    ];
+    if suite.tiers.keys().copied().collect::<Vec<_>>() != TIERS {
+        return Err(frontier_preview_invalid(
+            "suite must contain exactly tiers T1 through T5",
+        ));
+    }
+    let mut case_keys = BTreeSet::new();
+    for tier in TIERS {
+        let tier_suite = &suite.tiers[&tier];
+        if tier_suite.cases.len() < 30 {
+            return Err(frontier_preview_invalid(format!(
+                "suite {tier:?} has fewer than 30 cases"
+            )));
+        }
+        if tier_suite
+            .group_weights_basis_points
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+            != GROUPS
+            || tier_suite
+                .group_weights_basis_points
+                .values()
+                .any(|weight| *weight == 0)
+            || tier_suite
+                .group_weights_basis_points
+                .values()
+                .try_fold(0_u16, |total, weight| total.checked_add(*weight))
+                != Some(10_000)
+        {
+            return Err(frontier_preview_invalid(format!(
+                "suite {tier:?} group weights are invalid"
+            )));
+        }
+        let present_groups = tier_suite
+            .cases
+            .iter()
+            .map(|case| case.group)
+            .collect::<BTreeSet<_>>();
+        if present_groups != GROUPS.into_iter().collect()
+            || !tier_suite.cases.iter().any(|case| case.is_confirmation)
+        {
+            return Err(frontier_preview_invalid(format!(
+                "suite {tier:?} groups or confirmations are invalid"
+            )));
+        }
+        for case in &tier_suite.cases {
+            if case.artifact_path.as_os_str().is_empty()
+                || case.artifact_revision.trim().is_empty()
+                || case.case.0.trim().is_empty()
+                || !case_keys.insert((
+                    case.artifact_path.clone(),
+                    case.artifact_revision.clone(),
+                    case.case.clone(),
+                ))
+            {
+                return Err(frontier_preview_invalid(
+                    "suite case keys are invalid or not disjoint",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_frontier_entrants(plan: &FrontierPlan, now_seconds: u64) -> Result<(), SkillEvalError> {
+    const LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    if plan.entrants.is_empty() {
+        return Err(frontier_preview_invalid("entrant route list is empty"));
+    }
+    let mut identities = BTreeSet::new();
+    let mut previous_entry_tier = None;
+    for entrant in &plan.entrants {
+        require_frontier_first_party(&entrant.provider)?;
+        if entrant.model.trim().is_empty()
+            || !identities.insert((entrant.provider.clone(), entrant.model.clone()))
+            || entrant.thinking_levels.is_empty()
+        {
+            return Err(frontier_preview_invalid(
+                "entrant identity is invalid or duplicated",
+            ));
+        }
+        if previous_entry_tier.is_some_and(|previous| previous > entrant.entry_tier) {
+            return Err(frontier_preview_invalid("entrant route order is invalid"));
+        }
+        previous_entry_tier = Some(entrant.entry_tier);
+        let mut previous_level = None;
+        for thinking in &entrant.thinking_levels {
+            let index = LEVELS
+                .iter()
+                .position(|supported| supported == thinking)
+                .ok_or_else(|| frontier_preview_invalid("entrant thinking level is unsupported"))?;
+            if previous_level.is_some_and(|previous| previous >= index) {
+                return Err(frontier_preview_invalid(
+                    "entrant thinking order is invalid",
+                ));
+            }
+            previous_level = Some(index);
+        }
+        let observed = frontier_timestamp_seconds(
+            &entrant.catalog_observed_at.0,
+            "entrant catalog observation",
+        )?;
+        validate_frontier_age(
+            now_seconds,
+            observed,
+            plan.policy.maximum_catalog_age_seconds,
+            "entrant catalog",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_frontier_judge(plan: &FrontierPlan) -> Result<(), SkillEvalError> {
+    require_frontier_first_party(&plan.judge.provider)?;
+    if plan.judge.model.trim().is_empty()
+        || plan.judge.thinking.trim().is_empty()
+        || plan.entrants.iter().any(|entrant| {
+            entrant.provider == plan.judge.provider && entrant.model == plan.judge.model
+        })
+    {
+        return Err(frontier_preview_invalid(
+            "external judge identity is invalid or matches an entrant",
+        ));
+    }
+    Ok(())
+}
+
+fn frontier_tier_case_counts(suite: &FrontierSuite) -> Result<BTreeMap<Tier, u16>, SkillEvalError> {
+    suite
+        .tiers
+        .iter()
+        .map(|(tier, suite)| {
+            u16::try_from(suite.cases.len())
+                .map(|count| (*tier, count))
+                .map_err(|_| frontier_preview_invalid("tier case count overflow"))
+        })
+        .collect()
+}
+
+fn frontier_trial_bounds(
+    entrants: &[FrontierEntrant],
+    case_counts: &BTreeMap<Tier, u16>,
+    policy: &FrontierPolicy,
+) -> Result<(u32, u64, u64), SkillEvalError> {
+    let mut route_count = 0_u32;
+    let mut minimum_trials = 0_u64;
+    let mut maximum_trials = 0_u64;
+    for entrant in entrants {
+        for thinking_index in 0..entrant.thinking_levels.len() {
+            route_count = route_count
+                .checked_add(1)
+                .ok_or_else(|| frontier_preview_invalid("route count overflow"))?;
+            let reachable = frontier_reachable_tiers(entrant.entry_tier, thinking_index);
+            let minimum_cases = reachable
+                .iter()
+                .filter_map(|tier| case_counts.get(tier))
+                .min()
+                .copied()
+                .ok_or_else(|| frontier_preview_invalid("route has no reachable tier suite"))?;
+            let maximum_cases = reachable
+                .iter()
+                .filter_map(|tier| case_counts.get(tier))
+                .max()
+                .copied()
+                .ok_or_else(|| frontier_preview_invalid("route has no reachable tier suite"))?;
+            minimum_trials = minimum_trials
+                .checked_add(u64::from(minimum_cases) * u64::from(policy.screening_trials_per_case))
+                .ok_or_else(|| frontier_preview_invalid("minimum trial count overflow"))?;
+            let route_maximum = u64::from(maximum_cases)
+                .checked_mul(u64::from(policy.maximum_trials_per_case))
+                .and_then(|value| {
+                    value.checked_mul(u64::from(policy.maximum_infrastructure_attempts))
+                })
+                .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?;
+            maximum_trials = maximum_trials
+                .checked_add(route_maximum)
+                .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?;
+        }
+    }
+    Ok((route_count, minimum_trials, maximum_trials))
+}
+
+fn frontier_reachable_tiers(entry: Tier, thinking_index: usize) -> Vec<Tier> {
+    let tiers = [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5];
+    let entry_index = tiers.iter().position(|tier| *tier == entry).unwrap_or(0);
+    tiers[entry_index..=entry_index.saturating_add(thinking_index).min(4)].to_vec()
+}
+
+fn validate_frontier_age(
+    now: u64,
+    observed: u64,
+    maximum_age: u32,
+    identity: &str,
+) -> Result<(), SkillEvalError> {
+    let age = now
+        .checked_sub(observed)
+        .ok_or_else(|| frontier_preview_invalid(format!("{identity} is in the future")))?;
+    if age > u64::from(maximum_age) {
+        return Err(frontier_preview_invalid(format!("{identity} is stale")));
+    }
+    Ok(())
+}
+
+fn require_frontier_first_party(provider: &str) -> Result<(), SkillEvalError> {
+    if matches!(provider, "anthropic" | "openai-codex") {
+        Ok(())
+    } else {
+        Err(frontier_preview_invalid(format!(
+            "provider {provider:?} is not first-party"
+        )))
+    }
+}
+
+fn is_frontier_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn frontier_timestamp_seconds(value: &str, field: &str) -> Result<u64, SkillEvalError> {
+    const DAY: u64 = 86_400;
+    let bytes = value.as_bytes();
+    if bytes.len() != 24
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || !matches!(bytes[19], b'+' | b'-')
+        || bytes.iter().enumerate().any(|(index, byte)| {
+            !matches!(index, 4 | 7 | 10 | 13 | 16 | 19) && !byte.is_ascii_digit()
+        })
+    {
+        return Err(frontier_preview_invalid(format!(
+            "{field} timestamp is invalid"
+        )));
+    }
+    let part = |start, end| {
+        value[start..end]
+            .parse::<u32>()
+            .map_err(|_| frontier_preview_invalid(format!("{field} timestamp is invalid")))
+    };
+    let year = part(0, 4)?;
+    let month = part(5, 7)?;
+    let day = part(8, 10)?;
+    let hour = part(11, 13)?;
+    let minute = part(14, 16)?;
+    let second = part(17, 19)?;
+    let offset_hour = part(20, 22)?;
+    let offset_minute = part(22, 24)?;
+    let maximum_day = frontier_days_in_month(year, month);
+    if year == 0
+        || maximum_day == 0
+        || day == 0
+        || day > maximum_day
+        || hour > 23
+        || minute > 59
+        || second > 59
+        || offset_hour > 14
+        || offset_minute > 59
+        || offset_hour == 14 && offset_minute != 0
+    {
+        return Err(frontier_preview_invalid(format!(
+            "{field} timestamp is invalid"
+        )));
+    }
+    let days = frontier_days_before_year(year)
+        + u64::from(
+            (1..month)
+                .map(|prior| frontier_days_in_month(year, prior))
+                .sum::<u32>(),
+        )
+        + u64::from(day - 1);
+    let local = days
+        .checked_mul(DAY)
+        .and_then(|value| value.checked_add(u64::from(hour) * 3_600))
+        .and_then(|value| value.checked_add(u64::from(minute) * 60))
+        .and_then(|value| value.checked_add(u64::from(second)))
+        .ok_or_else(|| frontier_preview_invalid(format!("{field} timestamp overflow")))?;
+    let offset = u64::from(offset_hour) * 3_600 + u64::from(offset_minute) * 60;
+    let absolute = match bytes[19] {
+        b'+' => local.checked_sub(offset),
+        b'-' => local.checked_add(offset),
+        _ => unreachable!(),
+    }
+    .ok_or_else(|| frontier_preview_invalid(format!("{field} timestamp overflow")))?;
+    let unix_epoch = frontier_days_before_year(1970) * DAY;
+    absolute
+        .checked_sub(unix_epoch)
+        .ok_or_else(|| frontier_preview_invalid(format!("{field} timestamp predates Unix epoch")))
+}
+
+fn frontier_days_before_year(year: u32) -> u64 {
+    let previous = u64::from(year - 1);
+    previous * 365 + previous / 4 - previous / 100 + previous / 400
+}
+
+fn frontier_days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn frontier_preview_invalid(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("frontier preview: {}", message.into()))
 }
 
 // TODO(AGNT-0032.T147): Start and resume the exact cumulative frontier lifecycle.
@@ -6394,6 +6814,8 @@ include!("../tests/pool_resume.rs");
 #[cfg(test)]
 include!("../tests/pool_qualification.rs");
 #[cfg(test)]
+include!("../tests/frontier_preview.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -6411,6 +6833,8 @@ pool_start_tests!();
 pool_resume_tests!();
 #[cfg(test)]
 pool_qualification_tests!();
+#[cfg(test)]
+frontier_preview_tests!();
 
 #[cfg(test)]
 mod state {
