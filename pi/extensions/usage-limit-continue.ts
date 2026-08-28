@@ -398,13 +398,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	const fallbackModel = await applyTierFallback(pi, ctx);
 	if (fallbackModel) {
 		ctx.ui.notify(`Usage limit hit. Switched to the tier fallback ${fallbackModel}; the session continues.`, "warning");
-		// print/json runs (headless workers spawned via `pi -p`) send exactly one prompt and
-		// then check the LAST message's stopReason to decide the process exit code. Switching
-		// the model here does nothing for them on its own — the failed message is already the
-		// last one, so the worker still exits nonzero even though a working model is now
-		// active. Queue the same turn again on the fallback model so print mode's exit check
-		// sees a real completion instead of the stale error. Interactive/tui sessions are left
-		// alone: a human decides whether to continue.
+		// print/json workers exit on the LAST message's stopReason; retry it so that check sees the fallback model's work, not the stale error.
 		if (ctx.mode === "print" || ctx.mode === "json") {
 			logDiagnostic(`retrying same turn on ${fallbackModel} (mode=${ctx.mode})`);
 			pi.sendUserMessage(RESUME_PROMPT, { deliverAs: "followUp" });
@@ -426,9 +420,6 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 
 	const sessionFile = ctx.sessionManager.getSessionFile();
 	if (!sessionFile) {
-		// Headless workers run with no --session-dir (decision 11 keeps them in the plain
-		// session bucket, but getSessionFile() is still populated there in practice); this
-		// branch is the one case that leaves a worker with no automatic recovery at all.
 		logDiagnostic("no session file to resume; usage limit is fatal for this run");
 		ctx.ui.notify("Usage limit hit, but this session has no file to resume (--no-session). Not scheduling an automatic continue.", "warning");
 		return;

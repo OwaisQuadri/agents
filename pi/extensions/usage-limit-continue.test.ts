@@ -256,11 +256,6 @@ test("the real tier file compiles into a chain every hop of which resolves", asy
 });
 
 test("handleMessageEnd: a print-mode worker retries the same turn on the fallback model instead of staying on the stale error", async () => {
-	// Reproduces the reported failure: a headless `pi -p` consolidator worker hits its
-	// usage limit, the tier fallback resolves and the model switch succeeds, but print
-	// mode's exit check only ever looks at the LAST message — the one that already
-	// errored. Without an explicit retry, the worker still exits nonzero on a model that
-	// is fully able to serve the request.
 	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
 	const originalHome = process.env.HOME;
 	process.env.HOME = stateHome;
