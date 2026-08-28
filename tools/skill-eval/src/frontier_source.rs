@@ -22,6 +22,8 @@ const GROUPS: [FrontierCaseGroup; 4] = [
     FrontierCaseGroup::Critical,
 ];
 
+type ScoredFrontierCase = (Vec<u16>, FrontierCaseKey, FrontierCaseReference);
+
 /// Builds the complete executable-case inventory for offline tier review.
 ///
 /// The inputs are the frozen construction plan, loaded artifacts, and generation time. The output
@@ -275,8 +277,7 @@ pub(crate) fn build_frontier_suite_proposal(
     eligible.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
 
     let required = usize::from(plan.policy.minimum_unique_cases_per_tier);
-    let mut proposed_tiers = BTreeMap::new();
-    let mut tier_capacity = BTreeMap::new();
+    let mut tier_cases = BTreeMap::new();
     let mut cursor = 0_usize;
     for (index, tier) in plan.policy.required_tiers.iter().enumerate() {
         let end = if index + 1 == plan.policy.required_tiers.len() {
@@ -284,11 +285,23 @@ pub(crate) fn build_frontier_suite_proposal(
         } else {
             cursor.saturating_add(required).min(eligible.len())
         };
-        let references = eligible[cursor..end]
+        tier_cases.insert(*tier, eligible[cursor..end].to_vec());
+        cursor = end;
+    }
+    if cursor != eligible.len() {
+        return Err(invalid("frontier proposal dropped an eligible scored case"));
+    }
+    rebalance_group_coverage(&mut tier_cases);
+
+    let mut proposed_tiers = BTreeMap::new();
+    let mut tier_capacity = BTreeMap::new();
+    for tier in &plan.policy.required_tiers {
+        let references = tier_cases
+            .get(tier)
+            .ok_or_else(|| invalid("frontier proposal tier allocation disappeared"))?
             .iter()
             .map(|(_, _, reference)| reference.clone())
             .collect::<Vec<_>>();
-        cursor = end;
         let accepted_unique_cases = u16::try_from(references.len())
             .map_err(|_| invalid("frontier accepted-case count overflow"))?;
         let shortfall = plan
@@ -319,9 +332,6 @@ pub(crate) fn build_frontier_suite_proposal(
             },
         );
     }
-    if cursor != eligible.len() {
-        return Err(invalid("frontier proposal dropped an eligible scored case"));
-    }
 
     let mut holdout_cases = inventory
         .cases
@@ -348,6 +358,110 @@ pub(crate) fn build_frontier_suite_proposal(
         tier_capacity,
         status,
     })
+}
+
+fn rebalance_group_coverage(tiers: &mut BTreeMap<Tier, Vec<ScoredFrontierCase>>) {
+    let tier_order = tiers.keys().copied().collect::<Vec<_>>();
+    for recipient_tier in &tier_order {
+        for group in GROUPS {
+            let Some(recipient) = tiers.get(recipient_tier) else {
+                continue;
+            };
+            if recipient.iter().any(|case| case.2.group == group) {
+                continue;
+            }
+            let recipient_group_counts = group_counts(recipient);
+            let mut best = None;
+            for donor_tier in &tier_order {
+                if donor_tier == recipient_tier {
+                    continue;
+                }
+                let Some(donor) = tiers.get(donor_tier) else {
+                    continue;
+                };
+                let donor_group_counts = group_counts(donor);
+                for (donor_index, donor_case) in donor.iter().enumerate() {
+                    if donor_case.2.group != group
+                        || donor_group_counts.get(&group).copied().unwrap_or(0) < 2
+                    {
+                        continue;
+                    }
+                    for (recipient_index, recipient_case) in recipient.iter().enumerate() {
+                        if recipient_group_counts
+                            .get(&recipient_case.2.group)
+                            .copied()
+                            .unwrap_or(0)
+                            < 2
+                        {
+                            continue;
+                        }
+                        let candidate = (
+                            difficulty_distance(&donor_case.0, &recipient_case.0),
+                            donor_case.1.clone(),
+                            recipient_case.1.clone(),
+                            *donor_tier,
+                            donor_index,
+                            recipient_index,
+                        );
+                        if best.as_ref().is_none_or(|current| candidate < *current) {
+                            best = Some(candidate);
+                        }
+                    }
+                }
+            }
+            let Some((_, _, _, donor_tier, donor_index, recipient_index)) = best else {
+                continue;
+            };
+            let donor_case = tiers
+                .get(&donor_tier)
+                .and_then(|cases| cases.get(donor_index))
+                .cloned();
+            let recipient_case = tiers
+                .get(recipient_tier)
+                .and_then(|cases| cases.get(recipient_index))
+                .cloned();
+            let (Some(donor_case), Some(recipient_case)) = (donor_case, recipient_case) else {
+                continue;
+            };
+            if let Some(case) = tiers
+                .get_mut(&donor_tier)
+                .and_then(|cases| cases.get_mut(donor_index))
+            {
+                *case = recipient_case;
+            }
+            if let Some(case) = tiers
+                .get_mut(recipient_tier)
+                .and_then(|cases| cases.get_mut(recipient_index))
+            {
+                *case = donor_case;
+            }
+        }
+    }
+}
+
+fn group_counts(cases: &[ScoredFrontierCase]) -> BTreeMap<FrontierCaseGroup, usize> {
+    GROUPS
+        .into_iter()
+        .map(|group| {
+            (
+                group,
+                cases.iter().filter(|case| case.2.group == group).count(),
+            )
+        })
+        .collect()
+}
+
+fn difficulty_distance(left: &[u16], right: &[u16]) -> u64 {
+    let score_distance = left
+        .iter()
+        .zip(right)
+        .fold(0_u64, |distance, (left, right)| {
+            distance.saturating_add(u64::from(left.abs_diff(*right)))
+        });
+    let length_distance = u64::try_from(left.len().abs_diff(right.len()))
+        .unwrap_or(u64::MAX)
+        .saturating_mul(u64::from(BASIS_POINTS_TOTAL));
+    score_distance.saturating_add(length_distance)
 }
 
 /// Converts one ready all-tier proposal into the publishable frontier suite.

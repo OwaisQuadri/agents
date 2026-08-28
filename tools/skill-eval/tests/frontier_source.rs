@@ -12,8 +12,8 @@ mod frontier_source;
 #[path = "../src/model.rs"]
 mod model;
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use frontier_source::{
     build_frontier_suite_inventory, build_frontier_suite_proposal,
@@ -71,7 +71,7 @@ fn inventory_maps_loaded_absolute_roots_to_repository_relative_keys() {
         inventory
             .cases
             .iter()
-            .all(|entry| entry.key.artifact_path == PathBuf::from(ROOT))
+            .all(|entry| entry.key.artifact_path == Path::new(ROOT))
     );
     assert!(inventory.cases.iter().all(|entry| match &entry.drive {
         CaseDrive::Fixture { source, .. } => source.is_absolute(),
@@ -388,7 +388,7 @@ fn ready_proposal_contains_five_disjoint_complete_tiers() {
 }
 
 #[test]
-fn full_count_tier_missing_group_is_blocked_and_cannot_publish() {
+fn full_count_tier_missing_group_rebalances_and_publishes() {
     let (plan, inventory, mut reviews) = reviewed_bank(150);
     for record in &mut reviews.records {
         if case_index(&record.key) < 30
@@ -404,29 +404,79 @@ fn full_count_tier_missing_group_is_blocked_and_cannot_publish() {
         }
     }
 
+    let proposal = build_frontier_suite_proposal(&plan, &inventory, &reviews).unwrap();
+
+    assert_eq!(proposal.status, FrontierSuiteProposalStatus::Ready);
+    assert_eq!(proposal.proposed_tiers[&Tier::T1].cases.len(), 30);
+    assert!(
+        proposal.proposed_tiers[&Tier::T1]
+            .cases
+            .iter()
+            .any(|case| case.case.0 == "case-031")
+    );
+    assert!(
+        proposal.proposed_tiers[&Tier::T2]
+            .cases
+            .iter()
+            .any(|case| case.case.0 == "case-029")
+    );
+    assert_complete_tiers(&proposal, [30, 30, 30, 30, 30]);
+    assert_proposal_keys_match_inventory(&proposal, &inventory);
+    frontier_suite_from_ready_proposal(&proposal).unwrap();
+}
+
+#[test]
+fn current_shaped_155_tail_missing_normal_rebalances_deterministically() {
+    let (plan, inventory, mut reviews) = reviewed_bank(155);
+    for record in &mut reviews.records {
+        if case_index(&record.key) >= 120
+            && matches!(
+                record.decision,
+                FrontierCaseReviewDecision::Eligible {
+                    group: FrontierCaseGroup::Normal,
+                    ..
+                }
+            )
+        {
+            set_group(&mut record.decision, FrontierCaseGroup::Edge);
+        }
+    }
+
+    let first = build_frontier_suite_proposal(&plan, &inventory, &reviews).unwrap();
+    let second = build_frontier_suite_proposal(&plan, &inventory, &reviews).unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(first.status, FrontierSuiteProposalStatus::Ready);
+    assert_complete_tiers(&first, [30, 30, 30, 30, 35]);
+    assert_proposal_keys_match_inventory(&first, &inventory);
+    frontier_suite_from_ready_proposal(&first).unwrap();
+}
+
+#[test]
+fn globally_missing_group_is_blocked_and_forged_ready_cannot_publish() {
+    let (plan, inventory, mut reviews) = reviewed_bank(150);
+    for record in &mut reviews.records {
+        if matches!(
+            record.decision,
+            FrontierCaseReviewDecision::Eligible {
+                group: FrontierCaseGroup::Normal,
+                ..
+            }
+        ) {
+            set_group(&mut record.decision, FrontierCaseGroup::Edge);
+        }
+    }
+
     let mut proposal = build_frontier_suite_proposal(&plan, &inventory, &reviews).unwrap();
 
     assert_eq!(proposal.status, FrontierSuiteProposalStatus::Blocked);
-    let capacity = &proposal.tier_capacity[&Tier::T1];
-    assert_eq!(capacity.accepted_unique_cases, 30);
-    assert_eq!(capacity.shortfall, 0);
-    assert!(!capacity.is_complete);
-
-    let mut proposed_keys = proposal
-        .proposed_tiers
-        .values()
-        .flat_map(|tier| tier.cases.iter().map(case_key))
-        .collect::<Vec<_>>();
-    proposed_keys.sort();
-    assert_eq!(
-        proposed_keys,
-        inventory
-            .cases
-            .iter()
-            .map(|entry| entry.key.clone())
-            .collect::<Vec<_>>()
+    assert!(
+        proposal
+            .tier_capacity
+            .values()
+            .all(|capacity| !capacity.is_complete)
     );
-
+    assert_proposal_keys_match_inventory(&proposal, &inventory);
     proposal.status = FrontierSuiteProposalStatus::Ready;
     assert_named_error(
         frontier_suite_from_ready_proposal(&proposal),
@@ -447,6 +497,7 @@ fn proposal_ranks_complete_reviewer_values_then_exact_key() {
         set_difficulty(&mut record.decision, score);
     }
     let proposal = build_frontier_suite_proposal(&plan, &inventory, &reviews).unwrap();
+    assert_complete_tiers(&proposal, [30, 30, 30, 30, 30]);
     let ordered = proposal
         .proposed_tiers
         .values()
@@ -632,6 +683,60 @@ fn publication_rejects_unsorted_duplicate_holdouts_and_missing_confirmation_memb
     assert_named_error(
         frontier_suite_from_ready_proposal(&missing),
         "absent from holdout cases",
+    );
+}
+
+fn assert_complete_tiers(proposal: &model::FrontierSuiteProposal, expected_counts: [usize; 5]) {
+    for (tier, expected_count) in [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5]
+        .into_iter()
+        .zip(expected_counts)
+    {
+        let suite = &proposal.proposed_tiers[&tier];
+        assert_eq!(suite.cases.len(), expected_count);
+        assert_eq!(
+            suite
+                .cases
+                .iter()
+                .map(|case| case.group)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                FrontierCaseGroup::Normal,
+                FrontierCaseGroup::Edge,
+                FrontierCaseGroup::Adversarial,
+                FrontierCaseGroup::Critical,
+            ])
+        );
+        let capacity = &proposal.tier_capacity[&tier];
+        assert_eq!(capacity.accepted_unique_cases, expected_count as u16);
+        assert_eq!(capacity.shortfall, 0);
+        assert!(capacity.is_complete);
+    }
+}
+
+fn assert_proposal_keys_match_inventory(
+    proposal: &model::FrontierSuiteProposal,
+    inventory: &FrontierSuiteInventory,
+) {
+    let proposed_keys = proposal
+        .proposed_tiers
+        .values()
+        .flat_map(|tier| tier.cases.iter().map(case_key))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        proposed_keys.len(),
+        proposal
+            .proposed_tiers
+            .values()
+            .map(|tier| tier.cases.len())
+            .sum::<usize>()
+    );
+    assert_eq!(
+        proposed_keys,
+        inventory
+            .cases
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect::<BTreeSet<_>>()
     );
 }
 
