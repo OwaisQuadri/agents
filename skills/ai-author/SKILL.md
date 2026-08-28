@@ -87,9 +87,16 @@ thing is decidable from files, diffs, and exit codes with no taste involved. Two
 destinations, same test, different trigger:
 
 - **a checker** — an agent invokes it deliberately. Rust, in `tools/`, per AGENTS.md.
-- **a pi extension** — the RUNTIME fires it on an event: session start, a tool call, a file
-  change, a render. TypeScript, in `pi/extensions/`. Reach for this when the thing must not
-  depend on an agent remembering to run it.
+- **something the RUNTIME fires on an event, with no agent remembering to run it** — three
+  actual backends live in this repo: Pi's own event bus (a Pi extension, TypeScript wiring
+  in `pi/extensions/`), the Claude Code/Codex CLI's own hook system (a CLI hook, wired
+  through `config/*.json`'s `"hooks"` key), and git itself (a git hook, bash in `hooks/`,
+  symlinked by `install.sh`). All three can call back into a plain Rust checker rather than
+  reimplement the logic in a second language.
+
+HOW to build any of these four is `tool-author`'s craft, the same way `skill-author` owns
+SKILL.md craft — dispatch there once this branch is picked; nothing type-specific is
+repeated here.
 
 DECIDABLE IS NOT THE SAME AS RIGHT. Before building a checker, say which quantity it
 measures and which quantity you actually care about, and check they are the same one. A
@@ -153,6 +160,7 @@ crafted lives in one sibling skill per type. Once the tree picks a type, dispatc
 - **skill-author**: how to author a skill (the SKILL.md craft itself).
 - **agent-author**: how to author an agent definition.
 - **workflow-author**: how to author a workflow.
+- **tool-author**: how to author a checker, a Pi extension, a CLI hook, or a git hook.
 
 Each sibling owns its type's specifics in full. Nothing type-specific is duplicated here.
 

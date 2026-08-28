@@ -13,6 +13,20 @@
 //! derivation. A literal `~/Documents/agents` still passes too, since most of the repo's
 //! existing `prompt_version` git commands hardcode it — that is a separate, wider
 //! cleanup this checker does not force.
+//!
+//! Two modes:
+//! - `logpath-check <root>` — the static scan above, run on demand against every SKILL.md
+//!   / agent.md in the repo.
+//! - `logpath-check <root> --validate-path <resolved-absolute-path>` — a runtime check of
+//!   ONE concrete path a bash tool call is about to write to, used by the
+//!   `pi/extensions/logpath-guard.ts` runtime guard to block the write before it happens
+//!   rather than catch the drift later in prose. The caller (the extension) resolves any
+//!   `cd`, `~`, or `$HOME` in the shell command first — this mode takes an already-lexical
+//!   absolute path and checks only the STRUCTURE: does it land under `<root>/(skills|
+//!   agents|workflows)/<name>/logs/usage.jsonl`, and does `<name>` name a real, existing
+//!   artifact directory. That structural check alone catches the original bug: a path
+//!   like `<root>/agents/skills/rust-style/logs/usage.jsonl` has an extra path segment
+//!   and fails the pattern outright.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -144,28 +158,126 @@ fn check_file(root: &Path, file: &Path) -> Option<Finding> {
     })
 }
 
-fn main() -> ExitCode {
-    let root = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let root = fs::canonicalize(&root).unwrap_or(root);
-
-    let mut findings = Vec::new();
-    for file in find_candidates(&root) {
-        if let Some(finding) = check_file(&root, &file) {
-            findings.push(finding);
+/// Resolves `.` and `..` components lexically, without touching the filesystem — the
+/// target file usually does not exist yet (this runs BEFORE the write), so
+/// `fs::canonicalize` would fail on it. Not symlink-safe; that tradeoff is fine here
+/// because this checks path STRUCTURE (which artifact directory a write claims to
+/// belong to), not filesystem identity.
+fn resolve_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => out.push(other.as_os_str()),
         }
     }
+    out
+}
 
-    if findings.is_empty() {
-        return ExitCode::SUCCESS;
+/// Runtime check for ONE concrete path a bash tool call is about to write to. `target`
+/// must already be absolute and shell-resolved (no `~`, `$HOME`, or `cd` left in it) —
+/// resolving shell syntax is the caller's job, this only checks structure.
+fn validate_single_path(root: &Path, target: &Path) -> Result<(), String> {
+    if !target.is_absolute() {
+        return Err(format!(
+            "target path `{}` is not absolute",
+            target.display()
+        ));
     }
+    let resolved = resolve_lexical(target);
+    let Ok(rel) = resolved.strip_prefix(root) else {
+        return Err(format!(
+            "target path `{}` resolves outside the repo root `{}`",
+            resolved.display(),
+            root.display()
+        ));
+    };
+    let parts: Vec<&str> = rel
+        .to_str()
+        .unwrap_or_default()
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let [kind, name, "logs", "usage.jsonl"] = parts.as_slice() else {
+        return Err(format!(
+            "`{}` does not match <skills|agents|workflows>/<name>/logs/usage.jsonl — \
+             likely resolved from an unanchored relative path against the wrong cwd",
+            rel.display()
+        ));
+    };
+    if !matches!(*kind, "skills" | "agents" | "workflows") {
+        return Err(format!(
+            "`{}` starts with `{kind}/`, not one of skills/agents/workflows",
+            rel.display()
+        ));
+    }
+    let artifact_dir = root.join(kind).join(name);
+    if !artifact_dir.is_dir() {
+        return Err(format!(
+            "`{}/{name}/` does not exist — refusing to create a logs/ dir for an artifact \
+             that isn't there",
+            root.join(kind).display()
+        ));
+    }
+    let marker_exists = if *kind == "agents" {
+        artifact_dir.join(format!("{name}.md")).is_file()
+    } else {
+        artifact_dir.join("SKILL.md").is_file()
+    };
+    if !marker_exists {
+        return Err(format!(
+            "`{}/{name}/` exists but has no {} — not a real artifact directory",
+            root.join(kind).display(),
+            if *kind == "agents" {
+                format!("{name}.md")
+            } else {
+                "SKILL.md".to_string()
+            }
+        ));
+    }
+    Ok(())
+}
 
-    for finding in &findings {
-        println!("FAIL {}: {}", finding.file.display(), finding.reason);
+fn main() -> ExitCode {
+    let mut args = std::env::args().skip(1);
+    let root_arg = args.next().unwrap_or_else(|| ".".to_string());
+    let root = fs::canonicalize(&root_arg).unwrap_or_else(|_| PathBuf::from(&root_arg));
+
+    match args.next().as_deref() {
+        Some("--validate-path") => {
+            let Some(target_arg) = args.next() else {
+                eprintln!("--validate-path requires a path argument");
+                return ExitCode::FAILURE;
+            };
+            match validate_single_path(&root, Path::new(&target_arg)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(reason) => {
+                    println!("FAIL {target_arg}: {reason}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        _ => {
+            let mut findings = Vec::new();
+            for file in find_candidates(&root) {
+                if let Some(finding) = check_file(&root, &file) {
+                    findings.push(finding);
+                }
+            }
+
+            if findings.is_empty() {
+                return ExitCode::SUCCESS;
+            }
+
+            for finding in &findings {
+                println!("FAIL {}: {}", finding.file.display(), finding.reason);
+            }
+            ExitCode::FAILURE
+        }
     }
-    ExitCode::FAILURE
 }
 
 #[cfg(test)]
@@ -245,6 +357,83 @@ mod tests {
         let root = fs::canonicalize(&dir).unwrap();
         let finding = check_file(&root, &skill_dir.join("SKILL.md")).unwrap();
         assert!(finding.reason.contains("neither"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn validate_single_path_accepts_real_skill_dir() {
+        let dir = std::env::temp_dir().join(format!(
+            "logpath-check-test-validate-ok-{}",
+            std::process::id()
+        ));
+        let skill_dir = dir.join("skills").join("demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# demo\n").unwrap();
+        let root = fs::canonicalize(&dir).unwrap();
+        let target = root.join("skills/demo/logs/usage.jsonl");
+        assert_eq!(validate_single_path(&root, &target), Ok(()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn validate_single_path_rejects_the_original_bug_shape() {
+        let dir = std::env::temp_dir().join(format!(
+            "logpath-check-test-validate-bug-{}",
+            std::process::id()
+        ));
+        let skill_dir = dir.join("skills").join("rust-style");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# rust-style\n").unwrap();
+        let root = fs::canonicalize(&dir).unwrap();
+        // the real incident: cwd was `agents/` when the caller wrote a path relative to
+        // the repo root, landing at agents/skills/rust-style/logs/usage.jsonl.
+        let target = root.join("agents/skills/rust-style/logs/usage.jsonl");
+        let err = validate_single_path(&root, &target).unwrap_err();
+        assert!(err.contains("does not match"), "{err}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn validate_single_path_rejects_nonexistent_artifact() {
+        let dir = std::env::temp_dir().join(format!(
+            "logpath-check-test-validate-noexist-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(dir.join("skills")).unwrap();
+        let root = fs::canonicalize(&dir).unwrap();
+        let target = root.join("skills/nonexistent/logs/usage.jsonl");
+        let err = validate_single_path(&root, &target).unwrap_err();
+        assert!(err.contains("does not exist"), "{err}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn validate_single_path_rejects_path_outside_root() {
+        let dir = std::env::temp_dir().join(format!(
+            "logpath-check-test-validate-outside-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let root = fs::canonicalize(&dir).unwrap();
+        let target = PathBuf::from("/tmp/elsewhere/skills/demo/logs/usage.jsonl");
+        let err = validate_single_path(&root, &target).unwrap_err();
+        assert!(err.contains("outside the repo root"), "{err}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn validate_single_path_resolves_dot_dot_lexically() {
+        let dir = std::env::temp_dir().join(format!(
+            "logpath-check-test-validate-dotdot-{}",
+            std::process::id()
+        ));
+        let skill_dir = dir.join("skills").join("demo");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "# demo\n").unwrap();
+        let root = fs::canonicalize(&dir).unwrap();
+        // agents/../skills/demo/logs/usage.jsonl should resolve to skills/demo/...
+        let target = root.join("agents/../skills/demo/logs/usage.jsonl");
+        assert_eq!(validate_single_path(&root, &target), Ok(()));
         fs::remove_dir_all(&dir).ok();
     }
 
