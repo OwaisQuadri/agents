@@ -10,6 +10,7 @@ mod frontier_scheduler;
 #[path = "frontier_source.rs"]
 mod frontier_suite_source;
 
+pub(crate) use self::frontier_report::active_frontier_routes;
 use self::frontier_report::{
     derive_frontier_report, inspection_matches, validate_infrastructure_events,
     validate_report_lifecycle,
@@ -40,9 +41,9 @@ use crate::model::{
     TrialSelector, TrialUsage,
 };
 use crate::ports::{
-    Clock, FrontierProgressSink, FrontierRuntime, FrontierSuiteRuntime, PoolProgressSink,
-    PoolRuntime, ProgressSink, QualificationRuntime, RunStore, T1ScreenProgressSink,
-    T1ScreenRuntime, TierWriter,
+    ArtifactSource, Clock, FrontierProgressSink, FrontierRuntime, FrontierSuiteRuntime,
+    HarnessResolver, PoolProgressSink, PoolRuntime, ProgressSink, QualificationRuntime, RunStore,
+    T1ScreenProgressSink, T1ScreenRuntime, TierWriter,
 };
 use crate::statistics::{
     evaluate_calibration, evaluate_qualification, qualification_start_index, rank_pool,
@@ -7021,10 +7022,10 @@ fn execute_frontier_trial(
     })
 }
 
-fn frontier_case_context(
+fn frontier_case_context<R: FrontierTrialRuntime + ?Sized>(
     suite: &FrontierSuite,
     key: &TrialKey,
-    runtime: &dyn FrontierRuntime,
+    runtime: &R,
 ) -> Result<
     (
         ArtifactDefinition,
@@ -7107,10 +7108,10 @@ fn validate_frontier_execution_inputs(
     Ok(())
 }
 
-fn load_frontier_trials(
+fn load_frontier_trials<R: FrontierTrialRuntime + ?Sized>(
     state: &FrontierRunState,
     suite: &FrontierSuite,
-    runtime: &dyn FrontierRuntime,
+    runtime: &R,
 ) -> Result<Vec<TrialRecord>, SkillEvalError> {
     let mut trials = Vec::new();
     for entrant in &state.configuration.plan.entrants {
@@ -7139,7 +7140,7 @@ fn load_frontier_trials(
                             case: reference.case.clone(),
                             attempt,
                         };
-                        match runtime.inspect_frontier(&selector) {
+                        match runtime.inspect_frontier_trial(&selector) {
                             Ok(FrontierInspection::Trial { trial }) => {
                                 validate_loaded_frontier_trial(&selector, &trial, suite, runtime)?;
                                 trials.push(trial);
@@ -7157,11 +7158,11 @@ fn load_frontier_trials(
     Ok(trials)
 }
 
-fn validate_loaded_frontier_trial(
+fn validate_loaded_frontier_trial<R: FrontierTrialRuntime + ?Sized>(
     selector: &FrontierTrialSelector,
     trial: &TrialRecord,
     suite: &FrontierSuite,
-    runtime: &dyn FrontierRuntime,
+    runtime: &R,
 ) -> Result<(), SkillEvalError> {
     if trial.model.provider != selector.provider
         || trial.model.model != selector.model
@@ -7857,7 +7858,74 @@ fn frontier_decision_drift(identity: &str) -> SkillEvalError {
     frontier_decision_invalid(format!("{identity} drifted"))
 }
 
-// TODO(AGNT-0032.T159): Publish only current accepted active routes.
+pub(crate) trait FrontierTrialRuntime: ArtifactSource + HarnessResolver {
+    fn inspect_frontier_trial(
+        &self,
+        selector: &FrontierTrialSelector,
+    ) -> Result<FrontierInspection, SkillEvalError>;
+}
+
+impl<T: FrontierRuntime + ?Sized> FrontierTrialRuntime for T {
+    fn inspect_frontier_trial(
+        &self,
+        selector: &FrontierTrialSelector,
+    ) -> Result<FrontierInspection, SkillEvalError> {
+        FrontierRuntime::inspect_frontier(self, selector)
+    }
+}
+
+pub(crate) trait FrontierApplyRuntime: FrontierTrialRuntime + Clock {
+    fn load_apply_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError>;
+
+    fn load_apply_frontier(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<FrontierRunState, SkillEvalError>;
+
+    fn load_apply_frontier_baselines(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierBaselineLedger, SkillEvalError>;
+
+    fn publish_frontier_routes(
+        &mut self,
+        state: &FrontierRunState,
+    ) -> Result<FrontierApplyReport, SkillEvalError>;
+}
+
+impl<T: FrontierRuntime + ?Sized> FrontierApplyRuntime for T {
+    fn load_apply_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError> {
+        FrontierRuntime::load_frontier_plan(self, path)
+    }
+
+    fn load_apply_frontier(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<FrontierRunState, SkillEvalError> {
+        FrontierRuntime::load_frontier(self, run_id)
+    }
+
+    fn load_apply_frontier_baselines(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierBaselineLedger, SkillEvalError> {
+        FrontierRuntime::load_frontier_baselines(self, path)
+    }
+
+    fn publish_frontier_routes(
+        &mut self,
+        state: &FrontierRunState,
+    ) -> Result<FrontierApplyReport, SkillEvalError> {
+        FrontierRuntime::apply_frontier_routes(self, state)
+    }
+}
+
 /// Applies one accepted frontier's active routes to the owned routing map.
 ///
 /// The inputs are an accepted run identity and runtime. The output records routes and byte change.
@@ -7865,11 +7933,107 @@ fn frontier_decision_drift(identity: &str) -> SkillEvalError {
 /// # Errors
 ///
 /// Returns an error for unresolved, rejected, stale, drifted, unsafe, or unwritable evidence.
-pub(crate) fn apply_frontier_baseline(
-    _run_id: &FrontierRunId,
-    _runtime: &mut dyn FrontierRuntime,
+pub(crate) fn apply_frontier_baseline<R: FrontierApplyRuntime + ?Sized>(
+    run_id: &FrontierRunId,
+    runtime: &mut R,
 ) -> Result<FrontierApplyReport, SkillEvalError> {
-    unimplemented!()
+    let state = runtime.load_apply_frontier(run_id)?;
+    let decision = state
+        .decision
+        .as_ref()
+        .filter(|decision| {
+            decision.decision == Decision::Accepted
+                && !decision.reason.trim().is_empty()
+                && !decision.decided_at.0.trim().is_empty()
+        })
+        .ok_or_else(|| frontier_apply_invalid("run has no accepted owner decision"))?;
+    if state.configuration.run_id != *run_id || state.status != FrontierRunStatus::Accepted {
+        return Err(frontier_apply_invalid(
+            "run is not the requested terminal accepted state",
+        ));
+    }
+
+    let (plan, suite) = runtime.load_apply_frontier_plan(&state.configuration.plan_path)?;
+    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+    if plan != state.configuration.plan
+        || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
+    {
+        return Err(frontier_apply_drift("frozen plan or digest"));
+    }
+    let trials = load_frontier_trials(&state, &suite, runtime)?;
+    let (models, cells, spend) = reconstruct_frontier_authority(&state, &suite, &trials)?;
+    if state.models != models || state.cells != cells || state.spent_millionths_of_dollar != spend {
+        return Err(frontier_apply_drift("canonical durable evidence"));
+    }
+    validate_infrastructure_events(&state)?;
+    validate_frontier_complete(&state, &suite, &trials)?;
+    validate_report_lifecycle(&state, &FrontierScheduleAction::Complete)?;
+    let report = derive_frontier_report(&state, &models, &cells, None)?;
+    validate_frontier_decision_evidence(&state, &report)?;
+    let expected_pools = crate::statistics::rank_frontier_pools(
+        &report.models,
+        state.configuration.plan.policy.active_pool_size,
+    )?;
+
+    let ledger = runtime.load_apply_frontier_baselines(Path::new(FRONTIER_BASELINE_PATH))?;
+    let baseline = current_frontier_baseline(&ledger, run_id)?;
+    if baseline.accepted_at != decision.decided_at || baseline.pools != expected_pools {
+        return Err(frontier_apply_drift(
+            "accepted time, rank, or active membership",
+        ));
+    }
+    let state_bytes = frontier_decision_json_bytes(&state)?;
+    if baseline.run_evidence.sha256 != frontier_sha256(&state_bytes) {
+        return Err(frontier_apply_drift("accepted run bytes"));
+    }
+    let active_routes = active_frontier_routes(&state, baseline)?;
+    let applied = runtime.publish_frontier_routes(&state)?;
+    if applied.run_id != *run_id || applied.active_routes != active_routes {
+        return Err(frontier_apply_drift("routing writer result"));
+    }
+    Ok(applied)
+}
+
+fn current_frontier_baseline<'a>(
+    ledger: &'a FrontierBaselineLedger,
+    run_id: &FrontierRunId,
+) -> Result<&'a FrontierBaseline, SkillEvalError> {
+    if ledger.version != 1 || ledger.baselines.is_empty() {
+        return Err(frontier_apply_invalid(
+            "accepted baseline ledger is absent or unsupported",
+        ));
+    }
+    let mut previous = None;
+    let mut runs = BTreeSet::new();
+    for baseline in &ledger.baselines {
+        if baseline.previous_entry_sha256 != previous
+            || !runs.insert(&baseline.run_id)
+            || baseline.accepted_at.0.trim().is_empty()
+        {
+            return Err(frontier_apply_invalid(
+                "accepted baseline chain or identity is invalid",
+            ));
+        }
+        previous = Some(frontier_baseline_digest(baseline)?);
+    }
+    let current = ledger
+        .baselines
+        .last()
+        .ok_or_else(|| frontier_apply_invalid("accepted baseline ledger is empty"))?;
+    if current.run_id != *run_id {
+        return Err(frontier_apply_invalid(
+            "requested run is not the current accepted baseline",
+        ));
+    }
+    Ok(current)
+}
+
+fn frontier_apply_invalid(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("frontier apply: {}", message.into()))
+}
+
+fn frontier_apply_drift(identity: &str) -> SkillEvalError {
+    frontier_apply_invalid(format!("{identity} drifted"))
 }
 
 #[cfg(test)]

@@ -384,7 +384,7 @@ macro_rules! frontier_cli_tests {
             }
 
             #[test]
-            fn apply_and_non_frontier_rejections_make_no_runtime_call() {
+            fn apply_dispatches_and_non_frontier_rejections_make_only_expected_runtime_calls() {
                 let mut runtime = NoCallRuntime::default();
                 let error = execute_frontier_command(
                     &CliCommand::FrontierApply {
@@ -395,10 +395,9 @@ macro_rules! frontier_cli_tests {
                     &mut Vec::new(),
                 )
                 .unwrap_err();
-                assert!(
-                    matches!(error, SkillEvalError::InvalidConfiguration(message) if message == "frontier route publication requires AGNT-0032.T159")
-                );
-                assert!(runtime.log.borrow().is_empty());
+                assert!(matches!(error, SkillEvalError::NotFound(message) if message == "run"));
+                assert_eq!(runtime.log.borrow().as_slice(), ["load_run:run-1"]);
+                runtime.log.borrow_mut().clear();
 
                 let error = execute_frontier_command(
                     &CliCommand::FrontierSuiteCheck {

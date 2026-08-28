@@ -17,11 +17,11 @@ use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
     CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
-    FrontierBaselineLedger, FrontierCaseGroup, FrontierDecisionRequest, FrontierInspection,
-    FrontierPlan, FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState,
-    FrontierSuite, FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
-    FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialSelector, HarnessIdentity,
-    ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant,
+    FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup, FrontierDecisionRequest,
+    FrontierInspection, FrontierPlan, FrontierPreviewReport, FrontierReport, FrontierRunId,
+    FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan, FrontierSuiteInventory,
+    FrontierSuiteProposal, FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialSelector,
+    HarnessIdentity, ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant,
     PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
     PromptJudgeRequest, QualificationPolicy, QualificationPurpose, QualificationReport,
     QualifyRequest, RunEvent, RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest,
@@ -44,6 +44,7 @@ use crate::ports::{
     RunStore, T1ScreenProgressSink, T1ScreenRuntime, T1ScreenStore, TierWriter, Verifier,
 };
 use crate::service::{
+    FrontierApplyRuntime, FrontierTrialRuntime, active_frontier_routes, apply_frontier_baseline,
     apply_frontier_suite, apply_tier_assignments, build_pool_report, build_report,
     build_t1_screen_report, check_frontier_suite, evaluate_publication_gate, extend_t1_screen_cap,
     fail_t1_screen_route, inspect_frontier, inspect_trial, inventory_frontier_suite, judge_prompt,
@@ -83,6 +84,7 @@ const MODELS_RPC_ARGUMENTS: [&str; 5] = [
     "--no-extensions",
 ];
 static RUN_ID_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static ROUTING_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static RUN_ID_FILE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -2570,6 +2572,123 @@ impl<S: ArtifactSource> FrontierSuiteRuntime for FileSuiteRuntime<S> {
     }
 }
 
+struct FileApplyRuntime {
+    source: FileArtifactSource,
+    frontier_store: FileFrontierStore,
+    repository_root: PathBuf,
+    pi_version: RefCell<Option<String>>,
+    candidate_environment_manifest_digest: String,
+    routing_configuration_sha256: String,
+}
+
+impl FileApplyRuntime {
+    fn new(repository_root: &Path) -> Result<Self, SkillEvalError> {
+        let configuration_path = repository_root.join("config/model-tiers.json");
+        let routing_configuration =
+            fs::read(&configuration_path).map_err(|error| SkillEvalError::Io {
+                path: configuration_path,
+                message: error.to_string(),
+            })?;
+        let candidate_environment_manifest = candidate_environment_manifest()?;
+        Ok(Self {
+            source: FileArtifactSource,
+            frontier_store: FileFrontierStore::new(repository_root)?,
+            repository_root: repository_root.to_path_buf(),
+            pi_version: RefCell::new(None),
+            candidate_environment_manifest_digest: candidate_environment_manifest_digest(
+                &candidate_environment_manifest,
+            )?,
+            routing_configuration_sha256: sha256_digest(&routing_configuration),
+        })
+    }
+}
+
+impl ArtifactSource for FileApplyRuntime {
+    fn load(&self, root: &Path) -> Result<ArtifactDefinition, SkillEvalError> {
+        self.source.load(root)
+    }
+}
+
+impl HarnessResolver for FileApplyRuntime {
+    fn identity(
+        &self,
+        artifact: &ArtifactDefinition,
+        execution: &ExecutionDefinition,
+    ) -> Result<HarnessIdentity, SkillEvalError> {
+        let pi_version = self
+            .pi_version
+            .borrow()
+            .clone()
+            .ok_or_else(|| invalid("frontier apply plan must load before trial evidence"))?;
+        frontier_harness_identity(
+            artifact,
+            execution,
+            &pi_version,
+            &self.candidate_environment_manifest_digest,
+        )
+    }
+}
+
+impl Clock for FileApplyRuntime {
+    fn now(&self) -> Timestamp {
+        local_timestamp()
+    }
+}
+
+impl FrontierTrialRuntime for FileApplyRuntime {
+    fn inspect_frontier_trial(
+        &self,
+        selector: &FrontierTrialSelector,
+    ) -> Result<FrontierInspection, SkillEvalError> {
+        self.frontier_store.inspect_frontier(selector)
+    }
+}
+
+impl FrontierApplyRuntime for FileApplyRuntime {
+    fn load_apply_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError> {
+        let (plan, suite) = load_frontier_plan_files(&self.repository_root, &self.source, path)?;
+        if !plan.policy.is_first_party_only {
+            return Err(invalid("frontier plan must require first-party routes"));
+        }
+        for entrant in &plan.entrants {
+            require_first_party_provider(&entrant.provider)?;
+        }
+        require_first_party_provider(&plan.judge.provider)?;
+        self.pi_version
+            .replace(Some(plan.capabilities.pi_version.clone()));
+        Ok((plan, suite))
+    }
+
+    fn load_apply_frontier(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<FrontierRunState, SkillEvalError> {
+        self.frontier_store.load_frontier(run_id)
+    }
+
+    fn load_apply_frontier_baselines(
+        &self,
+        path: &Path,
+    ) -> Result<FrontierBaselineLedger, SkillEvalError> {
+        self.frontier_store.load_frontier_baselines(path)
+    }
+
+    fn publish_frontier_routes(
+        &mut self,
+        state: &FrontierRunState,
+    ) -> Result<FrontierApplyReport, SkillEvalError> {
+        apply_current_frontier_routes(
+            &mut self.frontier_store,
+            &self.repository_root,
+            &mut self.routing_configuration_sha256,
+            state,
+        )
+    }
+}
+
 pub(crate) struct ConcreteRuntime {
     source: FileArtifactSource,
     models: ConfiguredModelResolver,
@@ -2584,6 +2703,7 @@ pub(crate) struct ConcreteRuntime {
     writer: FileTierWriter,
     run_ids: PathRunIdSource,
     repository_root: PathBuf,
+    routing_configuration_sha256: String,
     pi_version: String,
     candidate_environment_manifest: Vec<CandidateEnvironmentEntry>,
     candidate_environment_manifest_digest: String,
@@ -2601,6 +2721,12 @@ impl ConcreteRuntime {
         let pi_version = command_output("pi", &["--version"])?;
         let repository_root = repository_root()?;
         let configuration_path = repository_root.join("config/model-tiers.json");
+        let routing_configuration =
+            fs::read(&configuration_path).map_err(|error| SkillEvalError::Io {
+                path: configuration_path.clone(),
+                message: error.to_string(),
+            })?;
+        let routing_configuration_sha256 = sha256_digest(&routing_configuration);
         let candidate_environment_manifest = candidate_environment_manifest()?;
         let candidate_environment_manifest_digest =
             candidate_environment_manifest_digest(&candidate_environment_manifest)?;
@@ -2618,6 +2744,7 @@ impl ConcreteRuntime {
             writer: FileTierWriter,
             run_ids: PathRunIdSource::new(runs_root)?,
             repository_root,
+            routing_configuration_sha256,
             pi_version: pi_version.trim().to_owned(),
             candidate_environment_manifest,
             candidate_environment_manifest_digest,
@@ -2675,28 +2802,40 @@ impl HarnessResolver for ConcreteRuntime {
         artifact: &ArtifactDefinition,
         execution: &ExecutionDefinition,
     ) -> Result<HarnessIdentity, SkillEvalError> {
-        if artifact.revision.trim().is_empty() {
-            return Err(SkillEvalError::InvalidConfiguration(
-                "harness identity requires an artifact revision".to_owned(),
-            ));
-        }
-        let policy = serde_json::to_vec(&(
+        frontier_harness_identity(
+            artifact,
             execution,
-            "candidate uses every tool and extension discovered by Pi",
+            &self.pi_version,
             &self.candidate_environment_manifest_digest,
-        ))
-        .map_err(|error| {
-            SkillEvalError::InvalidConfiguration(format!(
-                "tool policy serialization failed: {error}"
-            ))
-        })?;
-        Ok(HarnessIdentity {
-            runner_version: RUNNER_VERSION.to_owned(),
-            pi_version: self.pi_version.clone(),
-            artifact_revision: artifact.revision.clone(),
-            tool_policy_digest: stable_digest(&policy),
-        })
+        )
     }
+}
+
+fn frontier_harness_identity(
+    artifact: &ArtifactDefinition,
+    execution: &ExecutionDefinition,
+    pi_version: &str,
+    candidate_environment_manifest_digest: &str,
+) -> Result<HarnessIdentity, SkillEvalError> {
+    if artifact.revision.trim().is_empty() {
+        return Err(SkillEvalError::InvalidConfiguration(
+            "harness identity requires an artifact revision".to_owned(),
+        ));
+    }
+    let policy = serde_json::to_vec(&(
+        execution,
+        "candidate uses every tool and extension discovered by Pi",
+        candidate_environment_manifest_digest,
+    ))
+    .map_err(|error| {
+        SkillEvalError::InvalidConfiguration(format!("tool policy serialization failed: {error}"))
+    })?;
+    Ok(HarnessIdentity {
+        runner_version: RUNNER_VERSION.to_owned(),
+        pi_version: pi_version.to_owned(),
+        artifact_revision: artifact.revision.clone(),
+        tool_policy_digest: stable_digest(&policy),
+    })
 }
 
 impl RunIdSource for ConcreteRuntime {
@@ -3261,12 +3400,418 @@ impl FrontierRuntime for ConcreteRuntime {
 
     fn apply_frontier_routes(
         &mut self,
-        _state: &FrontierRunState,
+        state: &FrontierRunState,
     ) -> Result<FrontierApplyReport, SkillEvalError> {
-        Err(SkillEvalError::InvalidConfiguration(
-            "frontier route publication requires AGNT-0032.T159".to_owned(),
-        ))
+        apply_current_frontier_routes(
+            &mut self.frontier_store,
+            &self.repository_root,
+            &mut self.routing_configuration_sha256,
+            state,
+        )
     }
+}
+
+fn apply_current_frontier_routes(
+    frontier_store: &mut FileFrontierStore,
+    repository_root: &Path,
+    routing_configuration_sha256: &mut String,
+    state: &FrontierRunState,
+) -> Result<FrontierApplyReport, SkillEvalError> {
+    let ledger =
+        frontier_store.load_frontier_baselines(Path::new("config/model-frontier-baseline.json"))?;
+    let baseline = ledger.baselines.last().ok_or_else(|| {
+        invalid("frontier route publication requires a current accepted baseline")
+    })?;
+    let report = apply_frontier_routes_at(
+        repository_root,
+        routing_configuration_sha256,
+        state,
+        baseline,
+    )?;
+    if report.is_changed {
+        let path = repository_root.join("config/model-tiers.json");
+        let bytes = fs::read(&path).map_err(|error| SkillEvalError::Io {
+            path,
+            message: error.to_string(),
+        })?;
+        *routing_configuration_sha256 = sha256_digest(&bytes);
+    }
+    Ok(report)
+}
+
+#[derive(Serialize)]
+struct PublishedFrontierRoute<'a> {
+    provider: &'a str,
+    model: &'a str,
+    thinking: &'a str,
+}
+
+pub(crate) fn apply_frontier_routes_at(
+    repository_root: &Path,
+    routing_configuration_sha256: &str,
+    state: &FrontierRunState,
+    baseline: &FrontierBaseline,
+) -> Result<FrontierApplyReport, SkillEvalError> {
+    let active_routes = active_frontier_routes(state, baseline)?;
+    let mut state_bytes = serde_json::to_vec_pretty(state).map_err(|error| {
+        frontier_route_invalid(format!("accepted state serialization failed: {error}"))
+    })?;
+    state_bytes.push(b'\n');
+    if sha256_digest(&state_bytes) != baseline.run_evidence.sha256 {
+        return Err(frontier_route_invalid("accepted state bytes drifted"));
+    }
+    let path = routing_configuration_path(repository_root)?;
+    let stored = fs::read(&path).map_err(|error| SkillEvalError::Io {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    if sha256_digest(&stored) != routing_configuration_sha256 {
+        return Err(frontier_route_invalid(
+            "routing authority changed before apply",
+        ));
+    }
+    let replacement = published_routes_bytes(&active_routes, &stored)?;
+    let span = qualification_routes_span(&stored)?;
+    let mut next = Vec::with_capacity(stored.len() - span.len() + replacement.len());
+    next.extend_from_slice(&stored[..span.start]);
+    next.extend_from_slice(&replacement);
+    next.extend_from_slice(&stored[span.end..]);
+    serde_json::from_slice::<serde_json::Value>(&next)
+        .map_err(|error| frontier_route_invalid(format!("routing output is malformed: {error}")))?;
+    let is_changed = next != stored;
+    if is_changed {
+        replace_routing_bytes(&path, &stored, &next)?;
+    }
+    Ok(FrontierApplyReport {
+        run_id: state.configuration.run_id.clone(),
+        active_routes,
+        is_changed,
+    })
+}
+
+fn routing_configuration_path(repository_root: &Path) -> Result<PathBuf, SkillEvalError> {
+    let canonical_root = fs::canonicalize(repository_root).map_err(|error| SkillEvalError::Io {
+        path: repository_root.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    if canonical_root != repository_root || !canonical_root.is_dir() {
+        return Err(frontier_route_invalid("repository root is not canonical"));
+    }
+    let parent = canonical_root.join("config");
+    let canonical_parent = fs::canonicalize(&parent).map_err(|error| SkillEvalError::Io {
+        path: parent.clone(),
+        message: error.to_string(),
+    })?;
+    if canonical_parent != parent || !canonical_parent.is_dir() {
+        return Err(frontier_route_invalid(
+            "routing destination directory escapes the repository",
+        ));
+    }
+    let path = parent.join("model-tiers.json");
+    let metadata = fs::symlink_metadata(&path).map_err(|error| SkillEvalError::Io {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    let canonical = fs::canonicalize(&path).map_err(|error| SkillEvalError::Io {
+        path: path.clone(),
+        message: error.to_string(),
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || canonical != path {
+        return Err(frontier_route_invalid(
+            "routing destination is not the owned regular file",
+        ));
+    }
+    Ok(path)
+}
+
+fn published_routes_bytes(
+    active_routes: &BTreeMap<Tier, Vec<ModelIdentity>>,
+    stored: &[u8],
+) -> Result<Vec<u8>, SkillEvalError> {
+    let routes = active_routes
+        .iter()
+        .map(|(tier, routes)| {
+            (
+                tier_label(*tier).to_owned(),
+                routes
+                    .iter()
+                    .map(|route| PublishedFrontierRoute {
+                        provider: &route.provider,
+                        model: &route.model,
+                        thinking: &route.thinking,
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let raw = serde_json::to_string_pretty(&routes).map_err(|error| {
+        frontier_route_invalid(format!("active route serialization failed: {error}"))
+    })?;
+    let newline = if stored.windows(2).any(|window| window == b"\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    Ok(raw
+        .split('\n')
+        .enumerate()
+        .fold(Vec::new(), |mut bytes, (index, line)| {
+            if index > 0 {
+                bytes.extend_from_slice(newline.as_bytes());
+                bytes.extend_from_slice(b"  ");
+            }
+            bytes.extend_from_slice(line.as_bytes());
+            bytes
+        }))
+}
+
+fn qualification_routes_span(bytes: &[u8]) -> Result<std::ops::Range<usize>, SkillEvalError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
+        frontier_route_invalid(format!("routing configuration is malformed: {error}"))
+    })?;
+    if value
+        .as_object()
+        .and_then(|object| object.get("qualification_routes"))
+        .is_none_or(|routes| !routes.is_object())
+    {
+        return Err(frontier_route_invalid(
+            "routing configuration has no qualification route object",
+        ));
+    }
+
+    let mut index = skip_json_whitespace(bytes, 0);
+    if bytes.get(index) != Some(&b'{') {
+        return Err(frontier_route_invalid(
+            "routing configuration is not an object",
+        ));
+    }
+    index += 1;
+    let mut found = None;
+    let mut keys = BTreeSet::new();
+    loop {
+        index = skip_json_whitespace(bytes, index);
+        if bytes.get(index) == Some(&b'}') {
+            break;
+        }
+        let key_start = index;
+        let key_end = json_string_end(bytes, key_start)?;
+        let key: String = serde_json::from_slice(&bytes[key_start..key_end]).map_err(|error| {
+            frontier_route_invalid(format!("routing key is malformed: {error}"))
+        })?;
+        if !keys.insert(key.clone()) {
+            return Err(frontier_route_invalid(format!(
+                "routing configuration duplicates top-level key {key:?}"
+            )));
+        }
+        index = skip_json_whitespace(bytes, key_end);
+        if bytes.get(index) != Some(&b':') {
+            return Err(frontier_route_invalid("routing member has no value"));
+        }
+        index = skip_json_whitespace(bytes, index + 1);
+        let value_start = index;
+        let value_end = json_value_end(bytes, value_start)?;
+        if key == "qualification_routes" {
+            found = Some(value_start..value_end);
+        }
+        index = skip_json_whitespace(bytes, value_end);
+        match bytes.get(index) {
+            Some(b',') => index += 1,
+            Some(b'}') => break,
+            _ => {
+                return Err(frontier_route_invalid(
+                    "routing object boundary is malformed",
+                ));
+            }
+        }
+    }
+    found.ok_or_else(|| frontier_route_invalid("qualification_routes is absent"))
+}
+
+fn skip_json_whitespace(bytes: &[u8], mut index: usize) -> usize {
+    while bytes
+        .get(index)
+        .is_some_and(|byte| matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
+    {
+        index += 1;
+    }
+    index
+}
+
+fn json_string_end(bytes: &[u8], start: usize) -> Result<usize, SkillEvalError> {
+    if bytes.get(start) != Some(&b'"') {
+        return Err(frontier_route_invalid("routing object key is not a string"));
+    }
+    let mut index = start + 1;
+    while let Some(byte) = bytes.get(index) {
+        match byte {
+            b'\\' => index = index.saturating_add(2),
+            b'"' => return Ok(index + 1),
+            _ => index += 1,
+        }
+    }
+    Err(frontier_route_invalid("routing string is unterminated"))
+}
+
+fn json_value_end(bytes: &[u8], start: usize) -> Result<usize, SkillEvalError> {
+    match bytes.get(start) {
+        Some(b'"') => json_string_end(bytes, start),
+        Some(b'{') | Some(b'[') => {
+            let mut stack = vec![if bytes[start] == b'{' { b'}' } else { b']' }];
+            let mut index = start + 1;
+            while let Some(byte) = bytes.get(index) {
+                match byte {
+                    b'"' => index = json_string_end(bytes, index)?,
+                    b'{' => {
+                        stack.push(b'}');
+                        index += 1;
+                    }
+                    b'[' => {
+                        stack.push(b']');
+                        index += 1;
+                    }
+                    b'}' | b']' => {
+                        if stack.pop() != Some(*byte) {
+                            return Err(frontier_route_invalid(
+                                "routing value nesting is malformed",
+                            ));
+                        }
+                        index += 1;
+                        if stack.is_empty() {
+                            return Ok(index);
+                        }
+                    }
+                    _ => index += 1,
+                }
+            }
+            Err(frontier_route_invalid("routing value is unterminated"))
+        }
+        Some(_) => {
+            let mut index = start;
+            while bytes.get(index).is_some_and(|byte| {
+                !matches!(byte, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t')
+            }) {
+                index += 1;
+            }
+            Ok(index)
+        }
+        None => Err(frontier_route_invalid("routing value is absent")),
+    }
+}
+
+fn replace_routing_bytes(path: &Path, expected: &[u8], next: &[u8]) -> Result<(), SkillEvalError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| frontier_route_invalid("routing destination has no parent"))?;
+    let metadata = fs::metadata(path).map_err(|error| SkillEvalError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    let temporary = routing_temporary_path(path, "next")?;
+    write_routing_temporary(&temporary, next, metadata.permissions())?;
+    let result = (|| {
+        let current = fs::read(path).map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+        if current != expected {
+            return Err(frontier_route_invalid(
+                "routing authority changed before replacement",
+            ));
+        }
+        fs::rename(&temporary, path).map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+        sync_routing_directory(parent).or_else(|error| {
+            rollback_routing_bytes(path, expected, metadata.permissions()).map_err(|rollback| {
+                frontier_route_invalid(format!(
+                    "routing sync failed: {error:?}; rollback failed: {rollback:?}"
+                ))
+            })?;
+            Err(error)
+        })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn rollback_routing_bytes(
+    path: &Path,
+    bytes: &[u8],
+    permissions: fs::Permissions,
+) -> Result<(), SkillEvalError> {
+    let temporary = routing_temporary_path(path, "rollback")?;
+    write_routing_temporary(&temporary, bytes, permissions)?;
+    fs::rename(&temporary, path).map_err(|error| SkillEvalError::Io {
+        path: path.to_path_buf(),
+        message: error.to_string(),
+    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| frontier_route_invalid("routing destination has no parent"))?;
+    sync_routing_directory(parent)
+}
+
+fn routing_temporary_path(path: &Path, purpose: &str) -> Result<PathBuf, SkillEvalError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| frontier_route_invalid("routing destination has no parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| frontier_route_invalid("routing destination has no file name"))?
+        .to_string_lossy();
+    let sequence = ROUTING_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    Ok(parent.join(format!(
+        ".{name}.{}.{sequence}.{purpose}.tmp",
+        std::process::id()
+    )))
+}
+
+fn write_routing_temporary(
+    path: &Path,
+    bytes: &[u8],
+    permissions: fs::Permissions,
+) -> Result<(), SkillEvalError> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    let result = file
+        .write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })
+        .and_then(|()| {
+            fs::set_permissions(path, permissions).map_err(|error| SkillEvalError::Io {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })
+        });
+    if result.is_err() {
+        let _ = fs::remove_file(path);
+    }
+    result
+}
+
+fn sync_routing_directory(path: &Path) -> Result<(), SkillEvalError> {
+    fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| SkillEvalError::Io {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })
+}
+
+fn frontier_route_invalid(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("frontier route publication: {}", message.into()))
 }
 
 impl QualificationRuntime for ConcreteRuntime {}
@@ -3516,7 +4061,13 @@ pub(crate) fn run_main() -> Result<(), SkillEvalError> {
             );
         }
         CliCommand::FrontierApply { .. } => {
-            return Err(frontier_apply_unavailable());
+            let mut runtime = FileApplyRuntime::new(&repository_root()?)?;
+            return execute_frontier_apply_command(
+                &request.command,
+                request.output_format,
+                &mut runtime,
+                &mut std::io::stdout(),
+            );
         }
         CliCommand::FrontierPreview { .. }
         | CliCommand::FrontierStart { .. }
@@ -5852,6 +6403,18 @@ fn parse_positive_frontier_attempt(value: &str) -> Result<u16, SkillEvalError> {
     Ok(attempt)
 }
 
+fn execute_frontier_apply_command<R: FrontierApplyRuntime + ?Sized>(
+    command: &CliCommand,
+    format: OutputFormat,
+    runtime: &mut R,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let CliCommand::FrontierApply { run_id } = command else {
+        return Err(invalid("command is not frontier apply"));
+    };
+    render_frontier_apply(&apply_frontier_baseline(run_id, runtime)?, format, output)
+}
+
 pub(crate) fn execute_frontier_command(
     command: &CliCommand,
     format: OutputFormat,
@@ -5887,16 +6450,11 @@ pub(crate) fn execute_frontier_command(
             let state = record_frontier_decision(request, runtime)?;
             RenderFrontierProgress { format, output }.emit_frontier(&state)
         }
-        CliCommand::FrontierApply { .. } => Err(frontier_apply_unavailable()),
+        CliCommand::FrontierApply { .. } => {
+            execute_frontier_apply_command(command, format, runtime, output)
+        }
         _ => Err(invalid("command is not a cumulative frontier command")),
     }
-}
-
-// TODO(AGNT-0032.T159): Dispatch publication after the routing adapter is implemented.
-fn frontier_apply_unavailable() -> SkillEvalError {
-    SkillEvalError::InvalidConfiguration(
-        "frontier route publication requires AGNT-0032.T159".to_owned(),
-    )
 }
 
 fn render_frontier_preview(
@@ -6549,6 +7107,8 @@ include!("../tests/frontier_runtime.rs");
 include!("../tests/frontier_cli.rs");
 #[cfg(test)]
 include!("../tests/frontier_render.rs");
+#[cfg(test)]
+include!("../tests/frontier_apply.rs");
 
 #[cfg(test)]
 cli_tests!();
@@ -6562,3 +7122,5 @@ frontier_runtime_tests!();
 frontier_cli_tests!();
 #[cfg(test)]
 frontier_render_tests!();
+#[cfg(test)]
+frontier_apply_tests!();

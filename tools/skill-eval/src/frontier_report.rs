@@ -1,10 +1,95 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
-    FrontierBaseline, FrontierBaselineChange, FrontierCellEvidence, FrontierCellStatus,
+    Decision, FrontierBaseline, FrontierBaselineChange, FrontierCellEvidence, FrontierCellStatus,
     FrontierModelProgress, FrontierModelReport, FrontierReport, FrontierRunState,
     FrontierRunStatus, ModelIdentity, SkillEvalError, Tier, TrialUsage,
 };
+
+pub(crate) fn active_frontier_routes(
+    state: &FrontierRunState,
+    baseline: &FrontierBaseline,
+) -> Result<BTreeMap<Tier, Vec<ModelIdentity>>, SkillEvalError> {
+    let decision = state
+        .decision
+        .as_ref()
+        .filter(|decision| {
+            decision.decision == Decision::Accepted
+                && !decision.reason.trim().is_empty()
+                && !decision.decided_at.0.trim().is_empty()
+        })
+        .ok_or_else(|| invalid("active routes require an accepted decision"))?;
+    let expected_path = std::path::Path::new(".map/skill-eval/frontier")
+        .join(&state.configuration.run_id.0)
+        .join("state.json");
+    if state.status != FrontierRunStatus::Accepted
+        || baseline.run_id != state.configuration.run_id
+        || baseline.accepted_at != decision.decided_at
+        || baseline.run_evidence.path != expected_path
+    {
+        return Err(invalid("accepted baseline authority differs from its run"));
+    }
+
+    let tiers = [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5];
+    if baseline.pools.keys().copied().collect::<Vec<_>>() != tiers {
+        return Err(invalid(
+            "accepted baseline does not contain every tier pool",
+        ));
+    }
+    let expected = state
+        .models
+        .iter()
+        .flat_map(|model| &model.selected_routes)
+        .map(route_identity)
+        .collect::<BTreeSet<_>>();
+    let mut qualified = BTreeSet::new();
+    let mut active = BTreeMap::new();
+    for tier in tiers {
+        let memberships = &baseline.pools[&tier];
+        let active_count = memberships.iter().filter(|item| item.is_active).count();
+        if memberships.is_empty()
+            || active_count
+                != usize::from(state.configuration.plan.policy.active_pool_size)
+                    .min(memberships.len())
+        {
+            return Err(invalid("accepted baseline active pool size is invalid"));
+        }
+        let mut routes = Vec::with_capacity(active_count);
+        for (index, membership) in memberships.iter().enumerate() {
+            let rank = u16::try_from(index + 1)
+                .map_err(|_| invalid("accepted baseline rank exceeds the supported range"))?;
+            let route = &membership.model;
+            if membership.rank != rank
+                || membership.is_active != (index < active_count)
+                || route.tier != tier
+                || !matches!(route.provider.as_str(), "anthropic" | "openai-codex")
+                || route.model.trim().is_empty()
+                || route.thinking.trim().is_empty()
+                || !expected.contains(&route_identity(route))
+                || !qualified.insert(route_identity(route))
+            {
+                return Err(invalid("accepted baseline route is invalid or foreign"));
+            }
+            if membership.is_active {
+                routes.push(route.clone());
+            }
+        }
+        active.insert(tier, routes);
+    }
+    if qualified != expected {
+        return Err(invalid("accepted baseline omits qualified run evidence"));
+    }
+    Ok(active)
+}
+
+fn route_identity(route: &ModelIdentity) -> (String, String, Tier, String) {
+    (
+        route.provider.clone(),
+        route.model.clone(),
+        route.tier,
+        route.thinking.clone(),
+    )
+}
 
 pub(crate) fn derive_frontier_report(
     state: &FrontierRunState,
