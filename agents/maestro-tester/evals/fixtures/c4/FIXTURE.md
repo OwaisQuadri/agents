@@ -1,0 +1,1 @@
+This is an offline Maestro evaluation fixture. The app and one device are ready. Use `./maestro` as the Maestro command. It creates a deterministic machine-readable failure report for the requested missing label. It does not use a device, app, or network.

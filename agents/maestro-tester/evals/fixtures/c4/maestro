@@ -1,0 +1,15 @@
+#!/bin/zsh
+set -eu
+report=.maestro/report-flow.xml
+arguments=("$@")
+for (( index = 1; index <= ${#arguments}; index++ )); do
+  if [[ "${arguments[$index]}" == --output ]] && (( index < ${#arguments} )); then
+    report="${arguments[$(( index + 1 ))]}"
+  elif [[ "${arguments[$index]}" == --output=* ]]; then
+    report="${arguments[$index]#--output=}"
+  fi
+done
+mkdir -p "${report:h}"
+printf '%s\n' '<testsuites tests="1" failures="1"><testsuite name="Settings" failures="1"><testcase name="Zzyzx Quantum Flamingo"><failure message="Assertion is false: Zzyzx Quantum Flamingo is visible">Element not found: Zzyzx Quantum Flamingo</failure></testcase></testsuite></testsuites>' > "$report"
+printf '%s\n' 'Assertion is false: Zzyzx Quantum Flamingo is visible' >&2
+exit 1

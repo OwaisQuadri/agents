@@ -1,0 +1,1 @@
+This is an offline Maestro evaluation fixture. The app and one device are ready. Use `./maestro` as the Maestro command. It accepts the normal `test`, `--format junit`, and `--output` arguments. It does not use a device, app, or network.

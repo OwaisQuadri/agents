@@ -1,0 +1,1 @@
+The out-of-trigger dispatch must not change this fixture.

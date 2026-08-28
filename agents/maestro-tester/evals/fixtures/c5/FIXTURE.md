@@ -1,0 +1,1 @@
+This is an offline Maestro evaluation fixture. Use `./maestro` as the Maestro command. The dispatched device identifier is absent. The command returns the deterministic device error without using a device, app, or network.

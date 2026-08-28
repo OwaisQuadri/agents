@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -eu
+for argument in "$@"; do
+  if [[ "$argument" == NONEXISTENT-UDID-00000000 ]]; then
+    printf '%s\n' 'No device found with id NONEXISTENT-UDID-00000000' >&2
+    exit 2
+  fi
+done
+printf '%s\n' 'No device found with id NONEXISTENT-UDID-00000000' >&2
+exit 2
