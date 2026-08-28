@@ -56,9 +56,13 @@ export const DEFAULTS: Config = {
 	journeyTargetTokens: 1_000,
 	observerConcurrency: 4,
 	resumeAfterMidRunCompaction: true,
+	// Last resort only: overridden by the tier-compiled model from `subagents.agentOverrides`
+	// (see readTierCompiledModel) whenever install.sh has run, and by an explicit
+	// `observational-memory.models.*` setting on top of that. Free rather than a paid id, so an
+	// install.sh-less run of this extension never silently pays per token.
 	models: {
-		observer: { provider: "openrouter", id: "z-ai/glm-5.3", thinking: "low" },
-		consolidator: { provider: "openrouter", id: "z-ai/glm-5.3", thinking: "medium" },
+		observer: { provider: "openrouter", id: "openrouter/free", thinking: "low" },
+		consolidator: { provider: "openrouter", id: "openrouter/free", thinking: "medium" },
 	},
 	passive: false,
 	debugLog: false,
@@ -135,32 +139,85 @@ export function readEnvConfig(env: NodeJS.ProcessEnv = process.env): Partial<Con
 	return {};
 }
 
-function readNamespacedConfig(path: string, base: Config): Partial<Config> {
+function readRawJson(path: string): Record<string, unknown> {
 	if (!existsSync(path)) return {};
 	try {
-		const raw = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-		const nested = raw[SETTINGS_KEY];
-		return isRecord(nested) ? normalizeSettingsConfig(nested, base) : {};
+		const raw = JSON.parse(readFileSync(path, "utf-8"));
+		return isRecord(raw) ? raw : {};
 	} catch {
 		return {};
 	}
 }
 
+function namespacedFromRaw(raw: Record<string, unknown>, base: Config): Partial<Config> {
+	const nested = raw[SETTINGS_KEY];
+	return isRecord(nested) ? normalizeSettingsConfig(nested, base) : {};
+}
+
+/**
+ * Splits a `provider/id` model string on its *first* `/` only, since a model id can itself
+ * contain a slash (e.g. the canonical free-tier string is `openrouter/openrouter/free`:
+ * provider `openrouter`, id `openrouter/free`).
+ */
+function parseModelString(value: string): { provider: string; id: string } | undefined {
+	const slash = value.indexOf("/");
+	if (slash <= 0 || slash === value.length - 1) return undefined;
+	return { provider: value.slice(0, slash), id: value.slice(slash + 1) };
+}
+
+/**
+ * Reads the model install.sh already compiled for `agentName` from `config/model-tiers.json`
+ * into `subagents.agentOverrides` on the global settings.json's raw JSON — the same structure
+ * every other named agent (debugger, researcher, ...) is routed through, so the observer and
+ * consolidator prefer subscription-plan quota the same way instead of a second, disconnected
+ * hardcoded path. Absent (e.g. install.sh has never run) when the caller gets `undefined`.
+ */
+function readTierCompiledModel(raw: Record<string, unknown>, agentName: string): { provider: string; id: string } | undefined {
+	const subagents = raw.subagents;
+	if (!isRecord(subagents)) return undefined;
+	const overrides = subagents.agentOverrides;
+	if (!isRecord(overrides)) return undefined;
+	const entry = overrides[agentName];
+	if (!isRecord(entry)) return undefined;
+	return typeof entry.model === "string" ? parseModelString(entry.model) : undefined;
+}
+
+function resolveModel(
+	fallback: ConfiguredModel,
+	tierModel: { provider: string; id: string } | undefined,
+	globalModel: ConfiguredModel | undefined,
+	projectModel: ConfiguredModel | undefined,
+): ConfiguredModel {
+	return {
+		...fallback,
+		...(tierModel ?? {}),
+		...(globalModel ?? {}),
+		...(projectModel ?? {}),
+	};
+}
+
 export function loadConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): Config {
 	const globalPath = join(getAgentDir(), "settings.json");
 	const projectPath = join(cwd, ".pi", "settings.json");
-	const globalConfig = readNamespacedConfig(globalPath, DEFAULTS);
-	const projectConfig = readNamespacedConfig(projectPath, DEFAULTS);
+	const globalRaw = readRawJson(globalPath);
+	const globalConfig = namespacedFromRaw(globalRaw, DEFAULTS);
+	const projectConfig = namespacedFromRaw(readRawJson(projectPath), DEFAULTS);
 	const envConfig = readEnvConfig(env);
+	const tierObserver = readTierCompiledModel(globalRaw, "om-observer");
+	const tierConsolidator = readTierCompiledModel(globalRaw, "om-consolidator");
 	return {
 		...DEFAULTS,
 		...globalConfig,
 		...projectConfig,
 		...envConfig,
 		models: {
-			...DEFAULTS.models,
-			...globalConfig.models,
-			...projectConfig.models,
+			observer: resolveModel(DEFAULTS.models.observer, tierObserver, globalConfig.models?.observer, projectConfig.models?.observer),
+			consolidator: resolveModel(
+				DEFAULTS.models.consolidator,
+				tierConsolidator,
+				globalConfig.models?.consolidator,
+				projectConfig.models?.consolidator,
+			),
 		},
 	};
 }
