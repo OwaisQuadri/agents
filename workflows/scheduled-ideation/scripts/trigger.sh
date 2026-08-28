@@ -16,8 +16,14 @@ HERDR="${HERDR_BIN:-/opt/homebrew/bin/herdr}"
 PRUNE_AFTER_DAYS=7
 POLL_TAB_TIMEOUT_S=30
 POLL_TAB_INTERVAL_S=2
-POLL_DIGEST_TIMEOUT_S=90
-POLL_DIGEST_INTERVAL_S=10
+# A live 2026-08-28 03:06 run took 9m32s end-to-end (agent turn ended immediately after
+# dispatching the background Workflow tool call, then the workflow's own completion
+# notification woke the same pane and it wrote the digest) -- the old 90s budget gave up
+# and reported failure while the digest was still 8+ minutes from landing. PROMPT_TIMEOUT_MS
+# below already budgets 10 minutes for the agent's own "settle" wait; give the digest-file
+# poll a matching real budget instead of a token 90s afterthought.
+POLL_DIGEST_TIMEOUT_S=900
+POLL_DIGEST_INTERVAL_S=15
 TODAY="$(date +%Y-%m-%d)"
 RUN_STAMP="$(date +%Y-%m-%d-%H%M%S)"
 BRANCH="ideation/$RUN_STAMP"

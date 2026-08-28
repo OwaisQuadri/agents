@@ -1,6 +1,6 @@
 ---
 name: scheduled-ideation
-description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideation launchd job) needs to fan out candidate generation across skills, agents, workflows, checkers/linters, and pi extensions worth authoring plus existing public tools worth adopting — filter the results with a fresh critic, and write one markdown digest. Skip for an on-demand, single-question brainstorm with the user present (that's ideate), and skip for evaluating one already-identified external tool in depth (that's capability-adoption).
+description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideation launchd job) needs to find the highest-impact levers to pull on this workspace and AI setup — fan out candidate generation across skills, agents, checkers/linters, and existing public tools, check every finding against what the repo already has, rank survivors by leverage, and write one markdown digest. Skip for an on-demand, single-question brainstorm with the user present (that's ideate), and skip for evaluating one already-identified external tool in depth (that's capability-adoption).
 ---
 
 # scheduled-ideation
@@ -8,55 +8,74 @@ description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideat
 The fan-out-then-filter topology over ai-author's own bounded session evidence sweep
 (reused, not duplicated), the default session model, and web-research-summarizer.
 Runs unattended, so it never asks the user anything — a fresh critic stage stands in
-for the human-in-the-loop check that `ideate` gets for free by being interactive.
+for the human-in-the-loop check that `ideate` gets for free by being interactive. The
+fixed daily mission is not an exhaustive catalog: it's finding the highest-impact
+levers to pull on this workspace and AI setup, so the filter stage owns comparing
+every finding against the repo's actual current state and ranking what survives by
+leverage, not evidence quality alone.
 
 ## GRAPH SPEC
 
 ```
 workflow
 
-GOAL:     propose a reviewable batch of candidates across six categories — skills,
-          agents, workflows, checkers/linters, and pi extensions worth authoring,
-          plus existing public tools worth adopting — writing one markdown digest
-          for a human to review later, never auto-filing anything. A mining
-          dispatch's own candidate reports whichever of the five build-it
-          categories ai-author's "should it exist?" type tree actually concludes,
-          not a fixed skill-or-agent bucket.
-FAN OUT:  a plan node designs exactly 2 mining dispatches (skill-evidence-sweep,
-          agent-candidate-scan — both reusing skills/ai-author/SKILL.md's bounded
-          session evidence sweep procedure by reference, run on the default session
-          model — the founding version ran these on the lighter-weight Explore
-          agent, which two real 2026-08-28 live runs both aborted mid-task against
-          Pi's session-transcript directory, unrelated to content size) in one
-          parallel wave, THEN 1-3 tool-radar dispatches (run on
-          web-research-summarizer, angle/source rotated daily) in a second wave —
-          a genuine barrier, not a fake one: tool-radar is handed mining's actual
-          real-evidence findings as grounding text and its dispatch objective
-          requires naming which specific friction item a candidate addresses (or
-          explicitly grounding fit in this repo's real stack instead), because
-          2026-08-28 live runs kept surfacing generic "seems useful" tool reasoning
-          with no connection to any measured usage
+GOAL:     find the highest-impact levers to pull on this workspace and AI setup right
+          now, across five categories — skills, agents, workflows, checkers/linters,
+          and pi extensions worth authoring, plus existing public tools worth
+          adopting — writing one impact-ranked markdown digest for a human to review
+          later, never auto-filing anything. A mining dispatch's own candidate
+          reports whichever of the five build-it categories ai-author's "should it
+          exist?" type tree actually concludes, not a fixed skill-or-agent bucket.
+FAN OUT:  a plan node designs exactly 3 mining dispatches — skill-evidence-sweep,
+          agent-candidate-scan (both reusing skills/ai-author/SKILL.md's bounded
+          session evidence sweep procedure by reference, with its fixed-count
+          window overridden to "any parent session active in the last 24h"), and
+          correction-mining (greps that same 24h window for user-pushback markers —
+          "no,", "that's wrong", "undo", etc. — and groups them into repeated
+          mistake shapes with 2+ occurrences, feeding GitHub issue #79's
+          deterministic-checker backlog) — run on the default session model (the
+          founding version ran mining on the lighter-weight Explore agent, which two
+          real 2026-08-28 live runs both aborted mid-task against Pi's
+          session-transcript directory, unrelated to content size) in one parallel
+          wave, THEN 1-3 tool-radar dispatches (run on web-research-summarizer,
+          angle/source rotated daily) in a second wave — a genuine barrier, not a
+          fake one: tool-radar is handed mining's actual real-evidence findings as
+          grounding text and its dispatch objective requires naming which specific
+          friction item a candidate addresses (or explicitly grounding fit in this
+          repo's real stack instead), because 2026-08-28 live runs kept surfacing
+          generic "seems useful" tool reasoning with no connection to any measured
+          usage
 MERGE:    plain code collects every dispatch's raw candidate array — no model, zero
           tokens
 VERIFY:   a fresh-context filter agent, never having seen the generating dispatches'
-          own reasoning, scores every raw candidate on evidence strength, relevance,
-          and actionability, drops any tool candidate whose rationale ignores the
-          grounding block, and drops anything else unmeasured or vague — the direct
-          answer to 2026 reporting on AI-generated noise overwhelming reviewers
+          own reasoning, does two jobs over the whole raw set at once (a genuine
+          barrier: ranking needs every candidate together, not one at a time) — (1)
+          checks each candidate with real read/grep/bash access against this repo's
+          actual current implementation and open GitHub issues, dropping anything
+          already built or already tracked; (2) scores what survives on evidence
+          strength, relevance, and actionability, drops any tool candidate whose
+          rationale ignores the grounding block or reads as generic "seems useful"
+          noise, THEN ranks every remaining survivor by actual leverage (recurring
+          cost removed × how often the friction recurs), highest-impact first — the
+          direct answer to 2026 reporting on AI-generated noise overwhelming
+          reviewers, and to a candidate list with no sense of which item matters most
 RULE:     every candidate's evidence is a measured fact (a real repetition count, a
           real cost, a real URL fetched that run) — never an estimate; ai-author's own
           "do not estimate" rule, inherited by reference. Mining evidence is not
           limited to artifact usage logs: a marker that greps 2+ times across the
-          session window (a recurring warning, a repeated manual workaround) is
-          measured evidence too, since it's a counted occurrence, not a guess.
-CAP:      2 mining + 3 tool-radar dispatches; digest capped at 10 survivors
+          session window (a recurring warning, a repeated manual workaround, a
+          repeated human correction) is measured evidence too, since it's a counted
+          occurrence, not a guess. A candidate already built or already an open issue
+          never survives Filter, regardless of how well-evidenced its rationale is.
+CAP:      3 mining + 3 tool-radar dispatches; digest capped at 10 survivors
 ON FAIL:  any dispatch that returns nothing is named in the report by label, never
           dropped silently; zero raw candidates is a valid, honestly-reported result
 SAVE:     returns the digest text; the caller (the seeded kickoff prompt's Pi session)
           writes it to .context/scheduled-ideation-digest.md — this workflow has no
           filesystem access of its own
-REPORT:   digest markdown + candidates array + expected vs returned counts + missing
-          dispatch labels + raw-vs-survivor counts
+REPORT:   digest markdown (leading with a "Top lever today" section) + candidates
+          array in rank order + expected vs returned counts + missing dispatch
+          labels + raw-vs-survivor counts
 ```
 
 Anchors: every mining candidate's evidence traces to a real logged repetition/cost
