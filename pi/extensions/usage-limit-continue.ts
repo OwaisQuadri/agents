@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -52,6 +52,19 @@ function stateFile(): string {
 
 function logFile(): string {
 	return join(stateDir(), "resume.log");
+}
+
+/**
+ * Appends a timestamped diagnostic line to resume.log, best effort. Routing decisions
+ * (detected, fallback found/not found, switch applied, retry queued) are otherwise
+ * invisible once a headless worker's stderr is truncated to 200 chars by the caller.
+ */
+function logDiagnostic(line: string): void {
+	void mkdir(stateDir(), { recursive: true })
+		.then(() => appendFile(logFile(), `${new Date().toISOString()} [usage-limit] ${line}\n`))
+		.catch(() => {
+			// Diagnostics never block or fail the fallback path.
+		});
 }
 
 function settingsFile(): string {
@@ -355,7 +368,7 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	return (await switchTo(pi, ctx, qualified)) ? qualified : null;
 }
 
-async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
+export async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
 	const errorText = extractErrorText(message);
 	if (!errorText) {
 		return;
@@ -373,6 +386,7 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 	if (!plan?.isDetected) {
 		return;
 	}
+	logDiagnostic(`detected on ${ctx.model?.provider}/${ctx.model?.id} (mode=${ctx.mode}): ${plan.matchedText.slice(0, 200)}`);
 
 	const active = ctx.model as ModelLike | undefined;
 	const abandoned = abandonedByContext.get(ctx) ?? {};
@@ -384,8 +398,24 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 	const fallbackModel = await applyTierFallback(pi, ctx);
 	if (fallbackModel) {
 		ctx.ui.notify(`Usage limit hit. Switched to the tier fallback ${fallbackModel}; the session continues.`, "warning");
+		// print/json runs (headless workers spawned via `pi -p`) send exactly one prompt and
+		// then check the LAST message's stopReason to decide the process exit code. Switching
+		// the model here does nothing for them on its own — the failed message is already the
+		// last one, so the worker still exits nonzero even though a working model is now
+		// active. Queue the same turn again on the fallback model so print mode's exit check
+		// sees a real completion instead of the stale error. Interactive/tui sessions are left
+		// alone: a human decides whether to continue.
+		if (ctx.mode === "print" || ctx.mode === "json") {
+			logDiagnostic(`retrying same turn on ${fallbackModel} (mode=${ctx.mode})`);
+			pi.sendUserMessage(RESUME_PROMPT, { deliverAs: "followUp" });
+		} else {
+			logDiagnostic(`fallback ${fallbackModel} applied, no retry (mode=${ctx.mode})`);
+		}
 		return;
 	}
+	logDiagnostic(
+		`no tier fallback for ${active?.provider}/${active?.id ?? "unknown"}; falling back to a scheduled resume`,
+	);
 
 	const returning = earliestAvailable(abandoned);
 	const resumeAtMs = returning?.resetAtMs ?? plan.resetAtMs;
@@ -396,15 +426,21 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 
 	const sessionFile = ctx.sessionManager.getSessionFile();
 	if (!sessionFile) {
+		// Headless workers run with no --session-dir (decision 11 keeps them in the plain
+		// session bucket, but getSessionFile() is still populated there in practice); this
+		// branch is the one case that leaves a worker with no automatic recovery at all.
+		logDiagnostic("no session file to resume; usage limit is fatal for this run");
 		ctx.ui.notify("Usage limit hit, but this session has no file to resume (--no-session). Not scheduling an automatic continue.", "warning");
 		return;
 	}
 	const job = await scheduleResume(sessionFile, resumeAtMs, Date.now());
 	if (job === null) {
+		logDiagnostic(`resume already pending for ${sessionFile}, not rescheduling`);
 		return;
 	}
 	const climbedBack = returning ? await switchTo(pi, ctx, returning.model) : false;
 	const destination = climbedBack ? ` on ${returning?.model}` : "";
+	logDiagnostic(`scheduled resume of ${sessionFile} in ${formatWait(resumeAtMs - Date.now())}${destination} (pid ${job.pid})`);
 	ctx.ui.notify(`Usage limit hit. Will continue this session${destination} in ${formatWait(resumeAtMs - Date.now())}.`, "warning");
 }
 

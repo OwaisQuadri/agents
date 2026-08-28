@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -9,6 +9,7 @@ import {
 	earliestAvailable,
 	fallbackWindowResetMs,
 	findTierFallback,
+	handleMessageEnd,
 	isLocalModel,
 	parseResetFromHeaders,
 	parseResetFromText,
@@ -251,5 +252,91 @@ test("the real tier file compiles into a chain every hop of which resolves", asy
 			seen.add(at);
 			at = compiled[at];
 		}
+	}
+});
+
+test("handleMessageEnd: a print-mode worker retries the same turn on the fallback model instead of staying on the stale error", async () => {
+	// Reproduces the reported failure: a headless `pi -p` consolidator worker hits its
+	// usage limit, the tier fallback resolves and the model switch succeeds, but print
+	// mode's exit check only ever looks at the LAST message — the one that already
+	// errored. Without an explicit retry, the worker still exits nonzero on a model that
+	// is fully able to serve the request.
+	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
+	const originalHome = process.env.HOME;
+	process.env.HOME = stateHome;
+	try {
+		const settingsDir = join(stateHome, ".pi", "agent");
+		await mkdir(settingsDir, { recursive: true });
+		await writeFile(
+			join(settingsDir, "settings.json"),
+			JSON.stringify({ modelTierFallbacks: { "provider-a/small": "provider-b/small" } }),
+		);
+
+		const fallbackModel = { provider: "provider-b", id: "small" };
+		const sentMessages: { content: unknown; options: unknown }[] = [];
+		const notifications: string[] = [];
+		const pi = {
+			setModel: async () => true,
+			sendUserMessage: (content: unknown, options: unknown) => {
+				sentMessages.push({ content, options });
+			},
+		};
+		const ctx = {
+			mode: "print",
+			model: { provider: "provider-a", id: "small", cost: { input: 0, output: 0, cacheRead: 0 } },
+			modelRegistry: { find: () => fallbackModel },
+			ui: { notify: (message: string) => notifications.push(message) },
+			sessionManager: { getSessionFile: () => null },
+		};
+		const message = { role: "assistant", stopReason: "error", errorMessage: "Codex error: The usage limit has been reached" };
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		await handleMessageEnd(message as any, ctx as any, pi as any);
+
+		assert.equal(sentMessages.length, 1, "print mode must retry the turn once the fallback model is active");
+		assert.deepEqual(sentMessages[0].options, { deliverAs: "followUp" });
+		assert.ok(notifications.some((n) => n.includes("provider-b/small")), "notifies which fallback took over");
+	} finally {
+		process.env.HOME = originalHome;
+		await rm(stateHome, { recursive: true, force: true });
+	}
+});
+
+test("handleMessageEnd: an interactive session switches models but leaves the retry to the human", async () => {
+	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
+	const originalHome = process.env.HOME;
+	process.env.HOME = stateHome;
+	try {
+		const settingsDir = join(stateHome, ".pi", "agent");
+		await mkdir(settingsDir, { recursive: true });
+		await writeFile(
+			join(settingsDir, "settings.json"),
+			JSON.stringify({ modelTierFallbacks: { "provider-a/small": "provider-b/small" } }),
+		);
+
+		const fallbackModel = { provider: "provider-b", id: "small" };
+		const sentMessages: unknown[] = [];
+		const pi = {
+			setModel: async () => true,
+			sendUserMessage: (content: unknown) => {
+				sentMessages.push(content);
+			},
+		};
+		const ctx = {
+			mode: "tui",
+			model: { provider: "provider-a", id: "small", cost: { input: 0, output: 0, cacheRead: 0 } },
+			modelRegistry: { find: () => fallbackModel },
+			ui: { notify: () => {} },
+			sessionManager: { getSessionFile: () => null },
+		};
+		const message = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		await handleMessageEnd(message as any, ctx as any, pi as any);
+
+		assert.equal(sentMessages.length, 0, "a tui session decides for itself whether to continue");
+	} finally {
+		process.env.HOME = originalHome;
+		await rm(stateHome, { recursive: true, force: true });
 	}
 });
