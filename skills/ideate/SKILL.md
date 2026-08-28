@@ -52,10 +52,14 @@ OUT: candidate ideas filed into the task backend (GitHub Issues/Projects, Linear
 6. **File — behind a human gate, always.** Show the candidates plainly, wait for a yes
    before writing anything. On approval: check for a connected task system first (`gh
    issue list`/`gh project`, Linear MCP tools) the same way pick-task does; file there
-   if one exists, otherwise append to root `roadmap.json` with a fresh id. A candidate
-   citing a new adopted reference gets that reference appended to `inspiration.md`.
-   No manifest or snapshot machinery — a plain log line recording what was shown and
-   what was approved is the record.
+   if one exists, otherwise append to root `roadmap.json` with a fresh id. Filing into
+   GitHub Issues means `gh issue create` with `status:todo` and `priority:<p>` labels
+   and `--blocked-by <ids>` for any dependency — the same conventions
+   `skills/task-graph/SKILL.md`'s "GitHub Issues backend" section documents, so
+   `next-issue.sh` picks the new item up correctly. A candidate citing a new adopted
+   reference gets that reference appended to `inspiration.md`. No manifest or snapshot
+   machinery — a plain log line recording what was shown and what was approved is the
+   record.
 
 ## evals
 
