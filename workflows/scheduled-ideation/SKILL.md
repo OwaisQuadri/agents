@@ -1,6 +1,6 @@
 ---
 name: scheduled-ideation
-description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideation launchd job) needs to fan out candidate generation across three categories — skills worth authoring, agents worth authoring, and existing public tools worth adopting — filter the results with a fresh critic, and write one markdown digest. Skip for an on-demand, single-question brainstorm with the user present (that's ideate), and skip for evaluating one already-identified external tool in depth (that's capability-adoption).
+description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideation launchd job) needs to fan out candidate generation across skills, agents, workflows, checkers/linters, and pi extensions worth authoring plus existing public tools worth adopting — filter the results with a fresh critic, and write one markdown digest. Skip for an on-demand, single-question brainstorm with the user present (that's ideate), and skip for evaluating one already-identified external tool in depth (that's capability-adoption).
 ---
 
 # scheduled-ideation
@@ -15,10 +15,13 @@ for the human-in-the-loop check that `ideate` gets for free by being interactive
 ```
 workflow
 
-GOAL:     propose a reviewable batch of candidates across three categories — skills
-          worth authoring, agents worth authoring, existing public tools worth
-          adopting — writing one markdown digest for a human to review later, never
-          auto-filing anything
+GOAL:     propose a reviewable batch of candidates across six categories — skills,
+          agents, workflows, checkers/linters, and pi extensions worth authoring,
+          plus existing public tools worth adopting — writing one markdown digest
+          for a human to review later, never auto-filing anything. A mining
+          dispatch's own candidate reports whichever of the five build-it
+          categories ai-author's "should it exist?" type tree actually concludes,
+          not a fixed skill-or-agent bucket.
 FAN OUT:  a plan node designs exactly 2 mining dispatches (skill-evidence-sweep,
           agent-candidate-scan — both reusing skills/ai-author/SKILL.md's bounded
           session evidence sweep procedure by reference, run on Explore) plus 1-3
@@ -68,10 +71,11 @@ Workflow({ scriptPath: "<repo>/workflows/scheduled-ideation/scheduled-ideation.w
 
 `{ candidates, digest, expected, returned, missingLabels, rawCandidateCount,
 survivorCount }` — `digest` is the final markdown, grouped under "## Skills worth
-authoring" / "## Agents worth authoring" / "## Tools worth trying" headings (a heading
-is omitted entirely when it has zero survivors). `candidates` is the same survivor set
-as structured data, for a caller that wants to act on it programmatically instead of
-reading prose.
+authoring" / "## Agents worth authoring" / "## Workflows worth authoring" /
+"## Checkers/linters worth building" / "## Pi extensions worth building" / "## Tools
+worth trying" headings (a heading is omitted entirely when it has zero survivors).
+`candidates` is the same survivor set as structured data, for a caller that wants to
+act on it programmatically instead of reading prose.
 
 ## why a workflow, not a skill
 
