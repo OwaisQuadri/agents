@@ -80,8 +80,14 @@ while IFS= read -r line; do
       fi
       ;;
     c5)
-      if has "agentType: 'Explore'" && has "agentType: 'web-research-summarizer'" \
-        && has "mining.map" && has "toolRadar.map"; then
+      # Mining runs on the default session model (no agentType override) after two real
+      # 2026-08-28 live runs both aborted agentType 'Explore' mid-task against Pi's own
+      # session-transcript directory; tool-radar still routes to web-research-summarizer.
+      # The mechanical check confirms mining is NOT routed to web-research-summarizer
+      # (the wrong tool for a codebase-mining source) and tool-radar still is.
+      MINING_BLOCK="$(printf '%s' "$src" | awk '/parallel\(toolRadar\.map/{exit} /parallel\(mining\.map/{p=1} p{print}')"
+      if has "agentType: 'web-research-summarizer'" && has "mining.map" && has "toolRadar.map" \
+        && ! grep -q "agentType: 'web-research-summarizer'" <<<"$MINING_BLOCK"; then
         emit "$id" 5 null
       else
         emit "$id" 0 '"routing-missing"'

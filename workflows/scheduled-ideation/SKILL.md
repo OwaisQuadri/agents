@@ -6,7 +6,7 @@ description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideat
 # scheduled-ideation
 
 The fan-out-then-filter topology over ai-author's own bounded session evidence sweep
-(reused, not duplicated), the built-in Explore agent, and web-research-summarizer.
+(reused, not duplicated), the default session model, and web-research-summarizer.
 Runs unattended, so it never asks the user anything — a fresh critic stage stands in
 for the human-in-the-loop check that `ideate` gets for free by being interactive.
 
@@ -24,7 +24,10 @@ GOAL:     propose a reviewable batch of candidates across six categories — ski
           not a fixed skill-or-agent bucket.
 FAN OUT:  a plan node designs exactly 2 mining dispatches (skill-evidence-sweep,
           agent-candidate-scan — both reusing skills/ai-author/SKILL.md's bounded
-          session evidence sweep procedure by reference, run on Explore) plus 1-3
+          session evidence sweep procedure by reference, run on the default session
+          model — the founding version ran these on the lighter-weight Explore
+          agent, which two real 2026-08-28 live runs both aborted mid-task against
+          Pi's session-transcript directory, unrelated to content size) plus 1-3
           tool-radar dispatches (run on web-research-summarizer, angle/source
           rotated daily so consecutive runs don't repeat the same search) — one
           combined parallel wave
