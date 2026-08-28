@@ -89,7 +89,7 @@ if [ -z "$AGENT_PANE" ]; then
 fi
 log "typing kickoff prompt into pane $AGENT_PANE"
 
-# Two proven-live pitfalls to avoid here, both confirmed by hand against a real pane:
+# Three proven-live pitfalls to avoid here, all confirmed by hand against a real pane:
 # 1. `pane send-keys <pane> Enter` (capitalized) silently no-ops — it neither submits
 #    nor errors, leaving the text sitting prefilled forever. The working key name is
 #    lowercase `enter`, sent through `agent send-keys`, not `pane send-keys`.
@@ -99,19 +99,32 @@ log "typing kickoff prompt into pane $AGENT_PANE"
 #    Trusting that return value would have made the trigger call this run
 #    "successful" while it never actually started. Never do that again: submit and
 #    verify as two independently-checked steps instead of one trusted call.
+# 3. Even the fixed `send-text` + `agent send-keys enter` pair above is a race: on a
+#    real scheduled run (2026-08-28, first live launchd fire) the very first `enter`
+#    landed before the pane finished registering the typed text and was silently
+#    dropped — same symptom as (1), text left sitting prefilled. A second manual
+#    `agent send-keys enter` right after submitted it immediately. So the send is
+#    retried, not just sent once: each attempt re-sends `enter` (harmless no-op if
+#    the previous one actually landed and a turn is now running — see below) and
+#    waits a short beat for a real transition to "working" before giving up on it.
 KICKOFF="Run workflows/scheduled-ideation/ (the Workflow tool, no args needed) and write its returned digest verbatim to $DIGEST_PATH in this worktree. This is the scheduled ideation run started at $RUN_STAMP."
 "$HERDR" pane send-text "$AGENT_PANE" "$KICKOFF"
-"$HERDR" agent send-keys "$AGENT_PANE" enter
 
-# Two-phase wait, not one: `agent wait` with no --until matches idle/done/blocked, and
-# the agent was ALREADY idle before this submit — an immediate call could trivially
-# match that stale idle state before the turn even starts, the same silent-success
-# trap `agent prompt --wait` fell into above. Confirm a real transition to "working"
-# first (short timeout — this should happen within seconds of a real submit), then
-# wait for it to settle back down (long timeout — the real work happens here).
 log "confirming the agent actually started working"
-if ! "$HERDR" agent wait "$AGENT_PANE" --until working --timeout 10000 2>&1 | while read -r l; do log "  $l"; done; then
-  log "ERROR: agent never transitioned to working within 10s — the submit likely silently failed again"
+SUBMIT_CONFIRMED=0
+for attempt in 1 2 3; do
+  "$HERDR" agent send-keys "$AGENT_PANE" enter
+  # a resend while a turn is already running just replays into the chat input, which
+  # Pi ignores mid-turn — harmless. "agent wait --until working" is still the correct
+  # check either way: it is already true if attempt 1 landed, so it returns at once.
+  if "$HERDR" agent wait "$AGENT_PANE" --until working --timeout 8000 2>&1 | while read -r l; do log "  $l"; done; then
+    SUBMIT_CONFIRMED=1
+    break
+  fi
+  log "submit attempt $attempt did not reach working within 8s, retrying the enter key"
+done
+if [ "$SUBMIT_CONFIRMED" -ne 1 ]; then
+  log "ERROR: agent never transitioned to working after 3 submit attempts — giving up"
   exit 1
 fi
 log "working confirmed; waiting for it to settle (idle/done/blocked)"
