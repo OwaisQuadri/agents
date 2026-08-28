@@ -1,12 +1,12 @@
 export const meta = {
   name: 'scheduled-ideation',
-  description: 'Daily fan-out that proposes candidate skills, agents, and external tools to adopt, filters with a fresh critic, then synthesizes one markdown digest',
+  description: 'Daily fan-out that hunts for the highest-impact levers to pull on this workspace and AI setup — mines 24h session activity plus external research, checks every finding against what the repo already has, ranks survivors by leverage, then synthesizes one markdown digest',
   whenToUse: "Triggered by the scheduled-ideation launchd job's seeded kickoff prompt inside a fresh daily Herdr worktree. Returns a digest; the caller writes it to .context/scheduled-ideation-digest.md — this workflow has no filesystem access of its own.",
   phases: [
-    { title: 'Plan', detail: "one agent turns the fixed daily mission into self-contained mining + radar dispatches, rotating tool-radar sources so runs don't repeat the same search every day" },
-    { title: 'Generate', detail: 'one agent per angle: session-evidence mining (skills), agent-candidate scan, external-tool radar', model: 'sonnet' },
-    { title: 'Filter', detail: 'fresh-context critic scores every raw candidate against an evidence rubric, drops noise' },
-    { title: 'Digest', detail: 'one agent writes the final categorized markdown digest from survivors' },
+    { title: 'Plan', detail: "one agent turns the fixed daily mission (highest-impact levers, not an exhaustive catalog) into self-contained mining + radar dispatches scoped to the last 24h, rotating tool-radar sources so runs don't repeat the same search every day" },
+    { title: 'Generate', detail: 'one agent per angle: session-evidence mining (skills/agents), correction-mining (checkers), external-tool radar', model: 'sonnet' },
+    { title: 'Filter', detail: 'fresh-context critic with repo read access checks every raw candidate against the current implementation (already built? already open as an issue?), drops what is already addressed or unmeasured, then ranks the rest by leverage/impact, highest first' },
+    { title: 'Digest', detail: 'one agent writes the final impact-ranked markdown digest from survivors' },
   ],
 }
 
@@ -16,12 +16,13 @@ export const meta = {
 const FOCUS_NOTE = (args && typeof args === 'object' && args.focus) ? args.focus : null
 const MAX_TOOL_RADAR = Math.min((args && args.max_tool_radar) || 3, 3)
 const MAX_DIGEST_CANDIDATES = 10
+const MAX_MINING = 3
 
 const DISPATCH_SCHEMA = {
   type: 'object',
   properties: {
     label: { type: 'string' },
-    category: { type: 'string', enum: ['skill', 'agent', 'tool'] },
+    category: { type: 'string', enum: ['skill', 'agent', 'checker', 'tool'] },
     objective: { type: 'string' },
     boundaries: { type: 'string' },
     source_guidance: { type: 'string' },
@@ -36,6 +37,9 @@ const DISPATCH_SCHEMA = {
 // it exist?" test) — this is what lets the digest literally answer "which linters, checks,
 // skills, agents, workflows, or other", instead of force-fitting everything non-agent into
 // a single generic "skill" or "tool" bucket.
+// impactNote was tried as a required field and dropped: a live run showed the model
+// omitting it from every candidate anyway, since this harness doesn't enforce required
+// fields nested inside an array item schema. Folded into rationale's first sentence instead.
 const CANDIDATE_SCHEMA = {
   type: 'object',
   properties: {
@@ -50,19 +54,23 @@ const CANDIDATE_SCHEMA = {
 
 phase('Plan')
 const plan = await agent(
-  `You are the planning node of the daily scheduled-ideation workflow for a personal agents repo (Pi coding-agent CLI, Herdr terminal multiplexer, GitHub Issues for tracking). This workflow's fixed mission, every run: propose a batch of candidates across three categories a human reviews later — SKILLS worth authoring, AGENTS worth authoring, and existing PUBLIC TOOLS worth adopting or trying. Never file anything automatically; a later stage writes a markdown digest for manual review only.${FOCUS_NOTE ? `\n\nThis specific run has an operator-supplied focus note to steer the tool-radar angle: "${FOCUS_NOTE}"` : ''}
+  `You are the planning node of the daily scheduled-ideation workflow for a personal agents repo (Pi coding-agent CLI, Herdr terminal multiplexer, GitHub Issues for tracking). This workflow's fixed mission, every run: find the HIGHEST-IMPACT LEVERS the owner can pull right now to improve this actual workspace and AI setup — not an exhaustive catalog, a small ranked set of moves that would matter most, each checked against what the repo already has before it's proposed. It draws from four categories — SKILLS worth authoring, AGENTS worth authoring, CHECKERS worth building (deterministic rules for recurring agent mistakes, per GitHub issue #79), and existing PUBLIC TOOLS worth adopting or trying — but every candidate must earn its place by leverage: what breaks, costs, or stays slow without it, not just that it would be nice to have. Never file anything automatically; a later stage writes a markdown digest for manual review only.${FOCUS_NOTE ? `\n\nThis specific run has an operator-supplied focus note to steer the tool-radar angle: "${FOCUS_NOTE}"` : ''}
 
-Design exactly 2 mining dispatches (codebase, read-only) plus between 1 and ${MAX_TOOL_RADAR} tool-radar dispatches (web), each self-contained: the agent receiving it sees NOTHING but the five fields below, not this conversation.
+Design exactly 3 mining dispatches (codebase, read-only) plus between 1 and ${MAX_TOOL_RADAR} tool-radar dispatches (web), each self-contained: the agent receiving it sees NOTHING but the five fields below, not this conversation.
 
-Both mining dispatches MUST include this exact reading-boundedness rule verbatim in their objective, because a Pi session transcript can run to many megabytes and an earlier live run aborted trying to read several in full: "Session transcripts live under ~/.pi/agent/sessions/ and can be multi-MB each. NEVER read a full session file. Use grep to find markers first (tool_use, error, cost, a skill/agent name), or read only the last ~200 lines (tail) of a session, or bounded offset/limit reads — never an unbounded whole-file read. The same per-file cap applies to any logs/usage.jsonl or run-history.jsonl found. Repetition evidence is NOT limited to artifact usage logs -- grep the same handful of newest session transcripts for markers of repeated friction: a warning or error that recurs, a workaround or manual recovery step applied more than once, an operation that silently failed and needed re-doing. A marker that greps 2+ times across the window is measured evidence (you counted real occurrences), not an estimate -- cite each occurrence's rough marker text/timestamp as the evidence. Zero candidates stays a valid, honest result when nothing actually repeats."
+All three mining dispatches MUST include this exact reading-boundedness rule verbatim in their objective, because a Pi session transcript can run to many megabytes and an earlier live run aborted trying to read several in full: "Session transcripts live under ~/.pi/agent/sessions/ and can be multi-MB each. NEVER read a full session file. Use grep to find markers first (tool_use, error, cost, a skill/agent name), or read only the last ~200 lines (tail) of a session, or bounded offset/limit reads — never an unbounded whole-file read. The same per-file cap applies to any logs/usage.jsonl or run-history.jsonl found. Repetition evidence is NOT limited to artifact usage logs -- grep session transcripts for markers of repeated friction: a warning or error that recurs, a workaround or manual recovery step applied more than once, an operation that silently failed and needed re-doing. A marker that greps 2+ times across the window is measured evidence (you counted real occurrences), not an estimate -- cite each occurrence's rough marker text/timestamp as the evidence. Zero candidates stays a valid, honest result when nothing actually repeats."
 
-Mining dispatch 1 (category "skill", label "skill-evidence-sweep"): objective MUST instruct the agent to run the exact "bounded session evidence sweep" procedure from skills/ai-author/SKILL.md in this repo (read that file first, then follow its numbered steps 1-6 verbatim) and report the surviving candidates it proposes, each with its evidence and routing verdict. Step 5 of that procedure already routes each surviving candidate to whichever destination the evidence actually supports — a checker, a Pi extension, a skill, an agent, or a workflow — so the candidates returned are NOT limited to category "skill": instruct the agent explicitly to report each candidate's category as whatever that step concludes (skill|agent|workflow|checker|extension), never force-fit everything into "skill". source_guidance: "skills/ai-author/SKILL.md for the procedure; the ten newest parent Pi session transcripts and named artifacts' logs/usage.jsonl or run-history.jsonl for evidence, per that procedure's own window rule and the reading-boundedness rule above."
+All three mining dispatches MUST also include this exact window rule verbatim, overriding any fixed-count window a referenced procedure states: "Scope the session window to the last 24 hours of activity, not a fixed count of newest sessions: any parent Pi session transcript (exclude child/subagent transcripts) whose last message timestamp falls within the last 24 hours is in scope, however many that is. Zero sessions active in the last 24 hours is a valid, honest result — report it, don't substitute an older window."
 
-Mining dispatch 2 (category "agent", label "agent-candidate-scan"): objective MUST instruct the agent to read skills/ai-author/SKILL.md's "should it exist?" section (the same repo, same file) for the criteria that justify an AGENT specifically — a distinct model the parent shouldn't hold, a tool grant the parent must not hold, or isolation from noisy work — then apply the SAME bounded evidence sweep window and evidence discipline (measured repetition and cost only, never estimated, reject unmeasured shapes) but filtered to shapes that clear the agent bar specifically. When a shape doesn't clear the agent bar but the same step 5 routing concludes a different destination (checker, extension, skill, workflow) still fits, report that too rather than discarding it — instruct the agent to report each candidate's actual category (skill|agent|workflow|checker|extension), not force everything into "agent". source_guidance: same evidence sources and reading-boundedness rule as dispatch 1.
+Mining dispatch 1 (category "skill", label "skill-evidence-sweep"): objective MUST instruct the agent to run the "bounded session evidence sweep" procedure from skills/ai-author/SKILL.md in this repo (read that file first, then follow its numbered steps 1-6, substituting the 24-hour window rule above for that procedure's own step-1 window) and report the surviving candidates it proposes, each with its evidence and routing verdict. Step 5 of that procedure already routes each surviving candidate to whichever destination the evidence actually supports — a checker, a Pi extension, a skill, an agent, or a workflow — so the candidates returned are NOT limited to category "skill": instruct the agent explicitly to report each candidate's category as whatever that step concludes (skill|agent|workflow|checker|extension), never force-fit everything into "skill". source_guidance: "skills/ai-author/SKILL.md for the procedure; parent Pi session transcripts active in the last 24 hours, and named artifacts' logs/usage.jsonl or run-history.jsonl for evidence, per the window rule and the reading-boundedness rule above."
+
+Mining dispatch 2 (category "agent", label "agent-candidate-scan"): objective MUST instruct the agent to read skills/ai-author/SKILL.md's "should it exist?" section (the same repo, same file) for the criteria that justify an AGENT specifically — a distinct model the parent shouldn't hold, a tool grant the parent must not hold, or isolation from noisy work — then apply the SAME 24-hour window and evidence discipline (measured repetition and cost only, never estimated, reject unmeasured shapes) but filtered to shapes that clear the agent bar specifically. When a shape doesn't clear the agent bar but the same step 5 routing concludes a different destination (checker, extension, skill, workflow) still fits, report that too rather than discarding it — instruct the agent to report each candidate's actual category (skill|agent|workflow|checker|extension), not force everything into "agent". source_guidance: same evidence sources, window rule, and reading-boundedness rule as dispatch 1.
+
+Mining dispatch 3 (category "checker", label "correction-mining"): objective MUST instruct the agent to grep parent session transcripts in the 24-hour window for markers where the human user corrected the agent mid-task — pushback language such as "no,", "that's wrong", "don't", "stop", "undo", "revert", "not what I", "fix this", "why did you" inside role":"user" message blocks — then read a bounded window (offset/limit, never the whole file) around each hit to capture what the agent had just done and what exactly got corrected. Group hits into repeated SHAPES: the same kind of mistake recurring across 2+ independent sessions or tasks (e.g. "claimed a command succeeded without checking its exit code", "reported something done without verifying"). A shape needs 2+ independent occurrences to count; a single isolated correction is not a pattern — note it but do not report it as a candidate. For each surviving shape, report it as a candidate with category "checker" (this feeds GitHub issue #79, which wants deterministic Rust checkers under tools/ for exactly this class of recurring, cited, mechanizable mistake): name the shape, cite each occurrence (session path + a short quote of the correction), and state plainly whether it looks mechanizable (a program can catch it) or requires judgment (drop it — issue #79 explicitly wants only bounded, non-judgment rules). Zero repeated shapes in the window is a valid, honest result. source_guidance: "parent Pi session transcripts active in the last 24 hours only, per the window rule above; the reading-boundedness rule above governs every read."
 
 Tool-radar dispatches (category "tool", 1-${MAX_TOOL_RADAR} of them): each covers a DISTINCT external-discovery angle relevant to this repo's actual stack (Pi/Claude Code and coding-agent tooling, TypeScript/Rust developer tooling, terminal multiplexer/Herdr-adjacent tooling, AI agent orchestration). Rotate which specific sources and angle you pick each run so consecutive daily runs don't repeat the same search — vary among GitHub Trending, Hacker News, package-registry release feeds, vendor/company engineering blogs, and ArXiv for anything genuinely research-adjacent. Each objective must ask the researcher to name concrete, named tools/projects with a URL and a one-paragraph rationale for why THIS repo's owner specifically would want it, not a generic "top N tools" listicle.
 
-Fields per dispatch: label (short kebab-case), category (skill|agent|tool), objective (specific enough that "answered" is checkable), boundaries (what's out of scope), source_guidance (files/dirs for mining, or URLs/domains/search venues for tool-radar), recency ("current repo state" for mining, a freshness bound for tool-radar).`,
+Fields per dispatch: label (short kebab-case), category (skill|agent|checker|tool), objective (specific enough that "answered" is checkable), boundaries (what's out of scope), source_guidance (files/dirs for mining, or URLs/domains/search venues for tool-radar), recency ("current repo state" for mining, a freshness bound for tool-radar).`,
   {
     label: 'plan',
     schema: {
@@ -74,7 +82,7 @@ Fields per dispatch: label (short kebab-case), category (skill|agent|tool), obje
 
 if (!plan || !plan.dispatches || !plan.dispatches.length) return { error: 'plan node returned nothing; no candidate generators dispatched' }
 
-const mining = plan.dispatches.filter(d => d.category === 'skill' || d.category === 'agent').slice(0, 2)
+const mining = plan.dispatches.filter(d => d.category === 'skill' || d.category === 'agent' || d.category === 'checker').slice(0, MAX_MINING)
 const toolRadar = plan.dispatches.filter(d => d.category === 'tool').slice(0, MAX_TOOL_RADAR)
 const allDispatches = [...mining, ...toolRadar]
 log(`planned ${mining.length} mining dispatch(es) + ${toolRadar.length} tool-radar dispatch(es): ${allDispatches.map(d => d.label).join(', ')}`)
@@ -88,7 +96,7 @@ const categoryInstruction = d =>
     : `category (one of skill|agent|workflow|checker|extension — whichever your routing verdict actually concludes; do not force-fit into "${d.category}")`
 
 const dispatchPrompt = (d, extra) =>
-  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}${extra ? `\n\n${extra}` : ''}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
+  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}${extra ? `\n\n${extra}` : ''}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (its FIRST SENTENCE must state the actual leverage this buys — time, tokens, dollars, or failures saved, measured or a stated honest estimate flagged as such; the rest of the sentence explains why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
 
 phase('Generate')
 // Mining ran on agentType 'Explore' (Haiku-tier) in the founding version; two real 2026-08-28
@@ -129,12 +137,20 @@ if (!rawCandidates.length) {
 }
 
 phase('Filter')
+// Repo-comparison and leverage ranking share one stage deliberately: both need every
+// candidate present at once, so splitting them would just re-run the same barrier twice.
 const filtered = await agent(
-  `You are a fresh-context filter for a daily candidate-ideation run. You were not involved in generating these candidates and have never seen the sessions or searches that produced them — judge only what's written here.
+  `You are a fresh-context filter and ranker for a daily candidate-ideation run. You were not involved in generating these candidates and have never seen the sessions or searches that produced them — judge only what's written here plus what you verify yourself in the repo.
 
-Below are ${rawCandidates.length} raw candidates across six possible categories (skill/agent/workflow/checker/extension/tool), from a personal agents repo's daily ideation sweep. Score each on: (1) evidence strength — is the rationale backed by a measured, cited fact (a real repetition count, a real cost, a real URL fetched this run) rather than a vibe or an estimate; (2) relevance — would this repo's owner plausibly act on it; (3) actionability — is there a concrete next step, not just a vague observation. For any candidate with category "tool": drop it unless its rationale explicitly names a specific measured friction item it addresses, or explicitly grounds fit in this repo's real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking) — drop anything that reads as a generic "this tool seems useful" claim with no connection to this repo's actual work. This directly guards against a documented 2026 failure mode: AI-generated noise overwhelming a human reviewer. When in doubt, drop it — a short, high-signal list beats a long noisy one.
+Below are ${rawCandidates.length} raw candidates across six possible categories (skill/agent/workflow/checker/extension/tool), from a personal agents repo's daily ideation sweep whose fixed mission is finding the HIGHEST-IMPACT LEVERS to pull on this workspace and AI setup right now — not an exhaustive catalog.
 
-Return only the survivors, capped at ${MAX_DIGEST_CANDIDATES}, ranked best first, plus how many you dropped and the single main reason (e.g. "6 dropped: unmeasured/estimated evidence").
+STEP 1 — compare against the current implementation (use your read/grep/bash tools on this checked-out repo; use \`gh issue list --state all --search "<name>"\` to check GitHub Issues too): for EVERY candidate, actually look — does skills/, workflows/, tools/, pi/extensions/, or an existing open/closed GitHub issue already cover this? Drop any candidate that's already built or already fully tracked by an open issue (cite what you found in dropReason). Note a PARTIAL match (something related exists but this candidate is still a real gap) in the survivor's rationale rather than dropping it.
+
+STEP 2 — evidence quality: for what's left, score on (a) evidence strength — is the rationale backed by a measured, cited fact (a real repetition count, a real cost, a real URL fetched this run) rather than a vibe or an estimate; (b) relevance — would this repo's owner plausibly act on it; (c) actionability — is there a concrete next step. For any candidate with category "tool": drop it unless its rationale explicitly names a specific measured friction item it addresses, or explicitly grounds fit in this repo's real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking). This guards against a documented 2026 failure mode: AI-generated noise overwhelming a human reviewer. When in doubt, drop it — a short, high-signal list beats a long noisy one.
+
+STEP 3 — rank by leverage, not evidence alone: order every survivor by actual impact — how much recurring cost (time, tokens, dollars, failures, friction) this removes, weighted by how often the underlying friction actually recurs. A well-evidenced but low-stakes candidate ranks below a higher-stakes one even with slightly thinner evidence, as long as the higher-stakes one still clears STEP 2's bar. Put the single highest-leverage candidate first.
+
+Return only the survivors, capped at ${MAX_DIGEST_CANDIDATES}, ranked highest-leverage first, plus how many you dropped and the single main reason (e.g. "6 dropped: 2 already implemented (found in tools/), 4 unmeasured/estimated evidence").
 
 ${rawCandidates.map((c, i) => `=== candidate ${i + 1} (${c.category}) ===\nname: ${c.name}\nrationale: ${c.rationale}\nevidence: ${c.evidence}\nsource: ${c.source}`).join('\n\n')}`,
   { phase: 'Filter', schema: { type: 'object', properties: { survivors: { type: 'array', items: CANDIDATE_SCHEMA }, droppedCount: { type: 'number' }, dropReason: { type: 'string' } }, required: ['survivors', 'droppedCount', 'dropReason'] } })
@@ -144,17 +160,28 @@ log(filtered ? `filter: ${survivors.length} survived, ${filtered.droppedCount} d
 
 phase('Digest')
 const digestAgent = await agent(
-  `Write the final markdown digest for today's scheduled-ideation run. Group these survivor candidates under headings in this exact order, one per category present: "## Skills worth authoring", "## Agents worth authoring", "## Workflows worth authoring", "## Checkers/linters worth building" (category "checker"), "## Pi extensions worth building" (category "extension"), "## Tools worth trying" (category "tool") (omit a heading entirely if it has zero candidates — never write an empty section). Under each candidate: a bold name, then its rationale, evidence, and source on separate lines. Start the file with a one-line dated header "# Scheduled ideation — <today's date if inferable from context, otherwise omit the date>" and end with a one-line footer stating how many raw candidates were generated, how many survived filtering, and any dispatch labels that returned nothing.
+  `Write the final markdown digest for today's scheduled-ideation run. Group ALL survivors under headings in this exact order, one per category present: "## Skills worth authoring", "## Agents worth authoring", "## Workflows worth authoring", "## Checkers/linters worth building" (category "checker"), "## Pi extensions worth building" (category "extension"), "## Tools worth trying" (category "tool") (omit a heading entirely if it has zero candidates — never write an empty section). Candidates stay in the rank order given below within each section. Under each candidate: a bold name, then its rationale (its first sentence already states the leverage/impact), evidence, and source on separate lines. Start the file with a one-line dated header "# Scheduled ideation — <today's date if inferable from context, otherwise omit the date>" and end with a one-line footer stating how many raw candidates were generated, how many survived filtering, and any dispatch labels that returned nothing. Do NOT write your own top-level summary section — the caller prepends one from the #1-ranked survivor in code.
 
-Survivors:
-${survivors.map(c => `- [${c.category}] ${c.name} — ${c.rationale} | evidence: ${c.evidence} | source: ${c.source}`).join('\n')}
+Survivors, in rank order (best/highest-leverage first):
+${survivors.map((c, i) => `${i + 1}. [${c.category}] ${c.name} — ${c.rationale} | evidence: ${c.evidence} | source: ${c.source}`).join('\n')}
 
 Raw generated: ${rawCandidates.length}. Survived filter: ${survivors.length}.${generateMissing.length ? ` Dispatches that returned nothing: ${generateMissing.join(', ')}.` : ''}`,
   { phase: 'Digest' })
 
+// Built in code, not left to model compliance: a live run showed the Digest agent
+// skipping a "lead with Top lever" prompt instruction; survivors[0] is already known data.
+const topLeverBlock = survivors.length
+  ? `## Top lever today\n\n**[${survivors[0].category}] ${survivors[0].name}**\n${survivors[0].rationale}\n\n`
+  : ''
+const bodyDigest = digestAgent || `## Scheduled ideation\n\n(digest-writer node returned nothing; raw survivor list follows)\n\n${survivors.map(c => `- [${c.category}] ${c.name} — ${c.rationale}`).join('\n')}`
+const headerMatch = bodyDigest.match(/^# .*\n/)
+const finalDigest = headerMatch
+  ? bodyDigest.slice(0, headerMatch[0].length) + '\n' + topLeverBlock + bodyDigest.slice(headerMatch[0].length)
+  : topLeverBlock + bodyDigest
+
 return {
   candidates: survivors,
-  digest: digestAgent || `## Scheduled ideation\n\n(digest-writer node returned nothing; raw survivor list follows)\n\n${survivors.map(c => `- [${c.category}] ${c.name} — ${c.rationale}`).join('\n')}`,
+  digest: finalDigest,
   expected: allDispatches.length,
   returned: generateResults.length,
   missingLabels: generateMissing,

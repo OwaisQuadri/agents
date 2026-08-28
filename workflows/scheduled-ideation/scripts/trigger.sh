@@ -16,8 +16,10 @@ HERDR="${HERDR_BIN:-/opt/homebrew/bin/herdr}"
 PRUNE_AFTER_DAYS=7
 POLL_TAB_TIMEOUT_S=30
 POLL_TAB_INTERVAL_S=2
-POLL_DIGEST_TIMEOUT_S=90
-POLL_DIGEST_INTERVAL_S=10
+# A live run took 9m32s end to end (the completion notification wakes the pane well after
+# the main turn ends) -- the old 90s budget failed while the digest was still minutes away.
+POLL_DIGEST_TIMEOUT_S=900
+POLL_DIGEST_INTERVAL_S=15
 TODAY="$(date +%Y-%m-%d)"
 RUN_STAMP="$(date +%Y-%m-%d-%H%M%S)"
 BRANCH="ideation/$RUN_STAMP"
@@ -54,7 +56,7 @@ CUTOFF_EPOCH=$(( $(date +%s) - PRUNE_AFTER_DAYS * 86400 ))
 #     even two runs in the same minute never collide). Fires the existing
 #     worktree.created hook, which lays out the standard agent+editor tabs with bare
 #     `pi` in the agent pane. ---
-CREATE_JSON="$("$HERDR" worktree create --cwd "$REPO" --branch "$BRANCH" --base main --label ideation --focus 2>&1)"
+CREATE_JSON="$("$HERDR" worktree create --cwd "$REPO" --branch "$BRANCH" --base "${SCHEDULED_IDEATION_BASE:-main}" --label ideation --focus 2>&1)"
 WORKSPACE_ID="$(printf '%s' "$CREATE_JSON" | jq -r '.result.workspace.workspace_id // .result.worktree.open_workspace_id // empty' 2>/dev/null)"
 if [ -z "$WORKSPACE_ID" ]; then
   log "ERROR: could not determine workspace id from herdr worktree create/open output: $CREATE_JSON"
