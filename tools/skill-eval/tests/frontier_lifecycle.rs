@@ -43,6 +43,7 @@ macro_rules! frontier_lifecycle_tests {
                 timeouts: Vec<Option<u32>>,
                 models: Vec<ModelIdentity>,
                 harness_runner_version: String,
+                now: Timestamp,
             }
 
             impl FakeRuntime {
@@ -57,6 +58,7 @@ macro_rules! frontier_lifecycle_tests {
                         timeouts: Vec::new(),
                         models: Vec::new(),
                         harness_runner_version: "runner-1".to_owned(),
+                        now: Timestamp("2030-01-01T00:00:00+0000".to_owned()),
                     }
                 }
             }
@@ -199,7 +201,7 @@ macro_rules! frontier_lifecycle_tests {
 
             impl Clock for FakeRuntime {
                 fn now(&self) -> Timestamp {
-                    Timestamp("2030-01-01T00:00:00+0000".to_owned())
+                    self.now.clone()
                 }
             }
 
@@ -428,6 +430,30 @@ macro_rules! frontier_lifecycle_tests {
                         .unwrap();
                 assert_eq!(state.status, FrontierRunStatus::AwaitingDecision);
                 assert_eq!(runtime.execute_calls, 31);
+                assert_eq!(runtime.durable.borrow().trials.len(), 30);
+            }
+
+            #[test]
+            fn quota_pause_resumes_after_the_discovery_snapshot_ages_out() {
+                let mut runtime = FakeRuntime::new();
+                runtime.candidate_error = Some(SkillEvalError::Quota {
+                    model: candidate(),
+                    reset_at: Some(runtime.now()),
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+                assert_eq!(paused.status, FrontierRunStatus::Paused);
+
+                runtime.now = Timestamp("2030-01-01T02:00:00+0000".to_owned());
+                let state =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+                assert_eq!(state.status, FrontierRunStatus::AwaitingDecision);
                 assert_eq!(runtime.durable.borrow().trials.len(), 30);
             }
 

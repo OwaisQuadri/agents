@@ -6349,6 +6349,21 @@ fn validate_frontier_preview_inputs(
     suite: &FrontierSuite,
     now: &Timestamp,
 ) -> Result<(), SkillEvalError> {
+    validate_frontier_frozen_inputs(plan, suite)?;
+    let now_seconds = frontier_timestamp_seconds(&now.0, "runtime clock")?;
+    validate_frontier_age(
+        now_seconds,
+        plan.capabilities.observed_at_unix_seconds,
+        plan.policy.maximum_catalog_age_seconds,
+        "capability snapshot",
+    )?;
+    validate_frontier_entrant_ages(plan, now_seconds)
+}
+
+fn validate_frontier_frozen_inputs(
+    plan: &FrontierPlan,
+    suite: &FrontierSuite,
+) -> Result<(), SkillEvalError> {
     if plan.version != 1 {
         return Err(frontier_preview_invalid("plan version must be 1"));
     }
@@ -6373,17 +6388,8 @@ fn validate_frontier_preview_inputs(
     }
     validate_frontier_preview_policy(&plan.policy)?;
     validate_frontier_preview_suite(suite)?;
-
-    let now_seconds = frontier_timestamp_seconds(&now.0, "runtime clock")?;
-    validate_frontier_age(
-        now_seconds,
-        plan.capabilities.observed_at_unix_seconds,
-        plan.policy.maximum_catalog_age_seconds,
-        "capability snapshot",
-    )?;
-    validate_frontier_entrants(plan, now_seconds)?;
-    validate_frontier_judge(plan)?;
-    Ok(())
+    validate_frontier_entrants(plan)?;
+    validate_frontier_judge(plan)
 }
 
 fn validate_frontier_preview_policy(policy: &FrontierPolicy) -> Result<(), SkillEvalError> {
@@ -6482,7 +6488,7 @@ fn validate_frontier_preview_suite(suite: &FrontierSuite) -> Result<(), SkillEva
     Ok(())
 }
 
-fn validate_frontier_entrants(plan: &FrontierPlan, now_seconds: u64) -> Result<(), SkillEvalError> {
+fn validate_frontier_entrants(plan: &FrontierPlan) -> Result<(), SkillEvalError> {
     const LEVELS: [&str; 7] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
     if plan.entrants.is_empty() {
         return Err(frontier_preview_invalid("entrant route list is empty"));
@@ -6516,6 +6522,19 @@ fn validate_frontier_entrants(plan: &FrontierPlan, now_seconds: u64) -> Result<(
             }
             previous_level = Some(index);
         }
+        frontier_timestamp_seconds(
+            &entrant.catalog_observed_at.0,
+            "entrant catalog observation",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_frontier_entrant_ages(
+    plan: &FrontierPlan,
+    now_seconds: u64,
+) -> Result<(), SkillEvalError> {
+    for entrant in &plan.entrants {
         let observed = frontier_timestamp_seconds(
             &entrant.catalog_observed_at.0,
             "entrant catalog observation",
@@ -6822,7 +6841,7 @@ pub(crate) fn resume_frontier(
         ));
     }
     let (plan, suite) = runtime.load_frontier_plan(&state.configuration.plan_path)?;
-    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+    validate_frontier_frozen_inputs(&plan, &suite)?;
     if plan != state.configuration.plan
         || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
     {
@@ -7706,7 +7725,7 @@ pub(crate) fn record_frontier_decision(
     }
 
     let (plan, suite) = runtime.load_frontier_plan(&state.configuration.plan_path)?;
-    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+    validate_frontier_frozen_inputs(&plan, &suite)?;
     if plan != state.configuration.plan
         || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
     {
@@ -7969,7 +7988,7 @@ pub(crate) fn apply_frontier_baseline<R: FrontierApplyRuntime + ?Sized>(
     }
 
     let (plan, suite) = runtime.load_apply_frontier_plan(&state.configuration.plan_path)?;
-    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+    validate_frontier_frozen_inputs(&plan, &suite)?;
     if plan != state.configuration.plan
         || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
     {

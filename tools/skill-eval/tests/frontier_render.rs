@@ -42,6 +42,13 @@ macro_rules! frontier_render_tests {
                         "maximum spending: 9000000 millionths of a dollar\n",
                     )
                 );
+
+                let mut authorized = report;
+                authorized.is_owner_approval_required = false;
+                let output = render_text(|output| {
+                    render_frontier_preview(&authorized, OutputFormat::Text, output)
+                });
+                assert!(output.contains("owner_approval_required=false"));
             }
 
             #[test]

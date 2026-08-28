@@ -6763,7 +6763,6 @@ fn validate_frontier_preview(report: &FrontierPreviewReport) -> Result<(), Skill
         || report.candidate_calls.minimum > report.candidate_calls.maximum
         || report.judge_calls != report.candidate_calls
         || report.maximum_spending_millionths_of_dollar == 0
-        || !report.is_owner_approval_required
     {
         return Err(malformed_frontier_render("preview guards are incomplete"));
     }
