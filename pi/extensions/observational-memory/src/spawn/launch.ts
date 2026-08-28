@@ -16,6 +16,14 @@ import { runCostPath, runResultPath } from "./runs.js";
 /** Repo root = two levels up from src/spawn/. The shared agent extension lives at agent/index.ts. */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const AGENT_EXTENSION_PATH = join(REPO_ROOT, "agent", "index.ts");
+// usage-limit-continue.ts lives one level up from REPO_ROOT, alongside every other
+// pi/extensions/*.ts. --no-extensions below only disables auto-discovery of the user's
+// full extension set; explicit -e paths still load (confirmed via `pi --help`), so this
+// gives a worker JUST the usage-limit tier-fallback hook it needs — the same one an
+// interactive session gets — without loading anything else. Workers otherwise have no
+// fallback at all when their configured model hits its own usage limit: they simply
+// fail, with no hook present to catch message_end and switch models.
+export const USAGE_LIMIT_CONTINUE_EXTENSION_PATH = join(REPO_ROOT, "..", "usage-limit-continue.ts");
 
 export function modelArg(model: ConfiguredModel): string {
 	return `${model.provider}/${model.id}`;
@@ -56,6 +64,7 @@ export function buildWorkerArgv(opts: {
 	];
 	if (opts.model.thinking) args.push("--thinking", opts.model.thinking);
 	args.push("-e", opts.agentExtensionPath ?? AGENT_EXTENSION_PATH);
+	args.push("-e", USAGE_LIMIT_CONTINUE_EXTENSION_PATH);
 	args.push("-n", opts.sessionName);
 	args.push("-p", opts.kickoffPrompt);
 	return [pi.command, ...args];
