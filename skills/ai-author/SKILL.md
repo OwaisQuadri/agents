@@ -185,6 +185,14 @@ No harness = not done. No `## logging` section = not done. `templates/eval-harne
 carries both the harness files and the paste-ready logging section. A draft goes live
 only when every non-holdout case passes and the holdout slice holds (rule in the template).
 
+`tools/logpath-check` checks that the pasted logging section actually resolves — an
+unanchored `logs/usage.jsonl` silently lands wherever the caller's cwd happens to be
+instead of the artifact's own log. Run it before a draft goes live:
+
+```sh
+cargo run --release --manifest-path tools/logpath-check/Cargo.toml -- .
+```
+
 ## judge protocol (blind by construction)
 
 After logging, dispatch a fresh-context judge:
@@ -259,7 +267,9 @@ Every authored skill and agent carries a short `## logging` section (paste-ready
 `templates/eval-harness.md`). This is ai-author's own, and the model for all of them:
 
 At the end of a use, append ONE JSON(JavaScript Object Notation) line to
-`skills/ai-author/logs/usage.jsonl`:
+`<repo-root>/skills/ai-author/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory:
 
 ```json
 {"ts":"2026-07-31T14:05:09-0400","artifact":"ai-author","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

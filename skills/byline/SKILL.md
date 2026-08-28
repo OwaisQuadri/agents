@@ -64,8 +64,10 @@ modes as feedback.
 
 ## logging
 
-At the end of a use, append ONE JSON (JavaScript Object Notation) line to this skill's
-`logs/usage.jsonl`:
+At the end of a use, append ONE JSON (JavaScript Object Notation) line to
+`<repo-root>/skills/byline/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory:
 
 ```json
 {"ts":"<local iso with offset>","artifact":"byline","trigger":"<what was edited>","excerpt":"<the flags ste-check raised + what was cut>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

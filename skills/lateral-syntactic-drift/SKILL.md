@@ -36,7 +36,10 @@ Run `evals/run.sh` for non-holdout cases and `evals/run.sh --holdout` for the ho
 
 ## logging
 
-At the end of a use, append one bounded JSON line to `logs/usage.jsonl`:
+At the end of a use, append one bounded JSON line to
+`<repo-root>/skills/lateral-syntactic-drift/logs/usage.jsonl`, where `<repo-root>` is
+the output of `git rev-parse --show-toplevel` — never a path relative to the caller's
+own working directory:
 
 ```json
 {"ts":"<local ISO timestamp with offset>","artifact":"lateral-syntactic-drift","trigger":"<what fired it>","excerpt":"<problem and selected idea>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

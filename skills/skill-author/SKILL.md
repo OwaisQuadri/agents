@@ -173,5 +173,6 @@ its territory keeps coming up (trigger too narrow).
 ## logging
 
 At the end of a use of THIS skill, append one bounded JSON line to
-skills/skill-author/logs/usage.jsonl per section 4's logging spec — local timezone with
-offset, ~2KB cap.
+`<repo-root>/skills/skill-author/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory — per section 4's logging spec, local timezone with offset, ~2KB cap.

@@ -151,8 +151,10 @@ Done when: `LADDER.md` exists at the stated path and every section above is pres
 
 ## logging
 
-At the end of a use, append ONE JSON(JavaScript Object Notation) line to this
-artifact's `logs/usage.jsonl`:
+At the end of a use, append ONE JSON(JavaScript Object Notation) line to
+`<repo-root>/skills/ladder/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory:
 
 ```json
 {"ts":"<local iso with offset, e.g. 2026-08-07T14:05:09-0400>","artifact":"ladder","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

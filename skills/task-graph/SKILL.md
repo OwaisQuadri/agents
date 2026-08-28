@@ -106,7 +106,10 @@ deletes its own scratch issues, verified via a trap-based cleanup.
 
 ## logging
 
-At the end of a use, append ONE JSON line to this artifact's `logs/usage.jsonl`:
+At the end of a use, append ONE JSON line to
+`<repo-root>/skills/task-graph/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory:
 
 ```json
 {"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"task-graph","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

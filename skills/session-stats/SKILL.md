@@ -42,7 +42,9 @@ aggregation, and dedup. Run it from `skills/session-stats/`.
 ## logging
 
 At the end of a use, append one bounded JSON line (~2KB, local timezone with offset,
-never UTC) to `skills/session-stats/logs/usage.jsonl`:
+never UTC) to `<repo-root>/skills/session-stats/logs/usage.jsonl`, where `<repo-root>`
+is the output of `git rev-parse --show-toplevel` — never a path relative to the
+caller's own working directory:
 
 ```json
 {"ts":"<date +%Y-%m-%dT%H:%M:%S%z>","artifact":"session-stats","trigger":"<what fired it>","excerpt":"<question + key figures>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

@@ -61,7 +61,10 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
 
 ## logging
 
-At the end of a use, append ONE JSON line to this artifact's `logs/usage.jsonl`:
+At the end of a use, append ONE JSON line to
+`<repo-root>/skills/git-sync/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory:
 
 ```json
 {"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"git-sync","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

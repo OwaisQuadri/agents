@@ -64,8 +64,10 @@ banned word list, and the sentence-count guidance. Run
 
 ## logging
 
-At the end of a use, append one bounded JSON (JavaScript Object Notation) line to this
-skill's `logs/usage.jsonl`. It holds the relevant excerpt only, under a 2KB cap. Timestamp
+At the end of a use, append one bounded JSON (JavaScript Object Notation) line to
+`<repo-root>/skills/computah-voice/logs/usage.jsonl`, where `<repo-root>` is the output
+of `git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory. It holds the relevant excerpt only, under a 2KB cap. Timestamp
 it with `date +%Y-%m-%dT%H:%M:%S%z` in the machine's current local timezone, and never in
 UTC (Coordinated Universal Time).
 

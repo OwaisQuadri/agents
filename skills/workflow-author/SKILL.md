@@ -179,7 +179,9 @@ Catastrophic (score 0, un-tradeable, listed in rubric.md):
 ## logging
 
 At the end of a use, append ONE bounded JSON (JavaScript Object Notation) line to
-skills/workflow-author/logs/usage.jsonl — the relevant transcript excerpt only, ~2KB
+`<repo-root>/skills/workflow-author/logs/usage.jsonl`, where `<repo-root>` is the output
+of `git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory — the relevant transcript excerpt only, ~2KB
 cap. Timestamp in the machine's CURRENT LOCAL TIMEZONE with offset
 (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC (Coordinated Universal Time): these lines are
 analyzed against the user's own day, so UTC timestamps are useless.

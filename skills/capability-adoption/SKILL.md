@@ -63,7 +63,9 @@ Run `evals/run.sh` for the non-holdout cases. Run `evals/run.sh --holdout` for t
 ## logging
 
 At the end of a use, append one bounded JSON(JavaScript Object Notation) line to
-`logs/usage.jsonl`:
+`<repo-root>/skills/capability-adoption/logs/usage.jsonl`, where `<repo-root>` is the
+output of `git rev-parse --show-toplevel` — never a path relative to the caller's own
+working directory:
 
 ```json
 {"ts":"<local ISO timestamp with offset>","artifact":"capability-adoption","trigger":"<what fired it>","excerpt":"<sources, plan, and user correction>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections or surprises>"}
