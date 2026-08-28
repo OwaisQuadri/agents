@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { AGENT_EXTENSION_PATH, buildWorkerArgv, buildWorkerEnv, modelArg } from "../src/spawn/launch.js";
+import { AGENT_EXTENSION_PATH, USAGE_LIMIT_CONTINUE_EXTENSION_PATH, buildWorkerArgv, buildWorkerEnv, modelArg } from "../src/spawn/launch.js";
 import { readObserverResult, runResultPath, runsDir, writeObserverResult } from "../src/spawn/runs.js";
 import { registerObserverTool } from "../agent/observer/tool.js";
 
@@ -23,6 +23,12 @@ describe("launch argv + env", () => {
 		expect(argv[argv.indexOf("-n") + 1]).toBe("om-observer-x");
 		expect(argv[argv.indexOf("-p") + 1]).toBe("go");
 		expect(AGENT_EXTENSION_PATH.endsWith("/agent/index.ts")).toBe(true);
+		// --no-extensions only disables auto-discovery; a worker still needs the usage-limit
+		// tier-fallback hook explicitly, or its configured model has zero fallback when it
+		// hits its own usage limit -- the exact gap the owner reported live.
+		const secondExtensionIndex = argv.indexOf("-e", argv.indexOf("-e") + 1);
+		expect(argv[secondExtensionIndex + 1]).toBe(USAGE_LIMIT_CONTINUE_EXTENSION_PATH);
+		expect(USAGE_LIMIT_CONTINUE_EXTENSION_PATH.endsWith("/pi/extensions/usage-limit-continue.ts")).toBe(true);
 	});
 
 	it("omits --thinking when no level is configured", () => {
