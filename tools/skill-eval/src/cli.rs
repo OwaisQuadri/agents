@@ -44,14 +44,15 @@ use crate::ports::{
     RunStore, T1ScreenProgressSink, T1ScreenRuntime, T1ScreenStore, TierWriter, Verifier,
 };
 use crate::service::{
-    FrontierApplyRuntime, FrontierTrialRuntime, active_frontier_routes, apply_frontier_baseline,
-    apply_frontier_suite, apply_tier_assignments, build_pool_report, build_report,
-    build_t1_screen_report, check_frontier_suite, evaluate_publication_gate, extend_t1_screen_cap,
-    fail_t1_screen_route, inspect_frontier, inspect_trial, inventory_frontier_suite, judge_prompt,
-    pending_t1_screen_state, prepare_audit_briefs, preview_frontier, propose_frontier_suite,
-    record_decision, record_frontier_decision, resume_frontier, resume_pool_qualification,
-    resume_qualification, resume_t1_screening, start_frontier, start_pool_qualification,
-    start_pool_replacement_qualification, start_qualification, start_t1_screening,
+    FrontierApplyRuntime, FrontierPreviewRuntime, FrontierTrialRuntime, active_frontier_routes,
+    apply_frontier_baseline, apply_frontier_suite, apply_tier_assignments, build_pool_report,
+    build_report, build_t1_screen_report, check_frontier_suite, evaluate_publication_gate,
+    extend_t1_screen_cap, fail_t1_screen_route, inspect_frontier, inspect_trial,
+    inventory_frontier_suite, judge_prompt, pending_t1_screen_state, prepare_audit_briefs,
+    preview_frontier, propose_frontier_suite, record_decision, record_frontier_decision,
+    resume_frontier, resume_pool_qualification, resume_qualification, resume_t1_screening,
+    start_frontier, start_pool_qualification, start_pool_replacement_qualification,
+    start_qualification, start_t1_screening,
 };
 use crate::source::FileArtifactSource;
 use crate::statistics::select_thinking_level;
@@ -2572,6 +2573,43 @@ impl<S: ArtifactSource> FrontierSuiteRuntime for FileSuiteRuntime<S> {
     }
 }
 
+struct FilePreviewRuntime {
+    source: FileArtifactSource,
+    repository_root: PathBuf,
+}
+
+impl FilePreviewRuntime {
+    fn new(repository_root: &Path) -> Self {
+        Self {
+            source: FileArtifactSource,
+            repository_root: repository_root.to_path_buf(),
+        }
+    }
+}
+
+impl Clock for FilePreviewRuntime {
+    fn now(&self) -> Timestamp {
+        local_timestamp()
+    }
+}
+
+impl FrontierPreviewRuntime for FilePreviewRuntime {
+    fn load_preview_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError> {
+        let (plan, suite) = load_frontier_plan_files(&self.repository_root, &self.source, path)?;
+        if !plan.policy.is_first_party_only {
+            return Err(invalid("frontier plan must require first-party routes"));
+        }
+        for entrant in &plan.entrants {
+            require_first_party_provider(&entrant.provider)?;
+        }
+        require_first_party_provider(&plan.judge.provider)?;
+        Ok((plan, suite))
+    }
+}
+
 struct FileApplyRuntime {
     source: FileArtifactSource,
     frontier_store: FileFrontierStore,
@@ -4060,6 +4098,15 @@ pub(crate) fn run_main() -> Result<(), SkillEvalError> {
                 &mut std::io::stdout(),
             );
         }
+        CliCommand::FrontierPreview { .. } => {
+            let runtime = FilePreviewRuntime::new(&repository_root()?);
+            return execute_frontier_preview_command(
+                &request.command,
+                request.output_format,
+                &runtime,
+                &mut std::io::stdout(),
+            );
+        }
         CliCommand::FrontierApply { .. } => {
             let mut runtime = FileApplyRuntime::new(&repository_root()?)?;
             return execute_frontier_apply_command(
@@ -4069,8 +4116,7 @@ pub(crate) fn run_main() -> Result<(), SkillEvalError> {
                 &mut std::io::stdout(),
             );
         }
-        CliCommand::FrontierPreview { .. }
-        | CliCommand::FrontierStart { .. }
+        CliCommand::FrontierStart { .. }
         | CliCommand::FrontierResume { .. }
         | CliCommand::FrontierReport { .. }
         | CliCommand::FrontierInspect { .. }
@@ -6403,6 +6449,18 @@ fn parse_positive_frontier_attempt(value: &str) -> Result<u16, SkillEvalError> {
     Ok(attempt)
 }
 
+fn execute_frontier_preview_command<R: FrontierPreviewRuntime + ?Sized>(
+    command: &CliCommand,
+    format: OutputFormat,
+    runtime: &R,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    let CliCommand::FrontierPreview { plan_path } = command else {
+        return Err(invalid("command is not frontier preview"));
+    };
+    render_frontier_preview(&preview_frontier(plan_path, runtime)?, format, output)
+}
+
 fn execute_frontier_apply_command<R: FrontierApplyRuntime + ?Sized>(
     command: &CliCommand,
     format: OutputFormat,
@@ -6422,8 +6480,8 @@ pub(crate) fn execute_frontier_command(
     output: &mut dyn Write,
 ) -> Result<(), SkillEvalError> {
     match command {
-        CliCommand::FrontierPreview { plan_path } => {
-            render_frontier_preview(&preview_frontier(plan_path, runtime)?, format, output)
+        CliCommand::FrontierPreview { .. } => {
+            execute_frontier_preview_command(command, format, runtime, output)
         }
         CliCommand::FrontierStart { plan_path } => {
             preflight_run_id_file()?;

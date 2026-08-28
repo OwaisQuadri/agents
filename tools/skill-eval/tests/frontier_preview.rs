@@ -22,7 +22,7 @@ macro_rules! frontier_preview_tests {
                 ModelResolver, QualificationRuntime, RunIdSource, RunStore, TierWriter, Verifier,
             };
 
-            use super::preview_frontier;
+            use super::{frontier_plan_digest, preview_frontier};
 
             #[test]
             fn frontier_preview_projects_exact_bounds_without_calls() {
@@ -40,6 +40,10 @@ macro_rules! frontier_preview_tests {
                 assert_eq!(report.maximum_spending_millionths_of_dollar, 6_510);
                 assert!(report.is_owner_approval_required);
                 assert_eq!(report.plan_sha256.len(), 64);
+                assert_eq!(
+                    report.plan_sha256,
+                    frontier_plan_digest(&runtime.plan).unwrap()
+                );
 
                 let repeated = preview_frontier(Path::new("plan.json"), &runtime).unwrap();
                 assert_eq!(report, repeated);
