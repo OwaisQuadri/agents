@@ -36,6 +36,18 @@ The GEPA(Genetic-Pareto prompt evolution) loop's inputs and outputs for this wor
   Re-verification of this fix (a second live launchd-triggered run) is the next real
   signal on whether it holds.
 
+- 2026-08-28, second real-run correction, same evening. The bounded-reads fix above did
+  NOT hold: a real re-run still showed both mining dispatches returning nothing, and a
+  standalone reproduction confirmed why — `agentType: 'Explore'` aborted a second time
+  ("This operation was aborted"), this time on a run doing nothing but bounded
+  directory/filename listing with zero large reads, ruling out content size as the cause.
+  Dropped `agentType: 'Explore'` from both mining dispatches entirely; they now run on
+  the same default (session) model every other node in this workflow already uses
+  successfully in every one of these same live runs (Plan, Filter, Digest never once
+  failed). Updated SKILL.md's GRAPH SPEC and the evals/ mechanical routing check (c5)
+  to match — c5 previously asserted mining routes to Explore, which would now be wrong
+  on its own terms. A third live run is the next real signal.
+
 ## deferred
 
 - No persistent dedup across daily runs yet — two consecutive days could surface the

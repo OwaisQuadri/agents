@@ -16,8 +16,9 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - a candidate's evidence field is allowed through as an estimate rather than a
     measured fact, contradicting ai-author's own "do not estimate" rule this workflow
     inherits by reference
-  - a mining dispatch is routed to web-research-summarizer, or a tool-radar dispatch
-    is routed to Explore (wrong tool for the source type)
+  - a mining dispatch is routed to web-research-summarizer (wrong tool for a
+    codebase-mining source), or a tool-radar dispatch is routed anywhere but
+    web-research-summarizer
 
 Topology properties graded on every case, per workflow-author:
 

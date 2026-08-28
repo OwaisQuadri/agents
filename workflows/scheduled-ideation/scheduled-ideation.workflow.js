@@ -91,9 +91,16 @@ const dispatchPrompt = d =>
   `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
 
 phase('Generate')
+// Mining ran on agentType 'Explore' (Haiku-tier) in the founding version; two real 2026-08-28
+// live runs both aborted it mid-task on skill-evidence-sweep/agent-candidate-scan ("This
+// operation was aborted") -- reproduced live twice, including on a run doing nothing but
+// bounded directory-listing with no large reads at all, so it isn't a content-size problem
+// prompt tweaks can fix. Dropped agentType entirely: mining now runs on the same default
+// (session) model every other node here already uses successfully in every one of those
+// same runs -- Plan, Filter, and Digest never once failed.
 const [miningResults, toolResults] = await Promise.all([
   parallel(mining.map(d => () =>
-    agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', agentType: 'Explore', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
+    agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
       .then(r => (r ? { label: d.label, candidates: r.candidates } : null)))),
   parallel(toolRadar.map(d => () =>
     agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', agentType: 'web-research-summarizer', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
