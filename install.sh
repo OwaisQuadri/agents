@@ -660,9 +660,53 @@ elif [[ -f "$POLICY_SRC" ]] && command -v jq >/dev/null 2>&1; then
   fi
 fi
 
+# 18. launchd scheduled jobs — every plist under */launchd/*.plist in this repo (hq's
+#     heartbeat, scheduled-ideation's daily 3pm sweep, and any future one) gets installed
+#     and its registration refreshed on every install.sh run, on every device, so the
+#     schedule is never something a human has to remember to set up by hand. Refresh means
+#     re-copying the plist and re-bootstrapping so a content change actually takes effect —
+#     launchd does not reread a changed file on its own. It never means kickstart: this
+#     step also runs from the post-merge git hook, so an unconditional kickstart here would
+#     re-fire every scheduled job (hq's heartbeat, a daily ideation sweep) on every git
+#     checkout, not just once. kickstart fires only the first time a label is newly
+#     installed, matching "run once now" for a fresh install without repeating it forever.
+if [[ "$HOME_TARGET" != "$HOME" ]]; then
+  # sandboxed/test run: no real launchd session to touch, and a sandboxed install must
+  # never register a real system-level scheduled job
+  plan "skip launchd install (sandboxed HOME_TARGET)"
+elif ! command -v launchctl >/dev/null 2>&1; then
+  plan "skip launchd install (not macOS or launchctl unavailable)"
+else
+  # every plist lives at <category>/<name>/launchd/*.plist — skills/hq/launchd/*.plist,
+  # workflows/scheduled-ideation/launchd/*.plist, and any future one at that same depth
+  LAUNCHD_AGENTS_DIR="$HOME_TARGET/Library/LaunchAgents"
+  for PLIST_SRC in "$REPO_TARGET"/*/*/launchd/*.plist; do
+    [[ -f "$PLIST_SRC" ]] || continue
+    LABEL="$(basename "$PLIST_SRC" .plist)"
+    PLIST_DEST="$LAUNCHD_AGENTS_DIR/$LABEL.plist"
+    ALREADY_LOADED=0
+    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && ALREADY_LOADED=1
+    if [[ -f "$PLIST_DEST" ]] && diff -q "$PLIST_SRC" "$PLIST_DEST" >/dev/null 2>&1; then
+      plan "ok   $LABEL launchd plist already current"
+      continue
+    fi
+    plan "install launchd job $LABEL"
+    if (( ! IS_DRY )); then
+      mkdir -p "$LAUNCHD_AGENTS_DIR"
+      cp "$PLIST_SRC" "$PLIST_DEST"
+      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST"
+      if (( ! ALREADY_LOADED )); then
+        launchctl kickstart "gui/$(id -u)/$LABEL"
+        plan "kickstart $LABEL (first install on this device)"
+      fi
+    fi
+  done
+fi
+
 plan "done"
 
-# 18. --test drops into pi against the sandbox home so the run is inspectable right away.
+# 19. --test drops into pi against the sandbox home so the run is inspectable right away.
 #     The auth symlink borrows the real credential instead of copying it: the sandbox never
 #     holds its own token, and deleting .install-test-home deletes only the link.
 if (( IS_TEST )) && ! (( IS_DRY )); then
