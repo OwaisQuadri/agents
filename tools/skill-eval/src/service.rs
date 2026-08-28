@@ -7016,45 +7016,63 @@ fn execute_frontier_trial(
         return Err(frontier_lifecycle_drift("frozen judge identity"));
     }
     require_frontier_first_party(&judge.provider)?;
-    let run_id = RunId(state.configuration.run_id.0.clone());
-    let candidate = runtime.execute(&run_id, key, &artifact, &case, model, &harness, None)?;
-    if candidate.key != *key || candidate.model != *model || candidate.harness != harness {
-        return Err(frontier_lifecycle_drift("candidate result identity"));
-    }
-    let checks = runtime.verify(&case, &candidate)?;
-    let judged = runtime.grade(
-        &judge,
-        &JudgeInput {
-            candidate: candidate.clone(),
-            expect: case.expect.clone(),
-            rubric_path: artifact.root.join("evals/rubric.md"),
-            checks,
-        },
-    )?;
-    if judged.model != judge {
-        return Err(frontier_lifecycle_drift("judge result identity"));
-    }
-    let cost = candidate
-        .usage
+    let trial = match runtime
+        .recover_frontier_trial(state, key, &artifact, &case, model, &harness)?
+    {
+        Some(trial) => {
+            if trial.key != *key
+                || trial.model != *model
+                || trial.harness != harness
+                || trial.judge_model != judge
+            {
+                return Err(frontier_lifecycle_drift("recovered trial identity"));
+            }
+            trial
+        }
+        None => {
+            let run_id = RunId(state.configuration.run_id.0.clone());
+            let candidate =
+                runtime.execute(&run_id, key, &artifact, &case, model, &harness, None)?;
+            if candidate.key != *key || candidate.model != *model || candidate.harness != harness {
+                return Err(frontier_lifecycle_drift("candidate result identity"));
+            }
+            let checks = runtime.verify(&case, &candidate)?;
+            let judged = runtime.grade(
+                &judge,
+                &JudgeInput {
+                    candidate: candidate.clone(),
+                    expect: case.expect.clone(),
+                    rubric_path: artifact.root.join("evals/rubric.md"),
+                    checks,
+                },
+            )?;
+            if judged.model != judge {
+                return Err(frontier_lifecycle_drift("judge result identity"));
+            }
+            TrialRecord {
+                key: key.clone(),
+                model: candidate.model.clone(),
+                harness: candidate.harness.clone(),
+                artifact_path: candidate.artifact_path,
+                transcript_path: candidate.transcript_path,
+                candidate_usage: candidate.usage,
+                judge_model: judged.model,
+                judge_usage: judged.usage,
+                verdict: judged.verdict,
+            }
+        }
+    };
+    let cost = trial
+        .candidate_usage
         .cost_millionths_of_dollar
-        .checked_add(judged.usage.cost_millionths_of_dollar)
+        .checked_add(trial.judge_usage.cost_millionths_of_dollar)
         .ok_or_else(|| frontier_lifecycle_invalid("trial cost arithmetic overflow"))?;
     if cost > reservation {
         return Err(frontier_lifecycle_invalid(
             "trial cost exceeded its frozen reservation",
         ));
     }
-    Ok(TrialRecord {
-        key: key.clone(),
-        model: candidate.model.clone(),
-        harness: candidate.harness.clone(),
-        artifact_path: candidate.artifact_path,
-        transcript_path: candidate.transcript_path,
-        candidate_usage: candidate.usage,
-        judge_model: judged.model,
-        judge_usage: judged.usage,
-        verdict: judged.verdict,
-    })
+    Ok(trial)
 }
 
 fn frontier_case_context<R: FrontierTrialRuntime + ?Sized>(

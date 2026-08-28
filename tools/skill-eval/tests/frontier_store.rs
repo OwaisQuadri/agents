@@ -11,6 +11,7 @@ mod model;
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -113,6 +114,51 @@ fn trial_replay_is_idempotent_and_conflict_is_rejected() {
     assert!(
         store
             .save_frontier_trial(&state.configuration.run_id, &conflict)
+            .is_err()
+    );
+}
+
+#[test]
+fn trial_accepts_a_fixture_directory_and_requires_a_regular_transcript() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let state = fixture.state();
+    store.create_frontier(&state).unwrap();
+    let mut trial = fixture.trial();
+    let artifact = fixture
+        .root
+        .join(".map/skill-eval/runs/run-1/evidence/artifact");
+    fs::create_dir(&artifact).unwrap();
+    trial.artifact_path = PathBuf::from(".map/skill-eval/runs/run-1/evidence/artifact");
+    store
+        .save_frontier_trial(&state.configuration.run_id, &trial)
+        .unwrap();
+
+    let other = Fixture::new();
+    let mut other_store = FileFrontierStore::new(&other.root).unwrap();
+    let other_state = other.state();
+    other_store.create_frontier(&other_state).unwrap();
+    let mut invalid = other.trial();
+    invalid.transcript_path = PathBuf::from(".map/skill-eval/runs/run-1/evidence");
+    assert!(
+        other_store
+            .save_frontier_trial(&other_state.configuration.run_id, &invalid)
+            .is_err()
+    );
+
+    let linked = Fixture::new();
+    let mut linked_store = FileFrontierStore::new(&linked.root).unwrap();
+    let linked_state = linked.state();
+    linked_store.create_frontier(&linked_state).unwrap();
+    let mut linked_trial = linked.trial();
+    let link = linked
+        .root
+        .join(".map/skill-eval/runs/run-1/evidence/artifact-link");
+    symlink("artifact.txt", &link).unwrap();
+    linked_trial.artifact_path = PathBuf::from(".map/skill-eval/runs/run-1/evidence/artifact-link");
+    assert!(
+        linked_store
+            .save_frontier_trial(&linked_state.configuration.run_id, &linked_trial)
             .is_err()
     );
 }
@@ -432,7 +478,7 @@ impl Fixture {
     }
 
     fn trial(&self) -> TrialRecord {
-        let evidence = self.root.join(".map/skill-eval/frontier/run-1/evidence");
+        let evidence = self.root.join(".map/skill-eval/runs/run-1/evidence");
         fs::create_dir_all(&evidence).unwrap();
         fs::write(evidence.join("artifact.txt"), b"artifact").unwrap();
         fs::write(evidence.join("transcript.txt"), b"transcript").unwrap();
@@ -456,10 +502,8 @@ impl Fixture {
                 artifact_revision: "revision".to_owned(),
                 tool_policy_digest: "policy".to_owned(),
             },
-            artifact_path: PathBuf::from(".map/skill-eval/frontier/run-1/evidence/artifact.txt"),
-            transcript_path: PathBuf::from(
-                ".map/skill-eval/frontier/run-1/evidence/transcript.txt",
-            ),
+            artifact_path: PathBuf::from(".map/skill-eval/runs/run-1/evidence/artifact.txt"),
+            transcript_path: PathBuf::from(".map/skill-eval/runs/run-1/evidence/transcript.txt"),
             candidate_usage: zero_usage(),
             judge_model: ModelIdentity {
                 tier: Tier::T5,

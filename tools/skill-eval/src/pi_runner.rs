@@ -183,6 +183,66 @@ impl<P> PiCandidateRunner<P> {
             process,
         }
     }
+
+    pub(crate) fn recover_frontier(
+        &self,
+        run_id: &RunId,
+        key: &TrialKey,
+        case: &CaseDefinition,
+        model: &ModelIdentity,
+        harness: &HarnessIdentity,
+    ) -> Result<Option<CandidateArtifact>, SkillEvalError> {
+        validate_component(&run_id.0, "run")?;
+        let output_root = fs::canonicalize(&self.output_root)
+            .map_err(|error| io_error(&self.output_root, error))?;
+        let trial_directory = trial_directory(&output_root, run_id, key)?;
+        match fs::symlink_metadata(&trial_directory) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(_) => return Err(invalid("frontier recovery trial path is unsafe")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(&trial_directory, error)),
+        }
+        let transcript_path = trial_directory.join("transcript.jsonl");
+        let response_path = trial_directory.join("response.txt");
+        if !recovery_path_matches(&transcript_path, false)?
+            || !recovery_path_matches(&response_path, false)?
+        {
+            return Ok(None);
+        }
+        let transcript =
+            fs::read(&transcript_path).map_err(|error| io_error(&transcript_path, error))?;
+        if transcript.len() > MAX_PI_EVENT_BYTES {
+            return Err(invalid("frontier recovery transcript is too large"));
+        }
+        let mut parsed = parse_events(&transcript, model, 0, false)?;
+        parsed.usage.elapsed_milliseconds =
+            recovered_elapsed_milliseconds(&trial_directory, &transcript_path)?;
+        if !parsed.is_thinking_observed
+            || parsed.model != *model
+            || parsed.error_message.is_some()
+            || fs::read(&response_path).map_err(|error| io_error(&response_path, error))?
+                != parsed.response.as_bytes()
+        {
+            return Err(invalid(
+                "frontier recovery candidate evidence is inconsistent",
+            ));
+        }
+        let (artifact_path, is_directory_required) = match case.execution.drive {
+            CaseDrive::Fixture { .. } => (trial_directory.join("fixture"), true),
+            CaseDrive::Response | CaseDrive::ExistingHarness { .. } => (response_path, false),
+        };
+        if !recovery_path_matches(&artifact_path, is_directory_required)? {
+            return Ok(None);
+        }
+        Ok(Some(CandidateArtifact {
+            key: key.clone(),
+            model: parsed.model,
+            harness: harness.clone(),
+            artifact_path,
+            transcript_path,
+            usage: parsed.usage,
+        }))
+    }
 }
 
 impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
@@ -1097,6 +1157,39 @@ fn invalid_event(line_index: usize, message: &str) -> SkillEvalError {
     }
 }
 
+fn recovery_path_matches(path: &Path, is_directory_required: bool) -> Result<bool, SkillEvalError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            Err(invalid("frontier recovery evidence path is a symlink"))
+        }
+        Ok(metadata) if is_directory_required => Ok(metadata.is_dir()),
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(io_error(path, error)),
+    }
+}
+
+fn recovered_elapsed_milliseconds(
+    execution_directory: &Path,
+    transcript_path: &Path,
+) -> Result<u64, SkillEvalError> {
+    let started = fs::metadata(execution_directory)
+        .and_then(|metadata| metadata.created())
+        .map_err(|error| io_error(execution_directory, error))?;
+    let finished = fs::metadata(transcript_path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| io_error(transcript_path, error))?;
+    let elapsed = finished
+        .duration_since(started)
+        .map_err(|_| invalid("frontier recovery evidence timestamps are inconsistent"))?;
+    if elapsed.is_zero() {
+        return Err(invalid("frontier recovery elapsed time is zero"));
+    }
+    let milliseconds = u64::try_from(elapsed.as_millis())
+        .map_err(|_| invalid("frontier recovery elapsed time overflows"))?;
+    Ok(milliseconds.max(1))
+}
+
 fn io_error(path: &Path, error: io::Error) -> SkillEvalError {
     SkillEvalError::Io {
         path: path.to_owned(),
@@ -1305,6 +1398,57 @@ mod tests {
                     .any(|pair| pair == ["--thinking", "high"])
             );
         }
+    }
+
+    #[test]
+    fn frontier_recovers_completed_candidate_without_launch() {
+        let directory = TestDirectory::new("frontier-recovery");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let model = frontier_model("anthropic");
+        let output = exact_output(include_str!("../tests/fixtures/pi/success.jsonl"), &model);
+        let mut runner = PiCandidateRunner::with_process(
+            directory.path().join("runs"),
+            FakeProcess::returning(&output),
+        );
+        let case = response_case(&[]);
+        let candidate = runner
+            .execute(
+                &frontier_run_id(),
+                &key(),
+                &artifact,
+                &case,
+                &model,
+                &harness(),
+                None,
+            )
+            .unwrap();
+
+        let recovered = runner
+            .recover_frontier(&frontier_run_id(), &key(), &case, &model, &harness())
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(runner.process.requests.len(), 1);
+        assert_eq!(recovered.model, candidate.model);
+        assert_eq!(recovered.harness, candidate.harness);
+        assert_eq!(recovered.artifact_path, candidate.artifact_path);
+        assert_eq!(recovered.transcript_path, candidate.transcript_path);
+        let mut expected_usage = candidate.usage;
+        expected_usage.elapsed_milliseconds = recovered.usage.elapsed_milliseconds;
+        assert_eq!(recovered.usage, expected_usage);
+        assert!(recovered.usage.elapsed_milliseconds > 0);
+        assert!(recovered.usage.elapsed_milliseconds < 1_000);
+
+        let real_response = recovered.artifact_path.with_extension("real");
+        fs::rename(&recovered.artifact_path, &real_response).unwrap();
+        std::os::unix::fs::symlink("response.real", &recovered.artifact_path).unwrap();
+        assert!(
+            runner
+                .recover_frontier(&frontier_run_id(), &key(), &case, &model, &harness())
+                .is_err()
+        );
     }
 
     #[test]

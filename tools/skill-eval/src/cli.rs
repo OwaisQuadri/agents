@@ -16,21 +16,22 @@ use crate::frontier_store::FileFrontierStore;
 use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
-    CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
-    FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup, FrontierDecisionRequest,
-    FrontierInspection, FrontierPlan, FrontierPreviewReport, FrontierReport, FrontierRunId,
-    FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan, FrontierSuiteInventory,
-    FrontierSuiteProposal, FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialSelector,
-    HarnessIdentity, ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant,
-    PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
-    PromptJudgeRequest, QualificationPolicy, QualificationPurpose, QualificationReport,
-    QualifyRequest, RunEvent, RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest,
-    T1ScreenCampaignCreateRequest, T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest,
-    T1ScreenCandidateEnvironment, T1ScreenCandidatePrice, T1ScreenCapExtensionRequest,
-    T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState, T1ScreenPolicy,
-    T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest, T1ScreenRunConfiguration,
-    T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment,
-    TierDestination, Timestamp, TrialRecord, TrialSelector, TrialUsage,
+    CaseDefinition, CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition,
+    FrontierApplyReport, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup,
+    FrontierDecisionRequest, FrontierInspection, FrontierPlan, FrontierPreviewReport,
+    FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan,
+    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication,
+    FrontierSuiteReviewSet, FrontierTrialSelector, HarnessIdentity, JudgeInput, ModelIdentity,
+    OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence,
+    PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest,
+    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest, RunEvent,
+    RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest,
+    T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment,
+    T1ScreenCandidatePrice, T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat,
+    T1ScreenModelState, T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport,
+    T1ScreenRouteFailureRequest, T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState,
+    T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp,
+    TrialRecord, TrialSelector, TrialUsage,
 };
 use crate::model_capabilities;
 use crate::models::{ConfiguredModelResolver, validate_rpc_models_data};
@@ -3402,6 +3403,47 @@ impl FrontierRuntime for ConcreteRuntime {
 
     fn save_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
         self.frontier_store.save_frontier(state)
+    }
+
+    fn recover_frontier_trial(
+        &mut self,
+        state: &FrontierRunState,
+        key: &crate::model::TrialKey,
+        artifact: &ArtifactDefinition,
+        case: &CaseDefinition,
+        model: &ModelIdentity,
+        harness: &HarnessIdentity,
+    ) -> Result<Option<TrialRecord>, SkillEvalError> {
+        let run_id = RunId(state.configuration.run_id.0.clone());
+        let judge = &state.configuration.plan.judge;
+        let Some(candidate) = self
+            .runner
+            .recover_frontier(&run_id, key, case, model, harness)?
+        else {
+            return Ok(None);
+        };
+        let checks = self.verifier.verify(case, &candidate)?;
+        let input = JudgeInput {
+            candidate: candidate.clone(),
+            expect: case.expect.clone(),
+            rubric_path: artifact.root.join("evals/rubric.md"),
+            checks,
+        };
+        let judged = match self.judge.recover_frontier_grade(judge, &input)? {
+            Some(judged) => judged,
+            None => self.judge.grade(judge, &input)?,
+        };
+        Ok(Some(TrialRecord {
+            key: key.clone(),
+            model: model.clone(),
+            harness: harness.clone(),
+            artifact_path: candidate.artifact_path,
+            transcript_path: candidate.transcript_path,
+            candidate_usage: candidate.usage,
+            judge_model: judged.model,
+            judge_usage: judged.usage,
+            verdict: judged.verdict,
+        }))
     }
 
     fn save_frontier_trial(

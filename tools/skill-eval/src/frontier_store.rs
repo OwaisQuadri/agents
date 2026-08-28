@@ -26,6 +26,7 @@ use crate::frontier_source;
 use test_frontier_source as frontier_source;
 
 const FRONTIER_ROOT: [&str; 3] = [".map", "skill-eval", "frontier"];
+const RUN_EVIDENCE_ROOT: [&str; 3] = [".map", "skill-eval", "runs"];
 const SNAPSHOT_NAME: &str = "state.json";
 const TRIALS_DIRECTORY: &str = "trials";
 const TRANSACTION_NAME: &str = ".baseline-transaction.json";
@@ -1209,14 +1210,14 @@ fn validate_trial(
             "frontier trial attempt or source revision is out of schedule",
         ));
     }
-    let run_root = FRONTIER_ROOT
+    let run_root = RUN_EVIDENCE_ROOT
         .iter()
         .fold(repository_root.to_path_buf(), |path, component| {
             path.join(component)
         })
         .join(&state.configuration.run_id.0);
-    validate_trial_evidence_path(repository_root, &run_root, &trial.artifact_path)?;
-    validate_trial_evidence_path(repository_root, &run_root, &trial.transcript_path)
+    validate_trial_evidence_path(repository_root, &run_root, &trial.artifact_path, false)?;
+    validate_trial_evidence_path(repository_root, &run_root, &trial.transcript_path, true)
 }
 
 fn validate_ledger(
@@ -1367,7 +1368,18 @@ fn validate_trial_evidence_path(
     repository_root: &Path,
     run_root: &Path,
     path: &Path,
+    is_regular_file_required: bool,
 ) -> Result<(), SkillEvalError> {
+    let lexical_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repository_root.join(path)
+    };
+    let metadata =
+        fs::symlink_metadata(&lexical_path).map_err(|error| io_error(&lexical_path, error))?;
+    if metadata.file_type().is_symlink() {
+        return Err(invalid("frontier trial evidence path is a symlink"));
+    }
     let path = if path.is_absolute() {
         let canonical = fs::canonicalize(path).map_err(|error| io_error(path, error))?;
         if !canonical.starts_with(repository_root) {
@@ -1377,9 +1389,12 @@ fn validate_trial_evidence_path(
     } else {
         safe_repository_path(repository_root, path, true)?
     };
-    if !path.starts_with(run_root) || !path.is_file() {
+    if !path.starts_with(run_root)
+        || is_regular_file_required && !path.is_file()
+        || !is_regular_file_required && !path.is_file() && !path.is_dir()
+    {
         return Err(invalid(
-            "frontier trial evidence is outside its run or is not a regular file",
+            "frontier trial evidence is outside its run or has an invalid kind",
         ));
     }
     Ok(())

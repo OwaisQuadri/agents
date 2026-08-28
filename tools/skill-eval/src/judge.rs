@@ -150,6 +150,78 @@ impl<P> PiJudge<P> {
     fn with_process(process: P) -> Self {
         Self { process }
     }
+
+    pub(crate) fn recover_frontier_grade(
+        &self,
+        model: &ModelIdentity,
+        input: &JudgeInput,
+    ) -> Result<Option<JudgeResult>, SkillEvalError> {
+        validate_identities(model, Some(&input.candidate.model))?;
+        ensure_external(model, Some(&input.candidate.model))?;
+        let artifact = canonical_file_or_directory(&input.candidate.artifact_path)?;
+        let trial_root = artifact
+            .parent()
+            .ok_or_else(|| invalid_configuration("candidate artifact has no trial directory"))?;
+        let evidence_root = trial_root.join(JUDGE_PACKET_DIRECTORY);
+        let entries = match fs::read_dir(&evidence_root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(&evidence_root, error)),
+        };
+        let mut attempts = entries
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| io_error(&evidence_root, error))?;
+        attempts.sort();
+        for attempt in attempts.into_iter().rev() {
+            let attempt_metadata =
+                fs::symlink_metadata(&attempt).map_err(|error| io_error(&attempt, error))?;
+            if attempt_metadata.file_type().is_symlink() {
+                return Err(invalid_configuration(
+                    "frontier judge recovery attempt is a symbolic link",
+                ));
+            }
+            if !attempt_metadata.is_dir() {
+                continue;
+            }
+            let transcript_path = attempt.join(JUDGE_TRANSCRIPT_NAME);
+            let transcript_metadata = match fs::symlink_metadata(&transcript_path) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(io_error(&transcript_path, error)),
+            };
+            if transcript_metadata.file_type().is_symlink() {
+                return Err(invalid_configuration(
+                    "frontier judge recovery transcript is a symbolic link",
+                ));
+            }
+            if !transcript_metadata.is_file() {
+                continue;
+            }
+            let transcript =
+                fs::read(&transcript_path).map_err(|error| io_error(&transcript_path, error))?;
+            if transcript.len() > MAX_PI_EVENT_BYTES {
+                return Err(invalid_configuration(
+                    "frontier judge recovery transcript is too large",
+                ));
+            }
+            let mut parsed = parse_events(&transcript, model, 0)?;
+            parsed.usage.elapsed_milliseconds =
+                recovered_elapsed_milliseconds(&attempt, &transcript_path)?;
+            if parsed.model != *model
+                || parsed.error_message.is_some()
+                || !parsed.has_submitted_verdict
+            {
+                continue;
+            }
+            return Ok(Some(JudgeResult {
+                verdict: parse_verdict(&parsed.response, &input.checks)?,
+                model: parsed.model,
+                usage: parsed.usage,
+            }));
+        }
+        Ok(None)
+    }
 }
 
 impl<P: Process> Judge for PiJudge<P> {
@@ -938,6 +1010,29 @@ fn invalid_configuration(message: impl Into<String>) -> SkillEvalError {
     SkillEvalError::InvalidConfiguration(message.into())
 }
 
+fn recovered_elapsed_milliseconds(
+    execution_directory: &Path,
+    transcript_path: &Path,
+) -> Result<u64, SkillEvalError> {
+    let started = fs::metadata(execution_directory)
+        .and_then(|metadata| metadata.created())
+        .map_err(|error| io_error(execution_directory, error))?;
+    let finished = fs::metadata(transcript_path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| io_error(transcript_path, error))?;
+    let elapsed = finished.duration_since(started).map_err(|_| {
+        invalid_configuration("frontier judge recovery evidence timestamps are inconsistent")
+    })?;
+    if elapsed.is_zero() {
+        return Err(invalid_configuration(
+            "frontier judge recovery elapsed time is zero",
+        ));
+    }
+    let milliseconds = u64::try_from(elapsed.as_millis())
+        .map_err(|_| invalid_configuration("frontier judge recovery elapsed time overflows"))?;
+    Ok(milliseconds.max(1))
+}
+
 fn io_error(path: &Path, error: io::Error) -> SkillEvalError {
     SkillEvalError::Io {
         path: path.to_path_buf(),
@@ -1359,6 +1454,28 @@ mod tests {
         assert!(!result.verdict.is_catastrophic);
         assert_eq!(result.verdict.failure_mode, None);
         assert_eq!(result.usage.tool_calls, 1);
+    }
+
+    #[test]
+    fn frontier_recovers_completed_judge_without_launch() {
+        let output = submitted_verdict_event_stream();
+        let mut judge = PiJudge::with_process(FakeProcess::returning(&output));
+        let input = judge_input();
+        let result = judge.grade(&judge_model(), &input).unwrap();
+
+        let recovered = judge
+            .recover_frontier_grade(&judge_model(), &input)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(judge.process.requests.len(), 1);
+        assert_eq!(recovered.model, result.model);
+        assert_eq!(recovered.verdict, result.verdict);
+        let mut expected_usage = result.usage;
+        expected_usage.elapsed_milliseconds = recovered.usage.elapsed_milliseconds;
+        assert_eq!(recovered.usage, expected_usage);
+        assert!(recovered.usage.elapsed_milliseconds > 0);
+        assert!(recovered.usage.elapsed_milliseconds < 1_000);
     }
 
     #[test]

@@ -326,6 +326,26 @@ pub(crate) trait FrontierRuntime: QualificationRuntime {
     /// Returns an error for stale authority, invalid transition, evidence loss, or failed write.
     fn save_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError>;
 
+    /// Recovers completed candidate and judge evidence left before durable trial append.
+    ///
+    /// The inputs identify the exact scheduled trial and frozen execution identities. The output
+    /// is the recovered completed trial, or none when no complete evidence exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed, conflicting, unsafe, or partial evidence.
+    fn recover_frontier_trial(
+        &mut self,
+        _state: &FrontierRunState,
+        _key: &TrialKey,
+        _artifact: &ArtifactDefinition,
+        _case: &CaseDefinition,
+        _model: &ModelIdentity,
+        _harness: &HarnessIdentity,
+    ) -> Result<Option<TrialRecord>, SkillEvalError> {
+        Ok(None)
+    }
+
     /// Appends one completed frontier trial before its parent aggregate advances.
     ///
     /// The inputs are the frontier run identity and exact trial. The method produces no value.

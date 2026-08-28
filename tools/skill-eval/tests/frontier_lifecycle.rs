@@ -39,6 +39,7 @@ macro_rules! frontier_lifecycle_tests {
                 plan: FrontierPlan,
                 suite: FrontierSuite,
                 candidate_error: Option<SkillEvalError>,
+                recovered_cost: Option<u64>,
                 execute_calls: u32,
                 timeouts: Vec<Option<u32>>,
                 models: Vec<ModelIdentity>,
@@ -54,6 +55,7 @@ macro_rules! frontier_lifecycle_tests {
                         plan: plan(),
                         suite,
                         candidate_error: None,
+                        recovered_cost: None,
                         execute_calls: 0,
                         timeouts: Vec::new(),
                         models: Vec::new(),
@@ -135,6 +137,33 @@ macro_rules! frontier_lifecycle_tests {
                     durable.log.push("save");
                     durable.state = Some(state.clone());
                     Ok(())
+                }
+
+                fn recover_frontier_trial(
+                    &mut self,
+                    state: &FrontierRunState,
+                    key: &TrialKey,
+                    _artifact: &ArtifactDefinition,
+                    _case: &CaseDefinition,
+                    model: &ModelIdentity,
+                    harness: &HarnessIdentity,
+                ) -> Result<Option<TrialRecord>, SkillEvalError> {
+                    Ok(self.recovered_cost.take().map(|cost| TrialRecord {
+                        key: key.clone(),
+                        model: model.clone(),
+                        harness: harness.clone(),
+                        artifact_path: PathBuf::from("recovered/artifact"),
+                        transcript_path: PathBuf::from("recovered/transcript.jsonl"),
+                        candidate_usage: usage(cost),
+                        judge_model: state.configuration.plan.judge.clone(),
+                        judge_usage: usage(0),
+                        verdict: TrialVerdict {
+                            score: 10,
+                            is_catastrophic: false,
+                            failure_mode: None,
+                            checks: Vec::new(),
+                        },
+                    }))
                 }
 
                 fn save_frontier_trial(
@@ -489,6 +518,34 @@ macro_rules! frontier_lifecycle_tests {
                         .unwrap();
                 assert_eq!(unchanged, paused);
                 assert_eq!(runtime.execute_calls, calls);
+            }
+
+            #[test]
+            fn recovered_trial_over_the_frozen_reservation_is_rejected_before_append() {
+                let mut runtime = FakeRuntime::new();
+                runtime.recovered_cost = Some(11);
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+
+                assert!(
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .is_err()
+                );
+
+                assert_eq!(runtime.execute_calls, 0);
+                assert!(runtime.durable.borrow().trials.is_empty());
+                assert_eq!(
+                    runtime
+                        .durable
+                        .borrow()
+                        .state
+                        .as_ref()
+                        .unwrap()
+                        .spent_millionths_of_dollar,
+                    0
+                );
             }
 
             #[test]
