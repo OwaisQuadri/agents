@@ -273,8 +273,10 @@ fi
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
 #    because each one sits in a path that is waited on: ste-check in the reply path,
 #    no-ai-attribution in the PreToolUse path ahead of every commit,
-#    session-stats as an on-demand command the user runs by name
-for tool in ste-check no-ai-attribution session-stats; do
+#    session-stats as an on-demand command the user runs by name,
+#    logpath-check in the pi/extensions/logpath-guard tool_call path ahead of every bash
+#    write to a logs/usage.jsonl path (also runnable by name for the static SKILL.md scan)
+for tool in ste-check no-ai-attribution session-stats logpath-check; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then

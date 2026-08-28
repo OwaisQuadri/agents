@@ -117,8 +117,10 @@ runs read the mean and use the failure modes as feedback.
 
 ## logging
 
-At the end of a use, append ONE bounded JSON (JavaScript Object Notation) line to this
-skill's `logs/usage.jsonl`, in exactly this shape and with exactly these keys:
+At the end of a use, append ONE bounded JSON (JavaScript Object Notation) line to
+`<repo-root>/skills/mouthpiece/logs/usage.jsonl`, where `<repo-root>` is the output of
+`git rev-parse --show-toplevel` — never a path relative to the caller's own working
+directory — in exactly this shape and with exactly these keys:
 
 ```json
 {"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"mouthpiece","prompt_version":"<short sha>","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}

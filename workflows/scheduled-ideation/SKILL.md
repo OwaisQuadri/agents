@@ -131,8 +131,10 @@ itself is already OS-agnostic, only the scheduler wiring differs.
 
 ## logging
 
-At the end of a use, append ONE JSON(JavaScript Object Notation) line to this
-artifact's `logs/usage.jsonl`:
+At the end of a use, append ONE JSON(JavaScript Object Notation) line to
+`<repo-root>/workflows/scheduled-ideation/logs/usage.jsonl`, where `<repo-root>` is the
+output of `git rev-parse --show-toplevel` — never a path relative to the caller's own
+working directory:
 
 ```json
 {"ts":"<local iso with offset, e.g. 2026-08-28T15:00:09-0400>","artifact":"scheduled-ideation","trigger":"<what fired it, e.g. daily launchd 3pm run>","excerpt":"<candidate counts, dispatch labels, filter verdict>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
