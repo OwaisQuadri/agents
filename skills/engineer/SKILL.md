@@ -34,6 +34,27 @@ a step that touches tracked repo paths commits those real paths directly.
 No task on hand \u2192 dispatch `/pick-task`, use what it returns, continue. A task already
 in hand (an id, a clear description) skips straight to Research.
 
+A backend-tracked task (GitHub Issue, Linear item, `roadmap.json` entry) gets flipped
+to in-progress before Research starts: GitHub swaps the `status:*` label to
+`status:in-progress` (`task-graph`'s convention \u2014 `gh issue edit <id> --remove-label
+status:<old> --add-label status:in-progress`); Linear moves the issue to its "In
+Progress" state via MCP(Model Context Protocol); `roadmap.json` sets the entry's
+`status` field to `in progress`. A one-off description with no backend id has no
+status to flip \u2014 skip.
+
+Record the id in `.context/branch-tickets.md` (append, one id per line; create the
+file if this is the first task the branch has picked up). This is how Close (step 6)
+finds every ticket the branch carries \u2014 including a second task picked up mid-branch
+(next paragraph) \u2014 without re-deriving it from memory.
+
+**Folding a second ticket into the same branch.** Nothing here forces a new branch
+per task \u2014 engineer and `/git-sync` only branch away from main when work is starting
+from main itself (`/git-sync` step 3). Running engineer again for a new task while
+already on a feature branch with unfinished or unlanded work continues on that same
+branch by default: flip the new task's status the same way, append its id to
+`.context/branch-tickets.md` alongside the first, and carry it through Research \u2192
+Plan \u2192 Implement \u2192 Test same as any task. Both land through one Close.
+
 ## 1. Research
 
 Dispatch the research workflow (`workflows/research-sweep/`) with a goal built from the
@@ -99,7 +120,13 @@ verdict. This is the last stop before the change leaves the machine.
 
 Hand off to `/git-sync` for the whole landing sequence \u2014 committing, pushing, opening
 or updating the PR (or the local squash merge when there's no remote), and pruning
-branches main already contains. Never reimplement any of that here.
+branches main already contains. Pass every id from `.context/branch-tickets.md`
+along: for each GitHub Issue id, `/create-pr` adds a `Closes #<id>` line to the PR
+body, which is what makes merging the PR auto-close the issue; for each
+`roadmap.json` id (no PR-merge equivalent exists there) flip its `status` to `done`
+as part of this same step, not left for a later run; a Linear item with no linked
+GitHub issue gets its state moved to "Done" directly via MCP(Model Context Protocol),
+same reasoning. Never reimplement any of that here.
 
 ## evals
 
