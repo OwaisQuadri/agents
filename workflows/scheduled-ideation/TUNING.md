@@ -16,6 +16,26 @@ The GEPA(Genetic-Pareto prompt evolution) loop's inputs and outputs for this wor
   `workflows/research-sweep/`'s proven plan→fan-out→merge→verify shape. Mechanical run:
   6/6 non-holdout at 5.00, holdout c7 at 5.00, zero catastrophic.
 
+- 2026-08-28, real-run correction after the first live 3pm launchd fire. Two owner-
+  reported gaps against the same live run: (1) `CANDIDATE_SCHEMA.category` only had
+  `skill|agent|tool`, so a mining dispatch that correctly concluded "this is really a
+  checker" or "this is really a workflow" per ai-author's own step-5 routing had no
+  slot to report it in — the digest could never actually answer "which linters, checks,
+  skills, agents, workflows, or other", the exact question the owner asked. Expanded the
+  enum to `skill|agent|workflow|checker|extension|tool` and updated the Plan node's
+  dispatch instructions, `dispatchPrompt`'s per-candidate category instruction, the
+  Filter node's category count, and the Digest node's heading list (six headings now,
+  each omitted when empty) to match. (2) Both mining dispatches (`skill-evidence-sweep`,
+  `agent-candidate-scan`) failed outright on the live run — `ok: false` in the workflow
+  journal, no error text captured. Reproduced live with a standalone Explore dispatch:
+  it correctly located `~/.pi/agent/sessions/`, then aborted ("This operation was
+  aborted") while reading several full session transcripts, which can run multi-MB each
+  — confirmed by this very session's own transcript size. Added an explicit reading-
+  boundedness rule to both mining dispatch objectives (grep for markers, tail the last
+  ~200 lines, or bounded offset/limit reads — never an unbounded whole-file read).
+  Re-verification of this fix (a second live launchd-triggered run) is the next real
+  signal on whether it holds.
+
 ## deferred
 
 - No persistent dedup across daily runs yet — two consecutive days could surface the

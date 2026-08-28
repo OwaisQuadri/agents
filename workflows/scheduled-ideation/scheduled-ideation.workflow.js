@@ -30,11 +30,17 @@ const DISPATCH_SCHEMA = {
   required: ['label', 'category', 'objective', 'boundaries', 'source_guidance', 'recency'],
 }
 
+// The candidate's own destination category is ai-author's actual type-tree outcome, not
+// the coarser skill/agent/tool bucket a dispatch was routed under (a skill-evidence-sweep
+// dispatch can legitimately conclude "checker" or "workflow" once it applies the "should
+// it exist?" test) — this is what lets the digest literally answer "which linters, checks,
+// skills, agents, workflows, or other", instead of force-fitting everything non-agent into
+// a single generic "skill" or "tool" bucket.
 const CANDIDATE_SCHEMA = {
   type: 'object',
   properties: {
     name: { type: 'string' },
-    category: { type: 'string', enum: ['skill', 'agent', 'tool'] },
+    category: { type: 'string', enum: ['skill', 'agent', 'workflow', 'checker', 'extension', 'tool'] },
     rationale: { type: 'string' },
     evidence: { type: 'string' },
     source: { type: 'string' },
@@ -48,9 +54,11 @@ const plan = await agent(
 
 Design exactly 2 mining dispatches (codebase, read-only) plus between 1 and ${MAX_TOOL_RADAR} tool-radar dispatches (web), each self-contained: the agent receiving it sees NOTHING but the five fields below, not this conversation.
 
-Mining dispatch 1 (category "skill", label "skill-evidence-sweep"): objective MUST instruct the agent to run the exact "bounded session evidence sweep" procedure from skills/ai-author/SKILL.md in this repo (read that file first, then follow its numbered steps 1-6 verbatim) and report the surviving skill candidates it proposes, each with its evidence and routing verdict. source_guidance: "skills/ai-author/SKILL.md for the procedure; the ten newest parent Pi session transcripts and named artifacts' logs/usage.jsonl or run-history.jsonl for evidence, per that procedure's own window rule."
+Both mining dispatches MUST include this exact reading-boundedness rule verbatim in their objective, because a Pi session transcript can run to many megabytes and an earlier live run aborted trying to read several in full: "Session transcripts live under ~/.pi/agent/sessions/ and can be multi-MB each. NEVER read a full session file. Use grep to find markers first (tool_use, error, cost, a skill/agent name), or read only the last ~200 lines (tail) of a session, or bounded offset/limit reads — never an unbounded whole-file read. The same per-file cap applies to any logs/usage.jsonl or run-history.jsonl found."
 
-Mining dispatch 2 (category "agent", label "agent-candidate-scan"): objective MUST instruct the agent to read skills/ai-author/SKILL.md's "should it exist?" section (the same repo, same file) for the criteria that justify an AGENT specifically — a distinct model the parent shouldn't hold, a tool grant the parent must not hold, or isolation from noisy work — then apply the SAME bounded evidence sweep window and evidence discipline (measured repetition and cost only, never estimated, reject unmeasured shapes) but filtered to shapes that clear the agent bar specifically, not the skill bar. source_guidance: same evidence sources as dispatch 1.
+Mining dispatch 1 (category "skill", label "skill-evidence-sweep"): objective MUST instruct the agent to run the exact "bounded session evidence sweep" procedure from skills/ai-author/SKILL.md in this repo (read that file first, then follow its numbered steps 1-6 verbatim) and report the surviving candidates it proposes, each with its evidence and routing verdict. Step 5 of that procedure already routes each surviving candidate to whichever destination the evidence actually supports — a checker, a Pi extension, a skill, an agent, or a workflow — so the candidates returned are NOT limited to category "skill": instruct the agent explicitly to report each candidate's category as whatever that step concludes (skill|agent|workflow|checker|extension), never force-fit everything into "skill". source_guidance: "skills/ai-author/SKILL.md for the procedure; the ten newest parent Pi session transcripts and named artifacts' logs/usage.jsonl or run-history.jsonl for evidence, per that procedure's own window rule and the reading-boundedness rule above."
+
+Mining dispatch 2 (category "agent", label "agent-candidate-scan"): objective MUST instruct the agent to read skills/ai-author/SKILL.md's "should it exist?" section (the same repo, same file) for the criteria that justify an AGENT specifically — a distinct model the parent shouldn't hold, a tool grant the parent must not hold, or isolation from noisy work — then apply the SAME bounded evidence sweep window and evidence discipline (measured repetition and cost only, never estimated, reject unmeasured shapes) but filtered to shapes that clear the agent bar specifically. When a shape doesn't clear the agent bar but the same step 5 routing concludes a different destination (checker, extension, skill, workflow) still fits, report that too rather than discarding it — instruct the agent to report each candidate's actual category (skill|agent|workflow|checker|extension), not force everything into "agent". source_guidance: same evidence sources and reading-boundedness rule as dispatch 1.
 
 Tool-radar dispatches (category "tool", 1-${MAX_TOOL_RADAR} of them): each covers a DISTINCT external-discovery angle relevant to this repo's actual stack (Pi/Claude Code and coding-agent tooling, TypeScript/Rust developer tooling, terminal multiplexer/Herdr-adjacent tooling, AI agent orchestration). Rotate which specific sources and angle you pick each run so consecutive daily runs don't repeat the same search — vary among GitHub Trending, Hacker News, package-registry release feeds, vendor/company engineering blogs, and ArXiv for anything genuinely research-adjacent. Each objective must ask the researcher to name concrete, named tools/projects with a URL and a one-paragraph rationale for why THIS repo's owner specifically would want it, not a generic "top N tools" listicle.
 
@@ -71,8 +79,16 @@ const toolRadar = plan.dispatches.filter(d => d.category === 'tool').slice(0, MA
 const allDispatches = [...mining, ...toolRadar]
 log(`planned ${mining.length} mining dispatch(es) + ${toolRadar.length} tool-radar dispatch(es): ${allDispatches.map(d => d.label).join(', ')}`)
 
+// Mining dispatches (skill/agent) report whatever destination ai-author's own type-tree
+// concludes, not the coarse bucket they were routed under; tool-radar stays fixed at "tool"
+// since it never runs that routing step.
+const categoryInstruction = d =>
+  d.category === 'tool'
+    ? `category ("tool")`
+    : `category (one of skill|agent|workflow|checker|extension — whichever your routing verdict actually concludes; do not force-fit into "${d.category}")`
+
 const dispatchPrompt = d =>
-  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, category ("${d.category}"), rationale (why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
+  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
 
 phase('Generate')
 const [miningResults, toolResults] = await Promise.all([
@@ -97,7 +113,7 @@ phase('Filter')
 const filtered = await agent(
   `You are a fresh-context filter for a daily candidate-ideation run. You were not involved in generating these candidates and have never seen the sessions or searches that produced them — judge only what's written here.
 
-Below are ${rawCandidates.length} raw candidates across three categories (skill/agent/tool), from a personal agents repo's daily ideation sweep. Score each on: (1) evidence strength — is the rationale backed by a measured, cited fact (a real repetition count, a real cost, a real URL fetched this run) rather than a vibe or an estimate; (2) relevance — would this repo's owner plausibly act on it; (3) actionability — is there a concrete next step, not just a vague observation. This directly guards against a documented 2026 failure mode: AI-generated noise overwhelming a human reviewer. When in doubt, drop it — a short, high-signal list beats a long noisy one.
+Below are ${rawCandidates.length} raw candidates across six possible categories (skill/agent/workflow/checker/extension/tool), from a personal agents repo's daily ideation sweep. Score each on: (1) evidence strength — is the rationale backed by a measured, cited fact (a real repetition count, a real cost, a real URL fetched this run) rather than a vibe or an estimate; (2) relevance — would this repo's owner plausibly act on it; (3) actionability — is there a concrete next step, not just a vague observation. This directly guards against a documented 2026 failure mode: AI-generated noise overwhelming a human reviewer. When in doubt, drop it — a short, high-signal list beats a long noisy one.
 
 Return only the survivors, capped at ${MAX_DIGEST_CANDIDATES}, ranked best first, plus how many you dropped and the single main reason (e.g. "6 dropped: unmeasured/estimated evidence").
 
@@ -109,7 +125,7 @@ log(filtered ? `filter: ${survivors.length} survived, ${filtered.droppedCount} d
 
 phase('Digest')
 const digestAgent = await agent(
-  `Write the final markdown digest for today's scheduled-ideation run. Group these survivor candidates under three headings in this exact order: "## Skills worth authoring", "## Agents worth authoring", "## Tools worth trying" (omit a heading entirely if it has zero candidates — never write an empty section). Under each candidate: a bold name, then its rationale, evidence, and source on separate lines. Start the file with a one-line dated header "# Scheduled ideation — <today's date if inferable from context, otherwise omit the date>" and end with a one-line footer stating how many raw candidates were generated, how many survived filtering, and any dispatch labels that returned nothing.
+  `Write the final markdown digest for today's scheduled-ideation run. Group these survivor candidates under headings in this exact order, one per category present: "## Skills worth authoring", "## Agents worth authoring", "## Workflows worth authoring", "## Checkers/linters worth building" (category "checker"), "## Pi extensions worth building" (category "extension"), "## Tools worth trying" (category "tool") (omit a heading entirely if it has zero candidates — never write an empty section). Under each candidate: a bold name, then its rationale, evidence, and source on separate lines. Start the file with a one-line dated header "# Scheduled ideation — <today's date if inferable from context, otherwise omit the date>" and end with a one-line footer stating how many raw candidates were generated, how many survived filtering, and any dispatch labels that returned nothing.
 
 Survivors:
 ${survivors.map(c => `- [${c.category}] ${c.name} — ${c.rationale} | evidence: ${c.evidence} | source: ${c.source}`).join('\n')}
