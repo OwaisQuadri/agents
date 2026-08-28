@@ -107,7 +107,15 @@ log "typing kickoff prompt into pane $AGENT_PANE"
 #    retried, not just sent once: each attempt re-sends `enter` (harmless no-op if
 #    the previous one actually landed and a turn is now running — see below) and
 #    waits a short beat for a real transition to "working" before giving up on it.
-KICKOFF="Run workflows/scheduled-ideation/ (the Workflow tool, no args needed) and write its returned digest verbatim to $DIGEST_PATH in this worktree. This is the scheduled ideation run started at $RUN_STAMP."
+# 4. When the workflow's own completion notification lands truncated (large results,
+#    observed on the 2026-08-28 15:00 launchd fire) and get_subagent_result then
+#    reports "Agent not found: ... cleaned up", Pi's own fallback of choice is a
+#    blind `find /` from filesystem root -- which stalled past 10 minutes on that
+#    same run and would have blown well past PROMPT_TIMEOUT_MS on its own. The
+#    kickoff prompt below heads that off: it names the one real, fast location up
+#    front (OS temp dir, not root) so Pi never needs to invent the slow search.
+KICKOFF_TASKFILE_HINT='If the workflow'"'"'s own completion notification arrives truncated and get_subagent_result then reports the task was cleaned up, do NOT search from filesystem root -- that stalls for many minutes. The full result is already on disk under the OS temp dir (not /), several directories down, ending in a tasks folder holding a file named after the task id with a .workflow.jsonl suffix -- find that one specific file under the temp dir only, then read the digest field from its last JSON line.'
+KICKOFF="Run workflows/scheduled-ideation/ (the Workflow tool, no args needed) and write its returned digest verbatim to $DIGEST_PATH in this worktree. This is the scheduled ideation run started at $RUN_STAMP. $KICKOFF_TASKFILE_HINT"
 "$HERDR" pane send-text "$AGENT_PANE" "$KICKOFF"
 
 log "confirming the agent actually started working"
