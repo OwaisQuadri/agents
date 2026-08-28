@@ -10,235 +10,214 @@
       },
       "cases": [
         {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b1",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b2",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b3",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b4",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b5",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b6",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r1",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r2",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r4",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r5",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b7",
+          "artifact_path": "skills/ladder",
+          "artifact_revision": "fnv1a64:eab4127e9b7b7dd7",
+          "case": "c5",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b8",
+          "artifact_path": "agents/maestro-tester",
+          "artifact_revision": "fnv1a64:0667f264bf903835",
+          "case": "c2",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r3",
+          "artifact_path": "agents/debugger",
+          "artifact_revision": "fnv1a64:c85c4f7b3bb837cb",
+          "case": "c3",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r6",
+          "artifact_path": "agents/maestro-tester",
+          "artifact_revision": "fnv1a64:0667f264bf903835",
+          "case": "c3",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r7",
+          "artifact_path": "agents/anchor-verifier",
+          "artifact_revision": "fnv1a64:2f20bb3b8810f92f",
+          "case": "c3",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r8",
-          "group": "edge",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m2",
-          "group": "edge",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m5",
-          "group": "edge",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b9",
+          "artifact_path": "agents/debugger",
+          "artifact_revision": "fnv1a64:c85c4f7b3bb837cb",
+          "case": "c4",
           "group": "adversarial",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b10",
+          "artifact_path": "workflows/research-sweep",
+          "artifact_revision": "fnv1a64:d4040580ec8c0c05",
+          "case": "c1",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/debugger",
+          "artifact_revision": "fnv1a64:c85c4f7b3bb837cb",
+          "case": "c2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c2",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s3",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c4",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/anchor-verifier",
+          "artifact_revision": "fnv1a64:2f20bb3b8810f92f",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/anchor-verifier",
+          "artifact_revision": "fnv1a64:2f20bb3b8810f92f",
+          "case": "c4",
           "group": "adversarial",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r9",
-          "group": "adversarial",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m4",
-          "group": "adversarial",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m6",
-          "group": "adversarial",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m7",
-          "group": "adversarial",
+          "artifact_path": "agents/code-reviewer",
+          "artifact_revision": "fnv1a64:ce3fb092b3cc9120",
+          "case": "c4",
+          "group": "normal",
           "is_confirmation": false
         },
         {
           "artifact_path": "agents/log-summarizer",
-          "artifact_revision": "fnv1a64:900405c744ed4933",
+          "artifact_revision": "fnv1a64:b2da887f92422953",
+          "case": "c6",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c7",
+          "group": "normal",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/code-reviewer",
+          "artifact_revision": "fnv1a64:ce3fb092b3cc9120",
+          "case": "c5",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/debugger",
+          "artifact_revision": "fnv1a64:c85c4f7b3bb837cb",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c4-push-only",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/maestro-tester",
+          "artifact_revision": "fnv1a64:0667f264bf903835",
+          "case": "c5",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/agent-author",
+          "artifact_revision": "fnv1a64:4a4922a61c37a5c5",
+          "case": "a3-release-checklist",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c3",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/workflow-author",
+          "artifact_revision": "fnv1a64:b00e881dbddf71df",
+          "case": "w5-ai-author-fence",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/skill-author",
+          "artifact_revision": "fnv1a64:e5b62df057a8df35",
+          "case": "s3-ai-author-fence",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s4",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/code-reviewer",
+          "artifact_revision": "fnv1a64:ce3fb092b3cc9120",
           "case": "c2",
           "group": "adversarial",
           "is_confirmation": false
         },
         {
-          "artifact_path": "agents/log-summarizer",
-          "artifact_revision": "fnv1a64:900405c744ed4933",
-          "case": "c3",
+          "artifact_path": "agents/anchor-verifier",
+          "artifact_revision": "fnv1a64:2f20bb3b8810f92f",
+          "case": "c2",
           "group": "adversarial",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b11",
-          "group": "critical",
+          "artifact_path": "agents/debugger",
+          "artifact_revision": "fnv1a64:c85c4f7b3bb837cb",
+          "case": "c5",
+          "group": "adversarial",
           "is_confirmation": true
         },
         {
-          "artifact_path": "skills/byline",
-          "artifact_revision": "fnv1a64:c4a3239f7a79118f",
-          "case": "b14",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r10",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/bro",
-          "artifact_revision": "fnv1a64:499d068b54482315",
-          "case": "r13",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m11",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/mouthpiece",
-          "artifact_revision": "fnv1a64:f038ee57534fe901",
-          "case": "m23",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "agents/log-summarizer",
-          "artifact_revision": "fnv1a64:900405c744ed4933",
-          "case": "c6",
-          "group": "critical",
-          "is_confirmation": true
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
         }
       ]
     },
@@ -251,30 +230,30 @@
       },
       "cases": [
         {
-          "artifact_path": "skills/footprint",
-          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
+          "artifact_path": "agents/web-research-summarizer",
+          "artifact_revision": "fnv1a64:1a7f999b7d9fc0cc",
+          "case": "c3",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/log-summarizer",
+          "artifact_revision": "fnv1a64:b2da887f92422953",
           "case": "c1",
           "group": "normal",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/footprint",
-          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
-          "case": "c2",
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s1",
           "group": "normal",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/footprint",
-          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
-          "case": "c3",
-          "group": "normal",
-          "is_confirmation": false
-        },
-        {
-          "artifact_path": "skills/footprint",
-          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
-          "case": "c5",
+          "artifact_path": "agents/maestro-tester",
+          "artifact_revision": "fnv1a64:0667f264bf903835",
+          "case": "c1",
           "group": "normal",
           "is_confirmation": false
         },
@@ -286,30 +265,135 @@
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/simplify",
-          "artifact_revision": "fnv1a64:4a17f9a745971a47",
-          "case": "s2",
+          "artifact_path": "agents/code-reviewer",
+          "artifact_revision": "fnv1a64:ce3fb092b3cc9120",
+          "case": "c1",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c3",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/anchor-verifier",
+          "artifact_revision": "fnv1a64:2f20bb3b8810f92f",
+          "case": "c5",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c6",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/session-stats",
+          "artifact_revision": "fnv1a64:e4e9e1efc821d177",
+          "case": "synthetic-model",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s6",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/maestro-tester",
+          "artifact_revision": "fnv1a64:0667f264bf903835",
+          "case": "c4",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c7",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/session-stats",
+          "artifact_revision": "fnv1a64:e4e9e1efc821d177",
+          "case": "fixture-shape",
           "group": "normal",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/simplify",
-          "artifact_revision": "fnv1a64:4a17f9a745971a47",
-          "case": "s4",
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c2",
           "group": "normal",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/simplify",
-          "artifact_revision": "fnv1a64:4a17f9a745971a47",
-          "case": "s5",
+          "artifact_path": "skills/session-stats",
+          "artifact_revision": "fnv1a64:e4e9e1efc821d177",
+          "case": "dedup",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t3",
           "group": "normal",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/simplify",
-          "artifact_revision": "fnv1a64:4a17f9a745971a47",
-          "case": "s7",
+          "artifact_path": "skills/agent-author",
+          "artifact_revision": "fnv1a64:4a4922a61c37a5c5",
+          "case": "a4-missing-dispatch-input",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c4",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-author",
+          "artifact_revision": "fnv1a64:4a4922a61c37a5c5",
+          "case": "a2-json-normalizer",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c5",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c5",
           "group": "normal",
           "is_confirmation": false
         },
@@ -321,38 +405,125 @@
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/task-graph",
-          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
-          "case": "t2",
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s6",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g9",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/task-graph",
-          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
-          "case": "t4",
+          "artifact_path": "skills/session-stats",
+          "artifact_revision": "fnv1a64:e4e9e1efc821d177",
+          "case": "analysis-not-transcripts",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/rust-style",
+          "artifact_revision": "fnv1a64:a4655bd68db8ad8f",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "a1-healthy-audit",
+          "group": "normal",
+          "is_confirmation": false
+        }
+      ]
+    },
+    "t3": {
+      "group_weights_basis_points": {
+        "normal": 4000,
+        "edge": 2000,
+        "adversarial": 2000,
+        "critical": 2000
+      },
+      "cases": [
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g4",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/task-graph",
-          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
-          "case": "t7",
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c3",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/web-research-summarizer",
+          "artifact_revision": "fnv1a64:1a7f999b7d9fc0cc",
+          "case": "c1",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/web-research-summarizer",
+          "artifact_revision": "fnv1a64:1a7f999b7d9fc0cc",
+          "case": "c4",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/volley",
+          "artifact_revision": "fnv1a64:8a197d8b62ca72fb",
+          "case": "c6",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s3",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s2",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/task-graph",
-          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
-          "case": "t9",
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g11",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/create-pr",
-          "artifact_revision": "fnv1a64:930cb4004dfb0420",
-          "case": "c1-branch-mismatch",
+          "artifact_path": "skills/session-stats",
+          "artifact_revision": "fnv1a64:e4e9e1efc821d177",
+          "case": "view-on-request",
           "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s2",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/ladder",
+          "artifact_revision": "fnv1a64:eab4127e9b7b7dd7",
+          "case": "c3",
+          "group": "adversarial",
           "is_confirmation": false
         },
         {
@@ -363,16 +534,201 @@
           "is_confirmation": false
         },
         {
+          "artifact_path": "workflows/research-sweep",
+          "artifact_revision": "fnv1a64:d4040580ec8c0c05",
+          "case": "c3",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/skill-author",
+          "artifact_revision": "fnv1a64:e5b62df057a8df35",
+          "case": "s1-cache-key-auditor",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
           "artifact_path": "skills/create-pr",
           "artifact_revision": "fnv1a64:930cb4004dfb0420",
-          "case": "c5-auth-failure",
+          "case": "c2-no-attribution",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t6",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m6",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/ladder",
+          "artifact_revision": "fnv1a64:eab4127e9b7b7dd7",
+          "case": "c4",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c6",
           "group": "edge",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/git-sync",
-          "artifact_revision": "fnv1a64:6999835443158eee",
-          "case": "g3",
+          "artifact_path": "agents/code-reviewer",
+          "artifact_revision": "fnv1a64:ce3fb092b3cc9120",
+          "case": "c3",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g4",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/skill-author",
+          "artifact_revision": "fnv1a64:e5b62df057a8df35",
+          "case": "s5-hand-only",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/ladder",
+          "artifact_revision": "fnv1a64:eab4127e9b7b7dd7",
+          "case": "c6",
+          "group": "normal",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/workflow-author",
+          "artifact_revision": "fnv1a64:b00e881dbddf71df",
+          "case": "w2-fake-edge-rewrite",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-author",
+          "artifact_revision": "fnv1a64:4a4922a61c37a5c5",
+          "case": "a1-contract-checker",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/ladder",
+          "artifact_revision": "fnv1a64:eab4127e9b7b7dd7",
+          "case": "c2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/skill-author",
+          "artifact_revision": "fnv1a64:e5b62df057a8df35",
+          "case": "h1-stale-command-repair",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t5",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/skill-author",
+          "artifact_revision": "fnv1a64:e5b62df057a8df35",
+          "case": "s4-conditional-reference",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m3",
+          "group": "adversarial",
+          "is_confirmation": false
+        }
+      ]
+    },
+    "t4": {
+      "group_weights_basis_points": {
+        "normal": 4000,
+        "edge": 2000,
+        "adversarial": 2000,
+        "critical": 2000
+      },
+      "cases": [
+        {
+          "artifact_path": "workflows/research-sweep",
+          "artifact_revision": "fnv1a64:d4040580ec8c0c05",
+          "case": "c2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s4",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t8",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/web-research-summarizer",
+          "artifact_revision": "fnv1a64:1a7f999b7d9fc0cc",
+          "case": "c2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g8",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/ai-author",
+          "artifact_revision": "fnv1a64:48d99aa5d62079d2",
+          "case": "a4",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s7",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/rust-style",
+          "artifact_revision": "fnv1a64:a4655bd68db8ad8f",
+          "case": "c6",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/vocabulary",
+          "artifact_revision": "fnv1a64:3315c19bb4fae553",
+          "case": "c5",
           "group": "edge",
           "is_confirmation": false
         },
@@ -380,14 +736,318 @@
           "artifact_path": "skills/agent-config-reset",
           "artifact_revision": "fnv1a64:7ba5a998b08722f4",
           "case": "a2-sprawl-audit",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g7",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c7",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s5",
           "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-author",
+          "artifact_revision": "fnv1a64:4a4922a61c37a5c5",
+          "case": "h1-fixture-curator",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/workflow-author",
+          "artifact_revision": "fnv1a64:b00e881dbddf71df",
+          "case": "w1-route-audit",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/ladder",
+          "artifact_revision": "fnv1a64:eab4127e9b7b7dd7",
+          "case": "c1",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t9",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/spec-tester",
+          "artifact_revision": "fnv1a64:0b2128cf67d6571c",
+          "case": "s5",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/web-research-summarizer",
+          "artifact_revision": "fnv1a64:1a7f999b7d9fc0cc",
+          "case": "c5",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/skill-author",
+          "artifact_revision": "fnv1a64:e5b62df057a8df35",
+          "case": "s2-trigger-repair",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/workflow-author",
+          "artifact_revision": "fnv1a64:b00e881dbddf71df",
+          "case": "w3-wide-pricing",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t4",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "h1-mcp-audit",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/ai-author",
+          "artifact_revision": "fnv1a64:48d99aa5d62079d2",
+          "case": "c1",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c5-auth-failure",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/simplify",
+          "artifact_revision": "fnv1a64:4a17f9a745971a47",
+          "case": "s7",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m2",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t2",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/footprint",
+          "artifact_revision": "fnv1a64:6822cfe3adbd5add",
+          "case": "c2",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/rust-style",
+          "artifact_revision": "fnv1a64:a4655bd68db8ad8f",
+          "case": "c2",
+          "group": "critical",
+          "is_confirmation": false
+        }
+      ]
+    },
+    "t5": {
+      "group_weights_basis_points": {
+        "normal": 4000,
+        "edge": 2000,
+        "adversarial": 2000,
+        "critical": 2000
+      },
+      "cases": [
+        {
+          "artifact_path": "workflows/research-sweep",
+          "artifact_revision": "fnv1a64:d4040580ec8c0c05",
+          "case": "c5",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "agents/log-summarizer",
+          "artifact_revision": "fnv1a64:b2da887f92422953",
+          "case": "c4",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c6-full-workspace-diff",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g3",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g6",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/workflow-author",
+          "artifact_revision": "fnv1a64:b00e881dbddf71df",
+          "case": "w4-shared-changelog",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/task-graph",
+          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
+          "case": "t7",
+          "group": "edge",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-author",
+          "artifact_revision": "fnv1a64:4a4922a61c37a5c5",
+          "case": "a5-fresh-reviewer",
+          "group": "normal",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m8",
+          "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/workflow-author",
+          "artifact_revision": "fnv1a64:b00e881dbddf71df",
+          "case": "h1-partial-fanin",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/create-pr",
+          "artifact_revision": "fnv1a64:930cb4004dfb0420",
+          "case": "c1-branch-mismatch",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "workflows/research-sweep",
+          "artifact_revision": "fnv1a64:d4040580ec8c0c05",
+          "case": "c4",
+          "group": "adversarial",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "agents/log-summarizer",
+          "artifact_revision": "fnv1a64:b2da887f92422953",
+          "case": "c5",
+          "group": "edge",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m5",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g5",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/hq",
+          "artifact_revision": "fnv1a64:4fc38c115d5e7976",
+          "case": "c4",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g1",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g6",
+          "group": "critical",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g1",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m7",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g2",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g3",
+          "group": "critical",
           "is_confirmation": false
         },
         {
           "artifact_path": "skills/agent-config-reset",
           "artifact_revision": "fnv1a64:7ba5a998b08722f4",
           "case": "a3-verified-archive",
-          "group": "adversarial",
+          "group": "critical",
           "is_confirmation": false
         },
         {
@@ -398,79 +1058,79 @@
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/agent-config-reset",
-          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
-          "case": "a5-cutover-dry-gate",
-          "group": "adversarial",
-          "is_confirmation": false
-        },
-        {
           "artifact_path": "skills/git-sync",
           "artifact_revision": "fnv1a64:6999835443158eee",
-          "case": "g2",
-          "group": "adversarial",
-          "is_confirmation": false
+          "case": "g10",
+          "group": "critical",
+          "is_confirmation": true
         },
         {
-          "artifact_path": "skills/git-sync",
-          "artifact_revision": "fnv1a64:6999835443158eee",
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
           "case": "g5",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/git-sync",
+          "artifact_revision": "fnv1a64:6999835443158eee",
+          "case": "g7",
           "group": "adversarial",
+          "is_confirmation": true
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g2",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m9",
+          "group": "critical",
           "is_confirmation": false
         },
         {
           "artifact_path": "skills/git-sync",
           "artifact_revision": "fnv1a64:6999835443158eee",
           "case": "g8",
-          "group": "adversarial",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "g10",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/agent-config-reset",
+          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
+          "case": "a5-cutover-dry-gate",
+          "group": "critical",
+          "is_confirmation": false
+        },
+        {
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m1",
+          "group": "critical",
           "is_confirmation": false
         },
         {
           "artifact_path": "skills/git-sync",
           "artifact_revision": "fnv1a64:6999835443158eee",
           "case": "g9",
-          "group": "adversarial",
+          "group": "critical",
           "is_confirmation": false
         },
         {
-          "artifact_path": "skills/footprint",
-          "artifact_revision": "fnv1a64:fc9c518a32ccbcb3",
-          "case": "c6",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/simplify",
-          "artifact_revision": "fnv1a64:4a17f9a745971a47",
-          "case": "s6",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/task-graph",
-          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
-          "case": "t6",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/task-graph",
-          "artifact_revision": "fnv1a64:f2571eb7bd16d6fe",
-          "case": "t8",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/create-pr",
-          "artifact_revision": "fnv1a64:930cb4004dfb0420",
-          "case": "c6-full-workspace-diff",
-          "group": "critical",
-          "is_confirmation": true
-        },
-        {
-          "artifact_path": "skills/agent-config-reset",
-          "artifact_revision": "fnv1a64:7ba5a998b08722f4",
-          "case": "h1-mcp-audit",
+          "artifact_path": "skills/engineer",
+          "artifact_revision": "fnv1a64:0bc28eb59b09629f",
+          "case": "m4",
           "group": "critical",
           "is_confirmation": true
         }
