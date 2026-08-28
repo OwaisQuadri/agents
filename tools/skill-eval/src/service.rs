@@ -3,11 +3,17 @@ use std::path::{Component, Path};
 
 use sha2::{Digest, Sha256};
 
+#[path = "frontier_report.rs"]
+mod frontier_report;
 #[path = "frontier_scheduler.rs"]
 mod frontier_scheduler;
 #[path = "frontier_source.rs"]
 mod frontier_suite_source;
 
+use self::frontier_report::{
+    derive_frontier_report, inspection_matches, validate_infrastructure_events,
+    validate_report_lifecycle,
+};
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
@@ -7506,7 +7512,6 @@ fn frontier_lifecycle_drift(identity: &str) -> SkillEvalError {
     frontier_lifecycle_invalid(format!("{identity} drifted"))
 }
 
-// TODO(AGNT-0032.T148): Build the cross-tier report and exact inspection.
 /// Builds one cross-tier report and optional saved-baseline comparison.
 ///
 /// The inputs are a run identity, optional baseline path, and runtime. The output is the report.
@@ -7515,11 +7520,38 @@ fn frontier_lifecycle_drift(identity: &str) -> SkillEvalError {
 ///
 /// Returns an error for absent, malformed, incomplete, conflicting, or drifted evidence.
 pub(crate) fn build_frontier_report(
-    _run_id: &FrontierRunId,
-    _baseline_path: Option<&Path>,
-    _runtime: &dyn FrontierRuntime,
+    run_id: &FrontierRunId,
+    baseline_path: Option<&Path>,
+    runtime: &dyn FrontierRuntime,
 ) -> Result<FrontierReport, SkillEvalError> {
-    unimplemented!()
+    let state = runtime.load_frontier(run_id)?;
+    if state.configuration.run_id != *run_id {
+        return Err(frontier_lifecycle_drift("report run identity"));
+    }
+    let (plan, suite) = runtime.load_frontier_plan(&state.configuration.plan_path)?;
+    if plan != state.configuration.plan
+        || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
+    {
+        return Err(frontier_lifecycle_drift("report frozen plan or digest"));
+    }
+    let trials = load_frontier_trials(&state, &suite, runtime)?;
+    let (models, cells, spend) = reconstruct_frontier_authority(&state, &suite, &trials)?;
+    if state.models != models || state.cells != cells || state.spent_millionths_of_dollar != spend {
+        return Err(frontier_lifecycle_drift("report canonical evidence"));
+    }
+    validate_infrastructure_events(&state)?;
+    let mut schedulable = state.clone();
+    schedulable.models = models.clone();
+    schedulable.cells = cells.clone();
+    schedulable.status = FrontierRunStatus::Running;
+    schedulable.pause = None;
+    let action = frontier_scheduler::next_frontier_trial(&plan, &suite, &schedulable, &trials)?;
+    validate_report_lifecycle(&state, &action)?;
+    let ledger = baseline_path
+        .map(|path| runtime.load_frontier_baselines(path))
+        .transpose()?;
+    let baseline = ledger.as_ref().and_then(|ledger| ledger.baselines.last());
+    derive_frontier_report(&state, &models, &cells, baseline)
 }
 
 /// Loads one exact frontier trial or infrastructure event.
@@ -7530,10 +7562,101 @@ pub(crate) fn build_frontier_report(
 ///
 /// Returns an error for an unsafe, ambiguous, absent, or inconsistent selector.
 pub(crate) fn inspect_frontier(
-    _selector: &crate::model::FrontierTrialSelector,
-    _runtime: &dyn FrontierRuntime,
+    selector: &crate::model::FrontierTrialSelector,
+    runtime: &dyn FrontierRuntime,
 ) -> Result<FrontierInspection, SkillEvalError> {
-    unimplemented!()
+    validate_frontier_inspection_selector(selector)?;
+    let state = runtime.load_frontier(&selector.run_id)?;
+    if state.configuration.run_id != selector.run_id {
+        return Err(frontier_lifecycle_drift("inspection run identity"));
+    }
+    let entrant = state
+        .configuration
+        .plan
+        .entrants
+        .iter()
+        .find(|entrant| entrant.provider == selector.provider && entrant.model == selector.model)
+        .ok_or_else(|| frontier_lifecycle_drift("inspection entrant identity"))?;
+    let thinking_index = entrant
+        .thinking_levels
+        .iter()
+        .position(|thinking| thinking == &selector.thinking)
+        .ok_or_else(|| frontier_lifecycle_drift("inspection thinking identity"))?;
+    if !frontier_reachable_tiers(entrant.entry_tier, thinking_index).contains(&selector.tier)
+        || selector.attempt > u16::from(state.configuration.plan.policy.maximum_trials_per_case)
+    {
+        return Err(frontier_lifecycle_drift("inspection route identity"));
+    }
+    let expected_route_index = state.configuration.plan.entrants.iter().collect::<Vec<_>>();
+    let mut ordered_entrants = expected_route_index;
+    ordered_entrants.sort_by_key(|entrant| {
+        (
+            entrant.entry_tier,
+            entrant.provider.as_str(),
+            entrant.model.as_str(),
+        )
+    });
+    let expected_route_index = ordered_entrants
+        .iter()
+        .position(|candidate| *candidate == entrant)
+        .and_then(|index| u16::try_from(index).ok())
+        .ok_or_else(|| frontier_lifecycle_drift("inspection route index"))?;
+    let inspection = runtime.inspect_frontier(selector)?;
+    let is_complete = match &inspection {
+        FrontierInspection::Trial { trial } => {
+            trial.key.route_index == expected_route_index
+                && trial.judge_model == state.configuration.plan.judge
+                && trial.verdict.score <= 10
+                && !trial.harness.runner_version.trim().is_empty()
+                && !trial.harness.pi_version.trim().is_empty()
+                && !trial.harness.artifact_revision.trim().is_empty()
+                && !trial.harness.tool_policy_digest.trim().is_empty()
+                && !trial.artifact_path.as_os_str().is_empty()
+                && !trial.transcript_path.as_os_str().is_empty()
+        }
+        FrontierInspection::Infrastructure { event } => {
+            event.infrastructure_attempt
+                <= state
+                    .configuration
+                    .plan
+                    .policy
+                    .maximum_infrastructure_attempts
+                && !event.message.trim().is_empty()
+                && !event.occurred_at.0.trim().is_empty()
+        }
+    };
+    if !inspection_matches(selector, &inspection) || !is_complete {
+        return Err(frontier_lifecycle_drift(
+            "inspection returned evidence identity",
+        ));
+    }
+    Ok(inspection)
+}
+
+fn validate_frontier_inspection_selector(
+    selector: &FrontierTrialSelector,
+) -> Result<(), SkillEvalError> {
+    let values = [
+        selector.run_id.0.as_str(),
+        selector.provider.as_str(),
+        selector.model.as_str(),
+        selector.thinking.as_str(),
+        selector.artifact.0.as_str(),
+        selector.case.0.as_str(),
+    ];
+    if selector.attempt == 0
+        || values.iter().any(|value| {
+            value.trim().is_empty()
+                || value.contains(['/', '\\', '\0'])
+                || value.chars().any(char::is_control)
+                || matches!(*value, "." | "..")
+        })
+    {
+        return Err(frontier_lifecycle_invalid(
+            "inspection selector is incomplete or unsafe",
+        ));
+    }
+    Ok(())
 }
 
 // TODO(AGNT-0032.T149): Record rejection or commit acceptance with one ledger suffix.
@@ -7589,6 +7712,8 @@ include!("../tests/frontier_preview.rs");
 #[cfg(test)]
 include!("../tests/frontier_lifecycle.rs");
 #[cfg(test)]
+include!("../tests/frontier_report.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -7610,6 +7735,8 @@ pool_qualification_tests!();
 frontier_preview_tests!();
 #[cfg(test)]
 frontier_lifecycle_tests!();
+#[cfg(test)]
+frontier_report_tests!();
 
 #[cfg(test)]
 mod state {
