@@ -239,11 +239,17 @@ else
   # tuned its own thinking keeps it, and only its model follows the tier.
   OWNED="$(cd "$REPO_TARGET/agents" 2>/dev/null && ls -d */ 2>/dev/null | tr -d / | jq -R . | jq -sc .)"
   OWNED="${OWNED:-[]}"
-  # modelTierFallbacks takes each tier's FIRST backup: the session extension walks one hop
-  # per usage limit and re-enters on the new model, so the rest of the chain is reached by
-  # repetition rather than by a list. Subagents get the whole ordered list.
-  TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
-      .value as $tier | { key: $tier.pi, value: $tier.fallbacks[0] }))
+  # modelTierFallbacks maps EVERY model in a tier's chain (pi, then each fallback in order)
+  # to the next model in that same chain, so the session extension's one-hop-per-limit walk
+  # (re-enter on the new model, look it up again on its own next limit) actually reaches every
+  # entry in the ordered list instead of stopping after the tier's own primary. A model shared
+  # by two chains keeps whichever tier is processed last (tiers carry no two divergent chains
+  # for the same model today; config/model-tiers.json is the source of truth). A tier with an
+  # empty fallbacks list gets no key for its own primary at all (chosen over emitting a null-valued
+  # entry) — every tier today has at least one fallback, so this has never fired. Subagents get the
+  # whole ordered list directly, so this only matters for the top-level session.
+  TIER_JQ='.modelTierFallbacks = ($t.tiers | [.[] | ([.pi] + .fallbacks) as $chain
+      | range(0; ($chain | length) - 1) | { key: $chain[.], value: $chain[. + 1] }] | from_entries)
     | .subagents = ((.subagents // {})
     | .defaultModel = $t.tiers[$t.orchestrator].pi
     | .defaultThinking = $t.tiers[$t.orchestrator].thinking
