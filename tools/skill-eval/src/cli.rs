@@ -17,9 +17,9 @@ use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
     CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition, FrontierApplyReport,
-    FrontierBaselineLedger, FrontierCaseGroup, FrontierInspection, FrontierPlan,
-    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite,
-    FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
+    FrontierBaselineLedger, FrontierCaseGroup, FrontierDecisionRequest, FrontierInspection,
+    FrontierPlan, FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState,
+    FrontierSuite, FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
     FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialSelector, HarnessIdentity,
     ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant,
     PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
@@ -46,9 +46,10 @@ use crate::ports::{
 use crate::service::{
     apply_frontier_suite, apply_tier_assignments, build_pool_report, build_report,
     build_t1_screen_report, check_frontier_suite, evaluate_publication_gate, extend_t1_screen_cap,
-    fail_t1_screen_route, inspect_trial, inventory_frontier_suite, judge_prompt,
-    pending_t1_screen_state, prepare_audit_briefs, propose_frontier_suite, record_decision,
-    resume_pool_qualification, resume_qualification, resume_t1_screening, start_pool_qualification,
+    fail_t1_screen_route, inspect_frontier, inspect_trial, inventory_frontier_suite, judge_prompt,
+    pending_t1_screen_state, prepare_audit_briefs, preview_frontier, propose_frontier_suite,
+    record_decision, record_frontier_decision, resume_frontier, resume_pool_qualification,
+    resume_qualification, resume_t1_screening, start_frontier, start_pool_qualification,
     start_pool_replacement_qualification, start_qualification, start_t1_screening,
 };
 use crate::source::FileArtifactSource;
@@ -136,6 +137,13 @@ pub(crate) fn parse_arguments(arguments: &[OsString]) -> Result<CliRequest, Skil
         "frontier-suite-propose" => parse_frontier_suite_propose(&mut parser)?,
         "frontier-suite-check" => parse_frontier_suite_check(&mut parser)?,
         "frontier-suite-apply" => parse_frontier_suite_apply(&mut parser)?,
+        "frontier-preview" => parse_frontier_preview(&mut parser)?,
+        "frontier-start" => parse_frontier_start(&mut parser)?,
+        "frontier-resume" => parse_frontier_resume(&mut parser)?,
+        "frontier-report" => parse_frontier_report(&mut parser)?,
+        "frontier-inspect" => parse_frontier_inspect(&mut parser)?,
+        "frontier-decide" => parse_frontier_decide(&mut parser)?,
+        "frontier-apply" => parse_frontier_apply(&mut parser)?,
         _ => return Err(invalid(format!("unknown command {command:?}"))),
     };
     parser.finish()?;
@@ -3507,6 +3515,23 @@ pub(crate) fn run_main() -> Result<(), SkillEvalError> {
                 &mut std::io::stdout(),
             );
         }
+        CliCommand::FrontierApply { .. } => {
+            return Err(frontier_apply_unavailable());
+        }
+        CliCommand::FrontierPreview { .. }
+        | CliCommand::FrontierStart { .. }
+        | CliCommand::FrontierResume { .. }
+        | CliCommand::FrontierReport { .. }
+        | CliCommand::FrontierInspect { .. }
+        | CliCommand::FrontierDecide { .. } => {
+            let mut runtime = ConcreteRuntime::new(&request.runs_root)?;
+            return execute_frontier_command(
+                &request.command,
+                request.output_format,
+                &mut runtime,
+                &mut std::io::stdout(),
+            );
+        }
         _ => {}
     }
     let mut runtime = ConcreteRuntime::new(&request.runs_root)?;
@@ -4620,6 +4645,13 @@ fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
         "frontier-suite-propose",
         "frontier-suite-check",
         "frontier-suite-apply",
+        "frontier-preview",
+        "frontier-start",
+        "frontier-resume",
+        "frontier-report",
+        "frontier-inspect",
+        "frontier-decide",
+        "frontier-apply",
     ] {
         writeln!(output, "  {command}")?;
     }
@@ -4651,6 +4683,10 @@ fn print_help(output: &mut dyn Write) -> std::io::Result<()> {
     writeln!(
         output,
         "suite construction: frontier-suite-inventory --plan PATH --output PATH; frontier-suite-propose --plan PATH --inventory PATH --reviews PATH --output PATH; frontier-suite-check --proposal PATH; frontier-suite-apply --proposal PATH --output PATH"
+    )?;
+    writeln!(
+        output,
+        "frontier: frontier-preview --plan PATH; frontier-start --plan PATH [--run-id-file PATH]; frontier-resume|frontier-report|frontier-apply --run ID; frontier-inspect --run ID --provider NAME --model NAME --tier TIER --thinking LEVEL --artifact NAME --case ID --attempt N; frontier-decide --run ID (--accept|--reject) --reason TEXT"
     )?;
     writeln!(
         output,
@@ -5219,7 +5255,9 @@ fn validate_repository_path(path: &Path, label: &str) -> Result<(), SkillEvalErr
         || path
             .components()
             .any(|component| !matches!(component, Component::Normal(_)))
-        || path.to_string_lossy().chars().any(char::is_control)
+        || !path.to_string_lossy().chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '/' | '-' | '_' | '.')
+        })
     {
         return Err(invalid(format!(
             "{label} must be a safe repository-relative path"
@@ -5572,34 +5610,293 @@ fn render_frontier_suite_publication(
     writeln!(output, "published at: {}", publication.published_at.0).map_err(output_error)
 }
 
-// TODO(AGNT-0032.T151): Parse and dispatch strict cumulative frontier commands.
-fn parse_frontier_preview(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_preview(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    Ok(CliCommand::FrontierPreview {
+        plan_path: parse_frontier_plan(parser, "frontier-preview")?,
+    })
 }
 
-fn parse_frontier_start(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_start(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut plan_path = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--plan" => {
+                let path = PathBuf::from(parser.value_once("--plan")?);
+                validate_repository_path(&path, "frontier plan")?;
+                plan_path = Some(path);
+            }
+            "--run-id-file" => {
+                let path = PathBuf::from(parser.value_once("--run-id-file")?);
+                validate_repository_path(&path, "run-id file")?;
+                RUN_ID_FILE.with(|slot| *slot.borrow_mut() = Some(path));
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierStart {
+        plan_path: plan_path.ok_or_else(|| invalid("frontier-start requires --plan"))?,
+    })
 }
 
-fn parse_frontier_resume(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_plan(
+    parser: &mut ArgumentParser<'_>,
+    command: &str,
+) -> Result<PathBuf, SkillEvalError> {
+    let mut plan_path = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--plan" => {
+                let path = PathBuf::from(parser.value_once("--plan")?);
+                validate_repository_path(&path, "frontier plan")?;
+                plan_path = Some(path);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    plan_path.ok_or_else(|| invalid(format!("{command} requires --plan")))
 }
 
-fn parse_frontier_report(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_resume(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    Ok(CliCommand::FrontierResume {
+        run_id: parse_frontier_run(parser, "frontier-resume")?,
+    })
 }
 
-fn parse_frontier_inspect(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_report(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut baseline_path = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => {
+                run_id = Some(parse_frontier_run_id(parser.value_once("--run")?)?);
+            }
+            "--baseline" => {
+                let path = PathBuf::from(parser.value_once("--baseline")?);
+                validate_repository_path(&path, "frontier baseline")?;
+                baseline_path = Some(path);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierReport {
+        run_id: run_id.ok_or_else(|| invalid("frontier-report requires --run"))?,
+        baseline_path,
+    })
 }
 
-fn parse_frontier_decide(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_inspect(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut provider = None;
+    let mut model = None;
+    let mut tier = None;
+    let mut thinking = None;
+    let mut artifact = None;
+    let mut case = None;
+    let mut attempt = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => run_id = Some(parse_frontier_run_id(parser.value_once("--run")?)?),
+            "--provider" => {
+                provider = Some(parse_frontier_name(
+                    parser.value_once("--provider")?,
+                    "frontier provider",
+                )?);
+            }
+            "--model" => {
+                model = Some(parse_frontier_name(
+                    parser.value_once("--model")?,
+                    "frontier model",
+                )?);
+            }
+            "--tier" => tier = Some(parse_tier(parser.value_once("--tier")?)?),
+            "--thinking" => {
+                thinking = Some(parse_frontier_thinking(parser.value_once("--thinking")?)?);
+            }
+            "--artifact" => {
+                artifact = Some(ArtifactName(parse_frontier_name(
+                    parser.value_once("--artifact")?,
+                    "frontier artifact",
+                )?));
+            }
+            "--case" => {
+                case = Some(CaseId(parse_frontier_name(
+                    parser.value_once("--case")?,
+                    "frontier case",
+                )?));
+            }
+            "--attempt" => {
+                attempt = Some(parse_positive_frontier_attempt(
+                    parser.value_once("--attempt")?,
+                )?);
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierInspect {
+        selector: FrontierTrialSelector {
+            run_id: run_id.ok_or_else(|| invalid("frontier-inspect requires --run"))?,
+            provider: provider.ok_or_else(|| invalid("frontier-inspect requires --provider"))?,
+            model: model.ok_or_else(|| invalid("frontier-inspect requires --model"))?,
+            tier: tier.ok_or_else(|| invalid("frontier-inspect requires --tier"))?,
+            thinking: thinking.ok_or_else(|| invalid("frontier-inspect requires --thinking"))?,
+            artifact: artifact.ok_or_else(|| invalid("frontier-inspect requires --artifact"))?,
+            case: case.ok_or_else(|| invalid("frontier-inspect requires --case"))?,
+            attempt: attempt.ok_or_else(|| invalid("frontier-inspect requires --attempt"))?,
+        },
+    })
 }
 
-// TODO(AGNT-0032.T159): Parse, dispatch, and report accepted-route publication.
-fn parse_frontier_apply(_parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
-    unimplemented!()
+fn parse_frontier_decide(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    let mut run_id = None;
+    let mut decision = None;
+    let mut reason = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => run_id = Some(parse_frontier_run_id(parser.value_once("--run")?)?),
+            "--accept" => {
+                parser.take_once("--accept")?;
+                set_decision(&mut decision, Decision::Accepted)?;
+            }
+            "--reject" => {
+                parser.take_once("--reject")?;
+                set_decision(&mut decision, Decision::Rejected)?;
+            }
+            "--reason" => {
+                reason = Some(
+                    nonempty(parser.value_once("--reason")?, "frontier decision reason")?
+                        .trim()
+                        .to_owned(),
+                );
+            }
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    Ok(CliCommand::FrontierDecide {
+        request: FrontierDecisionRequest {
+            run_id: run_id.ok_or_else(|| invalid("frontier-decide requires --run"))?,
+            decision: decision
+                .ok_or_else(|| invalid("frontier-decide requires --accept or --reject"))?,
+            reason: reason.ok_or_else(|| invalid("frontier-decide requires --reason"))?,
+        },
+    })
+}
+
+fn parse_frontier_apply(parser: &mut ArgumentParser<'_>) -> Result<CliCommand, SkillEvalError> {
+    Ok(CliCommand::FrontierApply {
+        run_id: parse_frontier_run(parser, "frontier-apply")?,
+    })
+}
+
+fn parse_frontier_run(
+    parser: &mut ArgumentParser<'_>,
+    command: &str,
+) -> Result<FrontierRunId, SkillEvalError> {
+    let mut run_id = None;
+    while parser.peek().is_some() {
+        let flag = parser.peek().expect("checked above").to_owned();
+        match flag.as_str() {
+            "--run" => run_id = Some(parse_frontier_run_id(parser.value_once("--run")?)?),
+            _ if parser.take_common()? => {}
+            _ => break,
+        }
+    }
+    run_id.ok_or_else(|| invalid(format!("{command} requires --run")))
+}
+
+fn parse_frontier_run_id(value: &str) -> Result<FrontierRunId, SkillEvalError> {
+    Ok(FrontierRunId(parse_frontier_name(
+        value,
+        "frontier run identifier",
+    )?))
+}
+
+fn parse_frontier_name(value: &str, label: &str) -> Result<String, SkillEvalError> {
+    let value = nonempty(value, label)?;
+    if value != value.trim()
+        || matches!(value, "." | "..")
+        || !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return Err(invalid(format!(
+            "{label} must be one safe exact identifier"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn parse_frontier_thinking(value: &str) -> Result<String, SkillEvalError> {
+    match value {
+        "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" => Ok(value.to_owned()),
+        _ => Err(invalid(format!(
+            "unknown frontier thinking level {value:?}"
+        ))),
+    }
+}
+
+fn parse_positive_frontier_attempt(value: &str) -> Result<u16, SkillEvalError> {
+    let attempt = parse_number(value, "frontier attempt")?;
+    if attempt == 0 {
+        return Err(invalid("frontier attempt must be positive"));
+    }
+    Ok(attempt)
+}
+
+pub(crate) fn execute_frontier_command(
+    command: &CliCommand,
+    format: OutputFormat,
+    runtime: &mut dyn FrontierRuntime,
+    output: &mut dyn Write,
+) -> Result<(), SkillEvalError> {
+    match command {
+        CliCommand::FrontierPreview { plan_path } => {
+            render_frontier_preview(&preview_frontier(plan_path, runtime)?, format, output)
+        }
+        CliCommand::FrontierStart { plan_path } => {
+            preflight_run_id_file()?;
+            let mut progress = RenderFrontierProgress { format, output };
+            let state = start_frontier(plan_path, runtime, &mut progress)?;
+            write_run_id_value(&state.configuration.run_id.0)
+        }
+        CliCommand::FrontierResume { run_id } => {
+            let mut progress = RenderFrontierProgress { format, output };
+            resume_frontier(run_id, runtime, &mut progress).map(|_| ())
+        }
+        CliCommand::FrontierReport {
+            run_id,
+            baseline_path,
+        } => render_frontier_report(
+            &crate::service::build_frontier_report(run_id, baseline_path.as_deref(), runtime)?,
+            format,
+            output,
+        ),
+        CliCommand::FrontierInspect { selector } => {
+            render_frontier_inspection(&inspect_frontier(selector, runtime)?, format, output)
+        }
+        CliCommand::FrontierDecide { request } => {
+            let state = record_frontier_decision(request, runtime)?;
+            RenderFrontierProgress { format, output }.emit_frontier(&state)
+        }
+        CliCommand::FrontierApply { .. } => Err(frontier_apply_unavailable()),
+        _ => Err(invalid("command is not a cumulative frontier command")),
+    }
+}
+
+// TODO(AGNT-0032.T159): Dispatch publication after the routing adapter is implemented.
+fn frontier_apply_unavailable() -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(
+        "frontier route publication requires AGNT-0032.T159".to_owned(),
+    )
 }
 
 // TODO(AGNT-0032.T152): Render preview, matrix, inspection, and apply outputs.
@@ -5694,6 +5991,8 @@ include!("../tests/pool_report.rs");
 include!("../tests/frontier_suite_cli.rs");
 #[cfg(test)]
 include!("../tests/frontier_runtime.rs");
+#[cfg(test)]
+include!("../tests/frontier_cli.rs");
 
 #[cfg(test)]
 cli_tests!();
@@ -5703,3 +6002,5 @@ pool_report_tests!();
 frontier_suite_cli_tests!();
 #[cfg(test)]
 frontier_runtime_tests!();
+#[cfg(test)]
+frontier_cli_tests!();

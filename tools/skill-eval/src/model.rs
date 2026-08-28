@@ -1461,7 +1461,6 @@ pub(crate) struct CliRequest {
     pub(crate) command: CliCommand,
 }
 
-// TODO(AGNT-0032.T151): Parse and dispatch every cumulative frontier command.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub(crate) enum CliCommand {
