@@ -3168,18 +3168,6 @@ fn load_frontier_plan_files(
     if sha256_digest(&capability_bytes) != plan.capabilities.sha256 {
         return Err(invalid("frontier capability snapshot digest changed"));
     }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| invalid(format!("system clock is invalid: {error}")))?
-        .as_secs();
-    let expires_at = plan
-        .capabilities
-        .observed_at_unix_seconds
-        .checked_add(u64::from(plan.policy.maximum_catalog_age_seconds))
-        .ok_or_else(|| invalid("frontier capability freshness overflowed"))?;
-    if now > expires_at {
-        return Err(invalid("frontier capability snapshot is stale"));
-    }
     Ok((plan, suite))
 }
 

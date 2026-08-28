@@ -11,16 +11,17 @@ macro_rules! frontier_runtime_tests {
 
             use super::{
                 FileSuiteRuntime, RenderFrontierProgress, apply_current_frontier_suite,
-                next_frontier_run_id, proposal_artifact_revisions, validate_proposal_sources,
+                load_frontier_plan_files, next_frontier_run_id, proposal_artifact_revisions,
+                sha256_digest, validate_proposal_sources,
             };
             use crate::model::{
                 ArtifactDefinition, ArtifactKind, ArtifactName, CaseId, FrontierCaseGroup,
                 FrontierCaseKey, FrontierCaseReference, FrontierConfidenceMethod, FrontierPlan,
                 FrontierPolicy, FrontierRunConfiguration, FrontierRunId, FrontierRunState,
-                FrontierRunStatus, FrontierSuiteConstructionPlan, FrontierSuiteConstructionPolicy,
-                FrontierSuiteProposal, FrontierSuiteProposalStatus, FrontierTierSuite,
-                ModelIdentity, OutputFormat, RunId, SkillEvalError, T1ScreenSnapshotIdentity, Tier,
-                Timestamp,
+                FrontierRunStatus, FrontierSuite, FrontierSuiteConstructionPlan,
+                FrontierSuiteConstructionPolicy, FrontierSuiteProposal,
+                FrontierSuiteProposalStatus, FrontierTierSuite, ModelIdentity, OutputFormat, RunId,
+                SkillEvalError, T1ScreenSnapshotIdentity, Tier, Timestamp,
             };
             use crate::ports::{
                 ArtifactSource, FrontierProgressSink, FrontierSuiteRuntime, RunIdSource,
@@ -270,6 +271,39 @@ macro_rules! frontier_runtime_tests {
                         .map(Clone::clone)
                         .map_err(|_| SkillEvalError::NotFound("run id failed".to_owned()))
                 }
+            }
+
+            #[test]
+            fn frozen_plan_loader_accepts_an_aged_capability_snapshot() {
+                let fixture = FixtureRoot::new("aged-capability");
+                let suite = FrontierSuite {
+                    version: 1,
+                    tiers: BTreeMap::new(),
+                };
+                let suite_bytes = serde_json::to_vec(&suite).unwrap();
+                fs::write(fixture.0.join("suite.json"), &suite_bytes).unwrap();
+                let capability_bytes = b"{}";
+                fs::write(fixture.0.join("capabilities.json"), capability_bytes).unwrap();
+                let mut plan = state().configuration.plan;
+                plan.suite.sha256 = sha256_digest(&suite_bytes);
+                plan.capabilities.sha256 = sha256_digest(capability_bytes);
+                plan.capabilities.observed_at_unix_seconds = 1;
+                fs::write(
+                    fixture.0.join("plan.json"),
+                    serde_json::to_vec(&plan).unwrap(),
+                )
+                .unwrap();
+                let source = MockSource {
+                    revisions: BTreeMap::new(),
+                    calls: RefCell::new(Vec::new()),
+                    is_failing: false,
+                };
+
+                let loaded =
+                    load_frontier_plan_files(&fixture.0, &source, Path::new("plan.json")).unwrap();
+
+                assert_eq!(loaded, (plan, suite));
+                assert!(source.calls.borrow().is_empty());
             }
 
             #[test]
