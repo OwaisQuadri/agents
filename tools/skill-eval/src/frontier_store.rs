@@ -311,8 +311,19 @@ impl FileFrontierStore {
         if self.transaction_path().exists() {
             return Err(invalid("frontier baseline transaction requires recovery"));
         }
-        let path = safe_repository_path(&self.repository_root, path, true)?;
-        let ledger: FrontierBaselineLedger = read_strict_json(&path, "frontier baseline ledger")?;
+        let candidate = safe_repository_path(&self.repository_root, path, false)?;
+        let ledger = match fs::symlink_metadata(&candidate) {
+            Ok(_) => {
+                let path = safe_repository_path(&self.repository_root, path, true)?;
+                let bytes = fs::read(&path).map_err(|error| io_error(&path, error))?;
+                strict_json_bytes(&bytes, &path, "frontier baseline ledger")?
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => FrontierBaselineLedger {
+                version: LEDGER_VERSION,
+                baselines: Vec::new(),
+            },
+            Err(error) => return Err(io_error(&candidate, error)),
+        };
         validate_ledger(&self.repository_root, &ledger)?;
         Ok(ledger)
     }
@@ -1729,5 +1740,3 @@ fn io_error(path: &Path, error: std::io::Error) -> SkillEvalError {
         message: error.to_string(),
     }
 }
-
-// TODO(AGNT-0032.T149): Commit accepted decisions and ledger suffixes together.

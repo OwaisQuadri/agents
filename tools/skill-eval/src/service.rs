@@ -18,8 +18,9 @@ use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactDiscovery, ArtifactKind, ArtifactName,
     ArtifactQualificationState, ArtifactReport, ArtifactStatus, AuditBrief, AuditBriefRequest,
     CandidateArtifact, CandidateEnvironmentEntry, CaseDiscovery, CaseId, Decision, DecisionRecord,
-    EvidenceRole, FrontierApplyReport, FrontierCaseGroup, FrontierConfidenceMethod,
-    FrontierDecisionRequest, FrontierEntrant, FrontierInfrastructureEvent, FrontierInspection,
+    EvidenceRole, FrontierApplyReport, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup,
+    FrontierConfidenceMethod, FrontierDecisionRecord, FrontierDecisionRequest, FrontierEntrant,
+    FrontierEvidenceIdentity, FrontierInfrastructureEvent, FrontierInspection,
     FrontierModelProgress, FrontierPlan, FrontierPolicy, FrontierPreviewReport, FrontierReport,
     FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
     FrontierScheduleAction, FrontierSuite, FrontierSuiteInventory, FrontierSuiteProposal,
@@ -7431,7 +7432,9 @@ fn validate_frontier_complete(
     suite: &FrontierSuite,
     trials: &[TrialRecord],
 ) -> Result<(), SkillEvalError> {
-    let schedulable = canonical_frontier_schedulable_state(state);
+    let mut schedulable = canonical_frontier_schedulable_state(state);
+    schedulable.status = FrontierRunStatus::Running;
+    schedulable.pause = None;
     if !matches!(
         frontier_scheduler::next_frontier_trial(
             &schedulable.configuration.plan,
@@ -7659,7 +7662,8 @@ fn validate_frontier_inspection_selector(
     Ok(())
 }
 
-// TODO(AGNT-0032.T149): Record rejection or commit acceptance with one ledger suffix.
+const FRONTIER_BASELINE_PATH: &str = "config/model-frontier-baseline.json";
+
 /// Records an owner decision and appends an accepted baseline when requested.
 ///
 /// The inputs are a decision request and runtime. The output is the terminal saved state.
@@ -7668,10 +7672,189 @@ fn validate_frontier_inspection_selector(
 ///
 /// Returns an error for an invalid decision, nonterminal run, stale ledger, or failed atomic write.
 pub(crate) fn record_frontier_decision(
-    _request: &FrontierDecisionRequest,
-    _runtime: &mut dyn FrontierRuntime,
+    request: &FrontierDecisionRequest,
+    runtime: &mut dyn FrontierRuntime,
 ) -> Result<FrontierRunState, SkillEvalError> {
-    unimplemented!()
+    let reason = request.reason.trim();
+    if reason.is_empty() {
+        return Err(frontier_decision_invalid("owner reason is blank"));
+    }
+    let mut state = runtime.load_frontier(&request.run_id)?;
+    if state.configuration.run_id != request.run_id {
+        return Err(frontier_decision_drift("run identity"));
+    }
+    if state.status != FrontierRunStatus::AwaitingDecision || state.decision.is_some() {
+        return Err(frontier_decision_invalid(
+            "run must await its first owner decision",
+        ));
+    }
+
+    let (plan, suite) = runtime.load_frontier_plan(&state.configuration.plan_path)?;
+    validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
+    if plan != state.configuration.plan
+        || frontier_plan_digest(&plan)? != state.configuration.plan_sha256
+    {
+        return Err(frontier_decision_drift("frozen plan or digest"));
+    }
+    let trials = load_frontier_trials(&state, &suite, runtime)?;
+    let (models, cells, spend) = reconstruct_frontier_authority(&state, &suite, &trials)?;
+    if state.models != models || state.cells != cells || state.spent_millionths_of_dollar != spend {
+        return Err(frontier_decision_drift("canonical durable evidence"));
+    }
+    validate_infrastructure_events(&state)?;
+    validate_frontier_complete(&state, &suite, &trials)?;
+    let action = FrontierScheduleAction::Complete;
+    validate_report_lifecycle(&state, &action)?;
+    let report = derive_frontier_report(&state, &models, &cells, None)?;
+    validate_frontier_decision_evidence(&state, &report)?;
+
+    state.status = match request.decision {
+        Decision::Accepted => FrontierRunStatus::Accepted,
+        Decision::Rejected => FrontierRunStatus::Rejected,
+    };
+    state.decision = Some(FrontierDecisionRecord {
+        decision: request.decision,
+        reason: reason.to_owned(),
+        decided_at: runtime.now(),
+    });
+
+    if request.decision == Decision::Rejected {
+        runtime.save_frontier(&state)?;
+        return Ok(state);
+    }
+
+    let pools = crate::statistics::rank_frontier_pools(
+        &report.models,
+        state.configuration.plan.policy.active_pool_size,
+    )?;
+    let path = Path::new(FRONTIER_BASELINE_PATH);
+    let mut ledger = match runtime.load_frontier_baselines(path) {
+        Ok(ledger) => ledger,
+        Err(SkillEvalError::NotFound(_)) => FrontierBaselineLedger {
+            version: 1,
+            baselines: Vec::new(),
+        },
+        Err(error) => return Err(error),
+    };
+    if ledger
+        .baselines
+        .iter()
+        .any(|baseline| baseline.run_id == request.run_id)
+    {
+        return Err(frontier_decision_invalid(
+            "run already exists in the accepted baseline ledger",
+        ));
+    }
+    let previous_entry_sha256 = ledger
+        .baselines
+        .last()
+        .map(frontier_baseline_digest)
+        .transpose()?;
+    let state_bytes = frontier_decision_json_bytes(&state)?;
+    ledger.baselines.push(FrontierBaseline {
+        accepted_at: state
+            .decision
+            .as_ref()
+            .expect("accepted decision was created")
+            .decided_at
+            .clone(),
+        run_id: request.run_id.clone(),
+        run_evidence: FrontierEvidenceIdentity {
+            path: Path::new(".map/skill-eval/frontier")
+                .join(&request.run_id.0)
+                .join("state.json"),
+            sha256: frontier_sha256(&state_bytes),
+        },
+        previous_entry_sha256,
+        pools,
+        capabilities: Vec::new(),
+    });
+    runtime.accept_frontier_baseline(&state, path, &ledger)?;
+    Ok(state)
+}
+
+fn validate_frontier_decision_evidence(
+    state: &FrontierRunState,
+    report: &FrontierReport,
+) -> Result<(), SkillEvalError> {
+    if state.models.len() != state.configuration.plan.entrants.len()
+        || state.models.iter().any(|model| !model.is_exhausted)
+        || report.models.len() != state.configuration.plan.entrants.len()
+    {
+        return Err(frontier_decision_invalid(
+            "every planned entrant must have terminal evidence",
+        ));
+    }
+    for cell in &state.cells {
+        let score = cell
+            .score
+            .as_ref()
+            .ok_or_else(|| frontier_decision_invalid("terminal cell score is missing"))?;
+        let is_point_gate_passing = score.weighted_pass_basis_points
+            >= state
+                .configuration
+                .plan
+                .policy
+                .minimum_weighted_pass_basis_points
+            && score.critical_passed_trials == score.critical_expected_trials
+            && score.critical_expected_trials > 0
+            && score.is_group_coverage_complete;
+        let is_lower_bound_passing = score.lower_bound_basis_points
+            >= state
+                .configuration
+                .plan
+                .policy
+                .minimum_lower_bound_basis_points;
+        let is_status_consistent = match cell.status {
+            crate::model::FrontierCellStatus::Passed => {
+                is_point_gate_passing && is_lower_bound_passing
+            }
+            crate::model::FrontierCellStatus::Failed => !is_point_gate_passing,
+            crate::model::FrontierCellStatus::Indeterminate => {
+                is_point_gate_passing && !is_lower_bound_passing
+            }
+            crate::model::FrontierCellStatus::Pending
+            | crate::model::FrontierCellStatus::Running
+            | crate::model::FrontierCellStatus::Skipped => false,
+        };
+        if !is_status_consistent {
+            return Err(frontier_decision_invalid(
+                "terminal cell conflicts with its weighted or critical gates",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn frontier_baseline_digest(baseline: &FrontierBaseline) -> Result<String, SkillEvalError> {
+    serde_json::to_vec(baseline)
+        .map(|bytes| frontier_sha256(&bytes))
+        .map_err(|error| {
+            frontier_decision_invalid(format!("baseline digest serialization failed: {error}"))
+        })
+}
+
+fn frontier_decision_json_bytes<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, SkillEvalError> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| {
+        frontier_decision_invalid(format!("accepted evidence serialization failed: {error}"))
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn frontier_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn frontier_decision_invalid(message: impl Into<String>) -> SkillEvalError {
+    SkillEvalError::InvalidConfiguration(format!("frontier decision: {}", message.into()))
+}
+
+fn frontier_decision_drift(identity: &str) -> SkillEvalError {
+    frontier_decision_invalid(format!("{identity} drifted"))
 }
 
 // TODO(AGNT-0032.T159): Publish only current accepted active routes.
@@ -7714,6 +7897,8 @@ include!("../tests/frontier_lifecycle.rs");
 #[cfg(test)]
 include!("../tests/frontier_report.rs");
 #[cfg(test)]
+include!("../tests/frontier_decision.rs");
+#[cfg(test)]
 qualification_tests!();
 #[cfg(test)]
 resume_tests!();
@@ -7737,6 +7922,8 @@ frontier_preview_tests!();
 frontier_lifecycle_tests!();
 #[cfg(test)]
 frontier_report_tests!();
+#[cfg(test)]
+frontier_decision_tests!();
 
 #[cfg(test)]
 mod state {
