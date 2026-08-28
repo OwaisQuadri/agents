@@ -725,8 +725,17 @@ fn copy_candidate_file(
     packet_bytes: &mut u64,
 ) -> Result<(), SkillEvalError> {
     let metadata = fs::metadata(source).map_err(|error| io_error(source, error))?;
+    if metadata.len() > MAX_JUDGE_FILE_BYTES {
+        return Err(invalid_configuration(format!(
+            "judge evidence file {} exceeds the size limit",
+            source.display()
+        )));
+    }
+    let bytes = fs::read(source).map_err(|error| io_error(source, error))?;
+    let Ok(text) = String::from_utf8(bytes) else {
+        return Ok(());
+    };
     reserve_packet_bytes(packet_bytes, metadata.len(), source)?;
-    let text = fs::read_to_string(source).map_err(|error| io_error(source, error))?;
     let sanitized = redact_candidate_text(&text, candidate);
     write_private_file(destination, sanitized.as_bytes())
 }
@@ -1618,9 +1627,12 @@ mod tests {
         let trial_root = input.candidate.artifact_path.parent().unwrap();
         let fixture = trial_root.join("fixture");
         let cache = fixture.join("__pycache__");
+        let git_fixture = fixture.join(".git-fixture");
         fs::create_dir_all(&cache).unwrap();
+        fs::create_dir_all(&git_fixture).unwrap();
         fs::write(fixture.join("safe.txt"), "candidate response").unwrap();
         fs::write(cache.join("slugify.cpython-314.pyc"), [0xff, 0x00, 0xfe]).unwrap();
+        fs::write(git_fixture.join("index"), [0xff, 0x00, 0xfe]).unwrap();
         fs::write(trial_root.join("response.txt"), "candidate response").unwrap();
         input.candidate.artifact_path = fixture;
         let output = submitted_verdict_event_stream();
@@ -1632,6 +1644,7 @@ mod tests {
         let artifact = judge.process.requests[0].working_directory.join("artifact");
         assert!(artifact.join("safe.txt").is_file());
         assert!(!artifact.join("__pycache__").exists());
+        assert!(!artifact.join(".git-fixture/index").exists());
     }
 
     #[test]

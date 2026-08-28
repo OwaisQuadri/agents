@@ -173,7 +173,7 @@ impl FileFrontierStore {
     ) -> Result<FrontierInspection, SkillEvalError> {
         validate_selector(selector)?;
         let (state, _) = self.read_state(&selector.run_id)?;
-        let mut matches = Vec::new();
+        let mut matched_trial = None;
         let trials = self
             .existing_run_directory(&selector.run_id)?
             .join(TRIALS_DIRECTORY);
@@ -189,30 +189,35 @@ impl FileFrontierStore {
             let trial: TrialRecord = read_strict_json(&entry.path(), "frontier trial")?;
             validate_trial(&self.repository_root, &state, &trial)?;
             if trial_matches(&trial, selector) {
-                matches.push(FrontierInspection::Trial { trial });
+                if matched_trial.is_some() {
+                    return Err(invalid("frontier inspection selector is ambiguous"));
+                }
+                matched_trial = Some(trial);
             }
         }
-        for event in &state.infrastructure_events {
-            if event.model.provider == selector.provider
-                && event.model.model == selector.model
-                && event.model.tier == selector.tier
-                && event.model.thinking == selector.thinking
-                && event.artifact == selector.artifact
-                && event.case == selector.case
-                && event.attempt == selector.attempt
-            {
-                matches.push(FrontierInspection::Infrastructure {
-                    event: event.clone(),
-                });
-            }
+        if let Some(trial) = matched_trial {
+            return Ok(FrontierInspection::Trial { trial });
         }
-        match matches.len() {
-            1 => Ok(matches.remove(0)),
-            0 => Err(SkillEvalError::NotFound(
-                "frontier inspection selector has no exact record".to_owned(),
-            )),
-            _ => Err(invalid("frontier inspection selector is ambiguous")),
-        }
+        state
+            .infrastructure_events
+            .iter()
+            .filter(|event| {
+                event.model.provider == selector.provider
+                    && event.model.model == selector.model
+                    && event.model.tier == selector.tier
+                    && event.model.thinking == selector.thinking
+                    && event.artifact == selector.artifact
+                    && event.case == selector.case
+                    && event.attempt == selector.attempt
+            })
+            .max_by_key(|event| event.infrastructure_attempt)
+            .cloned()
+            .map(|event| FrontierInspection::Infrastructure { event })
+            .ok_or_else(|| {
+                SkillEvalError::NotFound(
+                    "frontier inspection selector has no exact record".to_owned(),
+                )
+            })
     }
 
     pub(crate) fn load_frontier_suite_construction_plan(

@@ -19,11 +19,11 @@ use frontier_store::{FileFrontierStore, FrontierFailurePoint};
 use model::{
     ArtifactName, CaseId, Decision, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup,
     FrontierCaseReference, FrontierConfidenceMethod, FrontierDecisionRecord, FrontierEntrant,
-    FrontierEvidenceIdentity, FrontierInspection, FrontierModelProgress, FrontierPlan,
-    FrontierPolicy, FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
-    FrontierSuite, FrontierSuiteIdentity, FrontierTierSuite, FrontierTrialSelector,
-    HarnessIdentity, ModelIdentity, T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey,
-    TrialRecord, TrialUsage, TrialVerdict,
+    FrontierEvidenceIdentity, FrontierInfrastructureEvent, FrontierInspection,
+    FrontierModelProgress, FrontierPlan, FrontierPolicy, FrontierRunConfiguration, FrontierRunId,
+    FrontierRunState, FrontierRunStatus, FrontierSuite, FrontierSuiteIdentity, FrontierTierSuite,
+    FrontierTrialSelector, HarnessIdentity, ModelIdentity, PoolPauseReason,
+    T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey, TrialRecord, TrialUsage, TrialVerdict,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -185,6 +185,56 @@ fn inspection_uses_every_exact_selector_field() {
     wrong.thinking = "low".to_owned();
     wrong.attempt = 2;
     assert!(store.inspect_frontier(&wrong).is_err());
+}
+
+#[test]
+fn inspection_prefers_a_completed_trial_over_prior_infrastructure() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let mut state = fixture.state();
+    store.create_frontier(&state).unwrap();
+    state.status = FrontierRunStatus::Running;
+    store.save_frontier(&state).unwrap();
+    state.status = FrontierRunStatus::Paused;
+    state.infrastructure_events = vec![fixture.infrastructure_event(1)];
+    state.pause = Some(PoolPauseReason::Infrastructure {
+        message: "transient".to_owned(),
+    });
+    store.save_frontier(&state).unwrap();
+    store
+        .save_frontier_trial(&state.configuration.run_id, &fixture.trial())
+        .unwrap();
+
+    assert!(matches!(
+        store.inspect_frontier(&fixture.selector()).unwrap(),
+        FrontierInspection::Trial { .. }
+    ));
+}
+
+#[test]
+fn inspection_returns_the_latest_infrastructure_attempt_without_a_trial() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let mut state = fixture.state();
+    store.create_frontier(&state).unwrap();
+    state.status = FrontierRunStatus::Running;
+    store.save_frontier(&state).unwrap();
+    state.status = FrontierRunStatus::Paused;
+    state.infrastructure_events = vec![
+        fixture.infrastructure_event(1),
+        fixture.infrastructure_event(2),
+    ];
+    state.pause = Some(PoolPauseReason::Infrastructure {
+        message: "transient".to_owned(),
+    });
+    store.save_frontier(&state).unwrap();
+
+    let FrontierInspection::Infrastructure { event } =
+        store.inspect_frontier(&fixture.selector()).unwrap()
+    else {
+        panic!("expected infrastructure evidence");
+    };
+    assert_eq!(event.infrastructure_attempt, 2);
 }
 
 #[test]
@@ -518,6 +568,23 @@ impl Fixture {
                 failure_mode: None,
                 checks: Vec::new(),
             },
+        }
+    }
+
+    fn infrastructure_event(&self, infrastructure_attempt: u8) -> FrontierInfrastructureEvent {
+        FrontierInfrastructureEvent {
+            model: ModelIdentity {
+                tier: Tier::T1,
+                provider: "first-party".to_owned(),
+                model: "alpha".to_owned(),
+                thinking: "low".to_owned(),
+            },
+            artifact: ArtifactName("demo".to_owned()),
+            case: CaseId("case-1".to_owned()),
+            attempt: 1,
+            infrastructure_attempt,
+            message: "transient".to_owned(),
+            occurred_at: self.timestamp(),
         }
     }
 
