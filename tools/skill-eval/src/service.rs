@@ -6282,6 +6282,22 @@ pub(crate) fn apply_frontier_suite(
     runtime.apply_frontier_suite_proposal(&proposal, output_path, &published_at)
 }
 
+pub(crate) trait FrontierPreviewRuntime: Clock {
+    fn load_preview_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError>;
+}
+
+impl<T: FrontierRuntime + ?Sized> FrontierPreviewRuntime for T {
+    fn load_preview_frontier_plan(
+        &self,
+        path: &Path,
+    ) -> Result<(FrontierPlan, FrontierSuite), SkillEvalError> {
+        FrontierRuntime::load_frontier_plan(self, path)
+    }
+}
+
 /// Validates one reviewed plan and projects its complete cumulative frontier.
 ///
 /// The inputs are a plan path and read-only runtime. The output is a no-call preview.
@@ -6289,11 +6305,11 @@ pub(crate) fn apply_frontier_suite(
 /// # Errors
 ///
 /// Returns an error for invalid suite, plan, capability, policy, identity, or source evidence.
-pub(crate) fn preview_frontier(
+pub(crate) fn preview_frontier<R: FrontierPreviewRuntime + ?Sized>(
     plan_path: &Path,
-    runtime: &dyn FrontierRuntime,
+    runtime: &R,
 ) -> Result<FrontierPreviewReport, SkillEvalError> {
-    let (plan, suite) = runtime.load_frontier_plan(plan_path)?;
+    let (plan, suite) = runtime.load_preview_frontier_plan(plan_path)?;
     validate_frontier_preview_inputs(&plan, &suite, &runtime.now())?;
 
     let tier_case_counts = frontier_tier_case_counts(&suite)?;
@@ -7544,8 +7560,7 @@ pub(crate) fn build_frontier_report(
         return Err(frontier_lifecycle_drift("report canonical evidence"));
     }
     validate_infrastructure_events(&state)?;
-    let mut schedulable = state.clone();
-    schedulable.models = models.clone();
+    let mut schedulable = canonical_frontier_schedulable_state(&state);
     schedulable.cells = cells.clone();
     schedulable.status = FrontierRunStatus::Running;
     schedulable.pause = None;

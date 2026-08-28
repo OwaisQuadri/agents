@@ -1,0 +1,22 @@
+{
+  "tiers": {
+    "T1": {
+      "pi": "keep/model",
+      "fallbacks": [],
+      "thinking": "low"
+    }
+  },
+  "qualification_routes": {},
+  "orchestrator": "T3",
+  "judge": "T5",
+  "capabilities": {
+    "special": {
+      "pi": "keep/model",
+      "fallbacks": []
+    }
+  },
+  "unranked_controls": {},
+  "agents": {
+    "worker": "T3"
+  }
+}
