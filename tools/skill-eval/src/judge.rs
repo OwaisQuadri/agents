@@ -636,6 +636,10 @@ fn copy_packet_directory(
     }
     for entry in entries {
         let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
+        if is_generated_python_cache(&entry.file_name(), &metadata) {
+            continue;
+        }
         let name = sanitized_entry_name(&entry.file_name(), candidate)?;
         let target = destination.join(name);
         if target.exists() {
@@ -644,7 +648,6 @@ fn copy_packet_directory(
                 target.display()
             )));
         }
-        let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
         if metadata.file_type().is_symlink() {
             return Err(invalid_configuration(format!(
                 "judge evidence entry {} must not be a symbolic link",
@@ -664,6 +667,14 @@ fn copy_packet_directory(
         }
     }
     Ok(())
+}
+
+fn is_generated_python_cache(name: &std::ffi::OsStr, metadata: &fs::Metadata) -> bool {
+    metadata.is_dir() && name == "__pycache__"
+        || metadata.is_file()
+            && Path::new(name)
+                .extension()
+                .is_some_and(|extension| extension == "pyc")
 }
 
 fn sanitized_entry_name(
@@ -1599,6 +1610,28 @@ mod tests {
             Err(SkillEvalError::InvalidConfiguration(_))
         ));
         assert!(judge.process.requests.is_empty());
+    }
+
+    #[test]
+    fn judge_omits_generated_python_bytecode_from_candidate_evidence() {
+        let mut input = judge_input();
+        let trial_root = input.candidate.artifact_path.parent().unwrap();
+        let fixture = trial_root.join("fixture");
+        let cache = fixture.join("__pycache__");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(fixture.join("safe.txt"), "candidate response").unwrap();
+        fs::write(cache.join("slugify.cpython-314.pyc"), [0xff, 0x00, 0xfe]).unwrap();
+        fs::write(trial_root.join("response.txt"), "candidate response").unwrap();
+        input.candidate.artifact_path = fixture;
+        let output = submitted_verdict_event_stream();
+        let mut judge = PiJudge::with_process(FakeProcess::returning(&output));
+
+        let result = judge.grade(&judge_model(), &input).unwrap();
+
+        assert_eq!(result.verdict.score, 9);
+        let artifact = judge.process.requests[0].working_directory.join("artifact");
+        assert!(artifact.join("safe.txt").is_file());
+        assert!(!artifact.join("__pycache__").exists());
     }
 
     #[test]
