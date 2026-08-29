@@ -38,9 +38,8 @@ export type FooterDegradableSegment = {
 	truncate?: FooterForm;
 };
 
-// segments touch degrade tiers low priority first: branch, headline, workspace, pr, status, provider,
-// thinking, model. every item gets a shot at its shorten form before any item is truncated, and every
-// item gets a shot at truncate before any item is hidden. degradation stops the moment the line fits.
+// low-to-high priority: branch, headline, workspace, pr, status, provider, thinking, model. each pass
+// (shorten, then truncate, then hide) touches low-priority items first and stops once the line fits.
 export function assembleFooterLine(
 	forms: Map<FooterSegmentId, FooterForm | undefined>,
 	pick: (form: FooterForm) => string,
@@ -129,6 +128,10 @@ export function pullRequestTone(pullRequest: PullRequest): "success" | "warning"
 
 function osc8(url: string, text: string): string {
 	return `\x1b]8;;${url}\x1b\\\x1b[4m${text}\x1b[24m\x1b]8;;\x1b\\`;
+}
+
+function textForm(text: string, colorize: (text: string) => string): FooterForm {
+	return { text, render: () => colorize(text) };
 }
 
 const BRANCH_COLORS = ["#82b8ff", "#8ee7f5", "#a6dca8", "#c7b5ff", "#d394ff"];
@@ -234,8 +237,7 @@ function contextColor(percent: number): string {
 
 export const BRANCH_SUMMARY_RELEVANCE_THRESHOLD = 0.5;
 
-// symmetric so growth and shrinkage both erode relevance; 1 means the commit count hasn't moved
-// since the last generation, 0 means there is no incumbent (or nothing ahead) at all.
+// symmetric ratio: growth or shrinkage both erode it; 1 = commit count unchanged, 0 = no incumbent.
 export function computeBranchSummaryRelevance(incumbentCommitCount: number | undefined, currentCommitCount: number): number {
 	if (incumbentCommitCount === undefined || incumbentCommitCount === 0 || currentCommitCount === 0) return 0;
 	return Math.min(incumbentCommitCount, currentCommitCount) / Math.max(incumbentCommitCount, currentCommitCount);
@@ -310,10 +312,8 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		return result.code === 0 && /github\.com[:/]/i.test(result.stdout);
 	}
 
-	// runs on every agent_settled (and on branch establishment/change). the incumbent headline stays
-	// on screen for the whole call — nothing is blanked while a challenger generates — and is only
-	// replaced if the challenger is both non-empty and different from the incumbent. the commit-count
-	// anchor advances regardless, so an unchanged incumbent doesn't refire fm on every following turn.
+	// checked on every agent_settled/branch change. the incumbent stays visible for the whole call —
+	// only swapped if the challenger is non-empty and different; the commit-count anchor advances either way.
 	async function refreshBranchSummary(cwd: string, generation: number): Promise<void> {
 		try {
 			const branchPoint = await resolveBranchPointCommit(execForBranchPoint, cwd);
@@ -405,8 +405,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			requestRender?.();
 			if (branch) {
 				await refreshPullRequest(cwd, generation);
-				// steady-state recomputation is driven by agent_settled; this call only covers first
-				// population and branch switches, so an idle 15s poll tick doesn't shell out to git/fm.
+				// steady state runs off agent_settled; this only fires on first population or branch switch.
 				if (isBranchChanged) void refreshBranchSummary(cwd, generation);
 			}
 		} catch {
@@ -482,88 +481,70 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						const model = ctx.model?.id ?? "unknown";
 						const thinking = ctx.thinkingLevel ?? "off";
 
-						// priority order low to high: items earlier in this array degrade first.
 						const items: FooterDegradableSegment[] = [];
 
 						if (state.isGit) {
 							const branch = state.branch;
-							items.push(
-								branch
-									? {
-											id: "branch",
-											full: { text: branch, render: () => fgHex(branchColor(branch), branch) },
-											shorten: {
-												text: truncateSegmentText(branch, 24, true),
-												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 24, true)),
-											},
-											truncate: {
-												text: truncateSegmentText(branch, 12, true),
-												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 12, true)),
-											},
-										}
-									: { id: "branch", full: { text: "detached", render: () => theme.fg("muted", "detached") } },
-							);
+							if (branch) {
+								const colorize = (text: string) => fgHex(branchColor(branch), text);
+								items.push({
+									id: "branch",
+									full: textForm(branch, colorize),
+									shorten: textForm(truncateSegmentText(branch, 24, true), colorize),
+									truncate: textForm(truncateSegmentText(branch, 12, true), colorize),
+								});
+							} else {
+								items.push({ id: "branch", full: textForm("detached", (text) => theme.fg("muted", text)) });
+							}
 						}
 
 						if (branchSummary) {
 							const summaryText = branchSummary;
+							const colorize = (text: string) => theme.fg("muted", text);
 							items.push({
 								id: "headline",
-								full: { text: summaryText, render: () => theme.fg("muted", summaryText) },
-								shorten: {
-									text: truncateSegmentText(summaryText, 24),
-									render: () => theme.fg("muted", truncateSegmentText(summaryText, 24)),
-								},
-								truncate: {
-									text: truncateSegmentText(summaryText, 14),
-									render: () => theme.fg("muted", truncateSegmentText(summaryText, 14)),
-								},
+								full: textForm(summaryText, colorize),
+								shorten: textForm(truncateSegmentText(summaryText, 24), colorize),
+								truncate: textForm(truncateSegmentText(summaryText, 14), colorize),
 							});
 						}
 
 						const workspaceText = state.isGit ? state.project : state.path;
+						const workspaceColorize = (text: string) => theme.fg("muted", text);
 						items.push({
 							id: "workspace",
-							full: { text: workspaceText, render: () => theme.fg("muted", workspaceText) },
-							shorten: {
-								text: truncateSegmentText(workspaceText, 12),
-								render: () => theme.fg("muted", truncateSegmentText(workspaceText, 12)),
-							},
-							truncate: {
-								text: truncateSegmentText(workspaceText, 6),
-								render: () => theme.fg("muted", truncateSegmentText(workspaceText, 6)),
-							},
+							full: textForm(workspaceText, workspaceColorize),
+							shorten: textForm(truncateSegmentText(workspaceText, 12), workspaceColorize),
+							truncate: textForm(truncateSegmentText(workspaceText, 6), workspaceColorize),
 						});
 
 						const activePullRequest = pullRequest;
 						if (activePullRequest) {
 							const tone = pullRequestTone(activePullRequest);
 							const { number, url } = activePullRequest;
-							const colorize = (label: string) => tone === "purple" ? fgHex("#c7b5ff", label) : theme.fg(tone, label);
+							const colorForTone = (label: string) => tone === "purple" ? fgHex("#c7b5ff", label) : theme.fg(tone, label);
+							const colorize = (label: string) => colorForTone(osc8(url, label));
 							items.push({
 								id: "pr",
-								full: { text: `PR #${number}`, render: () => colorize(osc8(url, `PR #${number}`)) },
-								shorten: { text: `#${number}`, render: () => colorize(osc8(url, `#${number}`)) },
+								full: textForm(`PR #${number}`, colorize),
+								shorten: textForm(`#${number}`, colorize),
 							});
 						}
 
+						const statusColorize = (text: string) => isWorking ? fgHex(activityColor(elapsedSeconds), text) : theme.fg("success", text);
 						items.push({
 							id: "status",
-							full: {
-								text: activityLabel,
-								render: () => isWorking ? fgHex(activityColor(elapsedSeconds), activityLabel) : theme.fg("success", activityLabel),
-							},
-							shorten: isWorking
-								? { text: activity, render: () => fgHex(activityColor(elapsedSeconds), activity) }
-								: undefined,
+							full: textForm(activityLabel, statusColorize),
+							shorten: isWorking ? textForm(activity, statusColorize) : undefined,
 						});
 
-						items.push({ id: "provider", full: { text: provider, render: () => provider } });
-						items.push({ id: "thinking", full: { text: thinking, render: () => thinking } });
+						const identity = (text: string) => text;
+						items.push({ id: "provider", full: textForm(provider, identity) });
+						items.push({ id: "thinking", full: textForm(thinking, identity) });
 						items.push({
 							id: "model",
-							full: { text: model, render: () => model },
-							truncate: { text: truncateSegmentText(model, 12, true), render: () => truncateSegmentText(model, 12, true) },
+							full: textForm(model, identity),
+							truncate: textForm(truncateSegmentText(model, 12, true), identity),
 						});
 
 						const forms = resolveFooterSegments(items, safeWidth);
