@@ -18,7 +18,7 @@ use crate::model::{
 use crate::pi_runner::{append_pi_auth_extension, pi_positional_prompt};
 use crate::ports::Judge;
 
-const GRADE_TIMEOUT: Duration = Duration::from_secs(120);
+const GRADE_TIMEOUT: Duration = Duration::from_secs(300);
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const JUDGE_PACKET_DIRECTORY: &str = "judge-evidence";
 const JUDGE_TRANSCRIPT_NAME: &str = "judge-transcript.jsonl";
@@ -772,7 +772,16 @@ fn write_sanitized_transcript(
             })?;
         if matches!(
             event.get("type").and_then(Value::as_str),
-            Some("message_update" | "tool_execution_update")
+            Some(
+                "agent_end"
+                    | "agent_settled"
+                    | "agent_start"
+                    | "message_start"
+                    | "message_update"
+                    | "tool_execution_update"
+                    | "turn_end"
+                    | "turn_start"
+            )
         ) {
             continue;
         }
@@ -1431,7 +1440,7 @@ mod tests {
     use crate::ports::Judge;
 
     use super::{
-        JUDGE_PACKET_DIRECTORY, JUDGE_TRANSCRIPT_NAME, LOCKED_READ_EXTENSION_NAME,
+        GRADE_TIMEOUT, JUDGE_PACKET_DIRECTORY, JUDGE_TRANSCRIPT_NAME, LOCKED_READ_EXTENSION_NAME,
         MAX_JUDGE_FILE_BYTES, PiJudge, Process, ProcessOutput, ProcessRequest, parse_verdict,
         redact_candidate_text,
     };
@@ -1487,6 +1496,7 @@ mod tests {
         assert!(!result.verdict.is_catastrophic);
         assert_eq!(result.verdict.failure_mode, None);
         assert_eq!(result.usage.tool_calls, 1);
+        assert_eq!(judge.process.requests[0].timeout, GRADE_TIMEOUT);
     }
 
     #[test]
@@ -1614,21 +1624,38 @@ mod tests {
     }
 
     #[test]
-    fn judge_drops_streaming_updates_before_enforcing_packet_size() {
+    fn judge_drops_duplicate_events_before_enforcing_packet_size() {
         let input = judge_input();
-        let tool_update = serde_json::json!({
-            "type": "tool_execution_update",
-            "content": "x".repeat(1024),
-        });
-        let message_update = serde_json::json!({
-            "type": "message_update",
-            "content": "x".repeat(1024),
-        });
+        let duplicate_types = [
+            "agent_end",
+            "agent_settled",
+            "agent_start",
+            "message_start",
+            "message_update",
+            "tool_execution_update",
+            "turn_end",
+            "turn_start",
+        ];
         let mut transcript = String::new();
-        for _ in 0..5_100 {
-            transcript.push_str(&serde_json::to_string(&tool_update).unwrap());
-            transcript.push('\n');
-            transcript.push_str(&serde_json::to_string(&message_update).unwrap());
+        for event_type in duplicate_types {
+            let event = serde_json::json!({
+                "type": event_type,
+                "content": "x".repeat(1024),
+            });
+            for _ in 0..700 {
+                transcript.push_str(&serde_json::to_string(&event).unwrap());
+                transcript.push('\n');
+            }
+        }
+        for event_type in [
+            "session",
+            "entry_appended",
+            "tool_execution_start",
+            "tool_execution_end",
+        ] {
+            transcript.push_str(
+                &serde_json::to_string(&serde_json::json!({"type": event_type})).unwrap(),
+            );
             transcript.push('\n');
         }
         transcript.push_str(
@@ -1648,8 +1675,18 @@ mod tests {
                 .join("transcript.jsonl"),
         )
         .unwrap();
-        assert!(!sanitized.contains("tool_execution_update"));
-        assert!(!sanitized.contains("message_update"));
+        for event_type in duplicate_types {
+            assert!(!sanitized.contains(event_type));
+        }
+        for event_type in [
+            "session",
+            "entry_appended",
+            "tool_execution_start",
+            "tool_execution_end",
+            "message_end",
+        ] {
+            assert!(sanitized.contains(event_type));
+        }
         assert!(sanitized.contains("candidate response"));
         assert!(sanitized.len() as u64 <= MAX_JUDGE_FILE_BYTES);
     }
