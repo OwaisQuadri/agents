@@ -470,6 +470,7 @@ fn infrastructure(
         case: key.case.clone(),
         attempt: key.attempt,
         infrastructure_attempt: attempt,
+        charged_millionths_of_dollar: 0,
         message: message.to_owned(),
         occurred_at: timestamp(),
     }

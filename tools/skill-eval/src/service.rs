@@ -7164,14 +7164,14 @@ fn commit_frontier_wave(
     let mut terminal_error = persistence_error;
     for (model, key, infrastructure_attempt, error) in failures {
         match error {
-            error @ (SkillEvalError::InvalidArguments(_)
-            | SkillEvalError::InvalidConfiguration(_)) => {
-                terminal_error.get_or_insert(error);
-            }
             SkillEvalError::Quota { model, reset_at } => {
                 quota_pause.get_or_insert(PoolPauseReason::Quota { model, reset_at });
             }
             error => {
+                let is_terminal = matches!(
+                    error,
+                    SkillEvalError::InvalidArguments(_) | SkillEvalError::InvalidConfiguration(_)
+                );
                 let message = format!("{error:?}");
                 state
                     .infrastructure_events
@@ -7181,11 +7181,18 @@ fn commit_frontier_wave(
                         case: key.case,
                         attempt: key.attempt,
                         infrastructure_attempt,
+                        charged_millionths_of_dollar: reservation,
                         message: message.clone(),
                         occurred_at: runtime.now(),
                     });
+                state.spent_millionths_of_dollar =
+                    frontier_spend(trials, &state.infrastructure_events)?;
                 save_frontier_and_emit(runtime, progress, state)?;
-                infrastructure_pause.get_or_insert(PoolPauseReason::Infrastructure { message });
+                if is_terminal {
+                    terminal_error.get_or_insert(error);
+                } else {
+                    infrastructure_pause.get_or_insert(PoolPauseReason::Infrastructure { message });
+                }
             }
         }
     }
@@ -7403,7 +7410,7 @@ fn update_frontier_progress(
         .collect::<Vec<_>>();
     let case_count = tier_suite.cases.len();
     if case_count == 0 || !route_trials.len().is_multiple_of(case_count) {
-        state.spent_millionths_of_dollar = frontier_spend(trials)?;
+        state.spent_millionths_of_dollar = frontier_spend(trials, &state.infrastructure_events)?;
         return Ok(());
     }
     let attempts = route_trials.len() / case_count;
@@ -7448,7 +7455,7 @@ fn update_frontier_progress(
             )?;
         }
     }
-    state.spent_millionths_of_dollar = frontier_spend(trials)?;
+    state.spent_millionths_of_dollar = frontier_spend(trials, &state.infrastructure_events)?;
     Ok(())
 }
 
@@ -7598,7 +7605,11 @@ fn reconstruct_frontier_authority(
             )?;
         }
     }
-    Ok((models, cells, frontier_spend(trials)?))
+    Ok((
+        models,
+        cells,
+        frontier_spend(trials, &state.infrastructure_events)?,
+    ))
 }
 
 fn is_recoverable_frontier_save_lag(
@@ -7652,7 +7663,7 @@ fn validate_frontier_saved_authority(
     trials: &[TrialRecord],
 ) -> Result<(), SkillEvalError> {
     if state.decision.is_some()
-        || state.spent_millionths_of_dollar != frontier_spend(trials)?
+        || state.spent_millionths_of_dollar != frontier_spend(trials, &state.infrastructure_events)?
         || state.models.len() != plan.entrants.len()
     {
         return Err(frontier_lifecycle_drift("saved authority or spend"));
@@ -7716,13 +7727,23 @@ fn initial_frontier_models(plan: &FrontierPlan) -> Vec<FrontierModelProgress> {
         .collect()
 }
 
-fn frontier_spend(trials: &[TrialRecord]) -> Result<u64, SkillEvalError> {
-    trials.iter().try_fold(0_u64, |total, trial| {
+fn frontier_spend(
+    trials: &[TrialRecord],
+    infrastructure_events: &[FrontierInfrastructureEvent],
+) -> Result<u64, SkillEvalError> {
+    let trial_spend = trials.iter().try_fold(0_u64, |total, trial| {
         total
             .checked_add(trial.candidate_usage.cost_millionths_of_dollar)
             .and_then(|value| value.checked_add(trial.judge_usage.cost_millionths_of_dollar))
             .ok_or_else(|| frontier_lifecycle_invalid("frontier spending arithmetic overflow"))
-    })
+    })?;
+    infrastructure_events
+        .iter()
+        .try_fold(trial_spend, |total, event| {
+            total
+                .checked_add(event.charged_millionths_of_dollar)
+                .ok_or_else(|| frontier_lifecycle_invalid("frontier spending arithmetic overflow"))
+        })
 }
 
 fn frontier_pause_is_retryable(state: &FrontierRunState, plan: &FrontierPlan) -> bool {

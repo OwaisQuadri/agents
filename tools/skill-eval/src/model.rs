@@ -608,6 +608,8 @@ pub(crate) struct FrontierInfrastructureEvent {
     pub(crate) case: CaseId,
     pub(crate) attempt: u16,
     pub(crate) infrastructure_attempt: u8,
+    #[serde(default)]
+    pub(crate) charged_millionths_of_dollar: u64,
     pub(crate) message: String,
     pub(crate) occurred_at: Timestamp,
 }

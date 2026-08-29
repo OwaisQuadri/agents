@@ -204,6 +204,7 @@ macro_rules! frontier_report_tests {
                     case: selector.case.clone(),
                     attempt: selector.attempt,
                     infrastructure_attempt: 1,
+                    charged_millionths_of_dollar: 0,
                     message: "temporary".to_owned(),
                     occurred_at: timestamp(),
                 };

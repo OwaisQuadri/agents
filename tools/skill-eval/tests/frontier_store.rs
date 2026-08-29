@@ -48,6 +48,21 @@ fn create_is_durable_and_rejects_collision_and_escape() {
 }
 
 #[test]
+fn legacy_infrastructure_event_without_charge_deserializes_as_zero() {
+    let fixture = Fixture::new();
+    let event = fixture.infrastructure_event(1);
+    let mut value = serde_json::to_value(event).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("charged_millionths_of_dollar");
+
+    let loaded: FrontierInfrastructureEvent = serde_json::from_value(value).unwrap();
+
+    assert_eq!(loaded.charged_millionths_of_dollar, 0);
+}
+
+#[test]
 fn second_run_writer_cannot_acquire_the_held_lock() {
     let fixture = Fixture::new();
     let mut store = FileFrontierStore::new(&fixture.root).unwrap();
@@ -665,6 +680,7 @@ impl Fixture {
             case: CaseId("case-1".to_owned()),
             attempt: 1,
             infrastructure_attempt,
+            charged_millionths_of_dollar: 0,
             message: "transient".to_owned(),
             occurred_at: self.timestamp(),
         }

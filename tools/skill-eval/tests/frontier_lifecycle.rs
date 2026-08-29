@@ -39,6 +39,7 @@ macro_rules! frontier_lifecycle_tests {
                 plan: FrontierPlan,
                 suite: FrontierSuite,
                 candidate_error: Option<SkillEvalError>,
+                verifier_error: Option<SkillEvalError>,
                 recovered_cost: Option<u64>,
                 execute_calls: u32,
                 timeouts: Vec<Option<u32>>,
@@ -55,6 +56,7 @@ macro_rules! frontier_lifecycle_tests {
                         plan: plan(),
                         suite,
                         candidate_error: None,
+                        verifier_error: None,
                         recovered_cost: None,
                         execute_calls: 0,
                         timeouts: Vec::new(),
@@ -332,6 +334,9 @@ macro_rules! frontier_lifecycle_tests {
                     _case: &CaseDefinition,
                     _candidate: &CandidateArtifact,
                 ) -> Result<Vec<CheckResult>, SkillEvalError> {
+                    if let Some(error) = self.verifier_error.take() {
+                        return Err(error);
+                    }
                     Ok(Vec::new())
                 }
             }
@@ -422,6 +427,10 @@ macro_rules! frontier_lifecycle_tests {
                 }));
                 let durable = runtime.durable.borrow();
                 assert_eq!(durable.trials.len(), 30);
+                assert!(durable.trials.iter().all(|trial| {
+                    trial.candidate_usage.cost_millionths_of_dollar == 1
+                        && trial.judge_usage.cost_millionths_of_dollar == 1
+                }));
                 assert_eq!(state.spent_millionths_of_dollar, 60);
                 assert!(
                     durable
@@ -452,6 +461,8 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .unwrap();
                 assert_eq!(paused.status, FrontierRunStatus::Paused);
+                assert_eq!(paused.spent_millionths_of_dollar, 58);
+                assert!(paused.infrastructure_events.is_empty());
                 assert_eq!(runtime.durable.borrow().trials.len(), 29);
 
                 let state =
@@ -484,6 +495,37 @@ macro_rules! frontier_lifecycle_tests {
                         .unwrap();
                 assert_eq!(state.status, FrontierRunStatus::AwaitingDecision);
                 assert_eq!(runtime.durable.borrow().trials.len(), 30);
+            }
+
+            #[test]
+            fn resume_does_not_reuse_a_failed_attempt_charge() {
+                let mut runtime = FakeRuntime::new();
+                runtime.verifier_error = Some(SkillEvalError::Process {
+                    program: "local-verifier".to_owned(),
+                    exit_code: Some(1),
+                    standard_error: "first".to_owned(),
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+                assert_eq!(paused.infrastructure_events.len(), 1);
+                assert_eq!(
+                    paused.infrastructure_events[0].charged_millionths_of_dollar,
+                    10
+                );
+                assert_eq!(paused.spent_millionths_of_dollar, 68);
+
+                let resumed =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+                assert_eq!(resumed.status, FrontierRunStatus::AwaitingDecision);
+                assert_eq!(resumed.infrastructure_events, paused.infrastructure_events);
+                assert_eq!(resumed.spent_millionths_of_dollar, 70);
+                assert_eq!(runtime.execute_calls, 31);
             }
 
             #[test]
