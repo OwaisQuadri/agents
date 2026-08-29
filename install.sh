@@ -285,8 +285,11 @@ fi
 #    preferred-cli-guard in the pi/extensions/preferred-cli-guard tool_call path ahead of
 #    every bash call, blocking a literal find/grep invocation in favor of fd/rg,
 #    warnings-check in the PreToolUse path ahead of every commit that stages a .rs file
-#    under tools/, alongside no-ai-attribution on the same hook
-for tool in ste-check no-ai-attribution session-stats logpath-check preferred-cli-guard warnings-check; do
+#    under tools/, alongside no-ai-attribution on the same hook,
+#    gepa-due in the daily workflows/gepa-due launchd job, which runs with the minimal
+#    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
+#    not a live `cargo build` attempted inside the launchd environment
+for tool in ste-check no-ai-attribution session-stats logpath-check preferred-cli-guard warnings-check gepa-due; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then

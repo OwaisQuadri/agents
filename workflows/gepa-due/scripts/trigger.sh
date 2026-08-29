@@ -17,7 +17,12 @@ set -euo pipefail
 
 REPO="${GEPA_DUE_REPO:-/Users/owaisquadri/Documents/agents}"
 HERDR="${HERDR_BIN:-/opt/homebrew/bin/herdr}"
-GEPA_DUE_BIN="$REPO/tools/gepa-due/target/release/gepa-due"
+# install.sh builds this and symlinks it onto $HOME/.local/bin (already first on this
+# plist's own PATH) — same pattern as every other tools/ checker, per its own "8. the
+# rust tools" comment. This launchd job's PATH has no cargo, so it must NOT try to
+# build here; command -v finds the symlink once install.sh has run, falling back to
+# the raw build path only for a manual run against a checkout install.sh hasn't touched.
+GEPA_DUE_BIN="$(command -v gepa-due || echo "$REPO/tools/gepa-due/target/release/gepa-due")"
 PRUNE_AFTER_DAYS=7
 POLL_TAB_TIMEOUT_S=30
 POLL_TAB_INTERVAL_S=2
@@ -30,11 +35,11 @@ log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S%z')" "$1"; }
 log "gepa-due trigger starting"
 
 # --- step 0: the ONLY step that runs every single day. Zero LLM cost, zero herdr
-#     call. Build the checker on first run (missing binary, fresh checkout); reuse it
-#     on every later run since it doesn't change day to day. ---
+#     call. Requires install.sh to have already built+symlinked gepa-due (this
+#     launchd job's PATH has no cargo, so it cannot build itself) ---
 if [ ! -x "$GEPA_DUE_BIN" ]; then
-  log "gepa-due binary not built yet, building it once"
-  ( cd "$REPO/tools/gepa-due" && cargo build --release ) 2>&1 | while read -r l; do log "  $l"; done
+  log "ERROR: gepa-due binary not found at $GEPA_DUE_BIN — run install.sh first (it builds and symlinks every tools/ checker, including this one)"
+  exit 1
 fi
 
 DUE_JSON="$("$GEPA_DUE_BIN" "$REPO")"
