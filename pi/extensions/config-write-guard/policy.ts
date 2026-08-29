@@ -18,10 +18,8 @@ function escapeRegExp(literal: string): string {
 	return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// `~/...` and `~<currentUsername>/...` expand to the same directory, and a shell
-// tolerates a doubled `/` between path components. Both forms name a protected path
-// exactly as much as the plain `home/...` form does, so the pattern must catch them too
-// — a command that mutates `~quadri/.claude/AGENTS.md` mutates AGENTS.md.
+// `~<username>/...` and a doubled `/` name the same protected path as `home/...` —
+// both must match too.
 function pathReferencePattern(home: string, username = currentUsername()): RegExp {
 	const escapedHome = escapeRegExp(home);
 	const tildeForms = username !== undefined ? `~(?:${escapeRegExp(username)})?` : "~";
@@ -34,6 +32,7 @@ function pathReferencePattern(home: string, username = currentUsername()): RegEx
  * @param toolName The Pi tool name.
  * @param input The file path or shell command supplied to the tool.
  * @param home The home directory that contains the agent destinations.
+ * @param username The current user's name, for the `~<username>/...` path form.
  * @returns A block reason, or undefined when the call is outside the policy.
  * @throws Never.
  */
