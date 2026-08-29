@@ -55,6 +55,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 	});
 
 	pi.on("model_select", (_event: unknown, ctx: any) => {
+		if (!runtime.enabled || runtime.config.passive) return;
 		runtime.applyContextWindow(ctx.model?.contextWindow);
 		const contextTokens = ctx.getContextUsage?.()?.tokens ?? null;
 		runtime.refreshFooterGauges(ctx.sessionManager.getBranch() as Entry[], contextTokens);
@@ -87,6 +88,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 			runtime.enabled = next;
 			pi.appendEntry(OM_ENABLED, { enabled: next });
 			if (next) {
+				runtime.applyContextWindow(ctx.model?.contextWindow);
 				runtime.memoryRoot = ensureSessionMemory(ctx);
 				attachIfEnabled(ctx);
 				runtime.refreshCost(ctx.sessionManager.getEntries() as Entry[]);
