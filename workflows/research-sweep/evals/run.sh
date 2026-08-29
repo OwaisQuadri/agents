@@ -82,7 +82,7 @@ while IFS= read -r line; do
       # invariant: a dead researcher reaches the fan-in guard as null, never as a
       # wrapped truthy block
       if has "missingLabels" && has "returned" && has "expected" \
-        && has "text \? \{ label" && has "plan node returned nothing"; then
+        && has "if \(!text\) return null" && has "plan node returned nothing"; then
         emit "$id" 5 null
       else
         emit "$id" 0 '"silent-partial"'
@@ -107,6 +107,20 @@ while IFS= read -r line; do
         emit "$id" 5 null
       else
         emit "$id" 1 '"plan-node-hardcoded-codebase-rule"'
+      fi
+      ;;
+    c9)
+      # invariant: a shape failure is corrected via resume on the SAME child, never a
+      # fresh dispatch through gap-check/fill-gap. This mechanical check is still a static
+      # source scan, not a live run of isValidFindingsBlock — it cannot prove the function
+      # actually rejects a truncated block, only that the wiring (resume, no agentType) and
+      # the required-field regex fragments are present in source. A judge run per rubric.md
+      # is what actually exercises isValidFindingsBlock against real malformed text.
+      if has "isValidFindingsBlock" && has "resume: d.label" && has "agentType !== 'web-research-summarizer'" \
+        && has "claim:" && has "cited="; then
+        emit "$id" 5 null
+      else
+        emit "$id" 0 '"shape-check-missing-or-fresh-redispatch"'
       fi
       ;;
     *)

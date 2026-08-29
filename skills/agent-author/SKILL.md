@@ -121,6 +121,49 @@ failure-mode watch-list:
 - fix reflex: any file modification is an automatic failed run
 ```
 
+## declare and check a handoff, even without a `.md` file (AGNT-0088)
+
+A workflow script (`workflows/*/*.workflow.js`) dispatches subagents too, without a named
+agent definition behind every call. The input/output contract this skill requires for a
+named `.md` agent still applies — a workflow author just declares and checks it inline,
+since a `.workflow.js` script cannot `import` another file at runtime (no filesystem or
+Node.js(JavaScript runtime) API access inside the sandboxed script).
+
+Two ways to declare and check a handoff shape, by what the receiving agent's own output
+contract already is:
+
+- **The receiving agent's contract is already JSON-shaped, or can be** — pass `schema`
+  (a JSON(JavaScript Object Notation) Schema) on the `agent()` call. A payload that
+  doesn't match is rejected back to the SAME child, which corrects it, before the call
+  ever returns to the caller. `workflows/scheduled-ideation/scheduled-ideation.workflow.js`'s
+  Generate phase does this today (`schema: {candidates: [...]}`) — this is the default,
+  reach for it first.
+- **The receiving agent's contract is a fixed fenced-block format, not JSON** (a documented
+  choice, not a gap — free text with a checkable shape reads better as prose than as
+  forced JSON fields) — write a small structural check and, on failure, correct the SAME
+  child with `agent()`'s `resume` option (never a fresh dispatch) before accepting the
+  result. `workflows/research-sweep/research-sweep.workflow.js`'s `runResearchers` is the
+  worked example: `isValidFindingsBlock(text)` checks the response against
+  `agents/web-research-summarizer/web-research-summarizer.md`'s own documented output
+  contract, and a failing response gets ONE same-child correction via `resume` before the
+  dispatch is treated as failed.
+
+Either way, the rule is the same one this skill already states for a named agent's own
+output contract: **a shape violation is rejected and retried, never accepted as complete
+because something came back.** A workflow's own separate coverage-retry mechanism (a
+gap-check + fill-gap round, a missing-angle re-dispatch) stays reserved for its actual
+job — an angle nobody covered at all — never repurposed as the first line of defense
+against a malformed single response. Catch a bad shape at the dispatch that produced it,
+before it reaches anything downstream.
+
+No universal field set is being prescribed here. `workflows/research-sweep/research-sweep.workflow.js`'s
+`DISPATCH_SCHEMA` (label, objective, boundaries, source_guidance, recency) fits that
+workflow's own planner-to-researcher handoff; a role with a genuinely different shape
+(`debugger`'s `repro_command`/`expected`/`actual`, `anchor-verifier`'s
+`work_product_paths`/`verify_command`/`rubric`) keeps its own fields. What generalizes is
+the PATTERN — name the expected shape, check it, correct in place — not one fixed
+vocabulary forced onto every dispatch.
+
 ## evals
 
 Every authored agent ships `evals/` per skills/ai-author/templates/eval-harness.md
