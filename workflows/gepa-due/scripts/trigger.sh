@@ -34,12 +34,32 @@
 # "never rm before a verified move" rule — so gepa-due stops re-firing on evidence
 # that has already been read and recorded, while the reviewed evidence itself stays on
 # disk for anyone who wants to look.
+#
+# Every session is instructed to push its branch and open a PR itself before
+# finishing (never merge — that stays a human Decide call) so the review actually
+# lands somewhere visible instead of sitting silent in a local worktree; this script
+# verifies that happened afterward and WARNs loudly if it didn't.
+#
+# A usage-only, ZERO-vote due reason gets a DIFFERENT kickoff than a real Reflect: with
+# no judge signal on file, a live Reflect pass has nothing to act on and — confirmed
+# live, repeatedly, 2026-08-29 — reliably just re-derives "no mutation" from the same
+# usage lines every time. So a zero-vote fire dispatches JUDGE_SAMPLE_SIZE fresh-context
+# sub-agents (real blind judging, per SKILL.md's judge protocol) against a sample of
+# recent usage lines FIRST, to generate real votes for next time, before Reflect runs.
 set -uo pipefail
 
 REPO="${GEPA_DUE_REPO:-/Users/owaisquadri/Documents/agents}"
 HERDR="${HERDR_BIN:-/opt/homebrew/bin/herdr}"
 GEPA_DUE_BASE="${GEPA_DUE_BASE:-main}"
 MAX_CONCURRENT="${GEPA_DUE_MAX_CONCURRENT:-3}"
+# when an artifact is due on usage_count alone with ZERO votes on file, there is no
+# judged critique to Reflect against — every real run so far (2026-08-29) confirmed
+# this: 100% of usage-only, zero-vote fires concluded "no mutation" with nothing but a
+# restated failure taxonomy already implicit in the incumbent's own contract. The real
+# missing input is judge signal, not more prose re-reading the same usage lines, so
+# the kickoff below dispatches the judge protocol against this many of the most recent
+# current-version usage lines instead of asking for a Reflect essay on zero votes.
+JUDGE_SAMPLE_SIZE="${GEPA_DUE_JUDGE_SAMPLE:-5}"
 # install.sh builds this and symlinks it onto $HOME/.local/bin (already first on this
 # plist's own PATH) — same pattern as every other tools/ checker, per its own "8. the
 # rust tools" comment. This launchd job's PATH has no cargo, so it must NOT try to
@@ -174,7 +194,12 @@ handle_artifact() {
   fi
   log "$tag typing kickoff prompt into pane $agent_pane"
 
-  local kickoff="tools/gepa-due found this artifact due for a GEPA tuning look: $artifact (usage_count=$usage_count, vote_count=$vote_count, reason: $reason). Its real $artifact/logs/usage.jsonl and $artifact/votes/votes.jsonl (if present) have already been copied into THIS worktree at those exact paths — read them directly, don't rely on this summary alone, and say so if either is missing. Read skills/ai-author/SKILL.md's GEPA loop (Reflect/Propose/Test/Decide/Record) and its 'applying frontier data' section, then decide what to do — run a real tuning pass, or record a short 'no mutation, here is why' note. Never ship a mutation without going through the loop's own Decide gate; this prompt is a nudge, not an instruction to skip it. Whatever you conclude, commit a dated entry to $artifact/TUNING.md before finishing — that commit is how this trigger knows the evidence was actually reviewed and stops re-firing on it. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+  local kickoff
+  if [ "$vote_count" -eq 0 ]; then
+    kickoff="tools/gepa-due found this artifact due on usage_count alone ($usage_count, reason: $reason) with ZERO votes on file. Its real $artifact/logs/usage.jsonl has already been copied into THIS worktree at that exact path — read it directly. With zero votes there is no judged critique to Reflect against — writing a long Reflect essay re-reading the same usage lines is NOT the right action here (every real gepa-due run so far that hit this exact zero-vote case concluded 'no mutation' with nothing but the incumbent's own contract restated). The right action: dispatch $JUDGE_SAMPLE_SIZE SEPARATE fresh-context sub-agents (the Agent tool, general-purpose type — NOT your own context, blindness is the whole point per SKILL.md's judge protocol section), one per the $JUDGE_SAMPLE_SIZE most recent lines in $artifact/logs/usage.jsonl. Each sub-agent gets ONLY the artifact's own source file and its one assigned usage line — never this prompt, never the other lines, never prior votes — and grades harshly per the judge protocol, submitting via 'python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>' with the vote's first line being 'prompt_version: <exact value from that usage line>'. After all $JUDGE_SAMPLE_SIZE votes land, THEN run Reflect for real with actual judge signal. If it still concludes no mutation (likely, with only $JUDGE_SAMPLE_SIZE votes), commit ONE short paragraph to $artifact/TUNING.md — how many votes you generated and their grades, and why no mutation — NOT a multi-section essay re-deriving the failure taxonomy from usage lines alone. Never ship a mutation without going through the loop's own Decide gate. Whatever you conclude, commit that entry AND push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — that PR is how this trigger's evidence review actually lands instead of sitting in a local worktree only. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+  else
+    kickoff="tools/gepa-due found this artifact due for a GEPA tuning look: $artifact (usage_count=$usage_count, vote_count=$vote_count, reason: $reason). Its real $artifact/logs/usage.jsonl and $artifact/votes/votes.jsonl have already been copied into THIS worktree at those exact paths — read them directly, don't rely on this summary alone. Read skills/ai-author/SKILL.md's GEPA loop (Reflect/Propose/Test/Decide/Record) and its 'applying frontier data' section, then decide what to do — run a real tuning pass, or record a short 'no mutation, here is why' note (one paragraph if there is genuinely nothing new to report; longer only if the votes actually surface a new pattern worth naming in full). Never ship a mutation without going through the loop's own Decide gate; this prompt is a nudge, not an instruction to skip it. Whatever you conclude, commit a dated entry to $artifact/TUNING.md AND push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — that commit is how this trigger knows the evidence was actually reviewed and stops re-firing on it, and the PR is how it actually lands for review. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+  fi
   "$HERDR" pane send-text "$agent_pane" "$kickoff"
 
   local submit_confirmed=0
@@ -197,6 +222,24 @@ handle_artifact() {
     return 1
   fi
   log "$tag SUCCESS: session settled — branch=$branch workspace=$workspace_id"
+
+  # verify the session actually did what the kickoff asked (push + open a PR) — the
+  # rotation decision below is independent of this (it only needs the LOCAL commit,
+  # so a session that committed but forgot to push still gets its evidence rotated,
+  # correctly, since the commit itself is the proof of review) but a session that
+  # never pushed leaves its record stuck in a local worktree nobody will see, so this
+  # is worth a loud WARN rather than a silent gap.
+  if git -C "$worktree_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    local pr_url
+    pr_url="$(gh pr view "$branch" --repo "$(git -C "$worktree_path" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')" --json url -q .url 2>/dev/null || true)"
+    if [ -n "$pr_url" ]; then
+      log "$tag confirmed: branch pushed, PR open at $pr_url"
+    else
+      log "$tag WARN: branch $branch was pushed but no open PR found for it — session may not have run 'gh pr create'"
+    fi
+  else
+    log "$tag WARN: branch $branch was never pushed (no upstream) — its commit(s) are stuck in the local worktree, nobody will see this without manual intervention"
+  fi
 
   # rotation: only once this branch actually committed a TUNING.md entry for this
   # artifact — real evidence the pass happened, not just that the session ran.
