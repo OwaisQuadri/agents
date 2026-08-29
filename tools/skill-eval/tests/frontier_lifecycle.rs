@@ -669,6 +669,70 @@ macro_rules! frontier_lifecycle_tests {
             }
 
             #[test]
+            fn definitive_candidate_refusal_sets_the_entrant_aside_without_a_retry() {
+                let mut runtime = FakeRuntime::new();
+                runtime.candidate_error = Some(SkillEvalError::Process {
+                    program: "pi".to_owned(),
+                    exit_code: Some(0),
+                    standard_error: "Codex error: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber".to_owned(),
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+                let calls = runtime.execute_calls;
+
+                let completed =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+
+                assert_eq!(completed.status, FrontierRunStatus::AwaitingDecision);
+                assert_eq!(
+                    completed.infrastructure_events,
+                    paused.infrastructure_events
+                );
+                assert_eq!(runtime.execute_calls, calls);
+                assert_eq!(completed.spent_millionths_of_dollar, paused.spent_millionths_of_dollar);
+                assert_eq!(completed.cells.len(), 1);
+                assert_eq!(
+                    completed.cells[0].set_aside_reason,
+                    Some($crate::model::FrontierSetAsideReason::Infrastructure)
+                );
+            }
+
+            #[test]
+            fn quoted_candidate_refusal_retains_the_normal_retry() {
+                let mut runtime = FakeRuntime::new();
+                runtime.candidate_error = Some(SkillEvalError::Process {
+                    program: "pi".to_owned(),
+                    exit_code: Some(0),
+                    standard_error: "wrapper quoted: Codex error: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber".to_owned(),
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+                let calls = runtime.execute_calls;
+
+                let completed =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+
+                assert_eq!(completed.status, FrontierRunStatus::AwaitingDecision);
+                assert!(runtime.execute_calls > calls);
+                assert_ne!(
+                    completed.cells[0].status,
+                    $crate::model::FrontierCellStatus::Skipped
+                );
+            }
+
+            #[test]
             fn repeated_non_candidate_infrastructure_remains_paused() {
                 let mut runtime = FakeRuntime::new();
                 runtime.verifier_error = Some(SkillEvalError::InvalidConfiguration(

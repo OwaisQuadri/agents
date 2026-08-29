@@ -6909,7 +6909,9 @@ pub(crate) fn resume_frontier(
                 save_frontier_and_emit(runtime, progress, &state)?;
             }
             Some(PoolPauseReason::Infrastructure { .. })
-                if frontier_pause_is_retryable(&state, &plan) =>
+                if frontier_pause_is_retryable(&state, &plan)
+                    && !frontier_paused_infrastructure_event(&state)
+                        .is_some_and(is_definitive_candidate_refusal) =>
             {
                 state.status = FrontierRunStatus::Running;
                 state.pause = None;
@@ -7895,6 +7897,13 @@ fn frontier_pause_is_retryable(state: &FrontierRunState, plan: &FrontierPlan) ->
     frontier_paused_infrastructure_event(state).is_some_and(|event| {
         event.infrastructure_attempt < plan.policy.maximum_infrastructure_attempts
     })
+}
+
+fn is_definitive_candidate_refusal(event: &FrontierInfrastructureEvent) -> bool {
+    const REFUSAL: &str = r#"Process { program: "pi", exit_code: Some(0), standard_error: "Codex error: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber" }"#;
+
+    event.failure_stage == Some(crate::model::FrontierFailureStage::Candidate)
+        && event.message.ends_with(REFUSAL)
 }
 
 fn frontier_paused_infrastructure_event(
