@@ -111,11 +111,7 @@ while IFS= read -r line; do
       ;;
     c9)
       # invariant: a shape failure is corrected via resume on the SAME child, never a
-      # fresh dispatch through gap-check/fill-gap. This mechanical check is still a static
-      # source scan, not a live run of isValidFindingsBlock — it cannot prove the function
-      # actually rejects a truncated block, only that the wiring (resume, no agentType) and
-      # the required-field regex fragments are present in source. A judge run per rubric.md
-      # is what actually exercises isValidFindingsBlock against real malformed text.
+      # fresh dispatch through gap-check/fill-gap (static source scan only — see header)
       if has "isValidFindingsBlock" && has "resume: d.label" && has "agentType !== 'web-research-summarizer'" \
         && has "claim:" && has "cited="; then
         emit "$id" 5 null

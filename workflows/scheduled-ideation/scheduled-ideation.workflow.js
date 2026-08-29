@@ -18,13 +18,10 @@ const MAX_TOOL_RADAR = Math.min((args && args.max_tool_radar) || 3, 3)
 const MAX_DIGEST_CANDIDATES = 10
 const MAX_MINING = 3
 
-// A superset of workflows/research-sweep/research-sweep.workflow.js's own DISPATCH_SCHEMA,
-// adding `category`. That is a legitimate, workflow-specific extension, not drift to reconcile
-// away: `category` genuinely reaches the dispatched agent (interpolated into the prompt via
-// categoryInstruction, below) and drives this file's own mining/toolRadar routing (see the
-// .filter(d => d.category === ...) calls below) — research-sweep never needs either behavior,
-// so it has no analogous field. `label` still never reaches a dispatch's prompt body here
-// either, same as research-sweep — it stays orchestration metadata only.
+// A superset of research-sweep's DISPATCH_SCHEMA, adding `category` — a legitimate,
+// workflow-specific field: it drives mining/toolRadar routing below and reaches the
+// dispatched agent via categoryInstruction, unlike `label`, which stays orchestration
+// metadata only here too.
 const DISPATCH_SCHEMA = {
   type: 'object',
   properties: {

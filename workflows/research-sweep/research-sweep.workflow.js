@@ -17,19 +17,13 @@ const MAX_CODEBASE = Math.min((args && args.max_codebase) || 2, 2)
 const MAX_FILL = 3
 const INCLUDE_CODEBASE = (args && args.includeCodebase) !== false
 
-// `label` is declared here but never reaches a dispatched researcher's prompt (see
-// dispatchPrompt below) — it stays purely orchestration metadata, passed to agent()'s own
-// {label, phase, agentType} opts for logging/matching, never interpolated into the prompt
-// body. That is intentional, not a gap: the researcher doesn't need its own label to do the
-// work. All five fields are required here because this schema governs the PLAN NODE's own
-// structured output (it must always produce a real value for every field) — a separate
-// question from whether the researcher it later dispatches to treats any of them as
-// optional. agents/web-research-summarizer/web-research-summarizer.md's own input contract
-// marks only `objective` required, with stated defaults for the rest — that is that agent's
-// fallback behavior for being dispatched directly, without a planner in front of it. The two
-// required-lists differ on purpose; this schema being stricter doesn't need reconciling down
-// to match the agent's own leniency; it means the planner is held to a higher bar when it's
-// the thing filling every field in.
+// `label` is declared but never reaches a dispatched researcher's prompt (see
+// dispatchPrompt below) — it stays orchestration metadata for agent()'s own
+// {label, phase, agentType} opts. All five fields are required here because this
+// schema governs the PLAN NODE's own output, not the researcher's contract:
+// agents/web-research-summarizer/web-research-summarizer.md marks only `objective`
+// required, with its own defaults for the rest. The two required-lists differ on
+// purpose, not drift.
 const DISPATCH_SCHEMA = {
   type: 'object',
   properties: {
@@ -42,24 +36,13 @@ const DISPATCH_SCHEMA = {
   required: ['label', 'objective', 'boundaries', 'source_guidance', 'recency'],
 }
 
-// Structural check against agents/web-research-summarizer/web-research-summarizer.md's own
-// documented output contract (its "## output contract" section): exactly one ```findings
-// fenced block carrying objective:, findings: with at least one claim/source pair, gaps:,
-// and a sources: fetched=N cited=M count. "nothing outside it" in that contract is not
-// literal — the same agent's own "## logging" section mandates a SEPARATE trailing ```log
-// fence after every response, findings or decline alike — so this check does not reject
-// content before or after the findings fence (real captured runs during this ticket's own
-// research routinely open with a line of narration before the fence, e.g. "I now have
-// everything needed to compose the findings block."). It does reject: a truncated block
-// missing any of the four required parts, and a second ```findings fence anywhere after the
-// first closes — the contract promises exactly one, and two makes it ambiguous which is
-// authoritative. Not a full parse — cheap enough to run on every response, strict enough to
-// catch a truncated, incomplete, or duplicated block before it's accepted as complete.
-// Scoped to web-research-summarizer dispatches only: the built-in Explore agent type (used
-// for codebase dispatches) has no repo-owned contract file, and its actual output shape
-// (a structured markdown report, confirmed directly during this ticket's own research) does
-// not follow this fence at all — there is no stable contract to check codebase dispatches
-// against yet.
+// Checks a response against agents/web-research-summarizer/web-research-summarizer.md's
+// output contract: one ```findings fence with objective:, findings:, a claim/source pair,
+// gaps:, and sources: fetched=N cited=M. "nothing outside it" there isn't literal — that
+// agent's logging section mandates a separate trailing ```log fence — so this only rejects
+// a truncated block (missing a required part) or a second ```findings fence, never
+// surrounding text. Scoped to web-research-summarizer: Explore (codebase dispatches) has
+// no repo-owned contract to check against.
 function isValidFindingsBlock(text) {
   const fenceStart = text.indexOf('```findings')
   if (fenceStart === -1) return false
@@ -109,16 +92,11 @@ log(`planned ${planned.length} web dispatch(es): ${planned.map(d => d.label).joi
 const dispatchPrompt = d =>
   `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}`
 
-// A malformed web-research-summarizer response is corrected IN PLACE, inside this same
-// dispatch, before it ever reaches the caller — never by falling through to the workflow's
-// separate gap-check/fill-gap round, which spins up a brand-new fresh-context agent. That
-// machinery stays reserved for its actual job (an angle nobody covered at all), not for
-// handoff-shape policing. One resumed correction only: `resume` continues the SAME child
-// that produced the bad response (it cannot be combined with agentType/model/schema/etc.,
-// so the correction prompt omits agentType and relies on resume routing to the already-typed
-// child). A response still malformed after the correction is treated as missing, same as no
-// response at all — that is the only point where the pre-existing gap-check/fill-gap path
-// legitimately takes over.
+// A malformed response is corrected in place via `resume` on the SAME child — never a
+// fresh dispatch through the gap-check/fill-gap round, which stays reserved for an angle
+// nobody covered at all. `resume` can't combine with agentType/model/schema, so the
+// correction call omits agentType. Still-malformed after one correction is treated as
+// missing, same as no response.
 async function dispatchAndCheck(d, phaseTitle, agentType) {
   const text = await agent(dispatchPrompt(d), { label: d.label, phase: phaseTitle, agentType })
   if (!text) return null
