@@ -240,11 +240,17 @@ export function buildBranchSummaryPrompt(subjects: string[]): string {
 	return `Name what these git commits implement, as one short label, not a sentence:\n${subjects.join("\n")}`;
 }
 
-export function truncateSegmentText(text: string, maxWidth: number): string {
+export function truncateSegmentText(text: string, maxWidth: number, fromStart = false): string {
 	const flattened = text.replace(/\s+/g, " ").trim();
 	if (visibleWidth(flattened) <= maxWidth) return flattened;
 	const ellipsis = "…";
 	let truncated = flattened;
+	if (fromStart) {
+		while (truncated.length > 0 && visibleWidth(truncated) + visibleWidth(ellipsis) > maxWidth) {
+			truncated = truncated.slice(1);
+		}
+		return `${ellipsis}${truncated.trimStart()}`;
+	}
 	while (truncated.length > 0 && visibleWidth(truncated) + visibleWidth(ellipsis) > maxWidth) {
 		truncated = truncated.slice(0, -1);
 	}
@@ -469,12 +475,12 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 											id: "branch",
 											full: { text: branch, render: () => fgHex(branchColor(branch), branch) },
 											shorten: {
-												text: truncateSegmentText(branch, 24),
-												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 24)),
+												text: truncateSegmentText(branch, 24, true),
+												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 24, true)),
 											},
 											truncate: {
-												text: truncateSegmentText(branch, 12),
-												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 12)),
+												text: truncateSegmentText(branch, 12, true),
+												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 12, true)),
 											},
 										}
 									: { id: "branch", full: { text: "detached", render: () => theme.fg("muted", "detached") } },
@@ -539,7 +545,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						items.push({
 							id: "model",
 							full: { text: model, render: () => model },
-							truncate: { text: truncateSegmentText(model, 12), render: () => truncateSegmentText(model, 12) },
+							truncate: { text: truncateSegmentText(model, 12, true), render: () => truncateSegmentText(model, 12, true) },
 						});
 
 						const forms = resolveFooterSegments(items, safeWidth);

@@ -159,6 +159,20 @@ test("pure: truncateSegmentText collapses whitespace and truncates with an ellip
 	}
 });
 
+test("pure: truncateSegmentText fromStart keeps the trailing text and leads with the ellipsis", async () => {
+	const extensions = await loadFooter();
+	try {
+		const { truncateSegmentText } = extensions.footer;
+		assert.equal(truncateSegmentText("short text", 60, true), "short text");
+		const truncated = truncateSegmentText("worktree/green-forest-a59b", 12, true);
+		assert.ok(truncated.startsWith("\u2026"), "leading truncation drops the front, so the ellipsis leads");
+		assert.ok(truncated.endsWith("a59b"), "the distinguishing suffix survives");
+		assert.equal(truncated.length, 12);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
 test("segment appears between the PR position and activity once a summary is computed", async () => {
 	const extensions = await loadFooter();
 	const { exec } = makeExec();
