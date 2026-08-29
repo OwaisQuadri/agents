@@ -12,6 +12,7 @@ import {
 	captureSnapshot,
 	diffStats,
 	filePatch,
+	resolveBranchPointCommit,
 	resolveBranchPointTree,
 	TEMP_INDEX_PREFIX,
 } from "./engine.ts";
@@ -349,6 +350,40 @@ test("T20 all three origin values are produced", async (t) => {
 		2,
 		"a both-row sums the committed and uncommitted additions",
 	);
+});
+
+test("T20 resolveBranchPointCommit matches the merge-base commit backing resolveBranchPointTree's tree", async (t) => {
+	const repo = makeFixtureRepo(tmpdir());
+	t.after(() => repo.cleanup());
+	addBranchCommit(repo);
+
+	const commit = await resolveBranchPointCommit(exec, repo.root);
+	assert.notEqual(commit, null);
+	const expectedTree = repo.git(["rev-parse", `${commit}^{tree}`]).trim();
+	const tree = await resolveBranchPointTree(exec, repo.root);
+	assert.equal(tree, expectedTree);
+});
+
+test("T20 resolveBranchPointCommit lands on the baseline commit, not HEAD", async (t) => {
+	const repo = makeFixtureRepo(tmpdir());
+	t.after(() => repo.cleanup());
+	const baseline = repo.git(["rev-parse", "HEAD"]).trim();
+	addBranchCommit(repo);
+
+	const commit = await resolveBranchPointCommit(exec, repo.root);
+	assert.equal(commit, baseline);
+});
+
+test("T20 resolveBranchPointCommit degrades to null without throwing", async (t) => {
+	const onDefaultBranch = makeFixtureRepo(tmpdir());
+	t.after(() => onDefaultBranch.cleanup());
+	assert.equal(await resolveBranchPointCommit(exec, onDefaultBranch.root), null);
+
+	const detached = makeFixtureRepo(tmpdir());
+	t.after(() => detached.cleanup());
+	addBranchCommit(detached);
+	detached.git(["checkout", "-q", "--detach"]);
+	assert.equal(await resolveBranchPointCommit(exec, detached.root), null);
 });
 
 test("T20 branch point degrades to null without throwing", async (t) => {

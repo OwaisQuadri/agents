@@ -2,10 +2,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { basename, relative } from "node:path";
+import { resolveBranchPointCommit, type Exec } from "./live-diff/engine.ts";
 
 const HERDR_WORKTREE_MARKER = "/.herdr/worktrees/";
 const PR_POLL_INTERVAL_MS = 15 * 1000;
 const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const BRANCH_SUMMARY_MAX_COMMITS = 20;
+const BRANCH_SUMMARY_MAX_WIDTH = 60;
+const BRANCH_SUMMARY_INSTRUCTIONS =
+	"Reply in one short plain-text line, under 12 words, no markdown, no quotes.";
 
 type RepositoryState =
 	| { isGit: true; project: string; branch: string | undefined }
@@ -168,6 +173,48 @@ function contextColor(percent: number): string {
 	return "#f28b9a";
 }
 
+export function shouldRecomputeBranchSummary(lastSha: string | undefined, currentSha: string | undefined): boolean {
+	return currentSha !== undefined && currentSha !== lastSha;
+}
+
+export function buildBranchSummaryPrompt(subjects: string[]): string {
+	return `Summarize this list of git commit messages as one line describing the work done:\n${subjects.join("\n")}`;
+}
+
+export function truncateSegmentText(text: string, maxWidth: number): string {
+	const flattened = text.replace(/\s+/g, " ").trim();
+	if (visibleWidth(flattened) <= maxWidth) return flattened;
+	const ellipsis = "…";
+	let truncated = flattened;
+	while (truncated.length > 0 && visibleWidth(truncated) + visibleWidth(ellipsis) > maxWidth) {
+		truncated = truncated.slice(0, -1);
+	}
+	return `${truncated.trimEnd()}${ellipsis}`;
+}
+
+async function isFoundationModelsAvailable(exec: ExtensionAPI["exec"]): Promise<boolean> {
+	try {
+		const result = await exec("fm", ["available", "--model", "system"], { timeout: 5_000 });
+		return result.code === 0 && result.stdout.trim() === "System model available";
+	} catch {
+		return false;
+	}
+}
+
+async function runFoundationModelsRespond(exec: ExtensionAPI["exec"], prompt: string): Promise<string | undefined> {
+	try {
+		const result = await exec(
+			"fm",
+			["respond", "--model", "system", "--no-stream", "--instructions", BRANCH_SUMMARY_INSTRUCTIONS, prompt],
+			{ timeout: 15_000 },
+		);
+		if (result.code !== 0 || result.stdout.trim() === "") return undefined;
+		return result.stdout.trim();
+	} catch {
+		return undefined;
+	}
+}
+
 export default function owaisFooter(pi: ExtensionAPI): void {
 	let activeContext: ExtensionContext | undefined;
 	let repository: RepositoryState = { isGit: false, path: "unknown" };
@@ -177,10 +224,49 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let requestRender: (() => void) | undefined;
 	let refreshGeneration = 0;
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
+	let branchSummary: string | undefined;
+	let branchSummarySha: string | undefined;
+	let isFoundationModelsAvailableCache: boolean | undefined;
+	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
 
 	async function hasGitHubRemote(cwd: string): Promise<boolean> {
 		const result = await pi.exec("git", ["remote", "-v"], { cwd, timeout: 5_000 });
 		return result.code === 0 && /github\.com[:/]/i.test(result.stdout);
+	}
+
+	async function refreshBranchSummary(cwd: string, generation: number): Promise<void> {
+		try {
+			const headResult = await pi.exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 5_000 });
+			if (generation !== refreshGeneration || headResult.code !== 0) return;
+			const headSha = headResult.stdout.trim();
+			if (!shouldRecomputeBranchSummary(branchSummarySha, headSha)) return;
+
+			const branchPoint = await resolveBranchPointCommit(execForBranchPoint, cwd);
+			if (generation !== refreshGeneration || branchPoint === null) return;
+
+			const logResult = await pi.exec(
+				"git",
+				["log", "--oneline", `-${BRANCH_SUMMARY_MAX_COMMITS}`, `${branchPoint}..HEAD`],
+				{ cwd, timeout: 5_000 },
+			);
+			if (generation !== refreshGeneration || logResult.code !== 0) return;
+			const subjects = logResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+			if (subjects.length === 0) return;
+
+			if (isFoundationModelsAvailableCache === undefined) {
+				isFoundationModelsAvailableCache = await isFoundationModelsAvailable(pi.exec);
+			}
+			if (generation !== refreshGeneration || !isFoundationModelsAvailableCache) return;
+
+			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+			if (generation !== refreshGeneration || response === undefined) return;
+			branchSummary = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
+			branchSummarySha = headSha;
+		} catch {
+			return;
+		} finally {
+			if (generation === refreshGeneration) requestRender?.();
+		}
 	}
 
 	async function refreshPullRequest(cwd: string, generation: number): Promise<void> {
@@ -230,9 +316,16 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const branch = branchResult.code === 0 ? branchResult.stdout.trim() || undefined : undefined;
 			const isBranchChanged = !repository.isGit || repository.branch !== branch;
 			repository = { isGit: true, project: projectName(cwd, root.stdout.trim()), branch };
-			if (isBranchChanged || !branch) pullRequest = undefined;
+			if (isBranchChanged || !branch) {
+				pullRequest = undefined;
+				branchSummary = undefined;
+				branchSummarySha = undefined;
+			}
 			requestRender?.();
-			if (branch) await refreshPullRequest(cwd, generation);
+			if (branch) {
+				await refreshPullRequest(cwd, generation);
+				void refreshBranchSummary(cwd, generation);
+			}
 		} catch {
 			if (generation !== refreshGeneration) return;
 			repository = { isGit: false, path: compactPath(cwd) };
@@ -329,6 +422,10 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 								},
 							});
 						}
+						if (branchSummary) {
+							const summaryText = branchSummary;
+							segments.push({ text: summaryText, render: () => theme.fg("muted", summaryText) });
+						}
 						const activityLabel = isWorking ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
 						segments.push({
 							text: activityLabel,
@@ -350,7 +447,12 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", () => setWorking(true));
-	pi.on("agent_settled", () => setWorking(false));
+	pi.on("agent_settled", () => {
+		setWorking(false);
+		if (repository.isGit && repository.branch && activeContext?.cwd) {
+			void refreshBranchSummary(activeContext.cwd, refreshGeneration);
+		}
+	});
 	pi.on("model_select", (_event, ctx) => {
 		activeContext = ctx;
 		requestRender?.();
