@@ -173,6 +173,7 @@ fn join_reader(reader: thread::JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Ve
 pub(crate) struct PiCandidateRunner<P = SystemProcess> {
     output_root: PathBuf,
     process: P,
+    installed_extensions: Option<Vec<PathBuf>>,
 }
 
 impl PiCandidateRunner<SystemProcess> {
@@ -180,6 +181,7 @@ impl PiCandidateRunner<SystemProcess> {
         Self {
             output_root,
             process: SystemProcess,
+            installed_extensions: None,
         }
     }
 }
@@ -189,6 +191,7 @@ impl<P> PiCandidateRunner<P> {
         Self {
             output_root,
             process,
+            installed_extensions: Some(Vec::new()),
         }
     }
 
@@ -312,7 +315,17 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
         )?;
         fs::set_permissions(&all_tools_extension, fs::Permissions::from_mode(0o600))
             .map_err(|error| io_error(&all_tools_extension, error))?;
-        let arguments = pi_arguments(artifact, case, model, &all_tools_extension)?;
+        let installed_extensions = match &self.installed_extensions {
+            Some(extensions) => extensions.clone(),
+            None => installed_pi_extensions()?,
+        };
+        let arguments = pi_arguments(
+            artifact,
+            case,
+            model,
+            &installed_extensions,
+            &all_tools_extension,
+        )?;
         let request = ProcessRequest {
             program: "pi".to_owned(),
             arguments,
@@ -690,6 +703,7 @@ fn pi_arguments(
     artifact: &ArtifactDefinition,
     case: &CaseDefinition,
     model: &ModelIdentity,
+    installed_extensions: &[PathBuf],
     all_tools_extension: &Path,
 ) -> Result<Vec<String>, SkillEvalError> {
     let mut arguments = vec![
@@ -718,6 +732,10 @@ fn pi_arguments(
             )?));
         }
     }
+    for extension in installed_extensions {
+        arguments.push("--extension".to_owned());
+        arguments.push(existing_extension(extension)?);
+    }
     arguments.push("--extension".to_owned());
     arguments.push(path_text(all_tools_extension));
     arguments.push("--model".to_owned());
@@ -737,10 +755,12 @@ fn pi_arguments(
 fn all_tools_extension_source() -> &'static str {
     r#"import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+const unattendedEvaluation = "This evaluation is fully unattended. No human can answer questions or grant approvals. Do not ask for input or wait for a response. Use the available evidence and tools, make the safest supported choice, and complete the request or report a concrete blocker.";
+
 export default function (pi: ExtensionAPI): void {
   const enableAll = () => pi.setActiveTools(pi.getAllTools().map((tool) => tool.name));
   pi.on("session_start", enableAll);
-  pi.on("before_agent_start", () => {
+  pi.on("before_agent_start", (event) => {
     enableAll();
     pi.sendMessage({
       customType: "skill-eval-effective-identity",
@@ -751,11 +771,48 @@ export default function (pi: ExtensionAPI): void {
     pi.appendEntry("skill-eval-tool-inventory", {
       tools: pi.getActiveTools().slice().sort(),
     });
+    return { systemPrompt: `${event.systemPrompt}\n\n${unattendedEvaluation}` };
   });
   pi.on("turn_start", enableAll);
   pi.on("context", enableAll);
 }
 "#
+}
+
+fn installed_pi_extensions() -> Result<Vec<PathBuf>, SkillEvalError> {
+    let home = env::var_os("HOME")
+        .ok_or_else(|| invalid("HOME is required to load installed Pi extensions"))?;
+    installed_pi_extensions_at(&PathBuf::from(home).join(".pi/agent/extensions"))
+}
+
+fn installed_pi_extensions_at(root: &Path) -> Result<Vec<PathBuf>, SkillEvalError> {
+    let mut entries = match fs::read_dir(root) {
+        Ok(entries) => entries
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| io_error(root, error))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(io_error(root, error)),
+    };
+    entries.sort_by_key(fs::DirEntry::file_name);
+    entries
+        .into_iter()
+        .map(|entry| {
+            let path = entry.path();
+            let canonical = fs::canonicalize(&path).map_err(|error| io_error(&path, error))?;
+            existing_extension(&canonical).map(PathBuf::from)
+        })
+        .collect()
+}
+
+fn existing_extension(path: &Path) -> Result<String, SkillEvalError> {
+    let metadata = fs::metadata(path).map_err(|error| io_error(path, error))?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(invalid(format!(
+            "explicit Pi extension {} is not a file or directory",
+            path.display()
+        )));
+    }
+    Ok(path_text(path))
 }
 
 fn one_file_with_suffix(root: &Path, suffix: &str) -> Result<PathBuf, SkillEvalError> {
@@ -2167,6 +2224,14 @@ mod tests {
         let case = response_case(&["read"]);
         let process = FakeProcess::returning(include_str!("../tests/fixtures/pi/success.jsonl"));
         let mut runner = PiCandidateRunner::with_process(directory.path().join("runs"), process);
+        let authentication_extension = directory.path().join("pi-anthropic-auth.ts");
+        let web_extension = directory.path().join("web-extension");
+        fs::write(&authentication_extension, "export default () => {};").unwrap();
+        fs::create_dir(&web_extension).unwrap();
+        runner.installed_extensions = Some(vec![
+            authentication_extension.clone(),
+            web_extension.clone(),
+        ]);
 
         let candidate = runner
             .execute(
@@ -2209,18 +2274,39 @@ mod tests {
         );
         assert!(!request.arguments.contains(&"--tools".to_owned()));
         assert!(request.arguments.contains(&"--no-extensions".to_owned()));
+        let extensions = request
+            .arguments
+            .windows(2)
+            .filter(|pair| pair[0] == "--extension")
+            .map(|pair| pair[1].clone())
+            .collect::<Vec<_>>();
+        assert_eq!(extensions.len(), 3);
+        assert_eq!(extensions[0], path_text(&authentication_extension));
+        assert_eq!(extensions[1], path_text(&web_extension));
+        assert_eq!(
+            extensions
+                .iter()
+                .filter(|extension| extension.contains("pi-anthropic-auth"))
+                .count(),
+            1
+        );
         let all_tools = request
             .arguments
             .windows(2)
             .find(|pair| pair[0] == "--extension" && pair[1].ends_with("all-tools.ts"))
             .unwrap();
+        assert_eq!(extensions[2], all_tools[1]);
         assert!(Path::new(&all_tools[1]).is_file());
-        assert!(
-            fs::read_to_string(&all_tools[1])
-                .unwrap()
-                .contains("pi.setActiveTools(pi.getAllTools()")
-        );
+        let all_tools_source = fs::read_to_string(&all_tools[1]).unwrap();
+        assert!(all_tools_source.contains("pi.setActiveTools(pi.getAllTools()"));
+        assert!(all_tools_source.contains("This evaluation is fully unattended."));
+        assert!(all_tools_source.contains("No human can answer questions or grant approvals."));
+        assert!(all_tools_source.contains("systemPrompt: `${event.systemPrompt}"));
         assert!(request.arguments.contains(&"--no-session".to_owned()));
+        assert_eq!(
+            request.arguments.last().unwrap(),
+            &pi_positional_prompt("Answer the fixture prompt.")
+        );
         assert_eq!(
             fs::read_to_string(&candidate.artifact_path).unwrap(),
             "final answer"
@@ -2249,7 +2335,29 @@ mod tests {
     }
 
     #[test]
-    fn anthropic_runs_load_only_the_authentication_extension() {
+    fn installed_extensions_are_sorted_and_resolved() {
+        let directory = TestDirectory::new("installed-extensions");
+        let root = directory.path().join("extensions");
+        let target = directory.path().join("source/auth.ts");
+        let package = directory.path().join("source/web");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::create_dir(&package).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(&target, "export default () => {};").unwrap();
+        std::os::unix::fs::symlink(&target, root.join("z-auth.ts")).unwrap();
+        std::os::unix::fs::symlink(&package, root.join("a-web")).unwrap();
+
+        assert_eq!(
+            installed_pi_extensions_at(&root).unwrap(),
+            [
+                fs::canonicalize(package).unwrap(),
+                fs::canonicalize(target).unwrap()
+            ]
+        );
+    }
+
+    #[test]
+    fn anthropic_runs_load_the_authentication_extension_explicitly() {
         let directory = TestDirectory::new("anthropic-auth-extension");
         let extension = directory
             .path()
