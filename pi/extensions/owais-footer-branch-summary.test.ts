@@ -43,7 +43,7 @@ function makeExec(overrides: {
 } = {}) {
 	const commits = overrides.commits ?? ["abc1230 add branch summary segment", "def4560 fix footer alignment"];
 	const fmAvailable = overrides.fmAvailable ?? true;
-	const fmResponse = overrides.fmResponse ?? "Added branch summary, fixed footer alignment.";
+	const fmResponse = overrides.fmResponse ?? "Branch summary widget";
 	const headSha = overrides.headSha ?? HEAD_SHA;
 	const calls: Array<{ command: string; args: string[] }> = [];
 
@@ -168,7 +168,7 @@ test("segment appears between the PR position and activity once a summary is com
 		await handlers.get("session_start")?.({}, ctx);
 		await settle();
 		const line = getWidget()?.render(160)[1] ?? "";
-		assert.match(line, /Added branch summary, fixed footer alignment\./);
+		assert.match(line, /Branch summary widget/);
 	} finally {
 		disposeAll();
 		await handlers.get("session_shutdown")?.({}, ctx);
@@ -185,7 +185,7 @@ test("segment stays absent when fm reports the system model unavailable", async 
 		await handlers.get("session_start")?.({}, ctx);
 		await settle();
 		const line = getWidget()?.render(160)[1] ?? "";
-		assert.doesNotMatch(line, /Added branch summary/);
+		assert.doesNotMatch(line, /Branch summary widget/);
 	} finally {
 		disposeAll();
 		await handlers.get("session_shutdown")?.({}, ctx);
@@ -202,7 +202,7 @@ test("segment stays absent before the first successful compute (no commits ahead
 		await handlers.get("session_start")?.({}, ctx);
 		await settle();
 		const line = getWidget()?.render(160)[1] ?? "";
-		assert.doesNotMatch(line, /Added branch summary/);
+		assert.doesNotMatch(line, /Branch summary widget/);
 	} finally {
 		disposeAll();
 		await handlers.get("session_shutdown")?.({}, ctx);

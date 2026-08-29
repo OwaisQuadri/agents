@@ -8,9 +8,9 @@ const HERDR_WORKTREE_MARKER = "/.herdr/worktrees/";
 const PR_POLL_INTERVAL_MS = 15 * 1000;
 const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const BRANCH_SUMMARY_MAX_COMMITS = 20;
-const BRANCH_SUMMARY_MAX_WIDTH = 60;
+const BRANCH_SUMMARY_MAX_WIDTH = 40;
 const BRANCH_SUMMARY_INSTRUCTIONS =
-	"Reply in one short plain-text line, under 12 words, no markdown, no quotes.";
+	"Reply with exactly one short noun phrase, 1 to 4 words total, naming the overall work across every commit listed. Never one phrase per commit. Present tense or no verb, never past tense. No markdown, no quotes, no trailing period, single line only.";
 
 type RepositoryState =
 	| { isGit: true; project: string; branch: string | undefined }
@@ -178,7 +178,7 @@ export function shouldRecomputeBranchSummary(lastSha: string | undefined, curren
 }
 
 export function buildBranchSummaryPrompt(subjects: string[]): string {
-	return `Summarize this list of git commit messages as one line describing the work done:\n${subjects.join("\n")}`;
+	return `Name what these git commits implement, as one short label, not a sentence:\n${subjects.join("\n")}`;
 }
 
 export function truncateSegmentText(text: string, maxWidth: number): string {
