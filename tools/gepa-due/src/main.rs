@@ -57,9 +57,20 @@ fn discover_artifacts(root: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// Mirrors the `git log` invocation every artifact's own `## logging` section
-/// documents: the short commit of the last change to the artifact's OWN files,
-/// excluding its harness, tuning record, and accumulated logs/votes — those change on
-/// every run and would make prompt_version churn constantly if included.
+/// documents: the commit of the last change to the artifact's OWN files, excluding
+/// its harness, tuning record, and accumulated logs/votes — those change on every run
+/// and would make prompt_version churn constantly if included.
+///
+/// Returns the FULL hash, not `%h`. Every artifact's own logging section (and
+/// `scripts/submit_vote.py`) logs the ABBREVIATED `%h`, and git's abbreviation length
+/// is not fixed — it grows as the repo needs more characters to stay unique, so the
+/// exact same commit can be logged under different-length prefixes at different
+/// points in time (`76a831fd`, then later `76a831fda`, then `76a831fda8`, all one
+/// commit). Matching callers compare a logged short hash against this FULL hash with
+/// `starts_with`, which is correct regardless of which length any given line used —
+/// exact-string equality between two independently-abbreviated hashes silently
+/// undercounts surviving evidence (confirmed live 2026-08-29: 65 exact-match lines vs
+/// 183 real current-commit lines once all three logged prefix lengths were counted).
 fn current_prompt_version(root: &Path, artifact_rel: &str) -> Option<String> {
     let output = Command::new("git")
         .arg("-C")
@@ -67,7 +78,7 @@ fn current_prompt_version(root: &Path, artifact_rel: &str) -> Option<String> {
         .args([
             "log",
             "-1",
-            "--format=%h",
+            "--format=%H",
             "--",
             artifact_rel,
             ":(exclude)**/evals/**",
@@ -126,7 +137,15 @@ fn extract_json_string_field(line: &str, key: &str) -> Option<String> {
     None
 }
 
-fn count_surviving_usage(artifact_dir: &Path, prompt_version: &str) -> usize {
+/// `current_full_hash` is the artifact's CURRENT full commit hash (see
+/// `current_prompt_version`'s doc comment for why full, not `%h`). A logged line
+/// survives when its own `prompt_version` (whatever abbreviated length it happened to
+/// be logged at) is a non-empty prefix of that full hash — the same relationship git
+/// itself uses to resolve any abbreviated hash, so two different-length loggings of
+/// the same commit always match and a genuinely different commit's short hash never
+/// does (short-hash collision across commits is the same astronomically-unlikely case
+/// git's own abbreviation already accepts everywhere else).
+fn count_surviving_usage(artifact_dir: &Path, current_full_hash: &str) -> usize {
     let Ok(content) = fs::read_to_string(artifact_dir.join("logs").join("usage.jsonl")) else {
         return 0;
     };
@@ -134,22 +153,29 @@ fn count_surviving_usage(artifact_dir: &Path, prompt_version: &str) -> usize {
         .lines()
         .filter(|line| !line.trim().is_empty())
         .filter(|line| {
-            extract_json_string_field(line, "prompt_version").as_deref() == Some(prompt_version)
+            extract_json_string_field(line, "prompt_version")
+                .is_some_and(|logged| !logged.is_empty() && current_full_hash.starts_with(&logged))
         })
         .count()
 }
 
-fn count_surviving_votes(artifact_dir: &Path, prompt_version: &str) -> usize {
+fn count_surviving_votes(artifact_dir: &Path, current_full_hash: &str) -> usize {
     let Ok(content) = fs::read_to_string(artifact_dir.join("votes").join("votes.jsonl")) else {
         return 0;
     };
-    let prefix = format!("prompt_version: {prompt_version}");
+    let vote_prefix_marker = "prompt_version: ";
     content
         .lines()
         .filter(|line| !line.trim().is_empty())
         .filter(|line| {
-            extract_json_string_field(line, "vote")
-                .is_some_and(|vote| vote.starts_with(&prefix))
+            let Some(vote) = extract_json_string_field(line, "vote") else {
+                return false;
+            };
+            let Some(rest) = vote.strip_prefix(vote_prefix_marker) else {
+                return false;
+            };
+            let logged = rest.split('\n').next().unwrap_or("");
+            !logged.is_empty() && current_full_hash.starts_with(logged)
         })
         .count()
 }
@@ -264,6 +290,41 @@ mod tests {
     }
 
     #[test]
+    fn count_surviving_usage_matches_across_abbreviation_lengths() {
+        // The real bug, live 2026-08-29: the same commit logged under three different
+        // `%h` abbreviation lengths as the repo grew (65 lines at 9 chars, 115 at 8
+        // chars, 3 at 10 chars — 183 total) all being real current evidence, but only
+        // the exact-length match survived the old `==` comparison.
+        let dir = std::env::temp_dir().join(format!("gepa-due-test-abbrev-{}", std::process::id()));
+        let logs = dir.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(
+            logs.join("usage.jsonl"),
+            "{\"prompt_version\":\"76a831fd\"}\n\
+             {\"prompt_version\":\"76a831fda\"}\n\
+             {\"prompt_version\":\"76a831fda8\"}\n\
+             {\"prompt_version\":\"deadbeef\"}\n",
+        )
+        .unwrap();
+        let current_full_hash = "76a831fda89d3d78150038c04b7af6726b5312ba";
+        assert_eq!(count_surviving_usage(&dir, current_full_hash), 3);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn count_surviving_usage_empty_logged_prompt_version_never_matches() {
+        let dir = std::env::temp_dir().join(format!("gepa-due-test-empty-{}", std::process::id()));
+        let logs = dir.join("logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(logs.join("usage.jsonl"), "{\"prompt_version\":\"\"}\n").unwrap();
+        // an empty logged prompt_version must never match ANY current hash via
+        // starts_with (every string starts with "") — this is the guard that stops
+        // that vacuous match.
+        assert_eq!(count_surviving_usage(&dir, "76a831fda89d3d78"), 0);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn count_surviving_usage_missing_file_is_zero() {
         let dir = std::env::temp_dir().join(format!("gepa-due-test-missing-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
@@ -286,6 +347,23 @@ mod tests {
         assert_eq!(count_surviving_votes(&dir, "aaa"), 1);
         assert_eq!(count_surviving_votes(&dir, "bbb"), 1);
         assert_eq!(count_surviving_votes(&dir, "ccc"), 0);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn count_surviving_votes_matches_across_abbreviation_lengths() {
+        let dir = std::env::temp_dir().join(format!("gepa-due-test-votes-abbrev-{}", std::process::id()));
+        let votes = dir.join("votes");
+        fs::create_dir_all(&votes).unwrap();
+        fs::write(
+            votes.join("votes.jsonl"),
+            "{\"vote\":\"prompt_version: 76a831fd\\nshort form\"}\n\
+             {\"vote\":\"prompt_version: 76a831fda8\\nlonger form\"}\n\
+             {\"vote\":\"prompt_version: deadbeef\\nunrelated commit\"}\n",
+        )
+        .unwrap();
+        let current_full_hash = "76a831fda89d3d78150038c04b7af6726b5312ba";
+        assert_eq!(count_surviving_votes(&dir, current_full_hash), 2);
         fs::remove_dir_all(&dir).ok();
     }
 

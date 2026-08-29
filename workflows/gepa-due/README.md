@@ -135,3 +135,15 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
      Concurrency (run up to `MAX_CONCURRENT` due artifacts in parallel, each in its
      own scoped worktree) landed in the same pass, since the per-artifact worktree
      rework the fabrication fix needed was most of the work concurrency needed too.
+  4. **Found by the fixed mechanism's own first real, grounded analysis**: `git log
+     --format=%h`'s abbreviation length isn't fixed — it grows as a repo needs more
+     characters to stay unique, so the SAME commit gets logged under
+     different-length prefixes at different points in time. `tools/gepa-due` compared
+     logged `prompt_version` values by exact string equality, so only ONE of those
+     lengths ever counted as "current" — confirmed live: `agents/anchor-verifier` had
+     183 real current-commit lines, but the checker only counted 65 (the one exact
+     length it happened to compute that run). Fixed: the checker now compares a
+     logged value against the artifact's current FULL hash via `starts_with`, the
+     same relationship git itself uses to resolve any abbreviated hash. Surfaced
+     `agents/debugger` (28 real lines) as newly, correctly due — it had been
+     silently undercounted below threshold by the same bug the whole time.
