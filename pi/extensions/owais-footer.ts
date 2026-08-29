@@ -2,10 +2,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { basename, relative } from "node:path";
+import { resolveBranchPointCommit, type Exec } from "./live-diff/engine.ts";
 
 const HERDR_WORKTREE_MARKER = "/.herdr/worktrees/";
 const PR_POLL_INTERVAL_MS = 15 * 1000;
 const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const BRANCH_SUMMARY_MAX_COMMITS = 20;
+const BRANCH_SUMMARY_MAX_WIDTH = 40;
+const BRANCH_SUMMARY_INSTRUCTIONS =
+	"Reply with exactly one short noun phrase, 1 to 4 words total, naming the overall work across every commit listed. Never one phrase per commit. Present tense or no verb, never past tense. No markdown, no quotes, no trailing period, single line only.";
 
 type RepositoryState =
 	| { isGit: true; project: string; branch: string | undefined }
@@ -19,10 +24,79 @@ export type PullRequest = {
 	mergeStateStatus: string;
 };
 
-type PreInputSegment = {
+export type FooterSegmentId = "branch" | "headline" | "workspace" | "pr" | "status" | "provider" | "thinking" | "model";
+
+export type FooterForm = {
 	text: string;
 	render: () => string;
 };
+
+export type FooterDegradableSegment = {
+	id: FooterSegmentId;
+	full: FooterForm;
+	shorten?: FooterForm;
+	truncate?: FooterForm;
+};
+
+// low-to-high priority: branch, headline, workspace, pr, status, provider, thinking, model. each pass
+// (shorten, then truncate, then hide) touches low-priority items first and stops once the line fits.
+export function assembleFooterLine(
+	forms: Map<FooterSegmentId, FooterForm | undefined>,
+	pick: (form: FooterForm) => string,
+	dot: string,
+	arrow: string,
+): { left: string; right: string } {
+	const get = (id: FooterSegmentId): string | undefined => {
+		const form = forms.get(id);
+		return form ? pick(form) : undefined;
+	};
+	const workspace = get("workspace");
+	const branch = get("branch");
+	const leftParts: string[] = [];
+	if (workspace !== undefined && branch !== undefined) leftParts.push(`${workspace}${arrow}${branch}`);
+	else if (workspace !== undefined) leftParts.push(workspace);
+	else if (branch !== undefined) leftParts.push(branch);
+	for (const id of ["pr", "headline", "status"] as const) {
+		const text = get(id);
+		if (text !== undefined) leftParts.push(text);
+	}
+	const left = leftParts.join(dot);
+
+	const provider = get("provider");
+	const thinking = get("thinking");
+	const model = get("model");
+	const right = model !== undefined
+		? `${provider !== undefined ? `${provider}/` : ""}${model}${thinking !== undefined ? ` (${thinking})` : ""}`
+		: "";
+	return { left, right };
+}
+
+export function resolveFooterSegments(
+	items: FooterDegradableSegment[],
+	maxWidth: number,
+): Map<FooterSegmentId, FooterForm | undefined> {
+	const forms = new Map<FooterSegmentId, FooterForm | undefined>(items.map((item) => [item.id, item.full]));
+	const fits = () => {
+		const { left, right } = assembleFooterLine(forms, (form) => form.text, " · ", " > ");
+		return visibleWidth(left) + visibleWidth(right) <= maxWidth;
+	};
+	if (fits()) return forms;
+	for (const item of items) {
+		if (fits()) break;
+		if (item.shorten) forms.set(item.id, item.shorten);
+	}
+	if (fits()) return forms;
+	for (const item of items) {
+		if (fits()) break;
+		if (item.truncate) forms.set(item.id, item.truncate);
+	}
+	if (fits()) return forms;
+	for (const item of items) {
+		if (fits()) break;
+		forms.set(item.id, undefined);
+	}
+	return forms;
+}
 
 function compactPath(path: string | undefined): string {
 	if (!path) return "unknown";
@@ -56,21 +130,14 @@ function osc8(url: string, text: string): string {
 	return `\x1b]8;;${url}\x1b\\\x1b[4m${text}\x1b[24m\x1b]8;;\x1b\\`;
 }
 
+function textForm(text: string, colorize: (text: string) => string): FooterForm {
+	return { text, render: () => colorize(text) };
+}
+
 const BRANCH_COLORS = ["#82b8ff", "#8ee7f5", "#a6dca8", "#c7b5ff", "#d394ff"];
 
 function branchColor(name: string): string {
 	return BRANCH_COLORS[name.length % BRANCH_COLORS.length]!;
-}
-
-function modelLabels(ctx: ExtensionContext): string[] {
-	const provider = ctx.model?.provider ?? "unknown";
-	const model = ctx.model?.id ?? "unknown";
-	const thinking = ctx.thinkingLevel ?? "off";
-	return [`${provider}/${model} (${thinking})`, `${model} (${thinking})`, model];
-}
-
-function fittingModelLabel(labels: string[], availableWidth: number): string {
-	return labels.find((label) => visibleWidth(label) <= availableWidth) ?? "";
 }
 
 function blend(start: string, end: string, fraction: number): string {
@@ -168,6 +235,64 @@ function contextColor(percent: number): string {
 	return "#f28b9a";
 }
 
+export const BRANCH_SUMMARY_RELEVANCE_THRESHOLD = 0.5;
+
+// symmetric ratio: growth or shrinkage both erode it; 1 = commit count unchanged, 0 = no incumbent.
+export function computeBranchSummaryRelevance(incumbentCommitCount: number | undefined, currentCommitCount: number): number {
+	if (incumbentCommitCount === undefined || incumbentCommitCount === 0 || currentCommitCount === 0) return 0;
+	return Math.min(incumbentCommitCount, currentCommitCount) / Math.max(incumbentCommitCount, currentCommitCount);
+}
+
+export function isBranchSummaryChallengerBetter(incumbent: string | undefined, challenger: string): boolean {
+	if (challenger.trim() === "") return false;
+	if (incumbent === undefined) return true;
+	return challenger.trim().toLowerCase() !== incumbent.trim().toLowerCase();
+}
+
+export function buildBranchSummaryPrompt(subjects: string[]): string {
+	return `Name what these git commits implement, as one short label, not a sentence:\n${subjects.join("\n")}`;
+}
+
+export function truncateSegmentText(text: string, maxWidth: number, fromStart = false): string {
+	const flattened = text.replace(/\s+/g, " ").trim();
+	if (visibleWidth(flattened) <= maxWidth) return flattened;
+	const ellipsis = "…";
+	let truncated = flattened;
+	if (fromStart) {
+		while (truncated.length > 0 && visibleWidth(truncated) + visibleWidth(ellipsis) > maxWidth) {
+			truncated = truncated.slice(1);
+		}
+		return `${ellipsis}${truncated.trimStart()}`;
+	}
+	while (truncated.length > 0 && visibleWidth(truncated) + visibleWidth(ellipsis) > maxWidth) {
+		truncated = truncated.slice(0, -1);
+	}
+	return `${truncated.trimEnd()}${ellipsis}`;
+}
+
+async function isFoundationModelsAvailable(exec: ExtensionAPI["exec"]): Promise<boolean> {
+	try {
+		const result = await exec("fm", ["available", "--model", "system"], { timeout: 5_000 });
+		return result.code === 0 && result.stdout.trim() === "System model available";
+	} catch {
+		return false;
+	}
+}
+
+async function runFoundationModelsRespond(exec: ExtensionAPI["exec"], prompt: string): Promise<string | undefined> {
+	try {
+		const result = await exec(
+			"fm",
+			["respond", "--model", "system", "--no-stream", "--instructions", BRANCH_SUMMARY_INSTRUCTIONS, prompt],
+			{ timeout: 15_000 },
+		);
+		if (result.code !== 0 || result.stdout.trim() === "") return undefined;
+		return result.stdout.trim();
+	} catch {
+		return undefined;
+	}
+}
+
 export default function owaisFooter(pi: ExtensionAPI): void {
 	let activeContext: ExtensionContext | undefined;
 	let repository: RepositoryState = { isGit: false, path: "unknown" };
@@ -177,10 +302,52 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let requestRender: (() => void) | undefined;
 	let refreshGeneration = 0;
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
+	let branchSummary: string | undefined;
+	let branchSummaryCommitCount: number | undefined;
+	let isFoundationModelsAvailableCache: boolean | undefined;
+	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
 
 	async function hasGitHubRemote(cwd: string): Promise<boolean> {
 		const result = await pi.exec("git", ["remote", "-v"], { cwd, timeout: 5_000 });
 		return result.code === 0 && /github\.com[:/]/i.test(result.stdout);
+	}
+
+	// checked on every agent_settled/branch change. the incumbent stays visible for the whole call —
+	// only swapped if the challenger is non-empty and different; the commit-count anchor advances either way.
+	async function refreshBranchSummary(cwd: string, generation: number): Promise<void> {
+		try {
+			const branchPoint = await resolveBranchPointCommit(execForBranchPoint, cwd);
+			if (generation !== refreshGeneration || branchPoint === null) return;
+
+			const logResult = await pi.exec(
+				"git",
+				["log", "--oneline", `-${BRANCH_SUMMARY_MAX_COMMITS}`, `${branchPoint}..HEAD`],
+				{ cwd, timeout: 5_000 },
+			);
+			if (generation !== refreshGeneration || logResult.code !== 0) return;
+			const subjects = logResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+			if (subjects.length === 0) return;
+
+			const relevance = computeBranchSummaryRelevance(branchSummaryCommitCount, subjects.length);
+			if (relevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD) return;
+
+			if (isFoundationModelsAvailableCache === undefined) {
+				isFoundationModelsAvailableCache = await isFoundationModelsAvailable(pi.exec);
+			}
+			if (generation !== refreshGeneration || !isFoundationModelsAvailableCache) return;
+
+			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+			if (generation !== refreshGeneration || response === undefined) return;
+			const challenger = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
+			if (isBranchSummaryChallengerBetter(branchSummary, challenger)) {
+				branchSummary = challenger;
+			}
+			branchSummaryCommitCount = subjects.length;
+		} catch {
+			return;
+		} finally {
+			if (generation === refreshGeneration) requestRender?.();
+		}
 	}
 
 	async function refreshPullRequest(cwd: string, generation: number): Promise<void> {
@@ -230,9 +397,17 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const branch = branchResult.code === 0 ? branchResult.stdout.trim() || undefined : undefined;
 			const isBranchChanged = !repository.isGit || repository.branch !== branch;
 			repository = { isGit: true, project: projectName(cwd, root.stdout.trim()), branch };
-			if (isBranchChanged || !branch) pullRequest = undefined;
+			if (isBranchChanged || !branch) {
+				pullRequest = undefined;
+				branchSummary = undefined;
+				branchSummaryCommitCount = undefined;
+			}
 			requestRender?.();
-			if (branch) await refreshPullRequest(cwd, generation);
+			if (branch) {
+				await refreshPullRequest(cwd, generation);
+				// steady state runs off agent_settled; this only fires on first population or branch switch.
+				if (isBranchChanged) void refreshBranchSummary(cwd, generation);
+			}
 		} catch {
 			if (generation !== refreshGeneration) return;
 			repository = { isGit: false, path: compactPath(cwd) };
@@ -299,44 +474,86 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						const elapsedMilliseconds = Math.max(0, Date.now() - startedAt);
 						const elapsedSeconds = elapsedMilliseconds / 1000;
 						const activity = isWorking ? elapsedLabel(startedAt) : "Ready";
+						const activityLabel = isWorking ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
 						const state = repository;
-						let location: PreInputSegment;
+						const ctx = activeContext ?? ({} as ExtensionContext);
+						const provider = ctx.model?.provider ?? "unknown";
+						const model = ctx.model?.id ?? "unknown";
+						const thinking = ctx.thinkingLevel ?? "off";
+
+						const items: FooterDegradableSegment[] = [];
+
 						if (state.isGit) {
-							const { project, branch } = state;
-							location = branch
-								? {
-										text: `${project} > ${branch}`,
-										render: () => theme.fg("muted", project) + theme.fg("dim", " > ") + fgHex(branchColor(branch), branch),
-									}
-								: {
-										text: `${project} > detached`,
-										render: () => theme.fg("muted", `${project} > detached`),
-									};
-						} else {
-							const { path } = state;
-							location = { text: path, render: () => theme.fg("muted", path) };
+							const branch = state.branch;
+							if (branch) {
+								const colorize = (text: string) => fgHex(branchColor(branch), text);
+								items.push({
+									id: "branch",
+									full: textForm(branch, colorize),
+									shorten: textForm(truncateSegmentText(branch, 24, true), colorize),
+									truncate: textForm(truncateSegmentText(branch, 12, true), colorize),
+								});
+							} else {
+								items.push({ id: "branch", full: textForm("detached", (text) => theme.fg("muted", text)) });
+							}
 						}
-						const segments: PreInputSegment[] = [location];
+
+						if (branchSummary) {
+							const summaryText = branchSummary;
+							const colorize = (text: string) => theme.fg("muted", text);
+							items.push({
+								id: "headline",
+								full: textForm(summaryText, colorize),
+								shorten: textForm(truncateSegmentText(summaryText, 24), colorize),
+								truncate: textForm(truncateSegmentText(summaryText, 14), colorize),
+							});
+						}
+
+						const workspaceText = state.isGit ? state.project : state.path;
+						const workspaceColorize = (text: string) => theme.fg("muted", text);
+						items.push({
+							id: "workspace",
+							full: textForm(workspaceText, workspaceColorize),
+							shorten: textForm(truncateSegmentText(workspaceText, 12), workspaceColorize),
+							truncate: textForm(truncateSegmentText(workspaceText, 6), workspaceColorize),
+						});
+
 						const activePullRequest = pullRequest;
 						if (activePullRequest) {
 							const tone = pullRequestTone(activePullRequest);
 							const { number, url } = activePullRequest;
-							segments.push({
-								text: `PR #${number}`,
-								render: () => {
-									const label = osc8(url, `PR #${number}`);
-									return tone === "purple" ? fgHex("#c7b5ff", label) : theme.fg(tone, label);
-								},
+							const colorForTone = (label: string) => tone === "purple" ? fgHex("#c7b5ff", label) : theme.fg(tone, label);
+							const colorize = (label: string) => colorForTone(osc8(url, label));
+							items.push({
+								id: "pr",
+								full: textForm(`PR #${number}`, colorize),
+								shorten: textForm(`#${number}`, colorize),
 							});
 						}
-						const activityLabel = isWorking ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
-						segments.push({
-							text: activityLabel,
-							render: () => isWorking ? fgHex(activityColor(elapsedSeconds), activityLabel) : theme.fg("success", activityLabel),
+
+						const statusColorize = (text: string) => isWorking ? fgHex(activityColor(elapsedSeconds), text) : theme.fg("success", text);
+						items.push({
+							id: "status",
+							full: textForm(activityLabel, statusColorize),
+							shorten: isWorking ? textForm(activity, statusColorize) : undefined,
 						});
-						const labels = modelLabels(activeContext ?? ({} as ExtensionContext));
-						const left = segments.map((segment) => segment.render()).join(theme.fg("dim", " · "));
-						const right = fittingModelLabel(labels, Math.max(0, safeWidth - visibleWidth(left)));
+
+						const identity = (text: string) => text;
+						items.push({ id: "provider", full: textForm(provider, identity) });
+						items.push({ id: "thinking", full: textForm(thinking, identity) });
+						items.push({
+							id: "model",
+							full: textForm(model, identity),
+							truncate: textForm(truncateSegmentText(model, 12, true), identity),
+						});
+
+						const forms = resolveFooterSegments(items, safeWidth);
+						const { left, right } = assembleFooterLine(
+							forms,
+							(form) => form.render(),
+							theme.fg("dim", " · "),
+							theme.fg("dim", " > "),
+						);
 						const spacerWidth = Math.max(0, safeWidth - visibleWidth(left) - visibleWidth(right));
 						return [
 							theme.fg("border", "─".repeat(safeWidth)),
@@ -350,7 +567,12 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_start", () => setWorking(true));
-	pi.on("agent_settled", () => setWorking(false));
+	pi.on("agent_settled", () => {
+		setWorking(false);
+		if (repository.isGit && repository.branch && activeContext?.cwd) {
+			void refreshBranchSummary(activeContext.cwd, refreshGeneration);
+		}
+	});
 	pi.on("model_select", (_event, ctx) => {
 		activeContext = ctx;
 		requestRender?.();

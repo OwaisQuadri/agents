@@ -25,6 +25,8 @@ async function loadExtensions() {
 	for (const name of ["owais-footer.ts", "world-clock.ts"]) {
 		await writeFile(join(root, name), await readFile(join(extensionDirectory, name)));
 	}
+	await mkdir(join(root, "live-diff"), { recursive: true });
+	await writeFile(join(root, "live-diff", "engine.ts"), await readFile(join(extensionDirectory, "live-diff", "engine.ts")));
 	await writeModule(root, "@earendil-works/pi-tui", tuiModule);
 	await writeModule(root, "@earendil-works/pi-coding-agent", codingAgentModule);
 	const suffix = `${Date.now()}-${Math.random()}`;
@@ -125,8 +127,9 @@ test("renders the compact Git label and linked pull request", async () => {
 		assert.match(activeLine, /add-to-pi-config/);
 		assert.match(activeLine.replace(/\x1b\[[0-9;]*m/g, ""), /· [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] \d{2}:\d{2}\.\d/);
 		assert.match(activeLine, /PR #42/);
-		assert.match(widget?.render(50)[1] ?? "", /PR #42/);
-		assert.match(widget?.render(42)[1] ?? "", /PR #42/);
+		// below ~50 cols the PR segment shorten-tier drops the "PR " prefix before anything gets hidden.
+		assert.match(widget?.render(50)[1] ?? "", /#42/);
+		assert.match(widget?.render(42)[1] ?? "", /#42/);
 		assert.ok(calls.some((call) => call.command === "gh" && call.args.join(" ") === "pr view --json url,number,state,isDraft,mergeStateStatus"));
 	} finally {
 		widget?.dispose?.();

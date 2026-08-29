@@ -191,6 +191,39 @@ export async function resolveBranchPointTree(
 	exec: Exec,
 	cwd: string,
 ): Promise<string | null> {
+	const commit = await resolveBranchPointMergeBase(exec, cwd);
+	if (commit === null) {
+		return null;
+	}
+	try {
+		const tree = await exec("git", ["rev-parse", `${commit}^{tree}`], { cwd });
+		return tree.code === 0 && tree.stdout.trim() !== "" ? tree.stdout.trim() : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Resolve the commit sha of the merge-base between HEAD and the default
+ * branch — the "branch point" commits after it belong to this branch alone.
+ *
+ * @param exec command runner
+ * @param cwd repository worktree root
+ * @returns the merge-base commit sha, or null when no branch point applies —
+ *   a detached HEAD, a repo sitting on its own default branch, a repo with
+ *   no commits, or no resolvable default branch
+ */
+export async function resolveBranchPointCommit(
+	exec: Exec,
+	cwd: string,
+): Promise<string | null> {
+	return resolveBranchPointMergeBase(exec, cwd);
+}
+
+async function resolveBranchPointMergeBase(
+	exec: Exec,
+	cwd: string,
+): Promise<string | null> {
 	try {
 		const head = await exec("git", ["rev-parse", "--verify", "--quiet", "HEAD"], {
 			cwd,
@@ -219,15 +252,7 @@ export async function resolveBranchPointTree(
 			if (base.code !== 0 || base.stdout.trim() === "") {
 				continue;
 			}
-			const tree = await exec(
-				"git",
-				["rev-parse", `${base.stdout.trim()}^{tree}`],
-				{ cwd },
-			);
-			if (tree.code !== 0 || tree.stdout.trim() === "") {
-				continue;
-			}
-			return tree.stdout.trim();
+			return base.stdout.trim();
 		}
 		return null;
 	} catch {
