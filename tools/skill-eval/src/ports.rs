@@ -2,14 +2,14 @@ use std::path::Path;
 
 use crate::model::{
     ArtifactDefinition, CandidateArtifact, CandidateEnvironmentEntry, CaseDefinition, CheckResult,
-    ExecutionDefinition, FrontierApplyReport, FrontierBaselineLedger, FrontierInspection,
-    FrontierPlan, FrontierRunId, FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan,
-    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication,
-    FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome, HarnessIdentity, JudgeInput,
-    JudgeResult, ModelIdentity, PoolPlan, PoolRunId, PoolRunState, PromptJudgeRequest,
-    PromptJudgeResult, RunEvent, RunId, SkillEvalError, T1ScreenCampaignId, T1ScreenCampaignState,
-    T1ScreenRunId, T1ScreenRunState, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord,
-    TrialSelector,
+    ExecutionDefinition, FrontierApplyReport, FrontierBaselineLedger, FrontierFailureStage,
+    FrontierInspection, FrontierPlan, FrontierRunId, FrontierRunState, FrontierSuite,
+    FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
+    FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome,
+    HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolPlan, PoolRunId, PoolRunState,
+    PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError, T1ScreenCampaignId,
+    T1ScreenCampaignState, T1ScreenRunId, T1ScreenRunState, Tier, TierAssignment, Timestamp,
+    TrialKey, TrialRecord, TrialSelector,
 };
 
 pub(crate) trait ArtifactSource {
@@ -289,6 +289,7 @@ pub(crate) trait FrontierRuntime: QualificationRuntime {
     ) -> Result<Vec<FrontierTrialOutcome>, SkillEvalError> {
         let mut outcomes = Vec::with_capacity(jobs.len());
         for job in jobs {
+            let mut failure_stage = FrontierFailureStage::Candidate;
             let result = (|| {
                 let candidate = self.execute(
                     &job.run_id,
@@ -299,7 +300,9 @@ pub(crate) trait FrontierRuntime: QualificationRuntime {
                     &job.harness,
                     None,
                 )?;
+                failure_stage = FrontierFailureStage::Verifier;
                 let checks = self.verify(&job.case, &candidate)?;
+                failure_stage = FrontierFailureStage::Judge;
                 let judged = self.grade(
                     &job.judge,
                     &JudgeInput {
@@ -325,6 +328,7 @@ pub(crate) trait FrontierRuntime: QualificationRuntime {
                 model: job.model,
                 key: job.key,
                 infrastructure_attempt: job.infrastructure_attempt,
+                failure_stage: result.as_ref().err().map(|_| failure_stage),
                 result,
             });
         }

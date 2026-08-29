@@ -77,6 +77,7 @@ macro_rules! frontier_render_tests {
                 let skipped = FrontierCellEvidence {
                     model: route(Tier::T3, "off"),
                     status: FrontierCellStatus::Skipped,
+                    set_aside_reason: Some($crate::model::FrontierSetAsideReason::Quota),
                     completed_trials: 0,
                     expected_trials: 0,
                     failed_trials: 0,
@@ -98,6 +99,16 @@ macro_rules! frontier_render_tests {
 
                 assert!(output.contains("| anthropic/alpha | Q |  |  | N/A | N/A | N/A | N/A |"));
                 assert!(output.contains("set aside after quota: T3 (off)"));
+
+                report.models[0].cells[0].set_aside_reason =
+                    Some($crate::model::FrontierSetAsideReason::Infrastructure);
+                let output = render_text(|output| {
+                    render_frontier_report(&report, OutputFormat::Text, output)
+                });
+                assert!(output.contains("| anthropic/alpha | E |  |  | N/A | N/A | N/A | N/A |"));
+                assert!(output.contains(
+                    "set aside after repeated infrastructure failure: T3 (off)"
+                ));
             }
 
             #[test]
@@ -291,6 +302,7 @@ macro_rules! frontier_render_tests {
                 FrontierCellEvidence {
                     model: route(tier, thinking),
                     status,
+                    set_aside_reason: None,
                     completed_trials: 2,
                     expected_trials: 2,
                     failed_trials: u32::from(status != FrontierCellStatus::Passed),

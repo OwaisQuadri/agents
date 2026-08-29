@@ -429,10 +429,7 @@ impl FakeFrontierRuntime {
             artifacts,
             states: BTreeMap::new(),
             next_frontier_run_id: 0,
-            interruptions: VecDeque::from([
-                FakeFrontierAttemptKind::Infrastructure,
-                FakeFrontierAttemptKind::Quota,
-            ]),
+            interruptions: VecDeque::from([FakeFrontierAttemptKind::Infrastructure]),
             attempts: Vec::new(),
             saved_trials: Vec::new(),
             baseline_ledger: FrontierBaselineLedger {

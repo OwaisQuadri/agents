@@ -47,7 +47,7 @@ macro_rules! frontier_full_tests {
                 assert_eq!(mixed_pause.status, FrontierRunStatus::Paused);
                 assert!(matches!(
                     mixed_pause.pause,
-                    Some(PoolPauseReason::Quota { .. })
+                    Some(PoolPauseReason::Infrastructure { .. })
                 ));
                 assert_eq!(mixed_pause.infrastructure_events.len(), 1);
                 let infrastructure_attempt = runtime.attempts()[0].clone();
@@ -67,10 +67,6 @@ macro_rules! frontier_full_tests {
                 .unwrap();
                 assert_complete_matrix(&accepted_candidate);
                 assert_eq!(accepted_candidate.status, FrontierRunStatus::AwaitingDecision);
-                assert!(progress
-                    .states
-                    .iter()
-                    .any(|state| matches!(state.pause, Some(PoolPauseReason::Quota { .. }))));
                 assert!(progress
                     .states
                     .iter()
@@ -193,15 +189,11 @@ macro_rules! frontier_full_tests {
                     .filter(|attempt| attempt.kind != FakeFrontierAttemptKind::Completed)
                     .collect::<Vec<_>>();
                 if is_interrupted {
-                    assert_eq!(exceptional.len(), 2);
+                    assert_eq!(exceptional.len(), 1);
                     assert_eq!(exceptional[0].kind, FakeFrontierAttemptKind::Infrastructure);
-                    assert_eq!(exceptional[1].kind, FakeFrontierAttemptKind::Quota);
-                    assert_ne!(
-                        execution_identity(&exceptional[0].model, &exceptional[0].key),
-                        execution_identity(&exceptional[1].model, &exceptional[1].key),
-                    );
-                    assert!(exceptional.iter().all(|attempt| terminal.contains(
-                        &execution_identity(&attempt.model, &attempt.key)
+                    assert!(terminal.contains(&execution_identity(
+                        &exceptional[0].model,
+                        &exceptional[0].key,
                     )));
                 } else {
                     assert!(exceptional.is_empty());

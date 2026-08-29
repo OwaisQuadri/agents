@@ -572,6 +572,13 @@ pub(crate) enum FrontierCellStatus {
     Skipped,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FrontierSetAsideReason {
+    Quota,
+    Infrastructure,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct FrontierScore {
     pub(crate) weighted_pass_basis_points: u16,
@@ -585,6 +592,8 @@ pub(crate) struct FrontierScore {
 pub(crate) struct FrontierCellEvidence {
     pub(crate) model: ModelIdentity,
     pub(crate) status: FrontierCellStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) set_aside_reason: Option<FrontierSetAsideReason>,
     pub(crate) completed_trials: u32,
     pub(crate) expected_trials: u32,
     pub(crate) failed_trials: u32,
@@ -603,6 +612,15 @@ pub(crate) struct FrontierModelProgress {
     pub(crate) is_exhausted: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FrontierFailureStage {
+    Candidate,
+    Verifier,
+    Judge,
+    Recovery,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct FrontierInfrastructureEvent {
     pub(crate) model: ModelIdentity,
@@ -610,6 +628,8 @@ pub(crate) struct FrontierInfrastructureEvent {
     pub(crate) case: CaseId,
     pub(crate) attempt: u16,
     pub(crate) infrastructure_attempt: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_stage: Option<FrontierFailureStage>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub(crate) charged_millionths_of_dollar: u64,
     pub(crate) message: String,
@@ -820,6 +840,7 @@ pub(crate) struct FrontierTrialOutcome {
     pub(crate) model: ModelIdentity,
     pub(crate) key: TrialKey,
     pub(crate) infrastructure_attempt: u8,
+    pub(crate) failure_stage: Option<FrontierFailureStage>,
     pub(crate) result: Result<TrialRecord, SkillEvalError>,
 }
 

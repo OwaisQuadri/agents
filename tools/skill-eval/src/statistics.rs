@@ -1618,6 +1618,7 @@ pub(crate) fn evaluate_frontier_cell(
     Ok(FrontierCellEvidence {
         model: model.clone(),
         status,
+        set_aside_reason: None,
         completed_trials,
         expected_trials,
         failed_trials,

@@ -94,6 +94,7 @@ macro_rules! frontier_report_tests {
                 let skipped = FrontierCellEvidence {
                     model: route(Tier::T1, "low"),
                     status: FrontierCellStatus::Skipped,
+                    set_aside_reason: None,
                     completed_trials: 0,
                     expected_trials: 0,
                     failed_trials: 0,
@@ -237,6 +238,7 @@ macro_rules! frontier_report_tests {
                     case: selector.case.clone(),
                     attempt: selector.attempt,
                     infrastructure_attempt: 1,
+                    failure_stage: None,
                     charged_millionths_of_dollar: 0,
                     message: "temporary".to_owned(),
                     occurred_at: timestamp(),
@@ -581,6 +583,7 @@ macro_rules! frontier_report_tests {
                 FrontierCellEvidence {
                     model: route(tier, thinking),
                     status,
+                    set_aside_reason: None,
                     completed_trials: 2,
                     expected_trials: 2,
                     failed_trials: 0,

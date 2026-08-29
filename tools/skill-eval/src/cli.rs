@@ -3391,6 +3391,7 @@ impl FrontierRuntime for ConcreteRuntime {
                     model,
                     key,
                     infrastructure_attempt,
+                    failure_stage: None,
                     result: Err(SkillEvalError::Process {
                         program: "frontier worker".to_owned(),
                         exit_code: None,
@@ -3581,10 +3582,13 @@ where
 }
 
 fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> FrontierTrialOutcome {
+    let mut failure_stage = crate::model::FrontierFailureStage::Recovery;
     let result = (|| {
         let mut runner = PiCandidateRunner::new(runs_root.to_path_buf());
+        failure_stage = crate::model::FrontierFailureStage::Verifier;
         let mut verifier = FileVerifier::new(runs_root)?;
         let mut judge = PiJudge::new();
+        failure_stage = crate::model::FrontierFailureStage::Recovery;
         let candidate = match runner.recover_frontier(
             &job.run_id,
             &job.key,
@@ -3593,15 +3597,18 @@ fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> Frontie
             &job.harness,
         )? {
             Some(candidate) => candidate,
-            None => runner.execute(
-                &job.run_id,
-                &job.key,
-                &job.artifact,
-                &job.case,
-                &job.model,
-                &job.harness,
-                None,
-            )?,
+            None => {
+                failure_stage = crate::model::FrontierFailureStage::Candidate;
+                runner.execute(
+                    &job.run_id,
+                    &job.key,
+                    &job.artifact,
+                    &job.case,
+                    &job.model,
+                    &job.harness,
+                    None,
+                )?
+            }
         };
         if candidate.key != job.key
             || candidate.model != job.model
@@ -3609,6 +3616,7 @@ fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> Frontie
         {
             return Err(invalid("frontier worker candidate identity drifted"));
         }
+        failure_stage = crate::model::FrontierFailureStage::Verifier;
         let checks = verifier.verify(&job.case, &candidate)?;
         let input = JudgeInput {
             candidate: candidate.clone(),
@@ -3616,6 +3624,7 @@ fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> Frontie
             rubric_path: job.artifact.root.join("evals/rubric.md"),
             checks,
         };
+        failure_stage = crate::model::FrontierFailureStage::Judge;
         let judged = match judge.recover_frontier_grade(&job.judge, &input)? {
             Some(judged) => judged,
             None => judge.grade(&job.judge, &input)?,
@@ -3649,6 +3658,7 @@ fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> Frontie
         model: job.model,
         key: job.key,
         infrastructure_attempt: job.infrastructure_attempt,
+        failure_stage: result.as_ref().err().map(|_| failure_stage),
         result,
     }
 }
@@ -6816,7 +6826,13 @@ fn render_frontier_report(
         {
             writeln!(
                 output,
-                "  set aside after quota: {} ({})",
+                "  set aside after {}: {} ({})",
+                match cell.set_aside_reason {
+                    Some(crate::model::FrontierSetAsideReason::Infrastructure) => {
+                        "repeated infrastructure failure"
+                    }
+                    Some(crate::model::FrontierSetAsideReason::Quota) | None => "quota",
+                },
                 tier_label(cell.model.tier),
                 cell.model.thinking
             )
@@ -6953,7 +6969,11 @@ fn render_frontier_matrix(
                 }
                 crate::model::FrontierCellStatus::Pending => {}
                 crate::model::FrontierCellStatus::Skipped => {
-                    cells[index] = "Q".to_owned();
+                    cells[index] = match cell.set_aside_reason {
+                        Some(crate::model::FrontierSetAsideReason::Infrastructure) => "E",
+                        Some(crate::model::FrontierSetAsideReason::Quota) | None => "Q",
+                    }
+                    .to_owned();
                 }
                 crate::model::FrontierCellStatus::Running => {
                     return Err(malformed_frontier_render("running cell is not renderable"));
@@ -7049,6 +7069,8 @@ fn validate_frontier_report(report: &FrontierReport) -> Result<(), SkillEvalErro
                     .supported_thinking_levels
                     .contains(&cell.model.thinking)
                 || !routes.insert((cell.model.tier, cell.model.thinking.as_str()))
+                || cell.status != crate::model::FrontierCellStatus::Skipped
+                    && cell.set_aside_reason.is_some()
                 || cell.failed_trials > cell.completed_trials
                 || cell.completed_trials > cell.expected_trials
             {

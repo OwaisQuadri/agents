@@ -476,7 +476,7 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .unwrap();
                 assert_eq!(state.status, FrontierRunStatus::AwaitingDecision);
-                assert_eq!(state.spent_millionths_of_dollar, 6);
+                assert_eq!(state.spent_millionths_of_dollar, 10);
                 assert_eq!(state.infrastructure_events.len(), 1);
                 assert_eq!(
                     state.infrastructure_events[0].charged_millionths_of_dollar,
@@ -488,8 +488,8 @@ macro_rules! frontier_lifecycle_tests {
                     $crate::model::FrontierCellStatus::Skipped
                 );
                 assert!(state.models[0].is_exhausted);
-                assert_eq!(runtime.execute_calls, 4);
-                assert_eq!(runtime.durable.borrow().trials.len(), 3);
+                assert_eq!(runtime.execute_calls, 6);
+                assert_eq!(runtime.durable.borrow().trials.len(), 5);
             }
 
             #[test]
@@ -514,8 +514,8 @@ macro_rules! frontier_lifecycle_tests {
                         .unwrap();
                 assert_eq!(state.status, FrontierRunStatus::Paused);
                 assert_eq!(state.pause, paused.pause);
-                assert_eq!(runtime.execute_calls, 4);
-                assert_eq!(runtime.durable.borrow().trials.len(), 3);
+                assert_eq!(runtime.execute_calls, 6);
+                assert_eq!(runtime.durable.borrow().trials.len(), 5);
             }
 
             #[test]
@@ -549,8 +549,8 @@ macro_rules! frontier_lifecycle_tests {
                     $crate::model::FrontierCellStatus::Skipped
                 );
                 assert!(state.models[0].is_exhausted);
-                assert_eq!(runtime.execute_calls, 4);
-                assert_eq!(runtime.durable.borrow().trials.len(), 3);
+                assert_eq!(runtime.execute_calls, 6);
+                assert_eq!(runtime.durable.borrow().trials.len(), 5);
             }
 
             #[test]
@@ -568,7 +568,7 @@ macro_rules! frontier_lifecycle_tests {
                 let paused =
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .unwrap();
-                assert_eq!(runtime.durable.borrow().trials.len(), 3);
+                assert_eq!(runtime.durable.borrow().trials.len(), 5);
 
                 let resumed =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
@@ -599,7 +599,7 @@ macro_rules! frontier_lifecycle_tests {
                     paused.infrastructure_events[0].charged_millionths_of_dollar,
                     10
                 );
-                assert_eq!(paused.spent_millionths_of_dollar, 16);
+                assert_eq!(paused.spent_millionths_of_dollar, 20);
 
                 let resumed =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
@@ -611,7 +611,7 @@ macro_rules! frontier_lifecycle_tests {
             }
 
             #[test]
-            fn infrastructure_retry_is_persisted_and_bounded_across_resume() {
+            fn repeated_candidate_infrastructure_sets_the_entrant_aside() {
                 let mut runtime = FakeRuntime::new();
                 runtime.candidate_error = Some(SkillEvalError::Process {
                     program: "pi".to_owned(),
@@ -637,11 +637,63 @@ macro_rules! frontier_lifecycle_tests {
                         .unwrap();
                 assert_eq!(paused.infrastructure_events.len(), 2);
                 let calls = runtime.execute_calls;
+                let completed =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+                assert_eq!(completed.status, FrontierRunStatus::AwaitingDecision);
+                assert_eq!(
+                    completed.infrastructure_events,
+                    paused.infrastructure_events
+                );
+                assert_eq!(completed.cells.len(), 1);
+                assert_eq!(
+                    completed.cells[0].status,
+                    $crate::model::FrontierCellStatus::Skipped
+                );
+                assert_eq!(
+                    completed.cells[0].set_aside_reason,
+                    Some($crate::model::FrontierSetAsideReason::Infrastructure)
+                );
+                assert!(completed.models[0].is_exhausted);
+                assert_eq!(runtime.execute_calls, calls);
+            }
+
+            #[test]
+            fn repeated_non_candidate_infrastructure_remains_paused() {
+                let mut runtime = FakeRuntime::new();
+                runtime.verifier_error = Some(SkillEvalError::Process {
+                    program: "local-verifier".to_owned(),
+                    exit_code: Some(1),
+                    standard_error: "first".to_owned(),
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+
+                runtime.verifier_error = Some(SkillEvalError::Process {
+                    program: "local-verifier".to_owned(),
+                    exit_code: Some(1),
+                    standard_error: "second".to_owned(),
+                });
+                let paused =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+                let calls = runtime.execute_calls;
                 let unchanged =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
                         .unwrap();
+
                 assert_eq!(unchanged, paused);
+                assert_eq!(unchanged.status, FrontierRunStatus::Paused);
+                assert!(unchanged.cells.is_empty());
                 assert_eq!(runtime.execute_calls, calls);
+                assert!(unchanged.infrastructure_events.iter().all(|event| {
+                    event.failure_stage == Some($crate::model::FrontierFailureStage::Verifier)
+                }));
             }
 
             #[test]
@@ -684,8 +736,8 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress,)
                         .is_err()
                 );
-                assert_eq!(runtime.execute_calls, 4);
-                assert_eq!(runtime.durable.borrow().trials.len(), 4);
+                assert_eq!(runtime.execute_calls, 6);
+                assert_eq!(runtime.durable.borrow().trials.len(), 6);
                 let run_id = runtime
                     .durable
                     .borrow()
@@ -715,7 +767,7 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .is_err()
                 );
-                assert_eq!(runtime.execute_calls, 4);
+                assert_eq!(runtime.execute_calls, 6);
                 runtime.harness_runner_version = "runner-2".to_owned();
                 let run_id = runtime
                     .durable
@@ -728,7 +780,7 @@ macro_rules! frontier_lifecycle_tests {
                     .clone();
 
                 assert!(resume_frontier(&run_id, &mut runtime, &mut progress).is_err());
-                assert_eq!(runtime.execute_calls, 4);
+                assert_eq!(runtime.execute_calls, 6);
             }
 
             #[test]

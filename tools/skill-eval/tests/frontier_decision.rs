@@ -89,6 +89,7 @@ macro_rules! frontier_decision_tests {
                     state.cells = vec![FrontierCellEvidence {
                         model,
                         status: FrontierCellStatus::Skipped,
+                        set_aside_reason: None,
                         completed_trials: 0,
                         expected_trials: 0,
                         failed_trials: 0,

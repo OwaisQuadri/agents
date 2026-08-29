@@ -1077,6 +1077,7 @@ fn validate_state(
     for cell in &state.cells {
         if cell.completed_trials > cell.expected_trials
             || cell.failed_trials > cell.completed_trials
+            || cell.status != FrontierCellStatus::Skipped && cell.set_aside_reason.is_some()
             || cell.total_usage.cost_millionths_of_dollar > state.spent_millionths_of_dollar
             || !cells.insert((
                 &cell.model.provider,

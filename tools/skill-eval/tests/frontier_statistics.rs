@@ -188,6 +188,7 @@ fn frontier_progression_exhausts_a_quota_skipped_route() {
     let skipped = FrontierCellEvidence {
         model: route("alpha", Tier::T1, "low"),
         status: FrontierCellStatus::Skipped,
+        set_aside_reason: None,
         completed_trials: 0,
         expected_trials: 0,
         failed_trials: 0,
@@ -425,6 +426,7 @@ fn cell(
     FrontierCellEvidence {
         model,
         status,
+        set_aside_reason: None,
         completed_trials: 4,
         expected_trials: 4,
         failed_trials: u32::from(status != FrontierCellStatus::Passed),

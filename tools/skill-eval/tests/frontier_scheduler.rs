@@ -164,6 +164,7 @@ fn quota_skipped_row_consumes_partial_trials_and_other_rows_continue() {
     state.cells.push(FrontierCellEvidence {
         model: alpha.clone(),
         status: FrontierCellStatus::Skipped,
+        set_aside_reason: None,
         completed_trials: 0,
         expected_trials: 0,
         failed_trials: 0,
@@ -500,6 +501,7 @@ fn infrastructure(
         case: key.case.clone(),
         attempt: key.attempt,
         infrastructure_attempt: attempt,
+        failure_stage: None,
         charged_millionths_of_dollar: 0,
         message: message.to_owned(),
         occurred_at: timestamp(),

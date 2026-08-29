@@ -6897,7 +6897,11 @@ pub(crate) fn resume_frontier(
         match state.pause.as_ref() {
             Some(PoolPauseReason::Quota { model, .. }) => {
                 let model = model.clone();
-                if !set_aside_frontier_entrant(&mut state, &model)? {
+                if !set_aside_frontier_entrant(
+                    &mut state,
+                    &model,
+                    crate::model::FrontierSetAsideReason::Quota,
+                )? {
                     return Ok(state);
                 }
                 state.status = FrontierRunStatus::Running;
@@ -6911,8 +6915,25 @@ pub(crate) fn resume_frontier(
                 state.pause = None;
                 save_frontier_and_emit(runtime, progress, &state)?;
             }
-            Some(PoolPauseReason::Infrastructure { .. })
-            | Some(PoolPauseReason::SpendingLimit { .. }) => return Ok(state),
+            Some(PoolPauseReason::Infrastructure { .. }) => {
+                let model = frontier_paused_infrastructure_event(&state)
+                    .ok_or_else(|| frontier_lifecycle_drift("infrastructure pause event"))?
+                    .model
+                    .clone();
+                if frontier_paused_infrastructure_event(&state).is_none_or(|event| {
+                    event.failure_stage != Some(crate::model::FrontierFailureStage::Candidate)
+                }) || !set_aside_frontier_entrant(
+                    &mut state,
+                    &model,
+                    crate::model::FrontierSetAsideReason::Infrastructure,
+                )? {
+                    return Ok(state);
+                }
+                state.status = FrontierRunStatus::Running;
+                state.pause = None;
+                save_frontier_and_emit(runtime, progress, &state)?;
+            }
+            Some(PoolPauseReason::SpendingLimit { .. }) => return Ok(state),
             None => return Err(frontier_lifecycle_invalid("paused run has no reason")),
         }
     }
@@ -7031,6 +7052,7 @@ fn execute_frontier_wave(
                     model: model.clone(),
                     key: scheduled_trial.key.clone(),
                     infrastructure_attempt: scheduled_trial.infrastructure_attempt,
+                    failure_stage: None,
                     result: Ok(trial),
                 });
             }
@@ -7049,6 +7071,7 @@ fn execute_frontier_wave(
                 model: model.clone(),
                 key: scheduled_trial.key.clone(),
                 infrastructure_attempt: scheduled_trial.infrastructure_attempt,
+                failure_stage: Some(crate::model::FrontierFailureStage::Recovery),
                 result: Err(error),
             }),
         }
@@ -7142,6 +7165,7 @@ fn commit_frontier_wave(
             model,
             key,
             infrastructure_attempt,
+            failure_stage,
             result,
         } = outcome;
         match result {
@@ -7159,14 +7183,14 @@ fn commit_frontier_wave(
                     persistence_error.get_or_insert(error);
                 }
             }
-            Err(error) => failures.push((model, key, infrastructure_attempt, error)),
+            Err(error) => failures.push((model, key, infrastructure_attempt, failure_stage, error)),
         }
     }
 
     let mut quota_pause = None;
     let mut infrastructure_pause = None;
     let mut terminal_error = persistence_error;
-    for (outcome_model, key, infrastructure_attempt, error) in failures {
+    for (outcome_model, key, infrastructure_attempt, failure_stage, error) in failures {
         match error {
             SkillEvalError::Quota {
                 model: quota_model,
@@ -7180,6 +7204,7 @@ fn commit_frontier_wave(
                         case: key.case,
                         attempt: key.attempt,
                         infrastructure_attempt,
+                        failure_stage,
                         charged_millionths_of_dollar: 0,
                         message: format!(
                             "quota set aside {}/{}; reset {:?}",
@@ -7187,7 +7212,11 @@ fn commit_frontier_wave(
                         ),
                         occurred_at: runtime.now(),
                     });
-                set_aside_frontier_entrant(state, &outcome_model)?;
+                set_aside_frontier_entrant(
+                    state,
+                    &outcome_model,
+                    crate::model::FrontierSetAsideReason::Quota,
+                )?;
                 state.spent_millionths_of_dollar =
                     frontier_spend(trials, &state.infrastructure_events)?;
                 save_frontier_and_emit(runtime, progress, state)?;
@@ -7200,7 +7229,15 @@ fn commit_frontier_wave(
                     error,
                     SkillEvalError::InvalidArguments(_) | SkillEvalError::InvalidConfiguration(_)
                 );
-                let message = format!("{error:?}");
+                let message = format!(
+                    "{}/{} {} {} attempt {} infrastructure attempt {}: {error:?}",
+                    outcome_model.provider,
+                    outcome_model.model,
+                    key.artifact.0,
+                    key.case.0,
+                    key.attempt,
+                    infrastructure_attempt,
+                );
                 state
                     .infrastructure_events
                     .push(FrontierInfrastructureEvent {
@@ -7209,6 +7246,7 @@ fn commit_frontier_wave(
                         case: key.case,
                         attempt: key.attempt,
                         infrastructure_attempt,
+                        failure_stage,
                         charged_millionths_of_dollar: reservation,
                         message: message.clone(),
                         occurred_at: runtime.now(),
@@ -7238,6 +7276,7 @@ fn commit_frontier_wave(
 fn set_aside_frontier_entrant(
     state: &mut FrontierRunState,
     model: &ModelIdentity,
+    reason: crate::model::FrontierSetAsideReason,
 ) -> Result<bool, SkillEvalError> {
     let Some(entrant_index) = state
         .configuration
@@ -7277,6 +7316,7 @@ fn set_aside_frontier_entrant(
     state.cells.push(crate::model::FrontierCellEvidence {
         model: model.clone(),
         status: crate::model::FrontierCellStatus::Skipped,
+        set_aside_reason: Some(reason),
         completed_trials: 0,
         expected_trials: 0,
         failed_trials: 0,
@@ -7845,9 +7885,24 @@ fn frontier_spend(
 }
 
 fn frontier_pause_is_retryable(state: &FrontierRunState, plan: &FrontierPlan) -> bool {
-    state.infrastructure_events.last().is_some_and(|event| {
+    frontier_paused_infrastructure_event(state).is_some_and(|event| {
         event.infrastructure_attempt < plan.policy.maximum_infrastructure_attempts
     })
+}
+
+fn frontier_paused_infrastructure_event(
+    state: &FrontierRunState,
+) -> Option<&FrontierInfrastructureEvent> {
+    let PoolPauseReason::Infrastructure { message } = state.pause.as_ref()? else {
+        return None;
+    };
+    let mut matches = state
+        .infrastructure_events
+        .iter()
+        .rev()
+        .filter(|event| event.message == *message);
+    let event = matches.next()?;
+    matches.next().is_none().then_some(event)
 }
 
 fn frontier_plan_digest(plan: &FrontierPlan) -> Result<String, SkillEvalError> {

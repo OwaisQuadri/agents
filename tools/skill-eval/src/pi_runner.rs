@@ -51,6 +51,13 @@ impl Process for SystemProcess {
         command
             .args(&request.arguments)
             .current_dir(&request.working_directory)
+            .env(
+                "GIT_CEILING_DIRECTORIES",
+                request
+                    .working_directory
+                    .parent()
+                    .unwrap_or(&request.working_directory),
+            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -690,6 +697,7 @@ fn pi_arguments(
         "json".to_owned(),
         "--no-session".to_owned(),
         "--no-skills".to_owned(),
+        "--no-extensions".to_owned(),
     ];
     match artifact.kind {
         ArtifactKind::Skill => {
@@ -2120,6 +2128,37 @@ mod tests {
     }
 
     #[test]
+    fn system_process_stops_git_discovery_at_the_trial_boundary() {
+        let directory = TestDirectory::new("git-ceiling");
+        let repository = directory.path().join("repository");
+        let fixture = repository.join("trial/fixture");
+        fs::create_dir_all(&fixture).unwrap();
+        assert!(
+            Command::new("/usr/bin/git")
+                .args(["-C", repository.to_str().unwrap(), "init", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let output = SystemProcess
+            .run(&ProcessRequest {
+                program: "/usr/bin/git".to_owned(),
+                arguments: vec!["rev-parse".to_owned(), "--show-toplevel".to_owned()],
+                working_directory: fixture,
+                timeout: Some(Duration::from_secs(5)),
+            })
+            .unwrap();
+
+        assert_eq!(output.exit_code, Some(128));
+        assert!(
+            String::from_utf8(output.standard_error)
+                .unwrap()
+                .contains("not a git repository")
+        );
+    }
+
+    #[test]
     fn pi_runner_builds_bounded_skill_command_and_uses_final_message_end() {
         let directory = TestDirectory::new("success");
         let artifact_root = directory.path().join("artifact");
@@ -2144,12 +2183,13 @@ mod tests {
         let request = &runner.process.requests[0];
         assert_eq!(request.program, "pi");
         assert_eq!(
-            &request.arguments[..7],
+            &request.arguments[..8],
             &[
                 "--mode",
                 "json",
                 "--no-session",
                 "--no-skills",
+                "--no-extensions",
                 "--skill",
                 artifact_root.join("SKILL.md").to_str().unwrap(),
                 "--extension",
@@ -2168,7 +2208,7 @@ mod tests {
                 .any(|pair| pair == ["--thinking", "low"])
         );
         assert!(!request.arguments.contains(&"--tools".to_owned()));
-        assert!(!request.arguments.contains(&"--no-extensions".to_owned()));
+        assert!(request.arguments.contains(&"--no-extensions".to_owned()));
         let all_tools = request
             .arguments
             .windows(2)
@@ -2600,6 +2640,7 @@ mod tests {
             "json".to_owned(),
             "--no-session".to_owned(),
             "--no-skills".to_owned(),
+            "--no-extensions".to_owned(),
             "--skill".to_owned(),
             workflow_root
                 .join("SKILL.md")
