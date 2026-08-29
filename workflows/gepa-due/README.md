@@ -33,13 +33,45 @@ single-user, low-volume regime).
 
 ## what happens when it fires
 
-The trigger script creates a fresh herdr worktree (same mechanism
-`workflows/scheduled-ideation/scripts/trigger.sh` already proved live — no GUI Terminal,
-no TCC(Transparency, Consent, and Control) prompt, every call over the herdr daemon's
-socket API) and seeds a kickoff prompt naming exactly which artifacts are due and their
-real counts. That session decides what to do — run a real GEPA tuning pass, or just
-surface a note for later — but it never ships a mutation without going through the GEPA
-loop's own Decide gate. This is a nudge, not an unattended prompt-editor.
+Up to `MAX_CONCURRENT` (default 3, override via `GEPA_DUE_MAX_CONCURRENT`) due
+artifacts each get their OWN fresh herdr worktree and live Pi session, run in
+parallel — never one session handed the whole due list to work through serially.
+Artifacts due beyond the cap are named in the trigger log and left for the next fire,
+never silently dropped. Selection when capping favors the highest `usage_count` (then
+`vote_count`) first — the artifacts with the most unread evidence go first.
+
+Each session's worktree gets that ONE artifact's real `logs/usage.jsonl` and
+`votes/votes.jsonl` copied in before the kickoff prompt fires (worktree creation uses
+the same mechanism `workflows/scheduled-ideation/scripts/trigger.sh` already proved
+live — no GUI Terminal, no TCC(Transparency, Consent, and Control) prompt, every call
+over the herdr daemon's socket API). That copy step matters: `logs/`/`votes/` are
+gitignored, so a fresh git worktree never inherits them on its own — git worktrees
+only share committed history, and `hooks/post-checkout` explicitly copies only
+untracked NON-ignored files. Without the copy, the session has no real evidence to
+read and nothing stops it from confabulating plausible-sounding numbers instead — a
+real failure mode this mechanism hit and had to fix (see deferred list below).
+
+The seeded session decides what to do — run a real GEPA tuning pass, or just record a
+short "no mutation, here is why" note — but it never ships a mutation without going
+through the GEPA loop's own Decide gate. This is a nudge, not an unattended
+prompt-editor. Whatever it concludes, it's told to commit a dated `TUNING.md` entry
+before finishing; the trigger checks for exactly that commit afterward to decide
+whether to rotate the reviewed evidence (see "rotation" below).
+
+## rotation (stops re-firing on evidence already reviewed)
+
+Once a session's branch has a real commit touching `<artifact>/TUNING.md`, the trigger
+treats that as proof the evidence was actually read and reasoned about — mutation
+shipped or not — and moves that artifact's `logs/usage.jsonl` and `votes/votes.jsonl`
+in the MAIN checkout to dated `.reviewed-<stamp>` siblings, then verifies the move
+(destination exists, source gone) before logging it. A move, never a `rm`, per this
+repo's own "never rm before a verified move" rule — the reviewed evidence stays on
+disk, just out of `tools/gepa-due`'s exact-filename count (it only ever reads
+`logs/usage.jsonl` / `votes/votes.jsonl` literally, so a renamed sibling is
+automatically excluded with no checker code change needed). No commit found on the
+branch → nothing rotates, and the next fire will see the same evidence again — a
+session that ran but produced no reviewable record shouldn't get to silently mute
+future fires on that artifact.
 
 ## install (macOS)
 
@@ -57,22 +89,18 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
 
 ## deferred
 
-- **No dedup across consecutive fires on the same due artifact.** Live-verified
-  2026-08-29: two real launchd-triggered runs, ~3 minutes apart, both flagged
-  `agents/anchor-verifier` due (its `usage_count`/`prompt_version` hadn't changed
-  between them, since neither Reflect pass shipped a mutation) and both spun up a full
-  worktree + live Pi session that independently reached the same "no mutation
-  warranted" conclusion. Until either a real mutation ships (changing
-  `prompt_version`) or new votes/usage lines accumulate, `gepa-due` will keep
-  re-firing on the same artifact every single day, each time paying for a full
-  worktree + Pi session to re-derive a conclusion already on record in that artifact's
-  `TUNING.md`. Same shape `scheduled-ideation`'s own deferred list already names for
-  itself ("no persistent dedup across daily runs") — deferred here for the same
-  reason: no fix attempted yet, revisit once real repeated-day evidence shows how much
-  it actually costs. A cheap first mitigation, not yet built: `tools/gepa-due` could
-  read the due artifact's own `TUNING.md` for a dated "no mutation, reason: X" entry
-  newer than its last usage/vote line and skip re-firing on it — deterministic, no
-  new judgment needed, but out of scope for this pass.
+- **Rotation happens per-branch, not per-merge.** A session's `TUNING.md` commit
+  triggers rotation as soon as the trigger script sees it on that branch — the PR
+  doesn't need to be merged first. Deliberate: a "no mutation" record is
+  documentation, not a shipped change, so it isn't gated behind the same harness-win
+  Decide rule an actual mutation needs. But it does mean a PR that later gets rejected
+  or heavily edited on human review has already had its source evidence rotated away
+  from the live count. Not fixed — the alternative (wait for merge) can stall
+  indefinitely on human review timing, which defeats the point of the dedup fix. Worth
+  revisiting if a rejected `TUNING.md`-only PR is ever observed in practice.
+- **No cleanup of `.reviewed-<stamp>` archive files.** They accumulate on the main
+  checkout's disk forever. Harmless at current volume (gitignored, never pushed,
+  local disk only) but unbounded. Not worth its own script yet.
 
 ## history
 
@@ -82,3 +110,28 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   on real evidence. Threshold (≥15 usage / ≥2 votes) set by direct instruction after
   computing the actual repo-wide mean (15.81 / 0.84) across all 32 eligible artifacts;
   full reasoning trail in that session's `PLAN.md`.
+- 2026-08-29, live-fire corrections, same day. Three real issues surfaced by actually
+  running the mechanism, not by review:
+  1. The launchd plist's PATH has no `cargo` — the original lazy "build on first run"
+     step failed outright on the real first kickstart. Fixed by moving the build into
+     `install.sh`, matching every other `tools/` checker's own pattern.
+  2. Two real launchd-triggered runs ~9 minutes apart both flagged the same artifact
+     due (nothing had changed between them) and both spun up a full worktree + live
+     Pi session that independently re-derived the same "no mutation" conclusion —
+     wasted, duplicate work. Fixed with the rotation mechanism above.
+  3. **The worst one, found while investigating #2**: none of the three live worktree
+     sessions that day ever actually had access to their artifact's real
+     `logs/usage.jsonl` — gitignored, never inherited by a fresh git worktree. Every
+     session had nonetheless written confident, specific-sounding numbers ("42
+     success, 22 failure, 1 partial", a full categorized breakdown) into `TUNING.md`
+     as if it had read the file — it hadn't; it fabricated plausible detail from
+     nothing but the checker's own one-line count summary. Fixed by having the
+     trigger copy the artifact's real `logs/`/`votes/` into its worktree before the
+     kickoff prompt fires, and by having the prompt name the exact copied paths and
+     require the session to say so if either is actually missing. The two `TUNING.md`
+     entries these three fabricating sessions committed to `agents/anchor-verifier`
+     (PRs #159–#162's follow-on work) are NOT reliable evidence of anything about that
+     artifact's real failure modes — they read like real analysis but were not one.
+     Concurrency (run up to `MAX_CONCURRENT` due artifacts in parallel, each in its
+     own scoped worktree) landed in the same pass, since the per-artifact worktree
+     rework the fabrication fix needed was most of the work concurrency needed too.
