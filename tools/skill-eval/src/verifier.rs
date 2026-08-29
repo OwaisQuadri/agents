@@ -612,7 +612,8 @@ struct StandardProcess;
 
 impl Process for StandardProcess {
     fn run(&mut self, request: ProcessRequest<'_>) -> Result<ProcessOutput, ProcessFailure> {
-        let mut child = Command::new(request.program)
+        let program = verification_program(request.program);
+        let mut child = Command::new(program)
             .args(request.arguments)
             .current_dir(request.working_directory)
             .stdin(Stdio::null())
@@ -651,6 +652,17 @@ impl Process for StandardProcess {
             standard_output: join_output(standard_output, "standard output")?,
             standard_error: join_output(standard_error, "standard error")?,
         })
+    }
+}
+
+fn verification_program(program: &str) -> &str {
+    if program == "/usr/bin/test"
+        && !Path::new(program).exists()
+        && Path::new("/bin/test").is_file()
+    {
+        "/bin/test"
+    } else {
+        program
     }
 }
 
@@ -867,6 +879,44 @@ mod tests {
             SkillEvalError::Verification(message) => message,
             other => panic!("expected verification error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn system_process_runs_the_portable_test_program() {
+        let declared = Path::new("/usr/bin/test");
+        let fallback = Path::new("/bin/test");
+        if !declared.exists() && !fallback.is_file() {
+            return;
+        }
+        assert_eq!(
+            verification_program("/usr/bin/test"),
+            if declared.exists() {
+                "/usr/bin/test"
+            } else {
+                "/bin/test"
+            }
+        );
+        let fixture = Fixture::new();
+        let arguments = vec!["!".to_owned(), "-e".to_owned(), "missing".to_owned()];
+        let mut process = StandardProcess;
+
+        let outcome = match process.run(ProcessRequest {
+            program: "/usr/bin/test",
+            arguments: &arguments,
+            working_directory: &fixture.root,
+            timeout: Duration::from_secs(2),
+        }) {
+            Ok(outcome) => outcome,
+            Err(_) => panic!("portable test program failed to launch"),
+        };
+
+        assert!(matches!(
+            outcome,
+            ProcessOutput::Completed {
+                exit_code: Some(0),
+                ..
+            }
+        ));
     }
 
     #[test]
