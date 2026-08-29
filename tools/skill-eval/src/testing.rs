@@ -929,7 +929,7 @@ fn frontier_plan(
             maximum_catalog_age_seconds: 3_600,
             active_pool_size: 1,
             maximum_trial_cost_millionths_of_dollar: 2,
-            spending_limit_millionths_of_dollar: 4_200,
+            spending_limit_millionths_of_dollar: 14_400,
             is_provider_limit_enforced: true,
             is_first_party_only: true,
         },

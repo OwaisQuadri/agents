@@ -24,15 +24,16 @@ use crate::model::{
     FrontierEvidenceIdentity, FrontierInfrastructureEvent, FrontierInspection,
     FrontierModelProgress, FrontierPlan, FrontierPolicy, FrontierPreviewReport, FrontierReport,
     FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
-    FrontierScheduleAction, FrontierSuite, FrontierSuiteInventory, FrontierSuiteProposal,
-    FrontierSuitePublication, FrontierTrialSelector, JudgeInput, ModelIdentity,
-    ParentResponsibility, PauseReason, PoolChildRun, PoolChildStatus, PoolEntrant, PoolPauseReason,
-    PoolQualifyRequest, PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage,
-    PromptJudgeRequest, PromptJudgeResult, PublicationGate, PublicationStatus,
-    QualificationBoundary, QualificationPolicy, QualificationPurpose, QualificationReport,
-    QualifyRequest, RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus,
-    SkillEvalError, SkillRoutingDecision, T1ScreenAttemptEvidence, T1ScreenAttemptReport,
-    T1ScreenCallRange, T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
+    FrontierScheduleAction, FrontierScheduledTrial, FrontierSuite, FrontierSuiteInventory,
+    FrontierSuiteProposal, FrontierSuitePublication, FrontierTrialJob, FrontierTrialOutcome,
+    FrontierTrialSelector, JudgeInput, ModelIdentity, ParentResponsibility, PauseReason,
+    PoolChildRun, PoolChildStatus, PoolEntrant, PoolPauseReason, PoolQualifyRequest,
+    PoolRunConfiguration, PoolRunId, PoolRunState, PoolRunStatus, PoolStage, PromptJudgeRequest,
+    PromptJudgeResult, PublicationGate, PublicationStatus, QualificationBoundary,
+    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest,
+    RunConfiguration, RunEvent, RunId, RunMode, RunState, RunStatus, SkillEvalError,
+    SkillRoutingDecision, T1ScreenAttemptEvidence, T1ScreenAttemptReport, T1ScreenCallRange,
+    T1ScreenCampaignState, T1ScreenCampaignStatus, T1ScreenCapExtension,
     T1ScreenCapExtensionRequest, T1ScreenCaseReport, T1ScreenChildRun, T1ScreenChildStatus,
     T1ScreenModelOutcome, T1ScreenModelReport, T1ScreenPauseReason, T1ScreenRankedRoute,
     T1ScreenRankingInputs, T1ScreenRankingReport, T1ScreenReport, T1ScreenRouteFailure,
@@ -6585,44 +6586,78 @@ fn frontier_trial_bounds(
     let mut minimum_trials = 0_u64;
     let mut maximum_trials = 0_u64;
     for entrant in entrants {
-        for thinking_index in 0..entrant.thinking_levels.len() {
-            route_count = route_count
-                .checked_add(1)
-                .ok_or_else(|| frontier_preview_invalid("route count overflow"))?;
-            let reachable = frontier_reachable_tiers(entrant.entry_tier, thinking_index);
-            let minimum_cases = reachable
-                .iter()
-                .filter_map(|tier| case_counts.get(tier))
-                .min()
-                .copied()
-                .ok_or_else(|| frontier_preview_invalid("route has no reachable tier suite"))?;
-            let maximum_cases = reachable
-                .iter()
-                .filter_map(|tier| case_counts.get(tier))
-                .max()
-                .copied()
-                .ok_or_else(|| frontier_preview_invalid("route has no reachable tier suite"))?;
-            minimum_trials = minimum_trials
-                .checked_add(u64::from(minimum_cases) * u64::from(policy.screening_trials_per_case))
-                .ok_or_else(|| frontier_preview_invalid("minimum trial count overflow"))?;
-            let route_maximum = u64::from(maximum_cases)
-                .checked_mul(u64::from(policy.maximum_trials_per_case))
-                .and_then(|value| {
-                    value.checked_mul(u64::from(policy.maximum_infrastructure_attempts))
-                })
-                .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?;
-            maximum_trials = maximum_trials
-                .checked_add(route_maximum)
-                .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?;
-        }
+        route_count = route_count
+            .checked_add(
+                u32::try_from(entrant.thinking_levels.len())
+                    .map_err(|_| frontier_preview_invalid("route count overflow"))?,
+            )
+            .ok_or_else(|| frontier_preview_invalid("route count overflow"))?;
+        let (minimum_cases, maximum_cases) = frontier_entrant_case_bounds(entrant, case_counts)?;
+        minimum_trials = minimum_trials
+            .checked_add(
+                minimum_cases
+                    .checked_mul(u64::from(policy.screening_trials_per_case))
+                    .ok_or_else(|| frontier_preview_invalid("minimum trial count overflow"))?,
+            )
+            .ok_or_else(|| frontier_preview_invalid("minimum trial count overflow"))?;
+        let entrant_maximum = maximum_cases
+            .checked_mul(u64::from(policy.maximum_trials_per_case))
+            .and_then(|value| value.checked_mul(u64::from(policy.maximum_infrastructure_attempts)))
+            .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?;
+        maximum_trials = maximum_trials
+            .checked_add(entrant_maximum)
+            .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?;
     }
     Ok((route_count, minimum_trials, maximum_trials))
 }
 
-fn frontier_reachable_tiers(entry: Tier, thinking_index: usize) -> Vec<Tier> {
+fn frontier_entrant_case_bounds(
+    entrant: &FrontierEntrant,
+    case_counts: &BTreeMap<Tier, u16>,
+) -> Result<(u64, u64), SkillEvalError> {
+    let tiers = frontier_execution_tiers(entrant.entry_tier);
+    let thinking_count = entrant.thinking_levels.len();
+    if tiers.is_empty() || thinking_count == 0 {
+        return Err(frontier_preview_invalid(
+            "route has no reachable frontier cell",
+        ));
+    }
+    let mut bounds = vec![vec![(0_u64, 0_u64); thinking_count]; tiers.len()];
+    for tier_index in (0..tiers.len()).rev() {
+        for thinking_index in (0..thinking_count).rev() {
+            let cases =
+                u64::from(*case_counts.get(&tiers[tier_index]).ok_or_else(|| {
+                    frontier_preview_invalid("route has no reachable tier suite")
+                })?);
+            let pass = if tier_index + 1 < tiers.len() {
+                bounds[tier_index + 1][thinking_index]
+            } else {
+                (0, 0)
+            };
+            let fail = if thinking_index + 1 < thinking_count {
+                bounds[tier_index][thinking_index + 1]
+            } else {
+                (0, 0)
+            };
+            let minimum = pass.0.min(fail.0);
+            let maximum = pass.1.max(fail.1);
+            bounds[tier_index][thinking_index] = (
+                cases
+                    .checked_add(minimum)
+                    .ok_or_else(|| frontier_preview_invalid("minimum trial count overflow"))?,
+                cases
+                    .checked_add(maximum)
+                    .ok_or_else(|| frontier_preview_invalid("maximum trial count overflow"))?,
+            );
+        }
+    }
+    Ok(bounds[0][0])
+}
+
+fn frontier_execution_tiers(entry: Tier) -> Vec<Tier> {
     let tiers = [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5];
     let entry_index = tiers.iter().position(|tier| *tier == entry).unwrap_or(0);
-    tiers[entry_index..=entry_index.saturating_add(thinking_index).min(4)].to_vec()
+    tiers[entry_index..].to_vec()
 }
 
 fn validate_frontier_age(
@@ -6809,6 +6844,7 @@ pub(crate) fn start_frontier(
         spent_millionths_of_dollar: 0,
     };
     runtime.create_frontier(&state)?;
+    runtime.lock_frontier_run(&state.configuration.run_id)?;
     progress.emit_frontier(&state)?;
     continue_frontier(state, suite, Vec::new(), runtime, progress)
 }
@@ -6825,6 +6861,7 @@ pub(crate) fn resume_frontier(
     runtime: &mut dyn FrontierRuntime,
     progress: &mut dyn FrontierProgressSink,
 ) -> Result<FrontierRunState, SkillEvalError> {
+    runtime.lock_frontier_run(run_id)?;
     let mut state = runtime.load_frontier(run_id)?;
     if state.configuration.run_id != *run_id {
         return Err(frontier_lifecycle_drift("run identity"));
@@ -6891,63 +6928,39 @@ fn continue_frontier(
     }
     loop {
         let schedulable = canonical_frontier_schedulable_state(&state);
-        match frontier_scheduler::next_frontier_trial(
+        match frontier_scheduler::next_frontier_wave(
             &schedulable.configuration.plan,
             &suite,
             &schedulable,
             &trials,
         )? {
             FrontierScheduleAction::Dispatch {
-                model,
-                key,
-                infrastructure_attempt,
-                reserved_cost_millionths_of_dollar,
-            } => match execute_frontier_trial(
-                &state,
-                &suite,
-                &model,
-                &key,
-                reserved_cost_millionths_of_dollar,
-                runtime,
-            ) {
-                Ok(trial) => {
-                    runtime.save_frontier_trial(&state.configuration.run_id, &trial)?;
-                    let completed_model = trial.model.clone();
-                    trials.push(trial);
-                    trials.sort_by(|left, right| left.key.cmp(&right.key));
-                    update_frontier_progress(&mut state, &suite, &trials, &completed_model)?;
-                    save_frontier_and_emit(runtime, progress, &state)?;
+                trials: scheduled,
+                reserved_cost_per_trial_millionths_of_dollar,
+            } => {
+                let outcomes = execute_frontier_wave(
+                    &state,
+                    &suite,
+                    &scheduled,
+                    reserved_cost_per_trial_millionths_of_dollar,
+                    runtime,
+                )?;
+                if let Some(error) = commit_frontier_wave(
+                    &mut state,
+                    &suite,
+                    &mut trials,
+                    scheduled,
+                    outcomes,
+                    reserved_cost_per_trial_millionths_of_dollar,
+                    runtime,
+                    progress,
+                )? {
+                    return Err(error);
                 }
-                Err(SkillEvalError::Quota { model, reset_at }) => {
-                    state.status = FrontierRunStatus::Paused;
-                    state.pause = Some(PoolPauseReason::Quota { model, reset_at });
-                    save_frontier_and_emit(runtime, progress, &state)?;
+                if state.status == FrontierRunStatus::Paused {
                     return Ok(state);
                 }
-                Err(
-                    error @ (SkillEvalError::InvalidArguments(_)
-                    | SkillEvalError::InvalidConfiguration(_)),
-                ) => return Err(error),
-                Err(error) => {
-                    state
-                        .infrastructure_events
-                        .push(FrontierInfrastructureEvent {
-                            model,
-                            artifact: key.artifact,
-                            case: key.case,
-                            attempt: key.attempt,
-                            infrastructure_attempt,
-                            message: format!("{error:?}"),
-                            occurred_at: runtime.now(),
-                        });
-                    state.status = FrontierRunStatus::Paused;
-                    state.pause = Some(PoolPauseReason::Infrastructure {
-                        message: format!("{error:?}"),
-                    });
-                    save_frontier_and_emit(runtime, progress, &state)?;
-                    return Ok(state);
-                }
-            },
+            }
             FrontierScheduleAction::Pause { reason } => {
                 if state.status != FrontierRunStatus::Paused
                     || state.pause.as_ref() != Some(&reason)
@@ -6975,16 +6988,85 @@ fn continue_frontier(
     }
 }
 
-fn execute_frontier_trial(
+fn execute_frontier_wave(
     state: &FrontierRunState,
     suite: &FrontierSuite,
-    model: &ModelIdentity,
-    key: &TrialKey,
+    scheduled: &[FrontierScheduledTrial],
     reservation: u64,
     runtime: &mut dyn FrontierRuntime,
-) -> Result<TrialRecord, SkillEvalError> {
-    require_frontier_first_party(&model.provider)?;
-    if reservation == 0
+) -> Result<Vec<FrontierTrialOutcome>, SkillEvalError> {
+    validate_frontier_wave_reservation(state, scheduled.len(), reservation)?;
+    let judge = runtime.exact_candidate(&state.configuration.plan.judge)?;
+    if judge != state.configuration.plan.judge {
+        return Err(frontier_lifecycle_drift("frozen judge identity"));
+    }
+    require_frontier_first_party(&judge.provider)?;
+    let mut outcomes = Vec::with_capacity(scheduled.len());
+    let mut jobs = Vec::with_capacity(scheduled.len());
+    for scheduled_trial in scheduled {
+        let model = &scheduled_trial.model;
+        require_frontier_first_party(&model.provider)?;
+        if runtime.exact_candidate(model)? != *model
+            || judge.provider == model.provider && judge.model == model.model
+        {
+            return Err(frontier_lifecycle_drift("dispatch route identity"));
+        }
+        let (artifact, case, harness) =
+            frontier_case_context(suite, &scheduled_trial.key, runtime)?;
+        match runtime.recover_frontier_trial(
+            state,
+            &scheduled_trial.key,
+            &artifact,
+            &case,
+            model,
+            &harness,
+        ) {
+            Ok(Some(trial)) => {
+                validate_frontier_trial_outcome(model, &scheduled_trial.key, &trial, reservation)?;
+                outcomes.push(FrontierTrialOutcome {
+                    model: model.clone(),
+                    key: scheduled_trial.key.clone(),
+                    infrastructure_attempt: scheduled_trial.infrastructure_attempt,
+                    result: Ok(trial),
+                });
+            }
+            Ok(None) => jobs.push(FrontierTrialJob {
+                run_id: RunId(state.configuration.run_id.0.clone()),
+                model: model.clone(),
+                judge: judge.clone(),
+                key: scheduled_trial.key.clone(),
+                artifact,
+                case,
+                harness,
+                infrastructure_attempt: scheduled_trial.infrastructure_attempt,
+                reserved_cost_millionths_of_dollar: reservation,
+            }),
+            Err(error) => outcomes.push(FrontierTrialOutcome {
+                model: model.clone(),
+                key: scheduled_trial.key.clone(),
+                infrastructure_attempt: scheduled_trial.infrastructure_attempt,
+                result: Err(error),
+            }),
+        }
+    }
+    if !jobs.is_empty() {
+        outcomes.extend(runtime.run_frontier_wave(jobs)?);
+    }
+    Ok(outcomes)
+}
+
+fn validate_frontier_wave_reservation(
+    state: &FrontierRunState,
+    trial_count: usize,
+    reservation: u64,
+) -> Result<(), SkillEvalError> {
+    let count = u64::try_from(trial_count)
+        .map_err(|_| frontier_lifecycle_invalid("wave trial count overflow"))?;
+    let reserved = count
+        .checked_mul(reservation)
+        .ok_or_else(|| frontier_lifecycle_invalid("wave reservation overflow"))?;
+    if trial_count == 0
+        || reservation == 0
         || reservation
             != state
                 .configuration
@@ -6993,7 +7075,7 @@ fn execute_frontier_trial(
                 .maximum_trial_cost_millionths_of_dollar
         || state
             .spent_millionths_of_dollar
-            .checked_add(reservation)
+            .checked_add(reserved)
             .is_none_or(|spend| {
                 spend
                     > state
@@ -7002,66 +7084,131 @@ fn execute_frontier_trial(
                         .policy
                         .spending_limit_millionths_of_dollar
             })
-        || runtime.exact_candidate(model)? != *model
     {
-        return Err(frontier_lifecycle_drift(
-            "dispatch route or spending reservation",
+        return Err(frontier_lifecycle_drift("wave spending reservation"));
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "wave commit needs the frozen schedule, durable state, and its two output ports"
+)]
+fn commit_frontier_wave(
+    state: &mut FrontierRunState,
+    suite: &FrontierSuite,
+    trials: &mut Vec<TrialRecord>,
+    scheduled: Vec<FrontierScheduledTrial>,
+    mut outcomes: Vec<FrontierTrialOutcome>,
+    reservation: u64,
+    runtime: &mut dyn FrontierRuntime,
+    progress: &mut dyn FrontierProgressSink,
+) -> Result<Option<SkillEvalError>, SkillEvalError> {
+    outcomes.sort_by(|left, right| {
+        (&left.model, &left.key, left.infrastructure_attempt).cmp(&(
+            &right.model,
+            &right.key,
+            right.infrastructure_attempt,
+        ))
+    });
+    let expected = scheduled.into_iter().collect::<BTreeSet<_>>();
+    let actual = outcomes
+        .iter()
+        .map(|outcome| FrontierScheduledTrial {
+            model: outcome.model.clone(),
+            key: outcome.key.clone(),
+            infrastructure_attempt: outcome.infrastructure_attempt,
+        })
+        .collect::<BTreeSet<_>>();
+    if outcomes.len() != expected.len() || actual != expected {
+        return Err(frontier_lifecycle_invalid(
+            "wave outcomes do not match the scheduled one-to-one identity set",
         ));
     }
-    let (artifact, case, harness) = frontier_case_context(suite, key, runtime)?;
-    let judge = runtime.exact_candidate(&state.configuration.plan.judge)?;
-    if judge != state.configuration.plan.judge
-        || judge.provider == model.provider && judge.model == model.model
-    {
-        return Err(frontier_lifecycle_drift("frozen judge identity"));
+    for outcome in &outcomes {
+        if let Ok(trial) = &outcome.result {
+            validate_frontier_trial_outcome(&outcome.model, &outcome.key, trial, reservation)?;
+        }
     }
-    require_frontier_first_party(&judge.provider)?;
-    let trial = match runtime
-        .recover_frontier_trial(state, key, &artifact, &case, model, &harness)?
-    {
-        Some(trial) => {
-            if trial.key != *key
-                || trial.model != *model
-                || trial.harness != harness
-                || trial.judge_model != judge
-            {
-                return Err(frontier_lifecycle_drift("recovered trial identity"));
+
+    let mut failures = Vec::new();
+    let mut persistence_error = None;
+    for outcome in outcomes {
+        let FrontierTrialOutcome {
+            model,
+            key,
+            infrastructure_attempt,
+            result,
+        } = outcome;
+        match result {
+            Ok(trial) => {
+                if let Err(error) = runtime.save_frontier_trial(&state.configuration.run_id, &trial)
+                {
+                    persistence_error.get_or_insert(error);
+                    continue;
+                }
+                let completed_model = trial.model.clone();
+                trials.push(trial);
+                trials.sort_by(frontier_trial_order);
+                update_frontier_progress(state, suite, trials, &completed_model)?;
+                if let Err(error) = save_frontier_and_emit(runtime, progress, state) {
+                    persistence_error.get_or_insert(error);
+                }
             }
-            trial
+            Err(error) => failures.push((model, key, infrastructure_attempt, error)),
         }
-        None => {
-            let run_id = RunId(state.configuration.run_id.0.clone());
-            let candidate =
-                runtime.execute(&run_id, key, &artifact, &case, model, &harness, None)?;
-            if candidate.key != *key || candidate.model != *model || candidate.harness != harness {
-                return Err(frontier_lifecycle_drift("candidate result identity"));
+    }
+
+    let mut quota_pause = None;
+    let mut infrastructure_pause = None;
+    let mut terminal_error = persistence_error;
+    for (model, key, infrastructure_attempt, error) in failures {
+        match error {
+            error @ (SkillEvalError::InvalidArguments(_)
+            | SkillEvalError::InvalidConfiguration(_)) => {
+                terminal_error.get_or_insert(error);
             }
-            let checks = runtime.verify(&case, &candidate)?;
-            let judged = runtime.grade(
-                &judge,
-                &JudgeInput {
-                    candidate: candidate.clone(),
-                    expect: case.expect.clone(),
-                    rubric_path: artifact.root.join("evals/rubric.md"),
-                    checks,
-                },
-            )?;
-            if judged.model != judge {
-                return Err(frontier_lifecycle_drift("judge result identity"));
+            SkillEvalError::Quota { model, reset_at } => {
+                quota_pause.get_or_insert(PoolPauseReason::Quota { model, reset_at });
             }
-            TrialRecord {
-                key: key.clone(),
-                model: candidate.model.clone(),
-                harness: candidate.harness.clone(),
-                artifact_path: candidate.artifact_path,
-                transcript_path: candidate.transcript_path,
-                candidate_usage: candidate.usage,
-                judge_model: judged.model,
-                judge_usage: judged.usage,
-                verdict: judged.verdict,
+            error => {
+                let message = format!("{error:?}");
+                state
+                    .infrastructure_events
+                    .push(FrontierInfrastructureEvent {
+                        model,
+                        artifact: key.artifact,
+                        case: key.case,
+                        attempt: key.attempt,
+                        infrastructure_attempt,
+                        message: message.clone(),
+                        occurred_at: runtime.now(),
+                    });
+                save_frontier_and_emit(runtime, progress, state)?;
+                infrastructure_pause.get_or_insert(PoolPauseReason::Infrastructure { message });
             }
         }
-    };
+    }
+    if let Some(error) = terminal_error {
+        return Ok(Some(error));
+    }
+    if let Some(reason) = quota_pause.or(infrastructure_pause) {
+        state.status = FrontierRunStatus::Paused;
+        state.pause = Some(reason);
+        save_frontier_and_emit(runtime, progress, state)?;
+    }
+    Ok(None)
+}
+
+fn validate_frontier_trial_outcome(
+    model: &ModelIdentity,
+    key: &TrialKey,
+    trial: &TrialRecord,
+    reservation: u64,
+) -> Result<(), SkillEvalError> {
+    if trial.key != *key || trial.model != *model {
+        return Err(frontier_lifecycle_drift("wave trial outcome identity"));
+    }
     let cost = trial
         .candidate_usage
         .cost_millionths_of_dollar
@@ -7072,7 +7219,11 @@ fn execute_frontier_trial(
             "trial cost exceeded its frozen reservation",
         ));
     }
-    Ok(trial)
+    Ok(())
+}
+
+fn frontier_trial_order(left: &TrialRecord, right: &TrialRecord) -> std::cmp::Ordering {
+    (&left.model, &left.key).cmp(&(&right.model, &right.key))
 }
 
 fn frontier_case_context<R: FrontierTrialRuntime + ?Sized>(
@@ -7124,8 +7275,8 @@ fn validate_frontier_execution_inputs(
     runtime: &dyn FrontierRuntime,
 ) -> Result<(), SkillEvalError> {
     for entrant in &plan.entrants {
-        for (index, thinking) in entrant.thinking_levels.iter().enumerate() {
-            for tier in frontier_reachable_tiers(entrant.entry_tier, index) {
+        for thinking in &entrant.thinking_levels {
+            for tier in frontier_execution_tiers(entrant.entry_tier) {
                 let model = ModelIdentity {
                     provider: entrant.provider.clone(),
                     model: entrant.model.clone(),
@@ -7168,8 +7319,8 @@ fn load_frontier_trials<R: FrontierTrialRuntime + ?Sized>(
 ) -> Result<Vec<TrialRecord>, SkillEvalError> {
     let mut trials = Vec::new();
     for entrant in &state.configuration.plan.entrants {
-        for (thinking_index, thinking) in entrant.thinking_levels.iter().enumerate() {
-            for tier in frontier_reachable_tiers(entrant.entry_tier, thinking_index) {
+        for thinking in &entrant.thinking_levels {
+            for tier in frontier_execution_tiers(entrant.entry_tier) {
                 let tier_suite = suite
                     .tiers
                     .get(&tier)
@@ -7207,7 +7358,7 @@ fn load_frontier_trials<R: FrontierTrialRuntime + ?Sized>(
             }
         }
     }
-    trials.sort_by(|left, right| left.key.cmp(&right.key));
+    trials.sort_by(frontier_trial_order);
     Ok(trials)
 }
 
@@ -7270,6 +7421,7 @@ fn update_frontier_progress(
                 ));
             }
             state.cells.push(evidence);
+            sort_frontier_cells(&state.configuration.plan, &mut state.cells)?;
             let entrant_index = state
                 .configuration
                 .plan
@@ -7297,6 +7449,41 @@ fn update_frontier_progress(
         }
     }
     state.spent_millionths_of_dollar = frontier_spend(trials)?;
+    Ok(())
+}
+
+fn sort_frontier_cells(
+    plan: &FrontierPlan,
+    cells: &mut [crate::model::FrontierCellEvidence],
+) -> Result<(), SkillEvalError> {
+    let mut entrants = plan.entrants.iter().collect::<Vec<_>>();
+    entrants.sort_by_key(|entrant| {
+        (
+            entrant.entry_tier,
+            entrant.provider.clone(),
+            entrant.model.clone(),
+        )
+    });
+    let mut order = BTreeMap::new();
+    for (entrant_index, entrant) in entrants.into_iter().enumerate() {
+        for (thinking_index, thinking) in entrant.thinking_levels.iter().enumerate() {
+            for tier in frontier_execution_tiers(entrant.entry_tier) {
+                order.insert(
+                    ModelIdentity {
+                        provider: entrant.provider.clone(),
+                        model: entrant.model.clone(),
+                        tier,
+                        thinking: thinking.clone(),
+                    },
+                    (entrant_index, thinking_index, tier),
+                );
+            }
+        }
+    }
+    if cells.iter().any(|cell| !order.contains_key(&cell.model)) {
+        return Err(frontier_lifecycle_drift("cell order identity"));
+    }
+    cells.sort_by_key(|cell| order[&cell.model]);
     Ok(())
 }
 
@@ -7439,14 +7626,16 @@ fn is_recoverable_frontier_save_lag(
         prior_state.pause = None;
         let schedulable = canonical_frontier_schedulable_state(&prior_state);
         if matches!(
-            frontier_scheduler::next_frontier_trial(
+            frontier_scheduler::next_frontier_wave(
                 &schedulable.configuration.plan,
                 suite,
                 &schedulable,
                 &prior_trials,
             )?,
-            FrontierScheduleAction::Dispatch { model, key, .. }
-                if model == durable_trial.model && key == durable_trial.key
+            FrontierScheduleAction::Dispatch { trials, .. }
+                if trials.iter().any(|scheduled| {
+                    scheduled.model == durable_trial.model && scheduled.key == durable_trial.key
+                })
         ) {
             recoverable_count = recoverable_count
                 .checked_add(1)
@@ -7471,7 +7660,7 @@ fn validate_frontier_saved_authority(
     let mut schedulable = canonical_frontier_schedulable_state(state);
     schedulable.status = FrontierRunStatus::Running;
     schedulable.pause = None;
-    let action = frontier_scheduler::next_frontier_trial(plan, suite, &schedulable, trials)?;
+    let action = frontier_scheduler::next_frontier_wave(plan, suite, &schedulable, trials)?;
     if state.status == FrontierRunStatus::Pending && !trials.is_empty()
         || state.status == FrontierRunStatus::Running
             && matches!(action, FrontierScheduleAction::Terminal { .. })
@@ -7490,7 +7679,7 @@ fn validate_frontier_complete(
     schedulable.status = FrontierRunStatus::Running;
     schedulable.pause = None;
     if !matches!(
-        frontier_scheduler::next_frontier_trial(
+        frontier_scheduler::next_frontier_wave(
             &schedulable.configuration.plan,
             suite,
             &schedulable,
@@ -7601,7 +7790,7 @@ pub(crate) fn build_frontier_report(
     schedulable.cells = cells.clone();
     schedulable.status = FrontierRunStatus::Running;
     schedulable.pause = None;
-    let action = frontier_scheduler::next_frontier_trial(&plan, &suite, &schedulable, &trials)?;
+    let action = frontier_scheduler::next_frontier_wave(&plan, &suite, &schedulable, &trials)?;
     validate_report_lifecycle(&state, &action)?;
     let ledger = baseline_path
         .map(|path| runtime.load_frontier_baselines(path))
@@ -7633,12 +7822,8 @@ pub(crate) fn inspect_frontier(
         .iter()
         .find(|entrant| entrant.provider == selector.provider && entrant.model == selector.model)
         .ok_or_else(|| frontier_lifecycle_drift("inspection entrant identity"))?;
-    let thinking_index = entrant
-        .thinking_levels
-        .iter()
-        .position(|thinking| thinking == &selector.thinking)
-        .ok_or_else(|| frontier_lifecycle_drift("inspection thinking identity"))?;
-    if !frontier_reachable_tiers(entrant.entry_tier, thinking_index).contains(&selector.tier)
+    if !entrant.thinking_levels.contains(&selector.thinking)
+        || !frontier_execution_tiers(entrant.entry_tier).contains(&selector.tier)
         || selector.attempt > u16::from(state.configuration.plan.policy.maximum_trials_per_case)
     {
         return Err(frontier_lifecycle_drift("inspection route identity"));

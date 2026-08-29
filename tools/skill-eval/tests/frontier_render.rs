@@ -61,7 +61,7 @@ macro_rules! frontier_render_tests {
                 assert!(output.starts_with(concat!(
                     "| Model | off | minimal | low | medium | high | xhigh | max |\n",
                     "| --- | --- | --- | --- | --- | --- | --- | --- |\n",
-                    "| anthropic/alpha | P1 | F2 | I2 |  |  |  |  |\n",
+                    "| anthropic/alpha | F2 | F3 | P5 | N/A | N/A | N/A | N/A |\n",
                 )));
                 assert_eq!(output.matches("| Model |").count(), 1);
                 assert!(output.contains("infrastructure/pause: Infrastructure { message: \"provider unavailable\" }"));
@@ -190,36 +190,54 @@ macro_rules! frontier_render_tests {
             }
 
             fn report() -> FrontierReport {
-                let passed = cell(Tier::T1, "off", FrontierCellStatus::Passed, 9_100);
-                let failed = cell(Tier::T2, "minimal", FrontierCellStatus::Failed, 7_900);
-                let indeterminate = cell(
-                    Tier::T2,
-                    "low",
-                    FrontierCellStatus::Indeterminate,
-                    8_600,
-                );
+                let t1_off = cell(Tier::T1, "off", FrontierCellStatus::Passed, 9_100);
+                let t2_off = cell(Tier::T2, "off", FrontierCellStatus::Failed, 7_900);
+                let t2_minimal = cell(Tier::T2, "minimal", FrontierCellStatus::Passed, 9_100);
+                let t3_minimal = cell(Tier::T3, "minimal", FrontierCellStatus::Failed, 7_900);
+                let t3_low = cell(Tier::T3, "low", FrontierCellStatus::Passed, 9_100);
+                let t4_low = cell(Tier::T4, "low", FrontierCellStatus::Passed, 9_100);
+                let t5_low = cell(Tier::T5, "low", FrontierCellStatus::Passed, 9_100);
                 let mut total_usage = usage();
-                total_usage.input_tokens *= 3;
-                total_usage.output_tokens *= 3;
-                total_usage.cache_read_tokens *= 3;
-                total_usage.cache_write_tokens *= 3;
-                total_usage.turns *= 3;
-                total_usage.tool_calls *= 3;
-                total_usage.elapsed_milliseconds *= 3;
-                total_usage.cost_millionths_of_dollar *= 3;
+                total_usage.input_tokens *= 7;
+                total_usage.output_tokens *= 7;
+                total_usage.cache_read_tokens *= 7;
+                total_usage.cache_write_tokens *= 7;
+                total_usage.turns *= 7;
+                total_usage.tool_calls *= 7;
+                total_usage.elapsed_milliseconds *= 7;
+                total_usage.cost_millionths_of_dollar *= 7;
                 FrontierReport {
                     run_id: FrontierRunId("frontier-1".to_owned()),
                     status: FrontierRunStatus::Paused,
                     models: vec![FrontierModelReport {
                         provider: "anthropic".to_owned(),
                         model: "alpha".to_owned(),
-                        cells: vec![passed.clone(), failed, indeterminate],
-                        highest_passing_tier: Some(Tier::T1),
-                        selected_routes: vec![passed.model.clone()],
+                        supported_thinking_levels: vec![
+                            "off".to_owned(),
+                            "minimal".to_owned(),
+                            "low".to_owned(),
+                        ],
+                        cells: vec![
+                            t1_off.clone(),
+                            t2_off,
+                            t2_minimal.clone(),
+                            t3_minimal,
+                            t3_low.clone(),
+                            t4_low.clone(),
+                            t5_low.clone(),
+                        ],
+                        highest_passing_tier: Some(Tier::T5),
+                        selected_routes: vec![
+                            t1_off.model.clone(),
+                            t2_minimal.model,
+                            t3_low.model,
+                            t4_low.model,
+                            t5_low.model,
+                        ],
                         pool_memberships: BTreeMap::from([(
                             Tier::T1,
                             FrontierPoolMembership {
-                                model: passed.model,
+                                model: t1_off.model,
                                 rank: 1,
                                 is_active: true,
                             },

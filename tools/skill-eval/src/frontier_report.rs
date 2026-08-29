@@ -148,6 +148,7 @@ pub(crate) fn derive_frontier_report(
         reports.push(FrontierModelReport {
             provider: entrant.provider.clone(),
             model: entrant.model.clone(),
+            supported_thinking_levels: entrant.thinking_levels.clone(),
             cells,
             highest_passing_tier,
             selected_routes,
@@ -211,66 +212,35 @@ fn matrix_cells(
     progress: &FrontierModelProgress,
     evidence: &[FrontierCellEvidence],
 ) -> Result<Vec<FrontierCellEvidence>, SkillEvalError> {
-    let by_thinking = evidence
-        .iter()
-        .map(|cell| (cell.model.thinking.as_str(), cell))
-        .collect::<BTreeMap<_, _>>();
-    if by_thinking.len() != evidence.len()
-        || evidence
-            .iter()
-            .any(|cell| !entrant.thinking_levels.contains(&cell.model.thinking))
-    {
-        return Err(invalid("frontier matrix evidence is duplicate or foreign"));
+    if evidence.iter().any(|cell| {
+        !entrant.thinking_levels.contains(&cell.model.thinking)
+            || !matches!(
+                cell.status,
+                FrontierCellStatus::Passed
+                    | FrontierCellStatus::Failed
+                    | FrontierCellStatus::Indeterminate
+            )
+    }) {
+        return Err(invalid(
+            "frontier matrix evidence is nonterminal or foreign",
+        ));
     }
-    let mut cells = Vec::with_capacity(entrant.thinking_levels.len());
-    let mut tier = entrant.entry_tier;
-    let mut is_unresolved = false;
-    for thinking in &entrant.thinking_levels {
-        if let Some(cell) = by_thinking.get(thinking.as_str()) {
-            if is_unresolved || cell.model.tier != tier {
-                return Err(invalid("frontier matrix evidence skips its legal route"));
-            }
-            cells.push((*cell).clone());
-            match cell.status {
-                FrontierCellStatus::Passed => {
-                    tier = next_tier(tier).unwrap_or(tier);
-                }
-                FrontierCellStatus::Failed | FrontierCellStatus::Indeterminate => {}
-                _ => return Err(invalid("canonical matrix evidence is not terminal")),
-            }
-        } else {
-            let status = if !is_unresolved && !progress.is_exhausted {
-                is_unresolved = true;
-                FrontierCellStatus::Pending
-            } else {
-                FrontierCellStatus::Skipped
-            };
-            cells.push(blank_cell(entrant, tier, thinking, status));
-        }
+    let initial = FrontierModelProgress {
+        provider: entrant.provider.clone(),
+        model: entrant.model.clone(),
+        entry_tier: entrant.entry_tier,
+        selected_routes: Vec::new(),
+        next_tier: Some(entrant.entry_tier),
+        next_thinking_index: Some(0),
+        is_exhausted: false,
+    };
+    let derived = crate::statistics::advance_frontier_model(entrant, &initial, evidence)?;
+    if &derived != progress {
+        return Err(invalid(
+            "frontier matrix progress differs from its evidence",
+        ));
     }
-    Ok(cells)
-}
-
-fn blank_cell(
-    entrant: &crate::model::FrontierEntrant,
-    tier: Tier,
-    thinking: &str,
-    status: FrontierCellStatus,
-) -> FrontierCellEvidence {
-    FrontierCellEvidence {
-        model: ModelIdentity {
-            provider: entrant.provider.clone(),
-            model: entrant.model.clone(),
-            tier,
-            thinking: thinking.to_owned(),
-        },
-        status,
-        completed_trials: 0,
-        expected_trials: 0,
-        failed_trials: 0,
-        score: None,
-        total_usage: empty_usage(),
-    }
+    Ok(evidence.to_vec())
 }
 
 fn baseline_change(
@@ -401,12 +371,8 @@ pub(crate) fn validate_infrastructure_events(
                 entrant.provider == event.model.provider && entrant.model == event.model.model
             })
             .ok_or_else(|| invalid("infrastructure event belongs to a foreign entrant"))?;
-        let thinking_index = entrant
-            .thinking_levels
-            .iter()
-            .position(|thinking| thinking == &event.model.thinking)
-            .ok_or_else(|| invalid("infrastructure event thinking identity drifted"))?;
-        if !reachable_tiers(entrant.entry_tier, thinking_index).contains(&event.model.tier)
+        if !entrant.thinking_levels.contains(&event.model.thinking)
+            || event.model.tier < entrant.entry_tier
             || event.attempt == 0
             || event.attempt > u16::from(state.configuration.plan.policy.maximum_trials_per_case)
             || event.infrastructure_attempt == 0
@@ -535,22 +501,6 @@ pub(crate) fn inspection_matches(
                 && event.attempt == selector.attempt
                 && event.infrastructure_attempt > 0
         }
-    }
-}
-
-fn reachable_tiers(entry: Tier, thinking_index: usize) -> Vec<Tier> {
-    let tiers = [Tier::T1, Tier::T2, Tier::T3, Tier::T4, Tier::T5];
-    let entry_index = tiers.iter().position(|tier| *tier == entry).unwrap_or(0);
-    tiers[entry_index..=entry_index.saturating_add(thinking_index).min(4)].to_vec()
-}
-
-fn next_tier(tier: Tier) -> Option<Tier> {
-    match tier {
-        Tier::T1 => Some(Tier::T2),
-        Tier::T2 => Some(Tier::T3),
-        Tier::T3 => Some(Tier::T4),
-        Tier::T4 => Some(Tier::T5),
-        Tier::T5 => None,
     }
 }
 

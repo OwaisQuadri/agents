@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::model::{
     ArtifactName, FrontierCellEvidence, FrontierCellStatus, FrontierEntrant, FrontierPlan,
-    FrontierRunState, FrontierRunStatus, FrontierScheduleAction, FrontierSuite, ModelIdentity,
-    PoolPauseReason, SkillEvalError, TrialKey, TrialRecord,
+    FrontierRunState, FrontierRunStatus, FrontierScheduleAction, FrontierScheduledTrial,
+    FrontierSuite, ModelIdentity, PoolPauseReason, SkillEvalError, TrialKey, TrialRecord,
 };
 use crate::statistics::{advance_frontier_model, evaluate_frontier_cell};
 
-pub(crate) fn next_frontier_trial(
+pub(crate) fn next_frontier_wave(
     plan: &FrontierPlan,
     suite: &FrontierSuite,
     state: &FrontierRunState,
@@ -46,6 +46,7 @@ pub(crate) fn next_frontier_trial(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let mut consumed = BTreeSet::new();
+    let mut scheduled = Vec::new();
 
     for entrant in entrants {
         let progress = progress_for(state, entrant)?;
@@ -91,62 +92,94 @@ pub(crate) fn next_frontier_trial(
             {
                 return Err(invalid("frontier trial has the wrong route index"));
             }
+            consumed.extend(
+                route_trials
+                    .iter()
+                    .map(|trial| (trial.model.clone(), trial.key.clone())),
+            );
             let checkpoint = completed_checkpoint(tier_suite.cases.len(), &route_trials)?;
-
-            if let Some(attempts) = checkpoint {
+            let target = if let Some(attempts) = checkpoint {
                 let evidence =
                     evaluate_frontier_cell(tier_suite, &model, &route_trials, &plan.policy)?;
-                consumed.extend(route_trials.iter().map(|trial| trial.key.clone()));
                 let is_screen_promising = attempts
                     == usize::from(plan.policy.screening_trials_per_case)
                     && evidence.status != FrontierCellStatus::Failed;
                 let is_confirmation_uncertain = attempts
                     == usize::from(plan.policy.confirmation_trials_per_case)
                     && evidence.status == FrontierCellStatus::Pending;
-                if is_screen_promising || is_confirmation_uncertain {
-                    let target = if is_screen_promising {
-                        plan.policy.confirmation_trials_per_case
-                    } else {
-                        plan.policy.maximum_trials_per_case
-                    };
-                    if let Some(key) =
-                        first_missing_key(tier_suite, tier, route_index, target, &route_trials)?
-                    {
-                        return schedule_or_stop(state, plan, trials, consumed, model, key);
-                    }
-                    return Err(invalid("frontier expandable cell has no missing trial"));
+                if is_screen_promising {
+                    plan.policy.confirmation_trials_per_case
+                } else if is_confirmation_uncertain {
+                    plan.policy.maximum_trials_per_case
+                } else {
+                    validate_persisted_cell(state, &evidence)?;
+                    cells.push(evidence);
+                    continue;
                 }
-                validate_persisted_cell(state, &evidence)?;
-                cells.push(evidence);
-                continue;
+            } else {
+                active_target(tier_suite.cases.len(), &route_trials, &plan.policy)?
+            };
+            let keys = earliest_missing_keys(tier_suite, tier, route_index, target, &route_trials)?;
+            if keys.is_empty() {
+                return Err(invalid("frontier incomplete cell has no missing trial"));
             }
-
-            let target = active_target(tier_suite.cases.len(), &route_trials, &plan.policy)?;
-            let key = first_missing_key(tier_suite, tier, route_index, target, &route_trials)?
-                .ok_or_else(|| invalid("frontier incomplete cell has no missing trial"))?;
-            consumed.extend(route_trials.iter().map(|trial| trial.key.clone()));
-            return schedule_or_stop(state, plan, trials, consumed, model, key);
+            for key in keys {
+                match scheduled_trial(state, plan, &model, key)? {
+                    Ok(trial) => scheduled.push(trial),
+                    Err(reason) => return Ok(FrontierScheduleAction::Pause { reason }),
+                }
+            }
+            break;
         }
     }
 
     ensure_no_unconsumed_trials(trials, &consumed)?;
-    Ok(FrontierScheduleAction::Complete)
+    if scheduled.is_empty() {
+        return Ok(FrontierScheduleAction::Complete);
+    }
+    scheduled.sort();
+    if scheduled.windows(2).any(|window| window[0] == window[1]) {
+        return Err(invalid("frontier wave contains a duplicate trial"));
+    }
+    let reserved_cost_per_trial_millionths_of_dollar =
+        plan.policy.maximum_trial_cost_millionths_of_dollar;
+    if reserved_cost_per_trial_millionths_of_dollar == 0 {
+        return Err(invalid("frontier trial cost reservation is zero"));
+    }
+    let trial_count = u64::try_from(scheduled.len())
+        .map_err(|_| invalid("frontier wave trial count overflow"))?;
+    let wave_reservation = trial_count
+        .checked_mul(reserved_cost_per_trial_millionths_of_dollar)
+        .ok_or_else(|| invalid("frontier wave reservation overflow"))?;
+    let projected_spend = state
+        .spent_millionths_of_dollar
+        .checked_add(wave_reservation)
+        .ok_or_else(|| invalid("frontier projected spend overflow"))?;
+    if projected_spend > plan.policy.spending_limit_millionths_of_dollar {
+        return Ok(FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::SpendingLimit {
+                spent_millionths_of_dollar: state.spent_millionths_of_dollar,
+                limit_millionths_of_dollar: plan.policy.spending_limit_millionths_of_dollar,
+            },
+        });
+    }
+    Ok(FrontierScheduleAction::Dispatch {
+        trials: scheduled,
+        reserved_cost_per_trial_millionths_of_dollar,
+    })
 }
 
-fn schedule_or_stop(
+fn scheduled_trial(
     state: &FrontierRunState,
     plan: &FrontierPlan,
-    trials: &[TrialRecord],
-    consumed: BTreeSet<TrialKey>,
-    model: ModelIdentity,
+    model: &ModelIdentity,
     key: TrialKey,
-) -> Result<FrontierScheduleAction, SkillEvalError> {
-    ensure_no_unconsumed_trials(trials, &consumed)?;
+) -> Result<Result<FrontierScheduledTrial, PoolPauseReason>, SkillEvalError> {
     let mut events = state
         .infrastructure_events
         .iter()
         .filter(|event| {
-            event.model == model
+            event.model == *model
                 && event.artifact == key.artifact
                 && event.case == key.case
                 && event.attempt == key.attempt
@@ -177,36 +210,17 @@ fn schedule_or_stop(
             .ok_or_else(|| invalid("frontier infrastructure pause has no event"))?
             .message
             .clone();
-        return Ok(FrontierScheduleAction::Pause {
-            reason: PoolPauseReason::Infrastructure { message },
-        });
-    }
-    let reserved_cost_millionths_of_dollar = plan.policy.maximum_trial_cost_millionths_of_dollar;
-    if reserved_cost_millionths_of_dollar == 0 {
-        return Err(invalid("frontier trial cost reservation is zero"));
-    }
-    let projected_spend = state
-        .spent_millionths_of_dollar
-        .checked_add(reserved_cost_millionths_of_dollar)
-        .ok_or_else(|| invalid("frontier projected spend overflow"))?;
-    if projected_spend > plan.policy.spending_limit_millionths_of_dollar {
-        return Ok(FrontierScheduleAction::Pause {
-            reason: PoolPauseReason::SpendingLimit {
-                spent_millionths_of_dollar: state.spent_millionths_of_dollar,
-                limit_millionths_of_dollar: plan.policy.spending_limit_millionths_of_dollar,
-            },
-        });
+        return Ok(Err(PoolPauseReason::Infrastructure { message }));
     }
     let infrastructure_attempt = u8::try_from(events.len())
         .map_err(|_| invalid("frontier infrastructure attempt count overflow"))?
         .checked_add(1)
         .ok_or_else(|| invalid("frontier infrastructure attempt overflow"))?;
-    Ok(FrontierScheduleAction::Dispatch {
-        model,
+    Ok(Ok(FrontierScheduledTrial {
+        model: model.clone(),
         key,
         infrastructure_attempt,
-        reserved_cost_millionths_of_dollar,
-    })
+    }))
 }
 
 fn validate_inputs(
@@ -232,10 +246,10 @@ fn validate_inputs(
     if state.models.len() != plan.entrants.len() {
         return Err(invalid("frontier state has incomplete model progress"));
     }
-    let mut keys = BTreeSet::new();
+    let mut identities = BTreeSet::new();
     for trial in trials {
-        if !keys.insert(trial.key.clone()) {
-            return Err(invalid("frontier trials contain a duplicate key"));
+        if !identities.insert((trial.model.clone(), trial.key.clone())) {
+            return Err(invalid("frontier trials contain a duplicate identity"));
         }
         if trial.key.tier != trial.model.tier {
             return Err(invalid("frontier trial tier differs from its model"));
@@ -306,13 +320,13 @@ fn active_target(
     }
 }
 
-fn first_missing_key(
+fn earliest_missing_keys(
     suite: &crate::model::FrontierTierSuite,
     tier: crate::model::Tier,
     route_index: u16,
     target: u8,
     trials: &[TrialRecord],
-) -> Result<Option<TrialKey>, SkillEvalError> {
+) -> Result<Vec<TrialKey>, SkillEvalError> {
     let present = trials
         .iter()
         .map(|trial| trial.key.clone())
@@ -334,20 +348,29 @@ fn first_missing_key(
         return Err(invalid("frontier suite contains a duplicate case"));
     }
     for attempt in 1..=u16::from(target) {
-        for (artifact, case) in &cases {
-            let key = TrialKey {
-                artifact: artifact.clone(),
-                tier,
-                route_index,
-                case: case.clone(),
-                attempt,
-            };
-            if !present.contains(&key) {
-                return Ok(Some(key));
+        let missing = cases
+            .iter()
+            .filter_map(|(artifact, case)| {
+                let key = TrialKey {
+                    artifact: artifact.clone(),
+                    tier,
+                    route_index,
+                    case: case.clone(),
+                    attempt,
+                };
+                (!present.contains(&key)).then_some(key)
+            })
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            if trials.iter().any(|trial| trial.key.attempt > attempt) {
+                return Err(invalid(
+                    "frontier trial evidence crosses an incomplete attempt barrier",
+                ));
             }
+            return Ok(missing);
         }
     }
-    Ok(None)
+    Ok(Vec::new())
 }
 
 fn validate_persisted_cell(
@@ -372,9 +395,12 @@ fn validate_persisted_cell(
 
 fn ensure_no_unconsumed_trials(
     trials: &[TrialRecord],
-    consumed: &BTreeSet<TrialKey>,
+    consumed: &BTreeSet<(ModelIdentity, TrialKey)>,
 ) -> Result<(), SkillEvalError> {
-    if trials.iter().any(|trial| !consumed.contains(&trial.key)) {
+    if trials
+        .iter()
+        .any(|trial| !consumed.contains(&(trial.model.clone(), trial.key.clone())))
+    {
         return Err(invalid("frontier trial evidence skips the legal frontier"));
     }
     Ok(())

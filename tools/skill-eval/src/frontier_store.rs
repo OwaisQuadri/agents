@@ -28,6 +28,7 @@ use test_frontier_source as frontier_source;
 const FRONTIER_ROOT: [&str; 3] = [".map", "skill-eval", "frontier"];
 const RUN_EVIDENCE_ROOT: [&str; 3] = [".map", "skill-eval", "runs"];
 const SNAPSHOT_NAME: &str = "state.json";
+const RUN_LOCK_NAME: &str = ".writer.lock";
 const TRIALS_DIRECTORY: &str = "trials";
 const TRANSACTION_NAME: &str = ".baseline-transaction.json";
 const LEDGER_VERSION: u64 = 1;
@@ -94,6 +95,31 @@ impl FileFrontierStore {
             return Err(error);
         }
         Ok(())
+    }
+
+    pub(crate) fn lock_frontier_run(&self, run_id: &FrontierRunId) -> Result<File, SkillEvalError> {
+        let path = self.existing_run_directory(run_id)?.join(RUN_LOCK_NAME);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+                return Err(invalid("frontier run lock path is unsafe"));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(&path, error)),
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| io_error(&path, error))?;
+        file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => {
+                invalid("another frontier writer owns the run lock")
+            }
+            std::fs::TryLockError::Error(error) => io_error(&path, error),
+        })?;
+        Ok(file)
     }
 
     pub(crate) fn load_frontier(
@@ -1444,6 +1470,7 @@ fn trial_identity_digest(trial: &TrialRecord) -> Result<String, SkillEvalError> 
         &trial.model.model,
         trial.model.tier,
         &trial.model.thinking,
+        trial.key.route_index,
         &trial.key.artifact,
         &trial.key.case,
         trial.key.attempt,

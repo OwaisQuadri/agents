@@ -39,7 +39,7 @@ macro_rules! frontier_report_tests {
                 assert_eq!(first, second);
                 assert_eq!(first.models.len(), 1);
                 let model = &first.models[0];
-                assert_eq!(model.cells.len(), 2);
+                assert_eq!(model.cells.len(), 1);
                 assert_eq!(model.cells[0].model.thinking, "low");
                 assert_eq!(model.cells[0].model.tier, Tier::T1);
                 assert_eq!(model.cells[0].status, FrontierCellStatus::Passed);
@@ -72,8 +72,6 @@ macro_rules! frontier_report_tests {
                 assert_eq!(model.cells[0].total_usage.tool_calls, 3);
                 assert_eq!(model.cells[0].total_usage.elapsed_milliseconds, 17);
                 assert_eq!(model.cells[0].total_usage.cost_millionths_of_dollar, 19);
-                assert_eq!(model.cells[1].model.thinking, "high");
-                assert_eq!(model.cells[1].status, FrontierCellStatus::Pending);
                 assert_eq!(model.selected_routes, vec![route(Tier::T1, "low")]);
                 assert_eq!(model.highest_passing_tier, Some(Tier::T1));
                 assert_eq!(model.pool_memberships[&Tier::T1].rank, 1);
@@ -535,7 +533,7 @@ macro_rules! frontier_report_tests {
                     entry_tier: Tier::T1,
                     selected_routes: vec![route(Tier::T1, "low")],
                     next_tier: Some(Tier::T2),
-                    next_thinking_index: Some(1),
+                    next_thinking_index: Some(0),
                     is_exhausted: false,
                 }
             }

@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::model::{
     ArtifactDefinition, ArtifactKind, CandidateArtifact, CaseDefinition, CaseDrive,
@@ -195,54 +196,70 @@ impl<P> PiCandidateRunner<P> {
         validate_component(&run_id.0, "run")?;
         let output_root = fs::canonicalize(&self.output_root)
             .map_err(|error| io_error(&self.output_root, error))?;
-        let trial_directory = trial_directory(&output_root, run_id, key)?;
-        match fs::symlink_metadata(&trial_directory) {
-            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
-            Ok(_) => return Err(invalid("frontier recovery trial path is unsafe")),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(io_error(&trial_directory, error)),
+        let current = frontier_trial_directory(&output_root, run_id, key, model)?;
+        match fs::symlink_metadata(&current) {
+            Ok(_) => return recover_frontier_from_directory(&current, key, case, model, harness),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(&current, error)),
         }
-        let transcript_path = trial_directory.join("transcript.jsonl");
-        let response_path = trial_directory.join("response.txt");
-        if !recovery_path_matches(&transcript_path, false)?
-            || !recovery_path_matches(&response_path, false)?
-        {
-            return Ok(None);
-        }
-        let transcript =
-            fs::read(&transcript_path).map_err(|error| io_error(&transcript_path, error))?;
-        if transcript.len() > MAX_PI_EVENT_BYTES {
-            return Err(invalid("frontier recovery transcript is too large"));
-        }
-        let mut parsed = parse_events(&transcript, model, 0, false)?;
-        parsed.usage.elapsed_milliseconds =
-            recovered_elapsed_milliseconds(&trial_directory, &transcript_path)?;
-        if !parsed.is_thinking_observed
-            || parsed.model != *model
-            || parsed.error_message.is_some()
-            || fs::read(&response_path).map_err(|error| io_error(&response_path, error))?
-                != parsed.response.as_bytes()
-        {
-            return Err(invalid(
-                "frontier recovery candidate evidence is inconsistent",
-            ));
-        }
-        let (artifact_path, is_directory_required) = match case.execution.drive {
-            CaseDrive::Fixture { .. } => (trial_directory.join("fixture"), true),
-            CaseDrive::Response | CaseDrive::ExistingHarness { .. } => (response_path, false),
-        };
-        if !recovery_path_matches(&artifact_path, is_directory_required)? {
-            return Ok(None);
-        }
-        Ok(Some(CandidateArtifact {
-            key: key.clone(),
-            model: parsed.model,
-            harness: harness.clone(),
-            artifact_path,
-            transcript_path,
-            usage: parsed.usage,
-        }))
+        let legacy = trial_directory(&output_root, run_id, key)?;
+        recover_frontier_from_directory(&legacy, key, case, model, harness)
     }
+}
+
+fn recover_frontier_from_directory(
+    trial_directory: &Path,
+    key: &TrialKey,
+    case: &CaseDefinition,
+    model: &ModelIdentity,
+    harness: &HarnessIdentity,
+) -> Result<Option<CandidateArtifact>, SkillEvalError> {
+    match fs::symlink_metadata(trial_directory) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => return Err(invalid("frontier recovery trial path is unsafe")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(io_error(trial_directory, error)),
+    }
+    let transcript_path = trial_directory.join("transcript.jsonl");
+    let response_path = trial_directory.join("response.txt");
+    if !recovery_path_matches(&transcript_path, false)?
+        || !recovery_path_matches(&response_path, false)?
+    {
+        return Ok(None);
+    }
+    let transcript =
+        fs::read(&transcript_path).map_err(|error| io_error(&transcript_path, error))?;
+    if transcript.len() > MAX_PI_EVENT_BYTES {
+        return Err(invalid("frontier recovery transcript is too large"));
+    }
+    let mut parsed = parse_events(&transcript, model, 0, false)?;
+    parsed.usage.elapsed_milliseconds =
+        recovered_elapsed_milliseconds(trial_directory, &transcript_path)?;
+    if !parsed.is_thinking_observed
+        || parsed.model != *model
+        || parsed.error_message.is_some()
+        || fs::read(&response_path).map_err(|error| io_error(&response_path, error))?
+            != parsed.response.as_bytes()
+    {
+        return Err(invalid(
+            "frontier recovery candidate evidence is inconsistent",
+        ));
+    }
+    let (artifact_path, is_directory_required) = match case.execution.drive {
+        CaseDrive::Fixture { .. } => (trial_directory.join("fixture"), true),
+        CaseDrive::Response | CaseDrive::ExistingHarness { .. } => (response_path, false),
+    };
+    if !recovery_path_matches(&artifact_path, is_directory_required)? {
+        return Ok(None);
+    }
+    Ok(Some(CandidateArtifact {
+        key: key.clone(),
+        model: parsed.model,
+        harness: harness.clone(),
+        artifact_path,
+        transcript_path,
+        usage: parsed.usage,
+    }))
 }
 
 impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
@@ -272,7 +289,11 @@ impl<P: Process> CandidateRunner for PiCandidateRunner<P> {
         }
         let output_root = fs::canonicalize(&self.output_root)
             .map_err(|error| io_error(&self.output_root, error))?;
-        let trial_directory = trial_directory(&output_root, run_id, key)?;
+        let trial_directory = if is_frontier_execution {
+            frontier_trial_directory(&output_root, run_id, key, model)?
+        } else {
+            trial_directory(&output_root, run_id, key)?
+        };
         create_clean_directory(&trial_directory)?;
         let working_directory = prepare_working_directory(&trial_directory, case)?;
         let transcript_path = trial_directory.join("transcript.jsonl");
@@ -543,6 +564,37 @@ fn trial_directory(root: &Path, run_id: &RunId, key: &TrialKey) -> Result<PathBu
         .join(key.attempt.to_string()))
 }
 
+fn frontier_trial_directory(
+    root: &Path,
+    run_id: &RunId,
+    key: &TrialKey,
+    model: &ModelIdentity,
+) -> Result<PathBuf, SkillEvalError> {
+    if root.as_os_str().is_empty() {
+        return Err(invalid("Pi runner output root is empty"));
+    }
+    let identity = serde_json::to_vec(&(
+        &model.provider,
+        &model.model,
+        model.tier,
+        &model.thinking,
+        key.route_index,
+        &key.artifact,
+        &key.case,
+        key.attempt,
+    ))
+    .map_err(|error| {
+        invalid(format!(
+            "frontier trial identity serialization failed: {error}"
+        ))
+    })?;
+    let digest = Sha256::digest(identity)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(root.join(&run_id.0).join(format!("trial-{digest}")))
+}
+
 fn create_clean_directory(path: &Path) -> Result<(), SkillEvalError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -651,7 +703,7 @@ fn pi_arguments(
         ArtifactKind::Workflow => {
             arguments.push("--skill".to_owned());
             arguments.push(existing_file(&artifact.root.join("SKILL.md"))?);
-            arguments.push("--extension".to_owned());
+            arguments.push("--append-system-prompt".to_owned());
             arguments.push(path_text(&one_file_with_suffix(
                 &artifact.root,
                 ".workflow.js",
@@ -1449,6 +1501,92 @@ mod tests {
                 .recover_frontier(&frontier_run_id(), &key(), &case, &model, &harness())
                 .is_err()
         );
+    }
+
+    #[test]
+    fn frontier_trial_paths_separate_every_execution_identity_part() {
+        let root = Path::new("/tmp/frontier-paths");
+        let run_id = frontier_run_id();
+        let base_key = key();
+        let base_model = frontier_model("anthropic");
+        let base = frontier_trial_directory(root, &run_id, &base_key, &base_model).unwrap();
+        let mut paths = BTreeSet::from([base]);
+
+        let mut variants = Vec::new();
+        let mut model = base_model.clone();
+        model.provider = "openai-codex".to_owned();
+        variants.push((base_key.clone(), model));
+        let mut model = base_model.clone();
+        model.model = "other-model".to_owned();
+        variants.push((base_key.clone(), model));
+        let mut model = base_model.clone();
+        model.tier = Tier::T3;
+        variants.push((base_key.clone(), model));
+        let mut model = base_model.clone();
+        model.thinking = "max".to_owned();
+        variants.push((base_key.clone(), model));
+        for mutate in [
+            |key: &mut TrialKey| key.route_index += 1,
+            |key: &mut TrialKey| key.artifact = ArtifactName("other-artifact".to_owned()),
+            |key: &mut TrialKey| key.case = CaseId("other-case".to_owned()),
+            |key: &mut TrialKey| key.attempt += 1,
+        ] {
+            let mut key = base_key.clone();
+            mutate(&mut key);
+            variants.push((key, base_model.clone()));
+        }
+        for (key, model) in variants {
+            paths.insert(frontier_trial_directory(root, &run_id, &key, &model).unwrap());
+        }
+
+        assert_eq!(paths.len(), 9);
+        assert!(paths.iter().all(|path| {
+            path.parent() == Some(root.join(&run_id.0).as_path())
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.len() == "trial-".len() + 64 && name.starts_with("trial-")
+                    })
+        }));
+    }
+
+    #[test]
+    fn frontier_recovery_falls_back_to_the_legacy_trial_path() {
+        let directory = TestDirectory::new("frontier-legacy-recovery");
+        let artifact_root = directory.path().join("artifact");
+        fs::create_dir(&artifact_root).unwrap();
+        let artifact = skill(&artifact_root);
+        let model = frontier_model("anthropic");
+        let output = exact_output(include_str!("../tests/fixtures/pi/success.jsonl"), &model);
+        let mut runner = PiCandidateRunner::with_process(
+            directory.path().join("runs"),
+            FakeProcess::returning(&output),
+        );
+        let case = response_case(&[]);
+        runner
+            .execute(
+                &frontier_run_id(),
+                &key(),
+                &artifact,
+                &case,
+                &model,
+                &harness(),
+                None,
+            )
+            .unwrap();
+        let root = fs::canonicalize(directory.path().join("runs")).unwrap();
+        let current = frontier_trial_directory(&root, &frontier_run_id(), &key(), &model).unwrap();
+        let legacy = trial_directory(&root, &frontier_run_id(), &key()).unwrap();
+        fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        fs::rename(&current, &legacy).unwrap();
+
+        let recovered = runner
+            .recover_frontier(&frontier_run_id(), &key(), &case, &model, &harness())
+            .unwrap();
+
+        assert!(recovered.is_some());
+        assert_eq!(runner.process.requests.len(), 1);
     }
 
     #[test]
@@ -2457,12 +2595,44 @@ mod tests {
                 agent_root.join("reviewer.md").to_str().unwrap(),
             ]
         }));
-        assert!(runner.process.requests[1].arguments.windows(2).any(|pair| {
-            pair == [
-                "--extension",
-                workflow_root.join("trial.workflow.js").to_str().unwrap(),
-            ]
-        }));
+        let workflow_arguments = vec![
+            "--mode".to_owned(),
+            "json".to_owned(),
+            "--no-session".to_owned(),
+            "--no-skills".to_owned(),
+            "--skill".to_owned(),
+            workflow_root
+                .join("SKILL.md")
+                .to_string_lossy()
+                .into_owned(),
+            "--append-system-prompt".to_owned(),
+            workflow_root
+                .join("trial.workflow.js")
+                .to_string_lossy()
+                .into_owned(),
+            "--extension".to_owned(),
+            fs::canonicalize(directory.path().join("runs"))
+                .unwrap()
+                .join("run-1/fixture-skill/t2/0/ordinary/1/all-tools.ts")
+                .to_string_lossy()
+                .into_owned(),
+            "--model".to_owned(),
+            "openai/candidate".to_owned(),
+            "--thinking".to_owned(),
+            "low".to_owned(),
+            "--no-prompt-templates".to_owned(),
+            "--no-themes".to_owned(),
+            "--no-context-files".to_owned(),
+            "--no-approve".to_owned(),
+            pi_positional_prompt("Answer the fixture prompt."),
+        ];
+        assert_eq!(runner.process.requests[1].arguments, workflow_arguments);
+        assert!(
+            !runner.process.requests[1].arguments.windows(2).any(|pair| {
+                pair[0] == "--extension"
+                    && pair[1] == workflow_root.join("trial.workflow.js").to_str().unwrap()
+            })
+        );
         assert!(
             !runner.process.requests[1]
                 .arguments

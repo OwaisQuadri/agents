@@ -48,6 +48,43 @@ fn create_is_durable_and_rejects_collision_and_escape() {
 }
 
 #[test]
+fn second_run_writer_cannot_acquire_the_held_lock() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let state = fixture.state();
+    store.create_frontier(&state).unwrap();
+
+    let first = store
+        .lock_frontier_run(&state.configuration.run_id)
+        .unwrap();
+    assert!(
+        store
+            .lock_frontier_run(&state.configuration.run_id)
+            .is_err()
+    );
+    drop(first);
+    let second = store
+        .lock_frontier_run(&state.configuration.run_id)
+        .unwrap();
+    drop(second);
+
+    let lock_path = fixture
+        .root
+        .join(".map/skill-eval/frontier")
+        .join(&state.configuration.run_id.0)
+        .join(".writer.lock");
+    fs::remove_file(&lock_path).unwrap();
+    let outside = fixture.root.join("outside-lock");
+    fs::write(&outside, b"outside").unwrap();
+    symlink(&outside, &lock_path).unwrap();
+    assert!(
+        store
+            .lock_frontier_run(&state.configuration.run_id)
+            .is_err()
+    );
+}
+
+#[test]
 fn create_accepts_semantic_plan_digest_for_pretty_json_and_rejects_drift() {
     let fixture = Fixture::new();
     let mut state = fixture.state();

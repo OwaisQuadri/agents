@@ -5,10 +5,11 @@ use crate::model::{
     ExecutionDefinition, FrontierApplyReport, FrontierBaselineLedger, FrontierInspection,
     FrontierPlan, FrontierRunId, FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan,
     FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication,
-    FrontierSuiteReviewSet, HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolPlan,
-    PoolRunId, PoolRunState, PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId,
-    SkillEvalError, T1ScreenCampaignId, T1ScreenCampaignState, T1ScreenRunId, T1ScreenRunState,
-    Tier, TierAssignment, Timestamp, TrialKey, TrialRecord, TrialSelector,
+    FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome, HarnessIdentity, JudgeInput,
+    JudgeResult, ModelIdentity, PoolPlan, PoolRunId, PoolRunState, PromptJudgeRequest,
+    PromptJudgeResult, RunEvent, RunId, SkillEvalError, T1ScreenCampaignId, T1ScreenCampaignState,
+    T1ScreenRunId, T1ScreenRunState, Tier, TierAssignment, Timestamp, TrialKey, TrialRecord,
+    TrialSelector,
 };
 
 pub(crate) trait ArtifactSource {
@@ -278,6 +279,58 @@ pub(crate) trait FrontierSuiteRuntime: ArtifactSource + Clock {
 }
 
 pub(crate) trait FrontierRuntime: QualificationRuntime {
+    fn lock_frontier_run(&mut self, _run_id: &FrontierRunId) -> Result<(), SkillEvalError> {
+        Ok(())
+    }
+
+    fn run_frontier_wave(
+        &mut self,
+        jobs: Vec<FrontierTrialJob>,
+    ) -> Result<Vec<FrontierTrialOutcome>, SkillEvalError> {
+        let mut outcomes = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            let result = (|| {
+                let candidate = self.execute(
+                    &job.run_id,
+                    &job.key,
+                    &job.artifact,
+                    &job.case,
+                    &job.model,
+                    &job.harness,
+                    None,
+                )?;
+                let checks = self.verify(&job.case, &candidate)?;
+                let judged = self.grade(
+                    &job.judge,
+                    &JudgeInput {
+                        candidate: candidate.clone(),
+                        expect: job.case.expect.clone(),
+                        rubric_path: job.artifact.root.join("evals/rubric.md"),
+                        checks,
+                    },
+                )?;
+                Ok(TrialRecord {
+                    key: job.key.clone(),
+                    model: candidate.model,
+                    harness: candidate.harness,
+                    artifact_path: candidate.artifact_path,
+                    transcript_path: candidate.transcript_path,
+                    candidate_usage: candidate.usage,
+                    judge_model: judged.model,
+                    judge_usage: judged.usage,
+                    verdict: judged.verdict,
+                })
+            })();
+            outcomes.push(FrontierTrialOutcome {
+                model: job.model,
+                key: job.key,
+                infrastructure_attempt: job.infrastructure_attempt,
+                result,
+            });
+        }
+        Ok(outcomes)
+    }
+
     /// Loads and validates one frozen frontier plan and its reviewed suite.
     ///
     /// The input is a repository-relative plan path. The output is the plan and suite.

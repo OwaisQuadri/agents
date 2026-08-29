@@ -1823,12 +1823,9 @@ pub(crate) fn advance_frontier_model(
         match cell.status {
             FrontierCellStatus::Passed => {
                 selected_routes.push(cell.model.clone());
-                thinking_index = thinking_index
-                    .checked_add(1)
-                    .ok_or_else(|| invalid("frontier thinking index overflow"))?;
                 match next_tier(tier) {
-                    Some(next) if thinking_index < entrant.thinking_levels.len() => tier = next,
-                    Some(_) | None => is_exhausted = true,
+                    Some(next) => tier = next,
+                    None => is_exhausted = true,
                 }
             }
             FrontierCellStatus::Failed | FrontierCellStatus::Indeterminate => {

@@ -245,7 +245,7 @@ fn exact_complete_call_projection() {
     let frozen: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         frozen["candidate_calls"],
-        json!({"minimum": 485, "maximum": 485})
+        json!({"minimum": 495, "maximum": 495})
     );
     assert_eq!(frozen["judge_calls"], frozen["candidate_calls"]);
 }

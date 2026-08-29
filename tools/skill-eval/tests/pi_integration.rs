@@ -85,7 +85,7 @@ fn frontier_start_and_resume_reach_only_exact_first_party_repository_fake_pi() {
             resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress).unwrap();
         assert!(matches!(resumed.status, model::FrontierRunStatus::Paused));
         assert!(resumed.cells.is_empty());
-        assert_eq!(runtime.process_requests.borrow().len(), 2);
+        assert_eq!(runtime.process_requests.borrow().len(), 60);
         assert!(
             runtime
                 .process_requests
@@ -99,13 +99,13 @@ fn frontier_start_and_resume_reach_only_exact_first_party_repository_fake_pi() {
 
         let log = fs::read_to_string(&fixture.log).unwrap();
         let candidate = format!("candidate:{provider}/{model}/low");
-        assert_eq!(
-            log.lines()
-                .filter(|line| line.starts_with("candidate:"))
-                .collect::<Vec<_>>(),
-            [candidate.as_str(), candidate.as_str()]
-        );
-        assert_guarded_environment(&log, &fixture.environment);
+        let candidates = log
+            .lines()
+            .filter(|line| line.starts_with("candidate:"))
+            .collect::<Vec<_>>();
+        assert_eq!(candidates.len(), 60);
+        assert!(candidates.iter().all(|line| *line == candidate));
+        assert_guarded_environment(&log, &fixture.environment, 60);
         for request in runtime.process_requests.borrow().iter() {
             let working_directory = format!("cwd:{}", request.working_directory.display());
             assert!(log.lines().any(|line| line == working_directory));
@@ -142,18 +142,18 @@ fn frontier_infrastructure_retries_are_service_managed_and_bounded() {
 
     let first =
         start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress).unwrap();
-    assert_infrastructure_pause(&first, 1);
+    assert_infrastructure_pause(&first, 30, 1);
     assert_eq!(runtime.state.as_ref(), Some(&first));
     assert_eq!(progress.states.last(), Some(&first));
-    assert_eq!(runtime.process_requests.borrow().len(), 1);
+    assert_eq!(runtime.process_requests.borrow().len(), 30);
     assert_eq!(runtime.trials.borrow().len(), 0);
     assert_eq!(runtime.candidate_performance.get(), 0);
 
     let second = resume_frontier(&first.configuration.run_id, &mut runtime, &mut progress).unwrap();
-    assert_infrastructure_pause(&second, 2);
+    assert_infrastructure_pause(&second, 60, 2);
     assert_eq!(runtime.state.as_ref(), Some(&second));
     assert_eq!(progress.states.last(), Some(&second));
-    assert_eq!(runtime.process_requests.borrow().len(), 2);
+    assert_eq!(runtime.process_requests.borrow().len(), 60);
     assert_eq!(runtime.trials.borrow().len(), 0);
     assert_eq!(runtime.candidate_performance.get(), 0);
 
@@ -161,10 +161,10 @@ fn frontier_infrastructure_retries_are_service_managed_and_bounded() {
     let stopped =
         resume_frontier(&second.configuration.run_id, &mut runtime, &mut progress).unwrap();
     assert_eq!(stopped, second);
-    assert_infrastructure_pause(&stopped, 2);
+    assert_infrastructure_pause(&stopped, 60, 2);
     assert_eq!(progress.states.len(), saved_progress_count);
 
-    assert_eq!(runtime.process_requests.borrow().len(), 2);
+    assert_eq!(runtime.process_requests.borrow().len(), 60);
     assert_eq!(runtime.trials.borrow().len(), 0);
     assert_eq!(runtime.candidate_performance.get(), 0);
     assert!(stopped.cells.is_empty());
@@ -726,21 +726,28 @@ fn frontier_judge() -> ModelIdentity {
     }
 }
 
-fn assert_infrastructure_pause(state: &FrontierRunState, expected_events: usize) {
+fn assert_infrastructure_pause(
+    state: &FrontierRunState,
+    expected_events: usize,
+    maximum_attempt: u8,
+) {
     assert!(matches!(state.status, model::FrontierRunStatus::Paused));
     assert!(matches!(
         state.pause,
         Some(model::PoolPauseReason::Infrastructure { .. })
     ));
     assert_eq!(state.infrastructure_events.len(), expected_events);
-    assert_eq!(
-        state
-            .infrastructure_events
-            .iter()
-            .map(|event| event.infrastructure_attempt)
-            .collect::<Vec<_>>(),
-        (1..=u8::try_from(expected_events).unwrap()).collect::<Vec<_>>()
-    );
+    let events_per_attempt = expected_events / usize::from(maximum_attempt);
+    for attempt in 1..=maximum_attempt {
+        assert_eq!(
+            state
+                .infrastructure_events
+                .iter()
+                .filter(|event| event.infrastructure_attempt == attempt)
+                .count(),
+            events_per_attempt
+        );
+    }
     assert!(state.cells.is_empty());
     assert_eq!(state.spent_millionths_of_dollar, 0);
 }
@@ -771,14 +778,24 @@ fn assert_guards_precede_process(events: &[&str]) {
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
 }
 
-fn assert_guarded_environment(log: &str, expected: &BTreeMap<&str, PathBuf>) {
+fn assert_guarded_environment(
+    log: &str,
+    expected: &BTreeMap<&str, PathBuf>,
+    expected_processes: usize,
+) {
     for (name, value) in expected {
         let line = format!("env:{name}={}", value.display());
-        assert_eq!(log.lines().filter(|entry| *entry == line).count(), 2);
+        assert_eq!(
+            log.lines().filter(|entry| *entry == line).count(),
+            expected_processes
+        );
     }
     for (name, value) in [("PI_SKIP_VERSION_CHECK", "1"), ("PI_TELEMETRY", "0")] {
         let line = format!("env:{name}={value}");
-        assert_eq!(log.lines().filter(|entry| *entry == line).count(), 2);
+        assert_eq!(
+            log.lines().filter(|entry| *entry == line).count(),
+            expected_processes
+        );
     }
     assert!(!log.contains("API_KEY"));
     assert!(!log.contains("TOKEN"));

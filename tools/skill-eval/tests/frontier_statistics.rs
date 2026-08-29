@@ -141,7 +141,7 @@ fn frontier_cell_rejects_usage_overflow() {
 }
 
 #[test]
-fn frontier_progression_advances_levels_and_uses_the_next_stronger_cross_tier_level() {
+fn frontier_progression_climbs_tiers_in_place_and_falls_back_after_failure() {
     let entrant = entrant();
     let progress = initial_progress(&entrant);
     let failed = cell(
@@ -164,6 +164,17 @@ fn frontier_progression_advances_levels_and_uses_the_next_stronger_cross_tier_le
     let progress =
         advance_frontier_model(&entrant, &progress, &[failed.clone(), passed.clone()]).unwrap();
     assert_eq!(progress.selected_routes, vec![passed.model.clone()]);
+    assert_eq!(progress.next_tier, Some(Tier::T2));
+    assert_eq!(progress.next_thinking_index, Some(1));
+
+    let failed_t2 = cell(
+        route("alpha", Tier::T2, "medium"),
+        FrontierCellStatus::Indeterminate,
+        8_000,
+        1,
+    );
+    let progress =
+        advance_frontier_model(&entrant, &progress, &[failed.clone(), passed, failed_t2]).unwrap();
     assert_eq!(progress.next_tier, Some(Tier::T2));
     assert_eq!(progress.next_thinking_index, Some(2));
 
@@ -408,6 +419,7 @@ fn report(name: &str, quality: u16, cost: u64) -> FrontierModelReport {
     FrontierModelReport {
         provider: route.provider.clone(),
         model: route.model.clone(),
+        supported_thinking_levels: vec!["low".to_owned()],
         cells: vec![cell.clone()],
         highest_passing_tier: Some(Tier::T1),
         selected_routes: vec![route],

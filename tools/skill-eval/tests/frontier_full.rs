@@ -42,50 +42,39 @@ macro_rules! frontier_full_tests {
                 let mut progress = Progress::default();
                 let plan_path = runtime.plan_path().to_path_buf();
 
-                let infrastructure_pause =
+                let mixed_pause =
                     start_frontier(&plan_path, &mut runtime, &mut progress).unwrap();
-                assert_eq!(infrastructure_pause.status, FrontierRunStatus::Paused);
+                assert_eq!(mixed_pause.status, FrontierRunStatus::Paused);
                 assert!(matches!(
-                    infrastructure_pause.pause,
-                    Some(PoolPauseReason::Infrastructure { .. })
+                    mixed_pause.pause,
+                    Some(PoolPauseReason::Quota { .. })
                 ));
-                assert_eq!(infrastructure_pause.infrastructure_events.len(), 1);
+                assert_eq!(mixed_pause.infrastructure_events.len(), 1);
                 let infrastructure_attempt = runtime.attempts()[0].clone();
-                let infrastructure = inspect_frontier(
-                    &selector(&infrastructure_attempt),
-                    &runtime,
-                )
-                .unwrap();
+                let infrastructure =
+                    inspect_frontier(&selector(&infrastructure_attempt), &runtime).unwrap();
                 assert!(matches!(
                     infrastructure,
                     FrontierInspection::Infrastructure { event }
                         if event.infrastructure_attempt == 1
                 ));
 
-                let quota_pause = resume_frontier(
-                    &infrastructure_pause.configuration.run_id,
-                    &mut runtime,
-                    &mut progress,
-                )
-                .unwrap();
-                assert_eq!(quota_pause.status, FrontierRunStatus::Paused);
-                assert!(matches!(quota_pause.pause, Some(PoolPauseReason::Quota { .. })));
-
                 let accepted_candidate = resume_frontier(
-                    &quota_pause.configuration.run_id,
+                    &mixed_pause.configuration.run_id,
                     &mut runtime,
                     &mut progress,
                 )
                 .unwrap();
                 assert_complete_matrix(&accepted_candidate);
                 assert_eq!(accepted_candidate.status, FrontierRunStatus::AwaitingDecision);
-                assert!(progress.states.iter().any(|state| {
-                    matches!(state.pause, Some(PoolPauseReason::Infrastructure { .. }))
-                }));
                 assert!(progress
                     .states
                     .iter()
                     .any(|state| matches!(state.pause, Some(PoolPauseReason::Quota { .. }))));
+                assert!(progress
+                    .states
+                    .iter()
+                    .any(|state| !state.infrastructure_events.is_empty()));
 
                 let accepted_run_id = accepted_candidate.configuration.run_id.clone();
                 let accepted_trials = runtime.saved_trials(&accepted_run_id);
@@ -178,7 +167,7 @@ macro_rules! frontier_full_tests {
                     .cells
                     .iter()
                     .any(|cell| cell.status == FrontierCellStatus::Indeterminate));
-                assert_eq!(state.cells.len(), state.configuration.plan.entrants.len());
+                assert_eq!(state.cells.len(), 17);
             }
 
             fn assert_execution_is_exact(
@@ -207,11 +196,12 @@ macro_rules! frontier_full_tests {
                     assert_eq!(exceptional.len(), 2);
                     assert_eq!(exceptional[0].kind, FakeFrontierAttemptKind::Infrastructure);
                     assert_eq!(exceptional[1].kind, FakeFrontierAttemptKind::Quota);
-                    assert_eq!(exceptional[0].key, exceptional[1].key);
-                    assert_eq!(exceptional[0].model, exceptional[1].model);
-                    assert!(terminal.contains(&execution_identity(
-                        &exceptional[0].model,
-                        &exceptional[0].key,
+                    assert_ne!(
+                        execution_identity(&exceptional[0].model, &exceptional[0].key),
+                        execution_identity(&exceptional[1].model, &exceptional[1].key),
+                    );
+                    assert!(exceptional.iter().all(|attempt| terminal.contains(
+                        &execution_identity(&attempt.model, &attempt.key)
                     )));
                 } else {
                     assert!(exceptional.is_empty());

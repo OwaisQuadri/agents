@@ -397,8 +397,8 @@ fn invalid_message(error: SkillEvalError) -> String {
 #[test]
 fn exact_complete_call_projection() {
     let state = initial_state();
-    assert_eq!(state.configuration.candidate_calls.minimum, 485);
-    assert_eq!(state.configuration.candidate_calls.maximum, 485);
+    assert_eq!(state.configuration.candidate_calls.minimum, 495);
+    assert_eq!(state.configuration.candidate_calls.maximum, 495);
     assert_eq!(
         state.configuration.judge_calls,
         state.configuration.candidate_calls
@@ -455,7 +455,7 @@ fn exact_complete_call_projection() {
     let loaded = historical_store.load(&state.configuration.run_id).unwrap();
     assert!(!loaded.configuration.is_complete_thinking_coverage);
     assert_eq!(loaded.configuration.candidate_calls.minimum, 105);
-    assert_eq!(loaded.configuration.candidate_calls.maximum, 485);
+    assert_eq!(loaded.configuration.candidate_calls.maximum, 495);
     historical_store.save(&loaded).unwrap();
     assert_eq!(
         historical_store
@@ -467,16 +467,16 @@ fn exact_complete_call_projection() {
 }
 
 #[test]
-fn real_preview_preallocates_all_97_safe_stable_children() {
+fn real_preview_preallocates_all_99_safe_stable_children() {
     let report = preview();
     assert_eq!(report.eligible.len(), 21);
-    assert_eq!(report.excluded.len(), 358);
+    assert_eq!(report.excluded.len(), 363);
     let mut first_source = SequentialRunIds { next: 0 };
     let mut second_source = SequentialRunIds { next: 0 };
     let first = preallocate_t1_screen_children(&report.eligible, &mut first_source).unwrap();
     let second = preallocate_t1_screen_children(&report.eligible, &mut second_source).unwrap();
 
-    assert_eq!(first.len(), 97);
+    assert_eq!(first.len(), 99);
     assert_eq!(first, second);
     assert_eq!(
         first

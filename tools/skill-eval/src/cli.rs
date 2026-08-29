@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -21,17 +21,17 @@ use crate::model::{
     FrontierDecisionRequest, FrontierInspection, FrontierPlan, FrontierPreviewReport,
     FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan,
     FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication,
-    FrontierSuiteReviewSet, FrontierTrialSelector, HarnessIdentity, JudgeInput, ModelIdentity,
-    OutputFormat, OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence,
-    PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest,
-    QualificationPolicy, QualificationPurpose, QualificationReport, QualifyRequest, RunEvent,
-    RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest,
-    T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment,
-    T1ScreenCandidatePrice, T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat,
-    T1ScreenModelState, T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport,
-    T1ScreenRouteFailureRequest, T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState,
-    T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp,
-    TrialRecord, TrialSelector, TrialUsage,
+    FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome, FrontierTrialSelector,
+    HarnessIdentity, JudgeInput, ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus,
+    PoolEntrant, PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
+    PromptJudgeRequest, QualificationPolicy, QualificationPurpose, QualificationReport,
+    QualifyRequest, RunEvent, RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest,
+    T1ScreenCampaignCreateRequest, T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest,
+    T1ScreenCandidateEnvironment, T1ScreenCandidatePrice, T1ScreenCapExtensionRequest,
+    T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState, T1ScreenPolicy,
+    T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest, T1ScreenRunConfiguration,
+    T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment,
+    TierDestination, Timestamp, TrialRecord, TrialSelector, TrialUsage,
 };
 use crate::model_capabilities;
 use crate::models::{ConfiguredModelResolver, validate_rpc_models_data};
@@ -2747,6 +2747,8 @@ pub(crate) struct ConcreteRuntime {
     candidate_environment_manifest: Vec<CandidateEnvironmentEntry>,
     candidate_environment_manifest_digest: String,
     t1_capability_snapshot: RefCell<Option<Vec<u8>>>,
+    runs_root: PathBuf,
+    frontier_run_lock: Option<File>,
 }
 
 impl ConcreteRuntime {
@@ -2788,6 +2790,11 @@ impl ConcreteRuntime {
             candidate_environment_manifest,
             candidate_environment_manifest_digest,
             t1_capability_snapshot: RefCell::new(None),
+            runs_root: fs::canonicalize(runs_root).map_err(|error| SkillEvalError::Io {
+                path: runs_root.to_path_buf(),
+                message: error.to_string(),
+            })?,
+            frontier_run_lock: None,
         })
     }
 }
@@ -3343,6 +3350,51 @@ impl FrontierSuiteRuntime for ConcreteRuntime {
 }
 
 impl FrontierRuntime for ConcreteRuntime {
+    fn lock_frontier_run(&mut self, run_id: &FrontierRunId) -> Result<(), SkillEvalError> {
+        if self.frontier_run_lock.is_some() {
+            return Err(invalid("frontier runtime already owns a run lock"));
+        }
+        self.frontier_run_lock = Some(self.frontier_store.lock_frontier_run(run_id)?);
+        Ok(())
+    }
+
+    fn run_frontier_wave(
+        &mut self,
+        jobs: Vec<FrontierTrialJob>,
+    ) -> Result<Vec<FrontierTrialOutcome>, SkillEvalError> {
+        let runs_root = self.runs_root.clone();
+        std::thread::scope(|scope| {
+            let handles = jobs
+                .into_iter()
+                .map(|job| {
+                    let identity = (
+                        job.model.clone(),
+                        job.key.clone(),
+                        job.infrastructure_attempt,
+                    );
+                    let runs_root = runs_root.clone();
+                    let handle = scope.spawn(move || run_concrete_frontier_job(&runs_root, job));
+                    (identity, handle)
+                })
+                .collect::<Vec<_>>();
+            Ok(handles
+                .into_iter()
+                .map(|((model, key, infrastructure_attempt), handle)| {
+                    handle.join().unwrap_or_else(|_| FrontierTrialOutcome {
+                        model,
+                        key,
+                        infrastructure_attempt,
+                        result: Err(SkillEvalError::Process {
+                            program: "frontier worker".to_owned(),
+                            exit_code: None,
+                            standard_error: "frontier worker panicked".to_owned(),
+                        }),
+                    })
+                })
+                .collect())
+        })
+    }
+
     fn load_frontier_plan(
         &self,
         path: &Path,
@@ -3417,9 +3469,8 @@ impl FrontierRuntime for ConcreteRuntime {
             rubric_path: artifact.root.join("evals/rubric.md"),
             checks,
         };
-        let judged = match self.judge.recover_frontier_grade(judge, &input)? {
-            Some(judged) => judged,
-            None => self.judge.grade(judge, &input)?,
+        let Some(judged) = self.judge.recover_frontier_grade(judge, &input)? else {
+            return Ok(None);
         };
         Ok(Some(TrialRecord {
             key: key.clone(),
@@ -3476,6 +3527,79 @@ impl FrontierRuntime for ConcreteRuntime {
             &mut self.routing_configuration_sha256,
             state,
         )
+    }
+}
+
+fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> FrontierTrialOutcome {
+    let result = (|| {
+        let mut runner = PiCandidateRunner::new(runs_root.to_path_buf());
+        let mut verifier = FileVerifier::new(runs_root)?;
+        let mut judge = PiJudge::new();
+        let candidate = match runner.recover_frontier(
+            &job.run_id,
+            &job.key,
+            &job.case,
+            &job.model,
+            &job.harness,
+        )? {
+            Some(candidate) => candidate,
+            None => runner.execute(
+                &job.run_id,
+                &job.key,
+                &job.artifact,
+                &job.case,
+                &job.model,
+                &job.harness,
+                None,
+            )?,
+        };
+        if candidate.key != job.key
+            || candidate.model != job.model
+            || candidate.harness != job.harness
+        {
+            return Err(invalid("frontier worker candidate identity drifted"));
+        }
+        let checks = verifier.verify(&job.case, &candidate)?;
+        let input = JudgeInput {
+            candidate: candidate.clone(),
+            expect: job.case.expect.clone(),
+            rubric_path: job.artifact.root.join("evals/rubric.md"),
+            checks,
+        };
+        let judged = match judge.recover_frontier_grade(&job.judge, &input)? {
+            Some(judged) => judged,
+            None => judge.grade(&job.judge, &input)?,
+        };
+        if judged.model != job.judge {
+            return Err(invalid("frontier worker judge identity drifted"));
+        }
+        let cost = candidate
+            .usage
+            .cost_millionths_of_dollar
+            .checked_add(judged.usage.cost_millionths_of_dollar)
+            .ok_or_else(|| invalid("frontier worker trial cost overflow"))?;
+        if cost > job.reserved_cost_millionths_of_dollar {
+            return Err(invalid(
+                "frontier worker trial cost exceeded its reservation",
+            ));
+        }
+        Ok(TrialRecord {
+            key: job.key.clone(),
+            model: candidate.model,
+            harness: candidate.harness,
+            artifact_path: candidate.artifact_path,
+            transcript_path: candidate.transcript_path,
+            candidate_usage: candidate.usage,
+            judge_model: judged.model,
+            judge_usage: judged.usage,
+            verdict: judged.verdict,
+        })
+    })();
+    FrontierTrialOutcome {
+        model: job.model,
+        key: job.key,
+        infrastructure_attempt: job.infrastructure_attempt,
+        result,
     }
 }
 
@@ -6747,25 +6871,29 @@ fn render_frontier_matrix(
     .map_err(output_error)?;
     writeln!(output, "| --- | --- | --- | --- | --- | --- | --- | --- |").map_err(output_error)?;
     for model in &report.models {
-        let mut cells = vec![String::new(); RESULT_MATRIX_LEVELS.len()];
+        let mut cells = vec!["N/A".to_owned(); RESULT_MATRIX_LEVELS.len()];
+        for thinking in &model.supported_thinking_levels {
+            cells[frontier_thinking_level_index(thinking)?].clear();
+        }
         for cell in &model.cells {
             let index = frontier_thinking_level_index(&cell.model.thinking)?;
-            cells[index] = match cell.status {
-                crate::model::FrontierCellStatus::Passed => {
-                    format!("P{}", frontier_tier_number(cell.model.tier))
+            match cell.status {
+                crate::model::FrontierCellStatus::Passed if cell.model.tier == Tier::T5 => {
+                    cells[index] = "P5".to_owned();
                 }
+                crate::model::FrontierCellStatus::Passed => {}
                 crate::model::FrontierCellStatus::Failed => {
-                    format!("F{}", frontier_tier_number(cell.model.tier))
+                    cells[index] = format!("F{}", frontier_tier_number(cell.model.tier));
                 }
                 crate::model::FrontierCellStatus::Indeterminate => {
-                    format!("I{}", frontier_tier_number(cell.model.tier))
+                    cells[index] = format!("I{}", frontier_tier_number(cell.model.tier));
                 }
                 crate::model::FrontierCellStatus::Pending
-                | crate::model::FrontierCellStatus::Skipped => String::new(),
+                | crate::model::FrontierCellStatus::Skipped => {}
                 crate::model::FrontierCellStatus::Running => {
                     return Err(malformed_frontier_render("running cell is not renderable"));
                 }
-            };
+            }
         }
         writeln!(
             output,
@@ -6825,16 +6953,26 @@ fn validate_frontier_report(report: &FrontierReport) -> Result<(), SkillEvalErro
     let mut models = BTreeSet::new();
     let mut pool_ranks = BTreeMap::<Tier, BTreeSet<u16>>::new();
     for model in &report.models {
+        let supported = model
+            .supported_thinking_levels
+            .iter()
+            .map(|thinking| {
+                frontier_thinking_level_index(thinking).map(|index| (index, thinking.as_str()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         if model.provider.trim().is_empty()
             || model.model.trim().is_empty()
             || !models.insert((model.provider.as_str(), model.model.as_str()))
-            || model.cells.is_empty()
+            || supported.is_empty()
+            || supported
+                .windows(2)
+                .any(|window| window[0].0 >= window[1].0)
         {
             return Err(malformed_frontier_render(
                 "model identity is incomplete or duplicated",
             ));
         }
-        let mut levels = BTreeSet::new();
+        let mut routes = BTreeSet::new();
         let mut selected_routes = Vec::new();
         let mut highest_passing_tier = None;
         let mut total_usage = zero_usage();
@@ -6842,7 +6980,10 @@ fn validate_frontier_report(report: &FrontierReport) -> Result<(), SkillEvalErro
             frontier_thinking_level_index(&cell.model.thinking)?;
             if cell.model.provider != model.provider
                 || cell.model.model != model.model
-                || !levels.insert(cell.model.thinking.as_str())
+                || !model
+                    .supported_thinking_levels
+                    .contains(&cell.model.thinking)
+                || !routes.insert((cell.model.tier, cell.model.thinking.as_str()))
                 || cell.failed_trials > cell.completed_trials
                 || cell.completed_trials > cell.expected_trials
             {

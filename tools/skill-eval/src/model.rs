@@ -172,7 +172,7 @@ pub(crate) struct CommandDefinition {
     pub(crate) working_directory: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct ModelIdentity {
     pub(crate) tier: Tier,
     pub(crate) provider: String,
@@ -624,14 +624,19 @@ pub(crate) enum FrontierRunStatus {
     Failed,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub(crate) struct FrontierScheduledTrial {
+    pub(crate) model: ModelIdentity,
+    pub(crate) key: TrialKey,
+    pub(crate) infrastructure_attempt: u8,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum FrontierScheduleAction {
     Dispatch {
-        model: ModelIdentity,
-        key: TrialKey,
-        infrastructure_attempt: u8,
-        reserved_cost_millionths_of_dollar: u64,
+        trials: Vec<FrontierScheduledTrial>,
+        reserved_cost_per_trial_millionths_of_dollar: u64,
     },
     Pause {
         reason: PoolPauseReason,
@@ -713,6 +718,7 @@ pub(crate) enum FrontierBaselineChange {
 pub(crate) struct FrontierModelReport {
     pub(crate) provider: String,
     pub(crate) model: String,
+    pub(crate) supported_thinking_levels: Vec<String>,
     pub(crate) cells: Vec<FrontierCellEvidence>,
     pub(crate) highest_passing_tier: Option<Tier>,
     pub(crate) selected_routes: Vec<ModelIdentity>,
@@ -786,6 +792,27 @@ pub(crate) struct TrialRecord {
     pub(crate) judge_model: ModelIdentity,
     pub(crate) judge_usage: TrialUsage,
     pub(crate) verdict: TrialVerdict,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FrontierTrialJob {
+    pub(crate) run_id: RunId,
+    pub(crate) model: ModelIdentity,
+    pub(crate) judge: ModelIdentity,
+    pub(crate) key: TrialKey,
+    pub(crate) artifact: ArtifactDefinition,
+    pub(crate) case: CaseDefinition,
+    pub(crate) harness: HarnessIdentity,
+    pub(crate) infrastructure_attempt: u8,
+    pub(crate) reserved_cost_millionths_of_dollar: u64,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct FrontierTrialOutcome {
+    pub(crate) model: ModelIdentity,
+    pub(crate) key: TrialKey,
+    pub(crate) infrastructure_attempt: u8,
+    pub(crate) result: Result<TrialRecord, SkillEvalError>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

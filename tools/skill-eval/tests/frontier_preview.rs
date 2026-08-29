@@ -35,9 +35,9 @@ macro_rules! frontier_preview_tests {
                 assert_eq!(report.tier_case_counts, expected_counts());
                 assert_eq!(report.route_count, 3);
                 assert_eq!(report.candidate_calls.minimum, 92);
-                assert_eq!(report.candidate_calls.maximum, 930);
+                assert_eq!(report.candidate_calls.maximum, 2_930);
                 assert_eq!(report.judge_calls, report.candidate_calls);
-                assert_eq!(report.maximum_spending_millionths_of_dollar, 6_510);
+                assert_eq!(report.maximum_spending_millionths_of_dollar, 20_510);
                 assert!(report.is_owner_approval_required);
                 assert_eq!(report.plan_sha256.len(), 64);
                 assert_eq!(
@@ -54,12 +54,12 @@ macro_rules! frontier_preview_tests {
             #[test]
             fn sufficient_owner_authority_clears_the_approval_gate() {
                 let mut insufficient = PreviewRuntime::valid();
-                insufficient.plan.policy.spending_limit_millionths_of_dollar = 6_509;
+                insufficient.plan.policy.spending_limit_millionths_of_dollar = 20_509;
                 let report = preview_frontier(Path::new("plan.json"), &insufficient).unwrap();
                 assert!(report.is_owner_approval_required);
 
                 let mut sufficient = PreviewRuntime::valid();
-                sufficient.plan.policy.spending_limit_millionths_of_dollar = 6_510;
+                sufficient.plan.policy.spending_limit_millionths_of_dollar = 20_510;
                 let report = preview_frontier(Path::new("plan.json"), &sufficient).unwrap();
                 assert!(!report.is_owner_approval_required);
                 assert_eq!(insufficient.loads.get(), 1);
