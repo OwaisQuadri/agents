@@ -40,6 +40,8 @@ macro_rules! frontier_lifecycle_tests {
                 suite: FrontierSuite,
                 candidate_error: Option<SkillEvalError>,
                 verifier_error: Option<SkillEvalError>,
+                judge_error: Option<SkillEvalError>,
+                recovery_error: Option<SkillEvalError>,
                 recovered_cost: Option<u64>,
                 execute_calls: u32,
                 timeouts: Vec<Option<u32>>,
@@ -59,6 +61,8 @@ macro_rules! frontier_lifecycle_tests {
                         suite,
                         candidate_error: None,
                         verifier_error: None,
+                        judge_error: None,
+                        recovery_error: None,
                         recovered_cost: None,
                         execute_calls: 0,
                         timeouts: Vec::new(),
@@ -154,6 +158,9 @@ macro_rules! frontier_lifecycle_tests {
                     model: &ModelIdentity,
                     harness: &HarnessIdentity,
                 ) -> Result<Option<TrialRecord>, SkillEvalError> {
+                    if let Some(error) = self.recovery_error.take() {
+                        return Err(error);
+                    }
                     Ok(self.recovered_cost.take().map(|cost| TrialRecord {
                         key: key.clone(),
                         model: model.clone(),
@@ -362,6 +369,9 @@ macro_rules! frontier_lifecycle_tests {
                     model: &ModelIdentity,
                     _input: &JudgeInput,
                 ) -> Result<JudgeResult, SkillEvalError> {
+                    if let Some(error) = self.judge_error.take() {
+                        return Err(error);
+                    }
                     Ok(JudgeResult {
                         model: model.clone(),
                         usage: usage(1),
@@ -661,11 +671,9 @@ macro_rules! frontier_lifecycle_tests {
             #[test]
             fn repeated_non_candidate_infrastructure_remains_paused() {
                 let mut runtime = FakeRuntime::new();
-                runtime.verifier_error = Some(SkillEvalError::Process {
-                    program: "local-verifier".to_owned(),
-                    exit_code: Some(1),
-                    standard_error: "first".to_owned(),
-                });
+                runtime.verifier_error = Some(SkillEvalError::InvalidConfiguration(
+                    "first verifier configuration failure".to_owned(),
+                ));
                 let mut progress = Progress {
                     durable: runtime.durable.clone(),
                     states: Vec::new(),
@@ -674,11 +682,9 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .unwrap();
 
-                runtime.verifier_error = Some(SkillEvalError::Process {
-                    program: "local-verifier".to_owned(),
-                    exit_code: Some(1),
-                    standard_error: "second".to_owned(),
-                });
+                runtime.verifier_error = Some(SkillEvalError::InvalidConfiguration(
+                    "second verifier configuration failure".to_owned(),
+                ));
                 let paused =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
                         .unwrap();
@@ -694,6 +700,69 @@ macro_rules! frontier_lifecycle_tests {
                 assert!(unchanged.infrastructure_events.iter().all(|event| {
                     event.failure_stage == Some($crate::model::FrontierFailureStage::Verifier)
                 }));
+            }
+
+            #[test]
+            fn judge_configuration_failure_is_a_retryable_infrastructure_pause() {
+                let mut runtime = FakeRuntime::new();
+                runtime.judge_error = Some(SkillEvalError::InvalidConfiguration(
+                    "judge packet is too large".to_owned(),
+                ));
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+
+                assert_eq!(paused.status, FrontierRunStatus::Paused);
+                assert_eq!(paused.infrastructure_events.len(), 1);
+                assert_eq!(
+                    paused.infrastructure_events[0].failure_stage,
+                    Some($crate::model::FrontierFailureStage::Judge)
+                );
+            }
+
+            #[test]
+            fn candidate_and_recovery_configuration_failures_remain_terminal() {
+                let mut candidate_runtime = FakeRuntime::new();
+                candidate_runtime.candidate_error = Some(SkillEvalError::InvalidConfiguration(
+                    "candidate configuration failure".to_owned(),
+                ));
+                let mut candidate_progress = Progress {
+                    durable: candidate_runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+
+                assert!(
+                    start_frontier(
+                        Path::new("frontier-plan.json"),
+                        &mut candidate_runtime,
+                        &mut candidate_progress,
+                    )
+                    .is_err()
+                );
+
+                let mut recovery_runtime = FakeRuntime::new();
+                recovery_runtime.recovery_error = Some(SkillEvalError::InvalidConfiguration(
+                    "recovery configuration failure".to_owned(),
+                ));
+                let mut recovery_progress = Progress {
+                    durable: recovery_runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+
+                assert!(
+                    start_frontier(
+                        Path::new("frontier-plan.json"),
+                        &mut recovery_runtime,
+                        &mut recovery_progress,
+                    )
+                    .is_err()
+                );
+                assert_eq!(recovery_runtime.execute_calls, 5);
             }
 
             #[test]

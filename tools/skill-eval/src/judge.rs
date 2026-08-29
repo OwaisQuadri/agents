@@ -770,7 +770,10 @@ fn write_sanitized_transcript(
                 line: (index + 1) as u64,
                 message: format!("candidate transcript is malformed: {error}"),
             })?;
-        if event.get("type").and_then(Value::as_str) == Some("tool_execution_update") {
+        if matches!(
+            event.get("type").and_then(Value::as_str),
+            Some("message_update" | "tool_execution_update")
+        ) {
             continue;
         }
         remove_identity_fields(&mut event, candidate);
@@ -1611,15 +1614,21 @@ mod tests {
     }
 
     #[test]
-    fn judge_drops_streaming_tool_updates_before_enforcing_packet_size() {
+    fn judge_drops_streaming_updates_before_enforcing_packet_size() {
         let input = judge_input();
-        let update = serde_json::json!({
+        let tool_update = serde_json::json!({
             "type": "tool_execution_update",
+            "content": "x".repeat(1024),
+        });
+        let message_update = serde_json::json!({
+            "type": "message_update",
             "content": "x".repeat(1024),
         });
         let mut transcript = String::new();
         for _ in 0..5_100 {
-            transcript.push_str(&serde_json::to_string(&update).unwrap());
+            transcript.push_str(&serde_json::to_string(&tool_update).unwrap());
+            transcript.push('\n');
+            transcript.push_str(&serde_json::to_string(&message_update).unwrap());
             transcript.push('\n');
         }
         transcript.push_str(
@@ -1640,6 +1649,7 @@ mod tests {
         )
         .unwrap();
         assert!(!sanitized.contains("tool_execution_update"));
+        assert!(!sanitized.contains("message_update"));
         assert!(sanitized.contains("candidate response"));
         assert!(sanitized.len() as u64 <= MAX_JUDGE_FILE_BYTES);
     }

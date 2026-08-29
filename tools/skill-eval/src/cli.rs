@@ -3483,15 +3483,19 @@ impl FrontierRuntime for ConcreteRuntime {
         else {
             return Ok(None);
         };
-        let checks = self.verifier.verify(case, &candidate)?;
+        let checks = match self.verifier.verify(case, &candidate) {
+            Ok(checks) => checks,
+            Err(_) => return Ok(None),
+        };
         let input = JudgeInput {
             candidate: candidate.clone(),
             expect: case.expect.clone(),
             rubric_path: artifact.root.join("evals/rubric.md"),
             checks,
         };
-        let Some(judged) = self.judge.recover_frontier_grade(judge, &input)? else {
-            return Ok(None);
+        let judged = match self.judge.recover_frontier_grade(judge, &input) {
+            Ok(Some(judged)) => judged,
+            Ok(None) | Err(_) => return Ok(None),
         };
         Ok(Some(TrialRecord {
             key: key.clone(),

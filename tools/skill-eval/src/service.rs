@@ -7225,10 +7225,17 @@ fn commit_frontier_wave(
                 quota_pause.get_or_insert(PoolPauseReason::Quota { model, reset_at });
             }
             error => {
-                let is_terminal = matches!(
-                    error,
-                    SkillEvalError::InvalidArguments(_) | SkillEvalError::InvalidConfiguration(_)
-                );
+                let is_terminal = match error {
+                    SkillEvalError::InvalidArguments(_) => true,
+                    SkillEvalError::InvalidConfiguration(_) => !matches!(
+                        failure_stage,
+                        Some(
+                            crate::model::FrontierFailureStage::Verifier
+                                | crate::model::FrontierFailureStage::Judge
+                        )
+                    ),
+                    _ => false,
+                };
                 let message = format!(
                     "{}/{} {} {} attempt {} infrastructure attempt {}: {error:?}",
                     outcome_model.provider,
