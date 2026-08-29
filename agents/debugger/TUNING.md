@@ -1,5 +1,30 @@
 # debugger — tuning history
 
+## 2026-08-29 — no mutation: evidence too thin under the live prompt
+
+GEPA-due trigger fired on usage_count=28, vote_count=0. Reflect pass, filtered to the
+current `prompt_version` (76a831fda, computed via this artifact's own logging-section
+command): 8 lines carry no `prompt_version`, 19 are `82f5edc`, 4 are `82f5edc0`, 25 are
+`76a831fd` (truncated, 8 chars), 3 lines are malformed JSON — all stale under the Reflect
+filter's exact-match rule, all dropped. Surviving evidence for the live prompt is 3 usage
+lines (2026-08-28), outcomes success / success / partial. Zero failures.
+
+`agents/debugger/votes/votes.jsonl` does not exist — the whole `votes/` directory is
+absent, so there is zero blind-judge signal for this artifact, live prompt or otherwise.
+No `evals/frontier.jsonl` exists either.
+
+The one `partial` line (AGNT-0032.T153) is the debugger correctly halting at a named
+out-of-scope file (`service.rs`) after fixing the dispatched timeout — not a defect in
+this artifact's behavior, and not a repeating shape (n=1).
+
+DECISION: no mutation. Three surviving lines with zero failures gives no failure
+histogram to target and no logged false positive to narrow against. The GEPA loop's own
+Decide gate rejects churn on noise (skills/ai-author/SKILL.md:200); proposing a mutation
+here would be exactly that. This artifact needs more logged runs under the current prompt
+(76a831fda) and its first blind-judge vote before the next Reflect pass has enough signal
+to propose from. Deferred: nothing actionable — next GEPA-due pass should re-run Reflect
+fresh rather than resume from here.
+
 ## 2026-08-25 — baseline delta on arrival, and `fixed-tests-stale`
 
 Two mutations. ONE: "working tree untouched" is graded as a zero DELTA from the baseline
