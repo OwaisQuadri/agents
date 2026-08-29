@@ -6846,7 +6846,7 @@ pub(crate) fn start_frontier(
     runtime.create_frontier(&state)?;
     runtime.lock_frontier_run(&state.configuration.run_id)?;
     progress.emit_frontier(&state)?;
-    continue_frontier(state, suite, Vec::new(), None, runtime, progress)
+    continue_frontier(state, suite, Vec::new(), runtime, progress)
 }
 
 /// Continues one saved cumulative frontier without repeating terminal work.
@@ -6893,7 +6893,6 @@ pub(crate) fn resume_frontier(
         save_frontier_and_emit(runtime, progress, &state)?;
     }
 
-    let mut exceptional_retry = None;
     if state.status == FrontierRunStatus::Paused {
         match state.pause.as_ref() {
             Some(PoolPauseReason::Quota { model, .. }) => {
@@ -6917,25 +6916,17 @@ pub(crate) fn resume_frontier(
                 save_frontier_and_emit(runtime, progress, &state)?;
             }
             Some(PoolPauseReason::Infrastructure { .. }) => {
-                let event = frontier_paused_infrastructure_event(&state)
+                let model = frontier_paused_infrastructure_event(&state)
                     .ok_or_else(|| frontier_lifecycle_drift("infrastructure pause event"))?
+                    .model
                     .clone();
-                if matches!(
-                    event.failure_stage,
-                    Some(
-                        crate::model::FrontierFailureStage::Verifier
-                            | crate::model::FrontierFailureStage::Judge
-                    )
-                ) && runtime.authorize_exceptional_frontier_retry(&event)
-                {
-                    exceptional_retry = Some(event);
-                } else if event.failure_stage != Some(crate::model::FrontierFailureStage::Candidate)
-                    || !set_aside_frontier_entrant(
-                        &mut state,
-                        &event.model,
-                        crate::model::FrontierSetAsideReason::Infrastructure,
-                    )?
-                {
+                if frontier_paused_infrastructure_event(&state).is_none_or(|event| {
+                    event.failure_stage != Some(crate::model::FrontierFailureStage::Candidate)
+                }) || !set_aside_frontier_entrant(
+                    &mut state,
+                    &model,
+                    crate::model::FrontierSetAsideReason::Infrastructure,
+                )? {
                     return Ok(state);
                 }
                 state.status = FrontierRunStatus::Running;
@@ -6946,14 +6937,13 @@ pub(crate) fn resume_frontier(
             None => return Err(frontier_lifecycle_invalid("paused run has no reason")),
         }
     }
-    continue_frontier(state, suite, trials, exceptional_retry, runtime, progress)
+    continue_frontier(state, suite, trials, runtime, progress)
 }
 
 fn continue_frontier(
     mut state: FrontierRunState,
     suite: FrontierSuite,
     mut trials: Vec<TrialRecord>,
-    mut exceptional_retry: Option<crate::model::FrontierInfrastructureEvent>,
     runtime: &mut dyn FrontierRuntime,
     progress: &mut dyn FrontierProgressSink,
 ) -> Result<FrontierRunState, SkillEvalError> {
@@ -6963,18 +6953,16 @@ fn continue_frontier(
     }
     loop {
         let schedulable = canonical_frontier_schedulable_state(&state);
-        match frontier_scheduler::next_frontier_wave_with_exception(
+        match frontier_scheduler::next_frontier_wave(
             &schedulable.configuration.plan,
             &suite,
             &schedulable,
             &trials,
-            exceptional_retry.as_ref(),
         )? {
             FrontierScheduleAction::Dispatch {
                 trials: scheduled,
                 reserved_cost_per_trial_millionths_of_dollar,
             } => {
-                exceptional_retry = None;
                 let outcomes = execute_frontier_wave(
                     &state,
                     &suite,

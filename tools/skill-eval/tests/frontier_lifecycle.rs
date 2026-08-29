@@ -43,7 +43,6 @@ macro_rules! frontier_lifecycle_tests {
                 judge_error: Option<SkillEvalError>,
                 recovery_error: Option<SkillEvalError>,
                 recovered_cost: Option<u64>,
-                exceptional_retry: bool,
                 execute_calls: u32,
                 timeouts: Vec<Option<u32>>,
                 models: Vec<ModelIdentity>,
@@ -65,7 +64,6 @@ macro_rules! frontier_lifecycle_tests {
                         judge_error: None,
                         recovery_error: None,
                         recovered_cost: None,
-                        exceptional_retry: false,
                         execute_calls: 0,
                         timeouts: Vec::new(),
                         models: Vec::new(),
@@ -106,13 +104,6 @@ macro_rules! frontier_lifecycle_tests {
 
                 fn next_frontier_run_id(&mut self) -> Result<FrontierRunId, SkillEvalError> {
                     Ok(FrontierRunId("frontier-1".to_owned()))
-                }
-
-                fn authorize_exceptional_frontier_retry(
-                    &self,
-                    _event: &$crate::model::FrontierInfrastructureEvent,
-                ) -> bool {
-                    self.exceptional_retry
                 }
 
                 fn create_frontier(
@@ -709,37 +700,6 @@ macro_rules! frontier_lifecycle_tests {
                 assert!(unchanged.infrastructure_events.iter().all(|event| {
                     event.failure_stage == Some($crate::model::FrontierFailureStage::Verifier)
                 }));
-            }
-
-            #[test]
-            fn owner_authorized_judge_retry_gets_one_extra_dispatch() {
-                let mut runtime = FakeRuntime::new();
-                runtime.judge_error = Some(SkillEvalError::InvalidConfiguration(
-                    "first judge failure".to_owned(),
-                ));
-                let mut progress = Progress {
-                    durable: runtime.durable.clone(),
-                    states: Vec::new(),
-                };
-                let paused =
-                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
-                        .unwrap();
-                runtime.judge_error = Some(SkillEvalError::InvalidConfiguration(
-                    "second judge failure".to_owned(),
-                ));
-                let paused =
-                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
-                        .unwrap();
-                let calls = runtime.execute_calls;
-                runtime.exceptional_retry = true;
-
-                let completed =
-                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
-                        .unwrap();
-
-                assert_eq!(completed.status, FrontierRunStatus::AwaitingDecision);
-                assert!(runtime.execute_calls > calls);
-                assert_eq!(completed.infrastructure_events.len(), 2);
             }
 
             #[test]

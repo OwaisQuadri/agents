@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::model::{
     ArtifactName, FRONTIER_WORKER_LIMIT, FrontierCellEvidence, FrontierCellStatus, FrontierEntrant,
-    FrontierInfrastructureEvent, FrontierPlan, FrontierRunState, FrontierRunStatus,
-    FrontierScheduleAction, FrontierScheduledTrial, FrontierSuite, ModelIdentity, PoolPauseReason,
-    SkillEvalError, TrialKey, TrialRecord,
+    FrontierPlan, FrontierRunState, FrontierRunStatus, FrontierScheduleAction,
+    FrontierScheduledTrial, FrontierSuite, ModelIdentity, PoolPauseReason, SkillEvalError,
+    TrialKey, TrialRecord,
 };
 use crate::statistics::{advance_frontier_model, evaluate_frontier_cell};
 
@@ -13,16 +13,6 @@ pub(crate) fn next_frontier_wave(
     suite: &FrontierSuite,
     state: &FrontierRunState,
     trials: &[TrialRecord],
-) -> Result<FrontierScheduleAction, SkillEvalError> {
-    next_frontier_wave_with_exception(plan, suite, state, trials, None)
-}
-
-pub(crate) fn next_frontier_wave_with_exception(
-    plan: &FrontierPlan,
-    suite: &FrontierSuite,
-    state: &FrontierRunState,
-    trials: &[TrialRecord],
-    exceptional_retry: Option<&FrontierInfrastructureEvent>,
 ) -> Result<FrontierScheduleAction, SkillEvalError> {
     validate_inputs(plan, suite, state, trials)?;
     if let Some(reason) = &state.pause {
@@ -153,7 +143,7 @@ pub(crate) fn next_frontier_wave_with_exception(
                 return Err(invalid("frontier incomplete cell has no missing trial"));
             }
             for key in keys {
-                match scheduled_trial(state, plan, exceptional_retry, &model, key)? {
+                match scheduled_trial(state, plan, &model, key)? {
                     Ok(trial) => scheduled.push(trial),
                     Err(reason) => return Ok(FrontierScheduleAction::Pause { reason }),
                 }
@@ -255,7 +245,6 @@ fn same_frontier_entrant(left: &ModelIdentity, right: &ModelIdentity) -> bool {
 fn scheduled_trial(
     state: &FrontierRunState,
     plan: &FrontierPlan,
-    exceptional_retry: Option<&FrontierInfrastructureEvent>,
     model: &ModelIdentity,
     key: TrialKey,
 ) -> Result<Result<FrontierScheduledTrial, PoolPauseReason>, SkillEvalError> {
@@ -288,19 +277,7 @@ fn scheduled_trial(
             "frontier infrastructure attempts are not contiguous",
         ));
     }
-    let has_exceptional_retry = exceptional_retry.is_some_and(|event| {
-        event.model == *model
-            && event.artifact == key.artifact
-            && event.case == key.case
-            && event.attempt == key.attempt
-            && events.last().is_some_and(|latest| *latest == event)
-    });
-    let maximum_infrastructure_attempts = plan
-        .policy
-        .maximum_infrastructure_attempts
-        .checked_add(u8::from(has_exceptional_retry))
-        .ok_or_else(|| invalid("frontier infrastructure attempt limit overflow"))?;
-    if events.len() >= usize::from(maximum_infrastructure_attempts) {
+    if events.len() >= usize::from(plan.policy.maximum_infrastructure_attempts) {
         let message = events
             .last()
             .ok_or_else(|| invalid("frontier infrastructure pause has no event"))?

@@ -3,8 +3,8 @@ use std::path::Path;
 use crate::model::{
     ArtifactDefinition, CandidateArtifact, CandidateEnvironmentEntry, CaseDefinition, CheckResult,
     ExecutionDefinition, FrontierApplyReport, FrontierBaselineLedger, FrontierFailureStage,
-    FrontierInfrastructureEvent, FrontierInspection, FrontierPlan, FrontierRunId, FrontierRunState,
-    FrontierSuite, FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
+    FrontierInspection, FrontierPlan, FrontierRunId, FrontierRunState, FrontierSuite,
+    FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
     FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome,
     HarnessIdentity, JudgeInput, JudgeResult, ModelIdentity, PoolPlan, PoolRunId, PoolRunState,
     PromptJudgeRequest, PromptJudgeResult, RunEvent, RunId, SkillEvalError, T1ScreenCampaignId,
@@ -281,14 +281,6 @@ pub(crate) trait FrontierSuiteRuntime: ArtifactSource + Clock {
 pub(crate) trait FrontierRuntime: QualificationRuntime {
     fn lock_frontier_run(&mut self, _run_id: &FrontierRunId) -> Result<(), SkillEvalError> {
         Ok(())
-    }
-
-    /// Confirms one exact owner-authorized retry beyond the frozen infrastructure limit.
-    ///
-    /// The input is the paused infrastructure event. The output is whether one extra dispatch is
-    /// authorized. The default denies the retry.
-    fn authorize_exceptional_frontier_retry(&self, _event: &FrontierInfrastructureEvent) -> bool {
-        false
     }
 
     fn run_frontier_wave(

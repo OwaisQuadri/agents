@@ -3366,25 +3366,6 @@ impl FrontierRuntime for ConcreteRuntime {
         Ok(())
     }
 
-    fn authorize_exceptional_frontier_retry(
-        &self,
-        event: &crate::model::FrontierInfrastructureEvent,
-    ) -> bool {
-        let expected = format!(
-            "{}/{}/{:?}/{}/{}/{}/{}/{}/{:?}",
-            event.model.provider,
-            event.model.model,
-            event.model.tier,
-            event.model.thinking,
-            event.artifact.0,
-            event.case.0,
-            event.attempt,
-            event.infrastructure_attempt,
-            event.failure_stage,
-        );
-        std::env::var("FRONTIER_EXCEPTIONAL_RETRY").is_ok_and(|value| value == expected)
-    }
-
     fn run_frontier_wave(
         &mut self,
         jobs: Vec<FrontierTrialJob>,
