@@ -80,24 +80,25 @@ below).
 
 ## rotation (stops re-firing on evidence already reviewed)
 
-Unconditional, once a session has actually been dispatched on an artifact: the
-trigger moves that artifact's `logs/usage.jsonl` and `votes/votes.jsonl` in the MAIN
-checkout to dated `.reviewed-<stamp>` siblings, then verifies the move (destination
-exists, source gone) before logging it — every fire clears the evidence it ran on,
-regardless of what the session did or didn't manage to land. A move, never a `rm`,
-per this repo's own "never rm before a verified move" rule — the reviewed evidence
-stays on disk, just out of `tools/gepa-due`'s exact-filename count (it only ever reads
-`logs/usage.jsonl` / `votes/votes.jsonl` literally, so a renamed sibling is
-automatically excluded with no checker code change needed).
+Gated on the session reaching a VERDICT — it settled (idle/done/blocked), not stuck
+or timed out — never on what that verdict was. "No mutation, nothing worth
+committing" is as much a verdict as a real mutation or a TUNING.md note: the session
+looked at the real evidence and reached a conclusion, so the trigger moves that
+artifact's `logs/usage.jsonl` and `votes/votes.jsonl` in the MAIN checkout to dated
+`.reviewed-<stamp>` siblings, then verifies the move (destination exists, source
+gone) before logging it. A move, never a `rm`, per this repo's own "never rm before a
+verified move" rule — the reviewed evidence stays on disk, just out of
+`tools/gepa-due`'s exact-filename count (it only ever reads `logs/usage.jsonl` /
+`votes/votes.jsonl` literally, so a renamed sibling is automatically excluded with no
+checker code change needed).
 
-The trigger still checks whether a `<artifact>/TUNING.md` commit actually landed on
-the branch and logs a WARN if not — useful signal that a session ran but may not have
-reviewed anything — but that check is informational only now, not a gate. Rotation
-happens either way, deliberately: the alternative (only rotate on a confirmed commit)
-meant a session that ran, decided nothing was worth writing up, and correctly
-skipped a commit would leave its artifact due again tomorrow on the exact same
-evidence — the same wasted-repeat-session problem rotation exists to solve in the
-first place, just moved one step earlier.
+A session that never settles (timed out, stuck) does NOT get its evidence rotated —
+it never reached a verdict, so leaving the artifact due for tomorrow's fire is
+correct, not a repeat of wasted work. The trigger also checks whether a
+`<artifact>/TUNING.md` commit actually landed on the branch and logs a note either
+way — useful for a human skimming the log — but that check is informational only,
+not a gate: a session that settled and correctly decided nothing was worth writing up
+still gets its evidence rotated, same as one that committed a real mutation.
 
 ## install (macOS)
 
