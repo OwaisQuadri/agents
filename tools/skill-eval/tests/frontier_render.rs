@@ -72,6 +72,35 @@ macro_rules! frontier_render_tests {
             }
 
             #[test]
+            fn quota_skipped_model_is_marked_in_the_matrix_and_detail() {
+                let mut report = report();
+                let skipped = FrontierCellEvidence {
+                    model: route(Tier::T3, "off"),
+                    status: FrontierCellStatus::Skipped,
+                    completed_trials: 0,
+                    expected_trials: 0,
+                    failed_trials: 0,
+                    score: None,
+                    total_usage: zero_usage(),
+                };
+                let model = &mut report.models[0];
+                model.cells = vec![skipped];
+                model.highest_passing_tier = None;
+                model.selected_routes.clear();
+                model.pool_memberships.clear();
+                model.total_usage = zero_usage();
+                report.status = FrontierRunStatus::AwaitingDecision;
+                report.pause = None;
+
+                let output = render_text(|output| {
+                    render_frontier_report(&report, OutputFormat::Text, output)
+                });
+
+                assert!(output.contains("| anthropic/alpha | Q |  |  | N/A | N/A | N/A | N/A |"));
+                assert!(output.contains("set aside after quota: T3 (off)"));
+            }
+
+            #[test]
             fn frontier_inspection_text_preserves_the_full_typed_evidence() {
                 let inspection = FrontierInspection::Trial { trial: trial() };
                 let output = render_text(|output| {
@@ -337,6 +366,19 @@ macro_rules! frontier_render_tests {
                     model: "alpha".to_owned(),
                     tier,
                     thinking: thinking.to_owned(),
+                }
+            }
+
+            fn zero_usage() -> TrialUsage {
+                TrialUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
+                    turns: 0,
+                    tool_calls: 0,
+                    elapsed_milliseconds: 0,
+                    cost_millionths_of_dollar: 0,
                 }
             }
 

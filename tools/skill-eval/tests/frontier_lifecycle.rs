@@ -447,7 +447,7 @@ macro_rules! frontier_lifecycle_tests {
             }
 
             #[test]
-            fn quota_pause_resumes_the_first_missing_trial_without_a_duplicate_call() {
+            fn candidate_quota_sets_the_entrant_aside_without_a_retry() {
                 let mut runtime = FakeRuntime::new();
                 runtime.candidate_error = Some(SkillEvalError::Quota {
                     model: candidate(),
@@ -457,27 +457,31 @@ macro_rules! frontier_lifecycle_tests {
                     durable: runtime.durable.clone(),
                     states: Vec::new(),
                 };
-                let paused =
+                let state =
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .unwrap();
-                assert_eq!(paused.status, FrontierRunStatus::Paused);
-                assert_eq!(paused.spent_millionths_of_dollar, 6);
-                assert!(paused.infrastructure_events.is_empty());
-                assert_eq!(runtime.durable.borrow().trials.len(), 3);
-
-                let state =
-                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
-                        .unwrap();
                 assert_eq!(state.status, FrontierRunStatus::AwaitingDecision);
-                assert_eq!(runtime.execute_calls, 31);
-                assert_eq!(runtime.durable.borrow().trials.len(), 30);
+                assert_eq!(state.spent_millionths_of_dollar, 6);
+                assert_eq!(state.infrastructure_events.len(), 1);
+                assert_eq!(
+                    state.infrastructure_events[0].charged_millionths_of_dollar,
+                    0
+                );
+                assert_eq!(state.cells.len(), 1);
+                assert_eq!(
+                    state.cells[0].status,
+                    $crate::model::FrontierCellStatus::Skipped
+                );
+                assert!(state.models[0].is_exhausted);
+                assert_eq!(runtime.execute_calls, 4);
+                assert_eq!(runtime.durable.borrow().trials.len(), 3);
             }
 
             #[test]
-            fn quota_pause_resumes_after_the_discovery_snapshot_ages_out() {
+            fn judge_quota_remains_paused_after_the_discovery_snapshot_ages_out() {
                 let mut runtime = FakeRuntime::new();
                 runtime.candidate_error = Some(SkillEvalError::Quota {
-                    model: candidate(),
+                    model: judge(),
                     reset_at: Some(runtime.now()),
                 });
                 let mut progress = Progress {
@@ -493,8 +497,45 @@ macro_rules! frontier_lifecycle_tests {
                 let state =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
                         .unwrap();
+                assert_eq!(state.status, FrontierRunStatus::Paused);
+                assert_eq!(state.pause, paused.pause);
+                assert_eq!(runtime.execute_calls, 4);
+                assert_eq!(runtime.durable.borrow().trials.len(), 3);
+            }
+
+            #[test]
+            fn legacy_candidate_quota_pause_sets_aside_without_another_call() {
+                let mut runtime = FakeRuntime::new();
+                runtime.candidate_error = Some(SkillEvalError::Quota {
+                    model: judge(),
+                    reset_at: None,
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let mut paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+                paused.pause = Some($crate::model::PoolPauseReason::Quota {
+                    model: candidate(),
+                    reset_at: None,
+                });
+                runtime.durable.borrow_mut().state = Some(paused.clone());
+
+                let state =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+
                 assert_eq!(state.status, FrontierRunStatus::AwaitingDecision);
-                assert_eq!(runtime.durable.borrow().trials.len(), 30);
+                assert_eq!(state.cells.len(), 1);
+                assert_eq!(
+                    state.cells[0].status,
+                    $crate::model::FrontierCellStatus::Skipped
+                );
+                assert!(state.models[0].is_exhausted);
+                assert_eq!(runtime.execute_calls, 4);
+                assert_eq!(runtime.durable.borrow().trials.len(), 3);
             }
 
             #[test]

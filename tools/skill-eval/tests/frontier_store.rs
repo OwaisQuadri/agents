@@ -18,12 +18,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use frontier_store::{FileFrontierStore, FrontierFailurePoint};
 use model::{
     ArtifactName, CaseId, Decision, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup,
-    FrontierCaseReference, FrontierConfidenceMethod, FrontierDecisionRecord, FrontierEntrant,
-    FrontierEvidenceIdentity, FrontierInfrastructureEvent, FrontierInspection,
-    FrontierModelProgress, FrontierPlan, FrontierPolicy, FrontierRunConfiguration, FrontierRunId,
-    FrontierRunState, FrontierRunStatus, FrontierSuite, FrontierSuiteIdentity, FrontierTierSuite,
-    FrontierTrialSelector, HarnessIdentity, ModelIdentity, PoolPauseReason,
-    T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey, TrialRecord, TrialUsage, TrialVerdict,
+    FrontierCaseReference, FrontierCellEvidence, FrontierCellStatus, FrontierConfidenceMethod,
+    FrontierDecisionRecord, FrontierEntrant, FrontierEvidenceIdentity, FrontierInfrastructureEvent,
+    FrontierInspection, FrontierModelProgress, FrontierPlan, FrontierPolicy,
+    FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus, FrontierSuite,
+    FrontierSuiteIdentity, FrontierTierSuite, FrontierTrialSelector, HarnessIdentity,
+    ModelIdentity, PoolPauseReason, T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey,
+    TrialRecord, TrialUsage, TrialVerdict,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -45,6 +46,59 @@ fn create_is_durable_and_rejects_collision_and_escape() {
     let mut unsafe_state = fixture.state();
     unsafe_state.configuration.run_id = FrontierRunId("../escape".to_owned());
     assert!(store.create_frontier(&unsafe_state).is_err());
+}
+
+#[test]
+fn sorted_quota_skip_can_precede_existing_terminal_cells() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let initial = fixture.state();
+    store.create_frontier(&initial).unwrap();
+
+    let mut running = initial;
+    running.status = FrontierRunStatus::Running;
+    running.cells.push(FrontierCellEvidence {
+        model: ModelIdentity {
+            tier: Tier::T2,
+            provider: "first-party".to_owned(),
+            model: "alpha".to_owned(),
+            thinking: "low".to_owned(),
+        },
+        status: FrontierCellStatus::Skipped,
+        completed_trials: 0,
+        expected_trials: 0,
+        failed_trials: 0,
+        score: None,
+        total_usage: zero_usage(),
+    });
+    store.save_frontier(&running).unwrap();
+
+    let mut with_skip = running;
+    with_skip.cells.insert(
+        0,
+        FrontierCellEvidence {
+            model: ModelIdentity {
+                tier: Tier::T1,
+                provider: "first-party".to_owned(),
+                model: "alpha".to_owned(),
+                thinking: "low".to_owned(),
+            },
+            status: FrontierCellStatus::Skipped,
+            completed_trials: 0,
+            expected_trials: 0,
+            failed_trials: 0,
+            score: None,
+            total_usage: zero_usage(),
+        },
+    );
+
+    store.save_frontier(&with_skip).unwrap();
+    assert_eq!(
+        store
+            .load_frontier(&with_skip.configuration.run_id)
+            .unwrap(),
+        with_skip
+    );
 }
 
 #[test]

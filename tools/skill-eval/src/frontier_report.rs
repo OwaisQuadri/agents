@@ -219,6 +219,7 @@ fn matrix_cells(
                 FrontierCellStatus::Passed
                     | FrontierCellStatus::Failed
                     | FrontierCellStatus::Indeterminate
+                    | FrontierCellStatus::Skipped
             )
     }) {
         return Err(invalid(

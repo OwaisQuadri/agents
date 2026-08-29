@@ -183,6 +183,32 @@ fn frontier_progression_climbs_tiers_in_place_and_falls_back_after_failure() {
 }
 
 #[test]
+fn frontier_progression_exhausts_a_quota_skipped_route() {
+    let entrant = entrant();
+    let skipped = FrontierCellEvidence {
+        model: route("alpha", Tier::T1, "low"),
+        status: FrontierCellStatus::Skipped,
+        completed_trials: 0,
+        expected_trials: 0,
+        failed_trials: 0,
+        score: None,
+        total_usage: usage(0),
+    };
+
+    let progress = advance_frontier_model(
+        &entrant,
+        &initial_progress(&entrant),
+        std::slice::from_ref(&skipped),
+    )
+    .unwrap();
+
+    assert!(progress.is_exhausted);
+    assert_eq!(progress.next_tier, None);
+    assert_eq!(progress.next_thinking_index, None);
+    assert!(progress.selected_routes.is_empty());
+}
+
+#[test]
 fn frontier_progression_marks_level_and_tier_exhaustion() {
     let entrant = entrant();
     let cells = vec![

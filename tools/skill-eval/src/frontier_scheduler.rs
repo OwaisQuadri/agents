@@ -46,7 +46,17 @@ pub(crate) fn next_frontier_wave(
                 .map_err(|_| invalid("frontier entrant index overflow"))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
-    let mut consumed = BTreeSet::new();
+    let skipped_routes = state
+        .cells
+        .iter()
+        .filter(|cell| cell.status == FrontierCellStatus::Skipped)
+        .map(|cell| cell.model.clone())
+        .collect::<BTreeSet<_>>();
+    let mut consumed = trials
+        .iter()
+        .filter(|trial| skipped_routes.contains(&trial.model))
+        .map(|trial| (trial.model.clone(), trial.key.clone()))
+        .collect::<BTreeSet<_>>();
     let mut scheduled = Vec::new();
 
     for entrant in entrants {
@@ -81,6 +91,14 @@ pub(crate) fn next_frontier_wave(
                 .tiers
                 .get(&tier)
                 .ok_or_else(|| invalid("frontier suite is missing a scheduled tier"))?;
+            if let Some(skipped) = state
+                .cells
+                .iter()
+                .find(|cell| cell.model == model && cell.status == FrontierCellStatus::Skipped)
+            {
+                cells.push(skipped.clone());
+                continue;
+            }
             let mut route_trials = trials
                 .iter()
                 .filter(|trial| trial.model == model)

@@ -10,8 +10,9 @@ macro_rules! frontier_decision_tests {
                 ArtifactDefinition, ArtifactKind, ArtifactName, CandidateArtifact, CaseDefinition,
                 CaseDrive, CaseId, CheckResult, Decision, ExecutionDefinition, FrontierApplyReport,
                 FrontierBaselineLedger, FrontierCaseGroup, FrontierCaseReference,
-                FrontierConfidenceMethod, FrontierDecisionRequest, FrontierEntrant,
-                FrontierInspection, FrontierModelProgress, FrontierPlan, FrontierPolicy,
+                FrontierCellEvidence, FrontierCellStatus, FrontierConfidenceMethod,
+                FrontierDecisionRequest, FrontierEntrant, FrontierInspection, FrontierModelProgress,
+                FrontierPlan, FrontierPolicy,
                 FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
                 FrontierSuite,
                 FrontierSuiteIdentity, FrontierTierSuite, FrontierTrialSelector, HarnessIdentity,
@@ -67,6 +68,50 @@ macro_rules! frontier_decision_tests {
                 assert!(baseline.capabilities.is_empty());
                 assert_eq!(runtime.apply_calls, 0);
                 assert_eq!(runtime.model_calls.get(), 0);
+            }
+
+            #[test]
+            fn quota_skipped_entrant_can_reach_an_owner_decision() {
+                for decision in [Decision::Accepted, Decision::Rejected] {
+                    let mut runtime = DecisionRuntime::new();
+                    runtime.trials.clear();
+                    let state = runtime.state.as_mut().unwrap();
+                    let model = ModelIdentity {
+                        provider: state.configuration.plan.entrants[0].provider.clone(),
+                        model: state.configuration.plan.entrants[0].model.clone(),
+                        tier: state.configuration.plan.entrants[0].entry_tier,
+                        thinking: state.configuration.plan.entrants[0].thinking_levels[0].clone(),
+                    };
+                    state.models[0].selected_routes.clear();
+                    state.models[0].next_tier = None;
+                    state.models[0].next_thinking_index = None;
+                    state.models[0].is_exhausted = true;
+                    state.cells = vec![FrontierCellEvidence {
+                        model,
+                        status: FrontierCellStatus::Skipped,
+                        completed_trials: 0,
+                        expected_trials: 0,
+                        failed_trials: 0,
+                        score: None,
+                        total_usage: zero_usage(),
+                    }];
+                    state.spent_millionths_of_dollar = 0;
+
+                    let result = record_frontier_decision(
+                        &request(decision, "owner reviewed quota set-aside"),
+                        &mut runtime,
+                    )
+                    .unwrap();
+
+                    assert_eq!(
+                        result.status,
+                        if decision == Decision::Accepted {
+                            FrontierRunStatus::Accepted
+                        } else {
+                            FrontierRunStatus::Rejected
+                        }
+                    );
+                }
             }
 
             #[test]

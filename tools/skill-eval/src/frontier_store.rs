@@ -1176,9 +1176,13 @@ fn validate_transition(
     if next.cells.len() < stored.cells.len() {
         return Err(invalid("frontier cell evidence was removed"));
     }
-    for (old, new) in stored.cells.iter().zip(&next.cells) {
-        if old.model != new.model
-            || new.completed_trials < old.completed_trials
+    for old in &stored.cells {
+        let new = next
+            .cells
+            .iter()
+            .find(|cell| cell.model == old.model)
+            .ok_or_else(|| invalid("frontier cell evidence was removed"))?;
+        if new.completed_trials < old.completed_trials
             || new.expected_trials != old.expected_trials
             || new.failed_trials < old.failed_trials
             || !usage_is_nondecreasing(&old.total_usage, &new.total_usage)

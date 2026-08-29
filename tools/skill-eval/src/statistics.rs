@@ -1819,7 +1819,18 @@ pub(crate) fn advance_frontier_model(
                 "frontier evidence skips or reorders the legal route",
             ));
         }
-        validate_frontier_cell_shape(cell)?;
+        if cell.status == FrontierCellStatus::Skipped {
+            if cell.completed_trials != 0
+                || cell.expected_trials != 0
+                || cell.failed_trials != 0
+                || cell.score.is_some()
+                || cell.total_usage != empty_usage()
+            {
+                return Err(invalid("frontier skipped cell contains trial evidence"));
+            }
+        } else {
+            validate_frontier_cell_shape(cell)?;
+        }
         match cell.status {
             FrontierCellStatus::Passed => {
                 selected_routes.push(cell.model.clone());
@@ -1841,7 +1852,8 @@ pub(crate) fn advance_frontier_model(
                     return Err(invalid("frontier evidence continues after a pending cell"));
                 }
             }
-            FrontierCellStatus::Running | FrontierCellStatus::Skipped => {
+            FrontierCellStatus::Skipped => is_exhausted = true,
+            FrontierCellStatus::Running => {
                 return Err(invalid(
                     "frontier progression requires evaluated cell evidence",
                 ));

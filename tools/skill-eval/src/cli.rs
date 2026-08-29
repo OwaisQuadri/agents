@@ -6788,6 +6788,19 @@ fn render_frontier_report(
             frontier_route_list(&model.selected_routes)
         )
         .map_err(output_error)?;
+        if let Some(cell) = model
+            .cells
+            .iter()
+            .find(|cell| cell.status == crate::model::FrontierCellStatus::Skipped)
+        {
+            writeln!(
+                output,
+                "  set aside after quota: {} ({})",
+                tier_label(cell.model.tier),
+                cell.model.thinking
+            )
+            .map_err(output_error)?;
+        }
         let memberships = model
             .pool_memberships
             .iter()
@@ -6917,8 +6930,10 @@ fn render_frontier_matrix(
                 crate::model::FrontierCellStatus::Indeterminate => {
                     cells[index] = format!("I{}", frontier_tier_number(cell.model.tier));
                 }
-                crate::model::FrontierCellStatus::Pending
-                | crate::model::FrontierCellStatus::Skipped => {}
+                crate::model::FrontierCellStatus::Pending => {}
+                crate::model::FrontierCellStatus::Skipped => {
+                    cells[index] = "Q".to_owned();
+                }
                 crate::model::FrontierCellStatus::Running => {
                     return Err(malformed_frontier_render("running cell is not renderable"));
                 }

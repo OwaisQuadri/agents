@@ -19,12 +19,13 @@ use std::path::PathBuf;
 
 use frontier_scheduler::next_frontier_wave;
 use model::{
-    ArtifactName, CaseId, FrontierCaseGroup, FrontierCaseReference, FrontierConfidenceMethod,
-    FrontierEntrant, FrontierInfrastructureEvent, FrontierModelProgress, FrontierPlan,
-    FrontierPolicy, FrontierRunConfiguration, FrontierRunId, FrontierRunState, FrontierRunStatus,
-    FrontierScheduleAction, FrontierScheduledTrial, FrontierSuite, FrontierSuiteIdentity,
-    FrontierTierSuite, HarnessIdentity, ModelIdentity, PoolPauseReason, SkillEvalError,
-    T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey, TrialRecord, TrialUsage, TrialVerdict,
+    ArtifactName, CaseId, FrontierCaseGroup, FrontierCaseReference, FrontierCellEvidence,
+    FrontierCellStatus, FrontierConfidenceMethod, FrontierEntrant, FrontierInfrastructureEvent,
+    FrontierModelProgress, FrontierPlan, FrontierPolicy, FrontierRunConfiguration, FrontierRunId,
+    FrontierRunState, FrontierRunStatus, FrontierScheduleAction, FrontierScheduledTrial,
+    FrontierSuite, FrontierSuiteIdentity, FrontierTierSuite, HarnessIdentity, ModelIdentity,
+    PoolPauseReason, SkillEvalError, T1ScreenSnapshotIdentity, Tier, Timestamp, TrialKey,
+    TrialRecord, TrialUsage, TrialVerdict,
 };
 
 #[test]
@@ -150,6 +151,31 @@ fn rows_can_emit_different_current_attempts_without_crossing_their_own_barriers(
             .filter(|trial| trial.model.model == "zeta")
             .all(|trial| trial.key.attempt == 1)
     );
+}
+
+#[test]
+fn quota_skipped_row_consumes_partial_trials_and_other_rows_continue() {
+    let entrants = vec![
+        entrant("alpha", Tier::T1, &["off"]),
+        entrant("zeta", Tier::T1, &["off"]),
+    ];
+    let (plan, suite, mut state) = fixture(entrants);
+    let alpha = route("alpha", Tier::T1, "off");
+    state.cells.push(FrontierCellEvidence {
+        model: alpha.clone(),
+        status: FrontierCellStatus::Skipped,
+        completed_trials: 0,
+        expected_trials: 0,
+        failed_trials: 0,
+        score: None,
+        total_usage: zero_usage(),
+    });
+    let partial = vec![trial(&suite.tiers[&Tier::T1].cases[0], &alpha, 0, 1, 10)];
+
+    let (wave, _) = dispatch(next_frontier_wave(&plan, &suite, &state, &partial).unwrap());
+
+    assert_eq!(wave.len(), 4);
+    assert!(wave.iter().all(|trial| trial.model.model == "zeta"));
 }
 
 #[test]
@@ -477,6 +503,19 @@ fn infrastructure(
         charged_millionths_of_dollar: 0,
         message: message.to_owned(),
         occurred_at: timestamp(),
+    }
+}
+
+fn zero_usage() -> TrialUsage {
+    TrialUsage {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        turns: 0,
+        tool_calls: 0,
+        elapsed_milliseconds: 0,
+        cost_millionths_of_dollar: 0,
     }
 }
 

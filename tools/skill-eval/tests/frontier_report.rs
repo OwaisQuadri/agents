@@ -80,6 +80,39 @@ macro_rules! frontier_report_tests {
             }
 
             #[test]
+            fn report_derivation_keeps_quota_skipped_evidence() {
+                let state = state();
+                let progress = FrontierModelProgress {
+                    provider: "anthropic".to_owned(),
+                    model: "alpha".to_owned(),
+                    entry_tier: Tier::T1,
+                    selected_routes: Vec::new(),
+                    next_tier: None,
+                    next_thinking_index: None,
+                    is_exhausted: true,
+                };
+                let skipped = FrontierCellEvidence {
+                    model: route(Tier::T1, "low"),
+                    status: FrontierCellStatus::Skipped,
+                    completed_trials: 0,
+                    expected_trials: 0,
+                    failed_trials: 0,
+                    score: None,
+                    total_usage: zero_usage(),
+                };
+
+                let report = derive_frontier_report(&state, &[progress], &[skipped], None).unwrap();
+
+                assert_eq!(report.models[0].cells.len(), 1);
+                assert_eq!(
+                    report.models[0].cells[0].status,
+                    FrontierCellStatus::Skipped
+                );
+                assert!(report.models[0].selected_routes.is_empty());
+                assert_eq!(report.models[0].highest_passing_tier, None);
+            }
+
+            #[test]
             fn report_derivation_marks_baseline_better_worse_unchanged_and_new() {
                 let state = state();
                 let evidence = vec![cell(Tier::T1, "low", FrontierCellStatus::Passed, 9_100)];

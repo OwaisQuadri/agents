@@ -6895,7 +6895,11 @@ pub(crate) fn resume_frontier(
 
     if state.status == FrontierRunStatus::Paused {
         match state.pause.as_ref() {
-            Some(PoolPauseReason::Quota { .. }) => {
+            Some(PoolPauseReason::Quota { model, .. }) => {
+                let model = model.clone();
+                if !set_aside_frontier_entrant(&mut state, &model)? {
+                    return Ok(state);
+                }
                 state.status = FrontierRunStatus::Running;
                 state.pause = None;
                 save_frontier_and_emit(runtime, progress, &state)?;
@@ -7162,8 +7166,32 @@ fn commit_frontier_wave(
     let mut quota_pause = None;
     let mut infrastructure_pause = None;
     let mut terminal_error = persistence_error;
-    for (model, key, infrastructure_attempt, error) in failures {
+    for (outcome_model, key, infrastructure_attempt, error) in failures {
         match error {
+            SkillEvalError::Quota {
+                model: quota_model,
+                reset_at,
+            } if same_frontier_entrant(&outcome_model, &quota_model) => {
+                state
+                    .infrastructure_events
+                    .push(FrontierInfrastructureEvent {
+                        model: outcome_model.clone(),
+                        artifact: key.artifact,
+                        case: key.case,
+                        attempt: key.attempt,
+                        infrastructure_attempt,
+                        charged_millionths_of_dollar: 0,
+                        message: format!(
+                            "quota set aside {}/{}; reset {:?}",
+                            quota_model.provider, quota_model.model, reset_at
+                        ),
+                        occurred_at: runtime.now(),
+                    });
+                set_aside_frontier_entrant(state, &outcome_model)?;
+                state.spent_millionths_of_dollar =
+                    frontier_spend(trials, &state.infrastructure_events)?;
+                save_frontier_and_emit(runtime, progress, state)?;
+            }
             SkillEvalError::Quota { model, reset_at } => {
                 quota_pause.get_or_insert(PoolPauseReason::Quota { model, reset_at });
             }
@@ -7176,7 +7204,7 @@ fn commit_frontier_wave(
                 state
                     .infrastructure_events
                     .push(FrontierInfrastructureEvent {
-                        model,
+                        model: outcome_model,
                         artifact: key.artifact,
                         case: key.case,
                         attempt: key.attempt,
@@ -7205,6 +7233,70 @@ fn commit_frontier_wave(
         save_frontier_and_emit(runtime, progress, state)?;
     }
     Ok(None)
+}
+
+fn set_aside_frontier_entrant(
+    state: &mut FrontierRunState,
+    model: &ModelIdentity,
+) -> Result<bool, SkillEvalError> {
+    let Some(entrant_index) = state
+        .configuration
+        .plan
+        .entrants
+        .iter()
+        .position(|entrant| entrant.provider == model.provider && entrant.model == model.model)
+    else {
+        return Ok(false);
+    };
+    if state.models[entrant_index].is_exhausted
+        && state.cells.iter().any(|cell| {
+            cell.status == crate::model::FrontierCellStatus::Skipped
+                && same_frontier_entrant(&cell.model, model)
+        })
+    {
+        return Ok(true);
+    }
+    let progress = &state.models[entrant_index];
+    let entrant = &state.configuration.plan.entrants[entrant_index];
+    let thinking_index = progress
+        .next_thinking_index
+        .map(usize::from)
+        .ok_or_else(|| frontier_lifecycle_drift("quota entrant thinking progress"))?;
+    let expected_thinking = entrant
+        .thinking_levels
+        .get(thinking_index)
+        .ok_or_else(|| frontier_lifecycle_drift("quota entrant thinking level"))?;
+    if progress.next_tier != Some(model.tier) || expected_thinking != &model.thinking {
+        return Err(frontier_lifecycle_drift("quota entrant route"));
+    }
+    if state.cells.iter().any(|cell| cell.model == *model) {
+        return Err(frontier_lifecycle_invalid(
+            "quota set-aside duplicates a frontier cell",
+        ));
+    }
+    state.cells.push(crate::model::FrontierCellEvidence {
+        model: model.clone(),
+        status: crate::model::FrontierCellStatus::Skipped,
+        completed_trials: 0,
+        expected_trials: 0,
+        failed_trials: 0,
+        score: None,
+        total_usage: empty_usage(),
+    });
+    sort_frontier_cells(&state.configuration.plan, &mut state.cells)?;
+    let cells = state
+        .cells
+        .iter()
+        .filter(|cell| same_frontier_entrant(&cell.model, model))
+        .cloned()
+        .collect::<Vec<_>>();
+    state.models[entrant_index] =
+        crate::statistics::advance_frontier_model(entrant, &state.models[entrant_index], &cells)?;
+    Ok(true)
+}
+
+fn same_frontier_entrant(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.provider == right.provider && left.model == right.model
 }
 
 fn validate_frontier_trial_outcome(
@@ -7566,6 +7658,24 @@ fn reconstruct_frontier_authority(
                     .cloned()
                     .ok_or_else(|| frontier_lifecycle_drift("thinking level"))?,
             };
+            if let Some(skipped) = state.cells.iter().find(|cell| {
+                cell.model == model && cell.status == crate::model::FrontierCellStatus::Skipped
+            }) {
+                cells.push(skipped.clone());
+                let entrant_cells = cells
+                    .iter()
+                    .filter(|cell| {
+                        cell.model.provider == entrant.provider && cell.model.model == entrant.model
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                models[progress_index] = crate::statistics::advance_frontier_model(
+                    &entrant,
+                    &models[progress_index],
+                    &entrant_cells,
+                )?;
+                continue;
+            }
             let route_trials = trials
                 .iter()
                 .filter(|trial| trial.model == model)
@@ -8045,6 +8155,9 @@ fn validate_frontier_decision_evidence(
         ));
     }
     for cell in &state.cells {
+        if cell.status == crate::model::FrontierCellStatus::Skipped {
+            continue;
+        }
         let score = cell
             .score
             .as_ref()
