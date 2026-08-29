@@ -138,6 +138,12 @@ else
       and (.fallbacks | type == "array" and all(.[]; identifier))
       and (.thinking | thinking)
       and unique_route;
+    def qualification_route:
+      type == "object"
+      and only_keys(["provider", "model", "thinking"])
+      and (.provider | segment)
+      and (.model | segment)
+      and (.thinking | thinking);
     def capability_route:
       type == "object"
       and only_keys(["pi", "fallbacks", "thinking"])
@@ -154,9 +160,10 @@ else
       and (.is_read_only | type == "boolean" and . == true);
     . as $config
     | type == "object"
-    and only_keys(["tiers", "orchestrator", "judge", "capabilities", "unranked_controls", "agents", "untiered"])
+    and only_keys(["tiers", "qualification_routes", "orchestrator", "judge", "capabilities", "unranked_controls", "agents", "untiered"])
     and all(["tiers", "orchestrator", "judge", "capabilities", "unranked_controls", "agents", "untiered"][]; . as $key | $config | has($key))
     and (.tiers | type == "object" and length > 0 and all(to_entries[]; (.key | tier) and (.value | tier_route)))
+    and ((.qualification_routes // {}) | type == "object" and all(to_entries[]; (.key | tier) and (.value | type == "array" and length > 0 and all(.[]; qualification_route))))
     and all(["T1", "T2", "T3", "T4", "T5"][]; . as $tier | $config.tiers[$tier] != null)
     and (.orchestrator | tier) and (.tiers[.orchestrator] != null)
     and (.judge | tier) and (.tiers[.judge] != null)
