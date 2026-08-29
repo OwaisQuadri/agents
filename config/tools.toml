@@ -27,7 +27,7 @@ name = "plannotator"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "apps/pi-extension"
-source = { url = "https://github.com/backnotprop/plannotator.git", revision = "8d735cb7dd2bd7b61074b36bbc5871b3dc994f1b" }
+source = { url = "https://github.com/backnotprop/plannotator.git", revision = "9e3af49f84d9c45971cfad3123e5743d6559d299" }
 installer = { command = "/bin/sh", args = ["-c", "bun install --frozen-lockfile && bun run build:pi"], preview_args = ["-c", "bun --version"] }
 
 [[tools]]

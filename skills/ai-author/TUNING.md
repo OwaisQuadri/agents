@@ -34,12 +34,49 @@ loads it. Open it when you tune this skill, and not when you run it.
   demonstrated gap and requirements, but not the candidate text. The incumbent scored 7.09
   over 11 non-holdout cases and 7.17 over 6 holdout cases. The candidate scored 7.27 and 8.50.
   The added cases distinguish the missing sweep from a bounded, redacted, zero-valid procedure.
+- 2026-08-29, Pareto-frontier candidate selection (GEPA loop step 2). **UNMEASURED** — no
+  harness case exercises this yet, and no artifact currently has ≥2 competing candidates on
+  record to test it against. Research grounding: the actual GEPA paper (arXiv:2507.19457,
+  ICLR 2026 Oral) selects the next mutation's parent from the Pareto frontier of past
+  candidates, not always the single incumbent — a candidate survives if it's the best-known
+  scorer on at least one eval case, even with a lower mean overall, so specialist variants
+  aren't discarded before their ideas can be recombined. This repo's `run.sh` already computes
+  per-case scores every Test run and discarded them the instant the run exited; the change adds
+  `evals/frontier.jsonl` (score vectors) + `evals/frontier/<id>.md` (full candidate text),
+  both git-tracked (reasoning: they only ever hold scores against already-tracked synthetic
+  cases plus draft variants of the artifact's own already-tracked definition file — no live
+  session content, unlike the gitignored `logs/`/`votes/`). Step 2 (Propose) now samples its
+  mutation parent from the frontier once an artifact has ≥2 non-incumbent frontier members;
+  below that threshold it behaves exactly as before. Step 4's shipping rule (mean win + holdout
+  + no new catastrophic + weakest-wins-on-tie) is unchanged — this only changes what step 2
+  starts mutating from. Next real signal: the first artifact to accumulate 2+ tested
+  candidates under the new template proves or disproves this in practice.
 
 ## deferred verdicts
 
 Verdicts this skill reached and did not execute. Case `d1` grades whether a verdict lands
 somewhere that tracks it. This heading is that place, and a log line is not.
 
+- No true pre/post-SKILL lifecycle hook exists in `@earendil-works/pi-coding-agent`'s
+  extension API. Confirmed by reading the installed package's own type definitions
+  (`~/.bun/install/cache/@earendil-works/pi-coding-agent@0.84.2@@@1/dist/core/extensions/types.d.ts`)
+  and every extension already in `pi/extensions/`: the real event vocabulary is
+  `tool_call`, `tool_execution_start/update/end`, `agent_start/end/settled`,
+  `before_agent_start`, `turn_start/end`, `message_start/update/end`,
+  `session_start/shutdown/before_compact/before_fork/before_switch/before_tree/compact/
+  tree/info_changed`, `model_select`, `thinking_level_select`,
+  `before_provider_request/headers`, `after_provider_response`, `resources_discover`.
+  `skill` appears only as a config field (`skillPaths?: string[]`) and in a doc comment,
+  never as an event. GEPA loop step 2 (Propose) already routes a mechanizable finding to
+  PROSE, a CHECKER, or a PI EXTENSION — but if that finding needs skill-lifecycle
+  granularity specifically (not just a `tool_call` filtered to a `Read` of a `SKILL.md`,
+  the nearest approximation `pi/extensions/logpath-guard.ts`'s pattern could build), no
+  platform hook exists to build it against. File an upstream ticket against
+  `@earendil-works/pi-coding-agent` only once a real Propose pass reaches a
+  PI-EXTENSION verdict the tool_call approximation can't satisfy — not speculatively; the
+  same "narrowing needs an observed false positive" rule this repo applies to prose
+  rules applies here in reverse to requesting a new platform capability. Owner: whichever
+  future GEPA pass hits this wall first.
 - Propagate the session preamble to the symlink target. A dispatched subagent listed the 11
   pre-change headings and not the new one, so a workspace edit alone does not reach a
   background session. Owner: the merge of that branch.

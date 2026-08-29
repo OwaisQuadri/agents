@@ -1,0 +1,2 @@
+{"candidate_id":"2ec7834e","tested_against":"effe9e7d5","scores_nonholdout":[9,8,8,8,6,8,6,9,8,9,9],"scores_holdout":[8,8,8,9,8,9],"mean_nonholdout":8.0,"accepted":true,"ts":"2026-08-28T23:24:59-0400"}
+{"candidate_id":"1a50ad24","tested_against":"effe9e7d5","scores_nonholdout":[9,8,8,8,6,6,5,9,8,9,9],"scores_holdout":[9,8,9,9,7,9],"mean_nonholdout":7.73,"accepted":false,"ts":"2026-08-28T23:30:27-0400"}
