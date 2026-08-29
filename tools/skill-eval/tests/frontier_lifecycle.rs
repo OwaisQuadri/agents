@@ -461,9 +461,9 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .unwrap();
                 assert_eq!(paused.status, FrontierRunStatus::Paused);
-                assert_eq!(paused.spent_millionths_of_dollar, 58);
+                assert_eq!(paused.spent_millionths_of_dollar, 6);
                 assert!(paused.infrastructure_events.is_empty());
-                assert_eq!(runtime.durable.borrow().trials.len(), 29);
+                assert_eq!(runtime.durable.borrow().trials.len(), 3);
 
                 let state =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
@@ -517,7 +517,7 @@ macro_rules! frontier_lifecycle_tests {
                     paused.infrastructure_events[0].charged_millionths_of_dollar,
                     10
                 );
-                assert_eq!(paused.spent_millionths_of_dollar, 68);
+                assert_eq!(paused.spent_millionths_of_dollar, 16);
 
                 let resumed =
                     resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
@@ -602,8 +602,8 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress,)
                         .is_err()
                 );
-                assert_eq!(runtime.execute_calls, 30);
-                assert_eq!(runtime.durable.borrow().trials.len(), 30);
+                assert_eq!(runtime.execute_calls, 4);
+                assert_eq!(runtime.durable.borrow().trials.len(), 4);
                 let run_id = runtime
                     .durable
                     .borrow()
@@ -633,7 +633,7 @@ macro_rules! frontier_lifecycle_tests {
                     start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
                         .is_err()
                 );
-                assert_eq!(runtime.execute_calls, 30);
+                assert_eq!(runtime.execute_calls, 4);
                 runtime.harness_runner_version = "runner-2".to_owned();
                 let run_id = runtime
                     .durable
@@ -646,7 +646,7 @@ macro_rules! frontier_lifecycle_tests {
                     .clone();
 
                 assert!(resume_frontier(&run_id, &mut runtime, &mut progress).is_err());
-                assert_eq!(runtime.execute_calls, 30);
+                assert_eq!(runtime.execute_calls, 4);
             }
 
             #[test]

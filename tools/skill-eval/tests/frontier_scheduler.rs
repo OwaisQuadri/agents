@@ -28,7 +28,7 @@ use model::{
 };
 
 #[test]
-fn wave_contains_every_ready_row_and_every_current_case() {
+fn wave_is_bounded_and_balances_ready_rows() {
     let entrants = vec![
         entrant("zeta", Tier::T2, &["off"]),
         entrant("alpha", Tier::T1, &["off"]),
@@ -37,31 +37,23 @@ fn wave_contains_every_ready_row_and_every_current_case() {
 
     let (trials, reservation) = dispatch(next_frontier_wave(&plan, &suite, &state, &[]).unwrap());
 
-    assert_eq!(trials.len(), 8);
+    assert_eq!(trials.len(), 4);
     assert_eq!(reservation, 10);
     assert_eq!(
         trials
             .iter()
-            .map(|trial| (
-                trial.model.model.as_str(),
-                trial.model.tier,
-                trial.model.thinking.as_str(),
-                trial.key.route_index,
-                trial.key.case.0.as_str(),
-                trial.key.attempt,
-            ))
-            .collect::<Vec<_>>(),
-        vec![
-            ("alpha", Tier::T1, "off", 0, "adversarial", 1),
-            ("alpha", Tier::T1, "off", 0, "critical", 1),
-            ("alpha", Tier::T1, "off", 0, "edge", 1),
-            ("alpha", Tier::T1, "off", 0, "normal", 1),
-            ("zeta", Tier::T2, "off", 1, "adversarial", 1),
-            ("zeta", Tier::T2, "off", 1, "critical", 1),
-            ("zeta", Tier::T2, "off", 1, "edge", 1),
-            ("zeta", Tier::T2, "off", 1, "normal", 1),
-        ]
+            .filter(|trial| trial.model.model == "alpha")
+            .count(),
+        2
     );
+    assert_eq!(
+        trials
+            .iter()
+            .filter(|trial| trial.model.model == "zeta")
+            .count(),
+        2
+    );
+    assert!(trials.iter().all(|trial| trial.key.attempt == 1));
 }
 
 #[test]
@@ -135,7 +127,19 @@ fn rows_can_emit_different_current_attempts_without_crossing_their_own_barriers(
 
     let (wave, _) = dispatch(next_frontier_wave(&plan, &suite, &state, &evidence).unwrap());
 
-    assert_eq!(wave.len(), 8);
+    assert_eq!(wave.len(), 4);
+    assert_eq!(
+        wave.iter()
+            .filter(|trial| trial.model.model == "alpha")
+            .count(),
+        2
+    );
+    assert_eq!(
+        wave.iter()
+            .filter(|trial| trial.model.model == "zeta")
+            .count(),
+        2
+    );
     assert!(
         wave.iter()
             .filter(|trial| trial.model.model == "alpha")

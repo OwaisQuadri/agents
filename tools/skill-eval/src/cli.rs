@@ -17,21 +17,22 @@ use crate::judge::PiJudge;
 use crate::model::{
     ArtifactChange, ArtifactDefinition, ArtifactName, AuditBriefRequest, CandidateEnvironmentEntry,
     CaseDefinition, CaseId, CliCommand, CliRequest, Decision, ExecutionDefinition,
-    FrontierApplyReport, FrontierBaseline, FrontierBaselineLedger, FrontierCaseGroup,
-    FrontierDecisionRequest, FrontierInspection, FrontierPlan, FrontierPreviewReport,
-    FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite, FrontierSuiteConstructionPlan,
-    FrontierSuiteInventory, FrontierSuiteProposal, FrontierSuitePublication,
-    FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome, FrontierTrialSelector,
-    HarnessIdentity, JudgeInput, ModelIdentity, OutputFormat, OwnEvalEvidence, PoolChildStatus,
-    PoolEntrant, PoolEntrantEvidence, PoolQualifyRequest, PoolRunId, PoolRunState, PoolRunStatus,
-    PromptJudgeRequest, QualificationPolicy, QualificationPurpose, QualificationReport,
-    QualifyRequest, RunEvent, RunId, SkillEvalError, T1ScreenCampaignCapExtensionRequest,
-    T1ScreenCampaignCreateRequest, T1ScreenCampaignId, T1ScreenCampaignRunRetirementRequest,
-    T1ScreenCandidateEnvironment, T1ScreenCandidatePrice, T1ScreenCapExtensionRequest,
-    T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState, T1ScreenPolicy,
-    T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest, T1ScreenRunConfiguration,
-    T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus, T1ScreenStartRequest, Tier, TierAssignment,
-    TierDestination, Timestamp, TrialRecord, TrialSelector, TrialUsage,
+    FRONTIER_WORKER_LIMIT, FrontierApplyReport, FrontierBaseline, FrontierBaselineLedger,
+    FrontierCaseGroup, FrontierDecisionRequest, FrontierInspection, FrontierPlan,
+    FrontierPreviewReport, FrontierReport, FrontierRunId, FrontierRunState, FrontierSuite,
+    FrontierSuiteConstructionPlan, FrontierSuiteInventory, FrontierSuiteProposal,
+    FrontierSuitePublication, FrontierSuiteReviewSet, FrontierTrialJob, FrontierTrialOutcome,
+    FrontierTrialSelector, HarnessIdentity, JudgeInput, ModelIdentity, OutputFormat,
+    OwnEvalEvidence, PoolChildStatus, PoolEntrant, PoolEntrantEvidence, PoolQualifyRequest,
+    PoolRunId, PoolRunState, PoolRunStatus, PromptJudgeRequest, QualificationPolicy,
+    QualificationPurpose, QualificationReport, QualifyRequest, RunEvent, RunId, SkillEvalError,
+    T1ScreenCampaignCapExtensionRequest, T1ScreenCampaignCreateRequest, T1ScreenCampaignId,
+    T1ScreenCampaignRunRetirementRequest, T1ScreenCandidateEnvironment, T1ScreenCandidatePrice,
+    T1ScreenCapExtensionRequest, T1ScreenExclusionReason, T1ScreenFormat, T1ScreenModelState,
+    T1ScreenPolicy, T1ScreenPreviewReport, T1ScreenReport, T1ScreenRouteFailureRequest,
+    T1ScreenRunConfiguration, T1ScreenRunId, T1ScreenRunState, T1ScreenRunStatus,
+    T1ScreenStartRequest, Tier, TierAssignment, TierDestination, Timestamp, TrialRecord,
+    TrialSelector, TrialUsage,
 };
 use crate::model_capabilities;
 use crate::models::{ConfiguredModelResolver, validate_rpc_models_data};
@@ -3348,8 +3349,6 @@ impl FrontierSuiteRuntime for ConcreteRuntime {
         )
     }
 }
-
-const FRONTIER_WORKER_LIMIT: usize = 4;
 
 impl FrontierRuntime for ConcreteRuntime {
     fn lock_frontier_run(&mut self, run_id: &FrontierRunId) -> Result<(), SkillEvalError> {

@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::model::{
-    ArtifactName, FrontierCellEvidence, FrontierCellStatus, FrontierEntrant, FrontierPlan,
-    FrontierRunState, FrontierRunStatus, FrontierScheduleAction, FrontierScheduledTrial,
-    FrontierSuite, ModelIdentity, PoolPauseReason, SkillEvalError, TrialKey, TrialRecord,
+    ArtifactName, FRONTIER_WORKER_LIMIT, FrontierCellEvidence, FrontierCellStatus, FrontierEntrant,
+    FrontierPlan, FrontierRunState, FrontierRunStatus, FrontierScheduleAction,
+    FrontierScheduledTrial, FrontierSuite, ModelIdentity, PoolPauseReason, SkillEvalError,
+    TrialKey, TrialRecord,
 };
 use crate::statistics::{advance_frontier_model, evaluate_frontier_cell};
 
@@ -141,6 +142,7 @@ pub(crate) fn next_frontier_wave(
     if scheduled.windows(2).any(|window| window[0] == window[1]) {
         return Err(invalid("frontier wave contains a duplicate trial"));
     }
+    scheduled = bounded_frontier_wave(scheduled, state, trials);
     let reserved_cost_per_trial_millionths_of_dollar =
         plan.policy.maximum_trial_cost_millionths_of_dollar;
     if reserved_cost_per_trial_millionths_of_dollar == 0 {
@@ -167,6 +169,59 @@ pub(crate) fn next_frontier_wave(
         trials: scheduled,
         reserved_cost_per_trial_millionths_of_dollar,
     })
+}
+
+fn bounded_frontier_wave(
+    scheduled: Vec<FrontierScheduledTrial>,
+    state: &FrontierRunState,
+    trials: &[TrialRecord],
+) -> Vec<FrontierScheduledTrial> {
+    let mut queues = BTreeMap::<ModelIdentity, VecDeque<FrontierScheduledTrial>>::new();
+    for trial in scheduled {
+        queues
+            .entry(trial.model.clone())
+            .or_default()
+            .push_back(trial);
+    }
+    let mut rows = queues
+        .into_iter()
+        .map(|(model, queue)| {
+            let trial_count = trials
+                .iter()
+                .filter(|trial| same_frontier_entrant(&trial.model, &model))
+                .count();
+            let event_count = state
+                .infrastructure_events
+                .iter()
+                .filter(|event| same_frontier_entrant(&event.model, &model))
+                .count();
+            (trial_count.saturating_add(event_count), model, queue)
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
+
+    let mut wave = Vec::new();
+    while wave.len() < FRONTIER_WORKER_LIMIT {
+        let mut added = false;
+        for (_, _, queue) in &mut rows {
+            if let Some(trial) = queue.pop_front() {
+                wave.push(trial);
+                added = true;
+            }
+            if wave.len() == FRONTIER_WORKER_LIMIT {
+                break;
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    wave.sort();
+    wave
+}
+
+fn same_frontier_entrant(left: &ModelIdentity, right: &ModelIdentity) -> bool {
+    left.provider == right.provider && left.model == right.model
 }
 
 fn scheduled_trial(
