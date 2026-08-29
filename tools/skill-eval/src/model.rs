@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-pub(crate) const FRONTIER_WORKER_LIMIT: usize = 4;
+pub(crate) const FRONTIER_WORKER_LIMIT: usize = 6;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]

@@ -31,11 +31,11 @@ macro_rules! frontier_runtime_tests {
             static ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
             #[test]
-            fn frontier_workers_run_exactly_four_jobs_at_a_time() {
+            fn frontier_workers_run_exactly_six_jobs_at_a_time() {
                 let active = Arc::new(AtomicUsize::new(0));
                 let maximum = Arc::new(AtomicUsize::new(0));
-                let barrier = Arc::new(Barrier::new(4));
-                let outcomes = run_bounded_frontier_jobs((0..8).collect(), {
+                let barrier = Arc::new(Barrier::new(6));
+                let outcomes = run_bounded_frontier_jobs((0..12).collect(), {
                     let active = active.clone();
                     let maximum = maximum.clone();
                     let barrier = barrier.clone();
@@ -50,9 +50,9 @@ macro_rules! frontier_runtime_tests {
 
                 assert_eq!(
                     outcomes.into_iter().collect::<Result<Vec<_>, _>>(),
-                    Ok((0..8).collect())
+                    Ok((0..12).collect())
                 );
-                assert_eq!(maximum.load(Ordering::SeqCst), 4);
+                assert_eq!(maximum.load(Ordering::SeqCst), 6);
             }
 
             struct MockSource {

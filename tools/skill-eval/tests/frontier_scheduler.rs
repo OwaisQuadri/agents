@@ -38,21 +38,21 @@ fn wave_is_bounded_and_balances_ready_rows() {
 
     let (trials, reservation) = dispatch(next_frontier_wave(&plan, &suite, &state, &[]).unwrap());
 
-    assert_eq!(trials.len(), 4);
+    assert_eq!(trials.len(), 6);
     assert_eq!(reservation, 10);
     assert_eq!(
         trials
             .iter()
             .filter(|trial| trial.model.model == "alpha")
             .count(),
-        2
+        3
     );
     assert_eq!(
         trials
             .iter()
             .filter(|trial| trial.model.model == "zeta")
             .count(),
-        2
+        3
     );
     assert!(trials.iter().all(|trial| trial.key.attempt == 1));
 }
@@ -128,18 +128,18 @@ fn rows_can_emit_different_current_attempts_without_crossing_their_own_barriers(
 
     let (wave, _) = dispatch(next_frontier_wave(&plan, &suite, &state, &evidence).unwrap());
 
-    assert_eq!(wave.len(), 4);
+    assert_eq!(wave.len(), 6);
     assert_eq!(
         wave.iter()
             .filter(|trial| trial.model.model == "alpha")
             .count(),
-        2
+        3
     );
     assert_eq!(
         wave.iter()
             .filter(|trial| trial.model.model == "zeta")
             .count(),
-        2
+        3
     );
     assert!(
         wave.iter()
