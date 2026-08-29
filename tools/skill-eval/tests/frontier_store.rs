@@ -57,9 +57,10 @@ fn legacy_infrastructure_event_without_charge_deserializes_as_zero() {
         .unwrap()
         .remove("charged_millionths_of_dollar");
 
-    let loaded: FrontierInfrastructureEvent = serde_json::from_value(value).unwrap();
+    let loaded: FrontierInfrastructureEvent = serde_json::from_value(value.clone()).unwrap();
 
     assert_eq!(loaded.charged_millionths_of_dollar, 0);
+    assert_eq!(serde_json::to_value(loaded).unwrap(), value);
 }
 
 #[test]

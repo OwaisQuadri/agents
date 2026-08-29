@@ -608,10 +608,14 @@ pub(crate) struct FrontierInfrastructureEvent {
     pub(crate) case: CaseId,
     pub(crate) attempt: u16,
     pub(crate) infrastructure_attempt: u8,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub(crate) charged_millionths_of_dollar: u64,
     pub(crate) message: String,
     pub(crate) occurred_at: Timestamp,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
