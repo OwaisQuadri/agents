@@ -761,6 +761,18 @@ impl FrontierRuntime for FakeFrontierRuntime {
         Ok(())
     }
 
+    fn load_frontier_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        Ok(self
+            .saved_trials
+            .iter()
+            .filter(|(stored_run_id, _)| stored_run_id == run_id)
+            .map(|(_, trial)| trial.clone())
+            .collect())
+    }
+
     fn inspect_frontier(
         &self,
         selector: &FrontierTrialSelector,

@@ -298,6 +298,13 @@ macro_rules! frontier_decision_tests {
                     Ok(state)
                 }
 
+                fn load_frontier_trials(
+                    &self,
+                    _run_id: &FrontierRunId,
+                ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+                    Ok(self.trials.clone())
+                }
+
                 fn save_frontier(
                     &mut self,
                     state: &FrontierRunState,

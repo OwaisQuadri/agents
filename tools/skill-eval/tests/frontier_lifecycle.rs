@@ -2,7 +2,7 @@
 macro_rules! frontier_lifecycle_tests {
     () => {
         mod frontier_lifecycle {
-            use std::cell::RefCell;
+            use std::cell::{Cell, RefCell};
             use std::collections::BTreeMap;
             use std::path::{Path, PathBuf};
             use std::rc::Rc;
@@ -46,6 +46,8 @@ macro_rules! frontier_lifecycle_tests {
                 models: Vec<ModelIdentity>,
                 harness_runner_version: String,
                 now: Timestamp,
+                bulk_trial_loads: Cell<u32>,
+                selector_inspections: Cell<u32>,
             }
 
             impl FakeRuntime {
@@ -63,6 +65,8 @@ macro_rules! frontier_lifecycle_tests {
                         models: Vec::new(),
                         harness_runner_version: "runner-1".to_owned(),
                         now: Timestamp("2030-01-01T00:00:00+0000".to_owned()),
+                        bulk_trial_loads: Cell::new(0),
+                        selector_inspections: Cell::new(0),
                     }
                 }
             }
@@ -184,10 +188,21 @@ macro_rules! frontier_lifecycle_tests {
                     Ok(())
                 }
 
+                fn load_frontier_trials(
+                    &self,
+                    _run_id: &FrontierRunId,
+                ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+                    self.bulk_trial_loads
+                        .set(self.bulk_trial_loads.get().saturating_add(1));
+                    Ok(self.durable.borrow().trials.clone())
+                }
+
                 fn inspect_frontier(
                     &self,
                     selector: &$crate::model::FrontierTrialSelector,
                 ) -> Result<FrontierInspection, SkillEvalError> {
+                    self.selector_inspections
+                        .set(self.selector_inspections.get().saturating_add(1));
                     self.durable
                         .borrow()
                         .trials
@@ -536,6 +551,32 @@ macro_rules! frontier_lifecycle_tests {
                 assert!(state.models[0].is_exhausted);
                 assert_eq!(runtime.execute_calls, 4);
                 assert_eq!(runtime.durable.borrow().trials.len(), 3);
+            }
+
+            #[test]
+            fn resume_bulk_loads_durable_trials_once() {
+                let mut runtime = FakeRuntime::new();
+                runtime.verifier_error = Some(SkillEvalError::Process {
+                    program: "local-verifier".to_owned(),
+                    exit_code: Some(1),
+                    standard_error: "first".to_owned(),
+                });
+                let mut progress = Progress {
+                    durable: runtime.durable.clone(),
+                    states: Vec::new(),
+                };
+                let paused =
+                    start_frontier(Path::new("frontier-plan.json"), &mut runtime, &mut progress)
+                        .unwrap();
+                assert_eq!(runtime.durable.borrow().trials.len(), 3);
+
+                let resumed =
+                    resume_frontier(&paused.configuration.run_id, &mut runtime, &mut progress)
+                        .unwrap();
+
+                assert_eq!(resumed.status, FrontierRunStatus::AwaitingDecision);
+                assert_eq!(runtime.bulk_trial_loads.get(), 1);
+                assert_eq!(runtime.selector_inspections.get(), 0);
             }
 
             #[test]

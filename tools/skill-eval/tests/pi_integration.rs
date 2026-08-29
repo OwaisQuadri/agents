@@ -366,6 +366,13 @@ impl FrontierRuntime for LifecycleRuntime {
         Ok(())
     }
 
+    fn load_frontier_trials(
+        &self,
+        _run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        Ok(self.trials.borrow().clone())
+    }
+
     fn inspect_frontier(
         &self,
         selector: &model::FrontierTrialSelector,

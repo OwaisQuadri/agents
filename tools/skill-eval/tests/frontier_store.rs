@@ -248,6 +248,58 @@ fn trial_replay_is_idempotent_and_conflict_is_rejected() {
 }
 
 #[test]
+fn bulk_load_returns_each_valid_trial_once_and_rejects_duplicate_identity() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let state = fixture.state();
+    store.create_frontier(&state).unwrap();
+    let trial = fixture.trial();
+    store
+        .save_frontier_trial(&state.configuration.run_id, &trial)
+        .unwrap();
+
+    assert_eq!(
+        store
+            .load_frontier_trials(&state.configuration.run_id)
+            .unwrap(),
+        vec![trial.clone()]
+    );
+
+    let trials = fixture
+        .root
+        .join(".map/skill-eval/frontier")
+        .join(&state.configuration.run_id.0)
+        .join("trials");
+    let current = fs::read_dir(&trials)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let legacy_identity = serde_json::to_vec(&(
+        &trial.model.provider,
+        &trial.model.model,
+        trial.model.tier,
+        &trial.model.thinking,
+        &trial.key.artifact,
+        &trial.key.case,
+        trial.key.attempt,
+    ))
+    .unwrap();
+    fs::copy(
+        current,
+        trials.join(format!("{}.json", digest(&legacy_identity))),
+    )
+    .unwrap();
+
+    assert!(
+        store
+            .load_frontier_trials(&state.configuration.run_id)
+            .is_err()
+    );
+}
+
+#[test]
 fn legacy_trial_filename_loads_and_replays_without_migration() {
     let fixture = Fixture::new();
     let mut store = FileFrontierStore::new(&fixture.root).unwrap();

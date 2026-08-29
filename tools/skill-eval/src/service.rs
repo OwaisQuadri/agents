@@ -6862,7 +6862,7 @@ pub(crate) fn resume_frontier(
     progress: &mut dyn FrontierProgressSink,
 ) -> Result<FrontierRunState, SkillEvalError> {
     runtime.lock_frontier_run(run_id)?;
-    let mut state = runtime.load_frontier(run_id)?;
+    let (mut state, stored_trials) = runtime.load_frontier_with_trials(run_id)?;
     if state.configuration.run_id != *run_id {
         return Err(frontier_lifecycle_drift("run identity"));
     }
@@ -6885,7 +6885,7 @@ pub(crate) fn resume_frontier(
         return Err(frontier_lifecycle_drift("frozen plan or plan digest"));
     }
     validate_frontier_execution_inputs(&plan, &suite, runtime)?;
-    let trials = load_frontier_trials(&state, &suite, runtime)?;
+    let trials = validate_loaded_frontier_trials(&state, &suite, runtime, stored_trials)?;
     let stored = state.clone();
     reconcile_frontier_evidence(&mut state, &suite, &trials)?;
     validate_frontier_saved_authority(&state, &plan, &suite, &trials)?;
@@ -7416,48 +7416,36 @@ fn load_frontier_trials<R: FrontierTrialRuntime + ?Sized>(
     suite: &FrontierSuite,
     runtime: &R,
 ) -> Result<Vec<TrialRecord>, SkillEvalError> {
-    let mut trials = Vec::new();
-    for entrant in &state.configuration.plan.entrants {
-        for thinking in &entrant.thinking_levels {
-            for tier in frontier_execution_tiers(entrant.entry_tier) {
-                let tier_suite = suite
-                    .tiers
-                    .get(&tier)
-                    .ok_or_else(|| frontier_lifecycle_drift("suite tier"))?;
-                for reference in &tier_suite.cases {
-                    let artifact = reference
-                        .artifact_path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .ok_or_else(|| frontier_lifecycle_drift("artifact identity"))?;
-                    for attempt in
-                        1..=u16::from(state.configuration.plan.policy.maximum_trials_per_case)
-                    {
-                        let selector = FrontierTrialSelector {
-                            run_id: state.configuration.run_id.clone(),
-                            provider: entrant.provider.clone(),
-                            model: entrant.model.clone(),
-                            tier,
-                            thinking: thinking.clone(),
-                            artifact: ArtifactName(artifact.to_owned()),
-                            case: reference.case.clone(),
-                            attempt,
-                        };
-                        match runtime.inspect_frontier_trial(&selector) {
-                            Ok(FrontierInspection::Trial { trial }) => {
-                                validate_loaded_frontier_trial(&selector, &trial, suite, runtime)?;
-                                trials.push(trial);
-                            }
-                            Ok(FrontierInspection::Infrastructure { .. })
-                            | Err(SkillEvalError::NotFound(_)) => {}
-                            Err(error) => return Err(error),
-                        }
-                    }
-                }
-            }
-        }
+    let trials = runtime.load_frontier_trial_records(&state.configuration.run_id)?;
+    validate_loaded_frontier_trials(state, suite, runtime, trials)
+}
+
+fn validate_loaded_frontier_trials<R: FrontierTrialRuntime + ?Sized>(
+    state: &FrontierRunState,
+    suite: &FrontierSuite,
+    runtime: &R,
+    mut trials: Vec<TrialRecord>,
+) -> Result<Vec<TrialRecord>, SkillEvalError> {
+    for trial in &trials {
+        let selector = FrontierTrialSelector {
+            run_id: state.configuration.run_id.clone(),
+            provider: trial.model.provider.clone(),
+            model: trial.model.model.clone(),
+            tier: trial.model.tier,
+            thinking: trial.model.thinking.clone(),
+            artifact: trial.key.artifact.clone(),
+            case: trial.key.case.clone(),
+            attempt: trial.key.attempt,
+        };
+        validate_loaded_frontier_trial(&selector, trial, suite, runtime)?;
     }
     trials.sort_by(frontier_trial_order);
+    if trials
+        .windows(2)
+        .any(|pair| frontier_trial_order(&pair[0], &pair[1]).is_eq())
+    {
+        return Err(frontier_lifecycle_drift("duplicate stored trial identity"));
+    }
     Ok(trials)
 }
 
@@ -8230,6 +8218,11 @@ fn frontier_decision_drift(identity: &str) -> SkillEvalError {
 }
 
 pub(crate) trait FrontierTrialRuntime: ArtifactSource + HarnessResolver {
+    fn load_frontier_trial_records(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError>;
+
     fn inspect_frontier_trial(
         &self,
         selector: &FrontierTrialSelector,
@@ -8237,6 +8230,13 @@ pub(crate) trait FrontierTrialRuntime: ArtifactSource + HarnessResolver {
 }
 
 impl<T: FrontierRuntime + ?Sized> FrontierTrialRuntime for T {
+    fn load_frontier_trial_records(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        FrontierRuntime::load_frontier_trials(self, run_id)
+    }
+
     fn inspect_frontier_trial(
         &self,
         selector: &FrontierTrialSelector,

@@ -370,6 +370,39 @@ pub(crate) trait FrontierRuntime: QualificationRuntime {
     /// Returns an error when the run is absent, malformed, inconsistent, or unsafe.
     fn load_frontier(&self, run_id: &FrontierRunId) -> Result<FrontierRunState, SkillEvalError>;
 
+    /// Loads every validated durable trial for one frontier run in one store pass.
+    ///
+    /// The input is an exact run identity. The output is its complete durable trial set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any stored trial is malformed, duplicated, unsafe, or inconsistent.
+    fn load_frontier_trials(
+        &self,
+        _run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        Err(SkillEvalError::InvalidConfiguration(
+            "frontier runtime does not support bulk trial loading".to_owned(),
+        ))
+    }
+
+    /// Loads one frontier snapshot and all of its durable trials.
+    ///
+    /// The input is an exact run identity. The output is one consistent state and trial set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state or any stored trial is malformed or inconsistent.
+    fn load_frontier_with_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<(FrontierRunState, Vec<TrialRecord>), SkillEvalError> {
+        Ok((
+            self.load_frontier(run_id)?,
+            self.load_frontier_trials(run_id)?,
+        ))
+    }
+
     /// Atomically replaces one durable frontier snapshot.
     ///
     /// The input is a validated successor state. The method produces no value.

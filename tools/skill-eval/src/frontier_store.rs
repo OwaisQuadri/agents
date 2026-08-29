@@ -132,6 +132,25 @@ impl FileFrontierStore {
         self.read_state(run_id).map(|(state, _)| state)
     }
 
+    pub(crate) fn load_frontier_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        self.load_frontier_with_trials(run_id)
+            .map(|(_, trials)| trials)
+    }
+
+    pub(crate) fn load_frontier_with_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<(FrontierRunState, Vec<TrialRecord>), SkillEvalError> {
+        if self.transaction_path().exists() {
+            return Err(invalid("frontier baseline transaction requires recovery"));
+        }
+        self.read_state_with_trials(run_id)
+            .map(|(state, _, trials)| (state, trials))
+    }
+
     pub(crate) fn save_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
         self.recover_transaction()?;
         validate_state(&self.repository_root, state, false)?;
@@ -201,22 +220,9 @@ impl FileFrontierStore {
         selector: &FrontierTrialSelector,
     ) -> Result<FrontierInspection, SkillEvalError> {
         validate_selector(selector)?;
-        let (state, _) = self.read_state(&selector.run_id)?;
+        let (state, _, trials) = self.read_state_with_trials(&selector.run_id)?;
         let mut matched_trial = None;
-        let trials = self
-            .existing_run_directory(&selector.run_id)?
-            .join(TRIALS_DIRECTORY);
-        for entry in fs::read_dir(&trials).map_err(|error| io_error(&trials, error))? {
-            let entry = entry.map_err(|error| io_error(&trials, error))?;
-            if !entry
-                .file_type()
-                .map_err(|error| io_error(&entry.path(), error))?
-                .is_file()
-            {
-                return Err(invalid("frontier trial storage contains a non-file entry"));
-            }
-            let trial: TrialRecord = read_strict_json(&entry.path(), "frontier trial")?;
-            validate_trial(&self.repository_root, &state, &trial)?;
+        for trial in trials {
             if trial_matches(&trial, selector) {
                 if matched_trial.is_some() {
                     return Err(invalid("frontier inspection selector is ambiguous"));
@@ -521,6 +527,14 @@ impl FileFrontierStore {
         &self,
         run_id: &FrontierRunId,
     ) -> Result<(FrontierRunState, Vec<u8>), SkillEvalError> {
+        self.read_state_with_trials(run_id)
+            .map(|(state, bytes, _)| (state, bytes))
+    }
+
+    fn read_state_with_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<(FrontierRunState, Vec<u8>, Vec<TrialRecord>), SkillEvalError> {
         let path = self.state_path(run_id)?;
         let bytes = fs::read(&path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
@@ -534,15 +548,19 @@ impl FileFrontierStore {
             return Err(invalid("frontier snapshot identity differs from its path"));
         }
         validate_state(&self.repository_root, &state, false)?;
-        self.validate_stored_trials(&state)?;
-        Ok((state, bytes))
+        let trials = self.read_stored_trials(&state)?;
+        Ok((state, bytes, trials))
     }
 
-    fn validate_stored_trials(&self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
+    fn read_stored_trials(
+        &self,
+        state: &FrontierRunState,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
         let trials = self
             .existing_run_directory(&state.configuration.run_id)?
             .join(TRIALS_DIRECTORY);
         let mut stored = Vec::new();
+        let mut identities = BTreeSet::new();
         for entry in fs::read_dir(&trials).map_err(|error| io_error(&trials, error))? {
             let entry = entry.map_err(|error| io_error(&trials, error))?;
             if !entry
@@ -554,14 +572,19 @@ impl FileFrontierStore {
             }
             let trial: TrialRecord = read_strict_json(&entry.path(), "frontier trial")?;
             validate_trial(&self.repository_root, state, &trial)?;
+            let identity = trial_identity_digest(&trial)?;
             let file_name = entry.file_name();
-            let current =
-                std::ffi::OsString::from(format!("{}.json", trial_identity_digest(&trial)?));
+            let current = std::ffi::OsString::from(format!("{identity}.json"));
             let legacy =
                 std::ffi::OsString::from(format!("{}.json", legacy_trial_identity_digest(&trial)?));
             if file_name != current && file_name != legacy {
                 return Err(invalid(
                     "frontier trial path differs from its exact identity",
+                ));
+            }
+            if !identities.insert(identity) {
+                return Err(invalid(
+                    "frontier trial storage contains a duplicate identity",
                 ));
             }
             stored.push(trial);
@@ -575,7 +598,7 @@ impl FileFrontierStore {
                 return Err(invalid("frontier cell advances beyond its durable trials"));
             }
         }
-        Ok(())
+        Ok(stored)
     }
 
     fn run_directory(&self, run_id: &FrontierRunId) -> Result<PathBuf, SkillEvalError> {

@@ -2676,6 +2676,13 @@ impl Clock for FileApplyRuntime {
 }
 
 impl FrontierTrialRuntime for FileApplyRuntime {
+    fn load_frontier_trial_records(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        self.frontier_store.load_frontier_trials(run_id)
+    }
+
     fn inspect_frontier_trial(
         &self,
         selector: &FrontierTrialSelector,
@@ -3438,6 +3445,20 @@ impl FrontierRuntime for ConcreteRuntime {
 
     fn load_frontier(&self, run_id: &FrontierRunId) -> Result<FrontierRunState, SkillEvalError> {
         self.frontier_store.load_frontier(run_id)
+    }
+
+    fn load_frontier_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<Vec<TrialRecord>, SkillEvalError> {
+        self.frontier_store.load_frontier_trials(run_id)
+    }
+
+    fn load_frontier_with_trials(
+        &self,
+        run_id: &FrontierRunId,
+    ) -> Result<(FrontierRunState, Vec<TrialRecord>), SkillEvalError> {
+        self.frontier_store.load_frontier_with_trials(run_id)
     }
 
     fn save_frontier(&mut self, state: &FrontierRunState) -> Result<(), SkillEvalError> {
