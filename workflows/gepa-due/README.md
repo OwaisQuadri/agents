@@ -51,12 +51,32 @@ untracked NON-ignored files. Without the copy, the session has no real evidence 
 read and nothing stops it from confabulating plausible-sounding numbers instead — a
 real failure mode this mechanism hit and had to fix (see deferred list below).
 
-The seeded session decides what to do — run a real GEPA tuning pass, or just record a
-short "no mutation, here is why" note — but it never ships a mutation without going
-through the GEPA loop's own Decide gate. This is a nudge, not an unattended
-prompt-editor. Whatever it concludes, it's told to commit a dated `TUNING.md` entry
-before finishing; the trigger checks for exactly that commit afterward to decide
-whether to rotate the reviewed evidence (see "rotation" below).
+The kickoff differs by WHY the artifact is due:
+
+- **Zero votes on file** (usage_count alone crossed the threshold): every real run
+  of this shape (2026-08-29) concluded "no mutation" from a long essay that just
+  restated the incumbent's own contract — there was no judged critique to Reflect
+  against. So this kickoff skips straight past a Reflect essay: it dispatches
+  `JUDGE_SAMPLE_SIZE` (default 5, `GEPA_DUE_JUDGE_SAMPLE` to override) SEPARATE
+  fresh-context sub-agents — real blind judging per SKILL.md's judge protocol, not
+  the escalated session grading its own read — against that many of the artifact's
+  most recent usage lines, submitting real votes via `submit_vote.py`. Reflect only
+  runs after that, with real judge signal to work from. If it's still "no mutation"
+  (likely, off 5 fresh votes), the record is ONE short paragraph, not a re-derived
+  taxonomy.
+- **Real vote signal already exists** (vote_count crossed the threshold, or both
+  did): the session runs a normal Reflect pass and decides — a real tuning pass, or a
+  proportionate note. Only genuinely new evidence earns a long writeup; "nothing new"
+  still gets one paragraph.
+
+Either way, it never ships a mutation without going through the GEPA loop's own
+Decide gate — this is a nudge, not an unattended prompt-editor. Whatever it
+concludes, it's told to commit a dated `TUNING.md` entry, push its branch, and open a
+PR (never merge — that stays a human Decide call) before finishing. The trigger
+checks afterward that the branch was actually pushed and a PR actually opened,
+WARNing loudly if either didn't happen, and checks for the TUNING.md commit
+specifically to decide whether to rotate the reviewed evidence (see "rotation"
+below).
 
 ## rotation (stops re-firing on evidence already reviewed)
 
@@ -147,3 +167,16 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
      same relationship git itself uses to resolve any abbreviated hash. Surfaced
      `agents/debugger` (28 real lines) as newly, correctly due — it had been
      silently undercounted below threshold by the same bug the whole time.
+- 2026-08-29, same day, third live pass. Real data across two more live runs (one
+  each on `agents/anchor-verifier` and `agents/debugger`, both usage-only zero-vote
+  triggers) confirmed a pattern worth fixing rather than a one-off: with no votes on
+  file, Reflect has nothing to act on and every real run just wrote a long essay
+  re-deriving the same "no mutation" conclusion from usage lines alone. Fixed by
+  splitting the kickoff on trigger reason — a zero-vote fire now dispatches real
+  fresh-context judges against a usage-line sample FIRST (see "what happens when it
+  fires" above) instead of asking for prose about lines nobody has graded yet.
+  Separately: sessions were never actually landing their work — they committed
+  locally but never pushed a branch or opened a PR, so every real PR in this history
+  (#159–#165) had to be pushed and opened by hand afterward. Fixed: the kickoff now
+  instructs push + `gh pr create` before finishing (never merge), and the trigger
+  verifies both happened, WARNing loudly if not.
