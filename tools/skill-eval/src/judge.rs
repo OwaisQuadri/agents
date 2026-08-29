@@ -753,7 +753,12 @@ fn write_sanitized_transcript(
     packet_bytes: &mut u64,
 ) -> Result<(), SkillEvalError> {
     let metadata = fs::metadata(source).map_err(|error| io_error(source, error))?;
-    reserve_packet_bytes(packet_bytes, metadata.len(), source)?;
+    if metadata.len() > MAX_PI_EVENT_BYTES as u64 {
+        return Err(invalid_configuration(format!(
+            "candidate transcript {} exceeds the size limit",
+            source.display()
+        )));
+    }
     let text = fs::read_to_string(source).map_err(|error| io_error(source, error))?;
     let mut output = String::new();
     for (index, line) in text.lines().enumerate() {
@@ -765,6 +770,9 @@ fn write_sanitized_transcript(
                 line: (index + 1) as u64,
                 message: format!("candidate transcript is malformed: {error}"),
             })?;
+        if event.get("type").and_then(Value::as_str) == Some("tool_execution_update") {
+            continue;
+        }
         remove_identity_fields(&mut event, candidate);
         output.push_str(&serde_json::to_string(&event).map_err(|error| {
             invalid_configuration(format!(
@@ -773,6 +781,7 @@ fn write_sanitized_transcript(
         })?);
         output.push('\n');
     }
+    reserve_packet_bytes(packet_bytes, output.len() as u64, source)?;
     write_private_file(destination, output.as_bytes())
 }
 
@@ -1419,8 +1428,9 @@ mod tests {
     use crate::ports::Judge;
 
     use super::{
-        JUDGE_PACKET_DIRECTORY, JUDGE_TRANSCRIPT_NAME, LOCKED_READ_EXTENSION_NAME, PiJudge,
-        Process, ProcessOutput, ProcessRequest, parse_verdict, redact_candidate_text,
+        JUDGE_PACKET_DIRECTORY, JUDGE_TRANSCRIPT_NAME, LOCKED_READ_EXTENSION_NAME,
+        MAX_JUDGE_FILE_BYTES, PiJudge, Process, ProcessOutput, ProcessRequest, parse_verdict,
+        redact_candidate_text,
     };
 
     static NEXT_INPUT: AtomicU64 = AtomicU64::new(0);
@@ -1598,6 +1608,40 @@ mod tests {
                 .join(LOCKED_READ_EXTENSION_NAME)
                 .to_string_lossy()
         );
+    }
+
+    #[test]
+    fn judge_drops_streaming_tool_updates_before_enforcing_packet_size() {
+        let input = judge_input();
+        let update = serde_json::json!({
+            "type": "tool_execution_update",
+            "content": "x".repeat(1024),
+        });
+        let mut transcript = String::new();
+        for _ in 0..5_100 {
+            transcript.push_str(&serde_json::to_string(&update).unwrap());
+            transcript.push('\n');
+        }
+        transcript.push_str(
+            "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"candidate response\"}]}}\n",
+        );
+        assert!(transcript.len() as u64 > MAX_JUDGE_FILE_BYTES);
+        fs::write(&input.candidate.transcript_path, transcript).unwrap();
+        let output = submitted_verdict_event_stream();
+        let mut judge = PiJudge::with_process(FakeProcess::returning(&output));
+
+        let result = judge.grade(&judge_model(), &input).unwrap();
+
+        assert_eq!(result.verdict.score, 9);
+        let sanitized = fs::read_to_string(
+            judge.process.requests[0]
+                .working_directory
+                .join("transcript.jsonl"),
+        )
+        .unwrap();
+        assert!(!sanitized.contains("tool_execution_update"));
+        assert!(sanitized.contains("candidate response"));
+        assert!(sanitized.len() as u64 <= MAX_JUDGE_FILE_BYTES);
     }
 
     #[test]
