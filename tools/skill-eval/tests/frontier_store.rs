@@ -63,6 +63,28 @@ fn legacy_infrastructure_event_without_charge_deserializes_as_zero() {
 }
 
 #[test]
+fn infrastructure_charge_must_match_the_frozen_reservation() {
+    let fixture = Fixture::new();
+    let mut store = FileFrontierStore::new(&fixture.root).unwrap();
+    let state = fixture.state();
+    store.create_frontier(&state).unwrap();
+
+    let mut charged = state;
+    charged.status = FrontierRunStatus::Running;
+    let mut event = fixture.infrastructure_event(1);
+    event.charged_millionths_of_dollar = charged
+        .configuration
+        .plan
+        .policy
+        .maximum_trial_cost_millionths_of_dollar
+        + 1;
+    charged.spent_millionths_of_dollar = event.charged_millionths_of_dollar;
+    charged.infrastructure_events.push(event);
+
+    assert!(store.save_frontier(&charged).is_err());
+}
+
+#[test]
 fn second_run_writer_cannot_acquire_the_held_lock() {
     let fixture = Fixture::new();
     let mut store = FileFrontierStore::new(&fixture.root).unwrap();

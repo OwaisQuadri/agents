@@ -1084,6 +1084,19 @@ fn validate_state(
             return Err(invalid("frontier terminal cell has no evidence"));
         }
     }
+    if state.infrastructure_events.iter().any(|event| {
+        event.charged_millionths_of_dollar != 0
+            && event.charged_millionths_of_dollar
+                != state
+                    .configuration
+                    .plan
+                    .policy
+                    .maximum_trial_cost_millionths_of_dollar
+    }) {
+        return Err(invalid(
+            "frontier infrastructure charge differs from its frozen reservation",
+        ));
+    }
     if state.spent_millionths_of_dollar
         > state
             .configuration
