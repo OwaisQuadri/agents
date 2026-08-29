@@ -22,6 +22,7 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const ANTHROPIC_AUTH_REVISION: &str = "c6605e2db9ad3e783c3fe8b23d269848e0981d26";
 const MAX_PI_EVENT_BYTES: usize = 64 * 1024 * 1024;
 const EFFECTIVE_IDENTITY_EVENT: &str = "skill-eval-effective-identity";
+const DISABLE_MODEL_FALLBACK_ENV: &str = "PI_DISABLE_MODEL_FALLBACK";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ProcessRequest {
@@ -58,6 +59,7 @@ impl Process for SystemProcess {
                     .parent()
                     .unwrap_or(&request.working_directory),
             )
+            .env(DISABLE_MODEL_FALLBACK_ENV, "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2182,6 +2184,25 @@ mod tests {
             SkillEvalError::Io { path, .. } if path == missing_root
         ));
         assert!(missing_root_runner.process.requests.is_empty());
+    }
+
+    #[test]
+    fn system_process_disables_model_fallbacks() {
+        let directory = TestDirectory::new("model-fallback");
+        let output = SystemProcess
+            .run(&ProcessRequest {
+                program: "/bin/sh".to_owned(),
+                arguments: vec![
+                    "-c".to_owned(),
+                    "printf %s \"$PI_DISABLE_MODEL_FALLBACK\"".to_owned(),
+                ],
+                working_directory: directory.path().to_owned(),
+                timeout: Some(Duration::from_secs(5)),
+            })
+            .unwrap();
+
+        assert_eq!(output.exit_code, Some(0));
+        assert_eq!(output.standard_output, b"1");
     }
 
     #[test]

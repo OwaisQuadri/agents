@@ -2878,7 +2878,7 @@ fn frontier_harness_identity(
     }
     let policy = serde_json::to_vec(&(
         execution,
-        "candidate uses every tool and extension discovered by Pi",
+        "candidate uses every tool and extension discovered by Pi with model fallback disabled",
         candidate_environment_manifest_digest,
     ))
     .map_err(|error| {

@@ -3,13 +3,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import {
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import usageLimitContinueExtension, {
 	computeResetPlan,
 	detectUsageLimitSignal,
 	earliestAvailable,
 	fallbackWindowResetMs,
 	findTierFallback,
 	isLocalModel,
+	isModelFallbackDisabled,
 	parseResetFromHeaders,
 	parseResetFromText,
 	scheduleResume,
@@ -174,6 +176,48 @@ test("findTierFallback: a model outside the tier file has no fallback, so the re
 	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-b", "medium"), null);
 	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "ollama", "llama-4"), null);
 	assert.equal(findTierFallback({}, "provider-a", "large"), null);
+});
+
+test("isModelFallbackDisabled: only the exact fixed-model signal disables fallback", () => {
+	assert.equal(isModelFallbackDisabled({ PI_DISABLE_MODEL_FALLBACK: "1" }), true);
+	assert.equal(isModelFallbackDisabled({ PI_DISABLE_MODEL_FALLBACK: "0" }), false);
+	assert.equal(isModelFallbackDisabled({}), false);
+});
+
+test("fixed-model processes leave usage-limit failures unchanged", async () => {
+	type MessageEndHandler = (
+		event: { message: { role: string; stopReason: string; errorMessage: string } },
+		context: object,
+	) => Promise<void>;
+	let messageEnd: MessageEndHandler | undefined;
+	const pi = {
+		on(event: string, handler: unknown): void {
+			if (event === "message_end") messageEnd = handler as MessageEndHandler;
+		},
+		registerCommand(): void {},
+	} as unknown as ExtensionAPI;
+	await usageLimitContinueExtension(pi);
+	assert.ok(messageEnd);
+
+	const previous = process.env.PI_DISABLE_MODEL_FALLBACK;
+	process.env.PI_DISABLE_MODEL_FALLBACK = "1";
+	try {
+		const staleContext = new Proxy(
+			{},
+			{
+				get(): never {
+					throw new Error("fixed-model handler read the context");
+				},
+			},
+		);
+		await messageEnd(
+			{ message: { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" } },
+			staleContext,
+		);
+	} finally {
+		if (previous === undefined) delete process.env.PI_DISABLE_MODEL_FALLBACK;
+		else process.env.PI_DISABLE_MODEL_FALLBACK = previous;
+	}
 });
 
 test("earliestAvailable: the resume waits on the model that returns first, not the one that failed last", () => {

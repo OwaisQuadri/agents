@@ -60,6 +60,7 @@ function settingsFile(): string {
 
 const RESUME_PROMPT = "continue";
 const MAX_SCHEDULABLE_WAIT_MS = 8 * 24 * 60 * 60 * 1000;
+const DISABLE_MODEL_FALLBACK_ENV = "PI_DISABLE_MODEL_FALLBACK";
 
 const LOCAL_PROVIDER_PATTERN = /ollama|lmstudio|llama\.cpp|^local$/i;
 const LOCAL_HOST_PATTERN = /localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]/i;
@@ -233,6 +234,15 @@ export function findTierFallback(fallbacks: FallbackMap, provider: string, model
 }
 
 /**
+ * Reports whether this process forbids automatic model fallback.
+ * @param env Environment variables that can carry the fixed-model signal.
+ * @returns True only when the fixed-model signal is set to `1`.
+ */
+export function isModelFallbackDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env[DISABLE_MODEL_FALLBACK_ENV] === "1";
+}
+
+/**
  * Picks the abandoned model that comes back first, so a resume waits the shortest time.
  * @param resets Abandoned models this session, keyed by `provider/id`, valued by reset epoch ms.
  * @returns The soonest-returning model and its reset, or null when nothing was abandoned.
@@ -362,6 +372,10 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 	}
 
 	const lastResponse = lastProviderResponseByContext.get(ctx) ?? { status: 0, headers: {} };
+	lastProviderResponseByContext.delete(ctx);
+	if (isModelFallbackDisabled()) {
+		return;
+	}
 	const plan = computeResetPlan({
 		status: lastResponse.status,
 		headers: lastResponse.headers,
@@ -369,7 +383,6 @@ async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionCon
 		model: ctx.model,
 		nowMs: Date.now(),
 	});
-	lastProviderResponseByContext.delete(ctx);
 	if (!plan?.isDetected) {
 		return;
 	}
