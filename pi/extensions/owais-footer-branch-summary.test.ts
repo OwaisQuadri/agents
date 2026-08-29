@@ -41,9 +41,9 @@ function makeExec(overrides: {
 	fmResponse?: string;
 	headSha?: string;
 } = {}) {
-	const commits = overrides.commits ?? ["abc1230 add branch summary segment", "def4560 fix footer alignment"];
+	let commits = overrides.commits ?? ["abc1230 add branch summary segment", "def4560 fix footer alignment"];
+	let fmResponse = overrides.fmResponse ?? "Branch summary widget";
 	const fmAvailable = overrides.fmAvailable ?? true;
-	const fmResponse = overrides.fmResponse ?? "Branch summary widget";
 	const headSha = overrides.headSha ?? HEAD_SHA;
 	const calls: Array<{ command: string; args: string[] }> = [];
 
@@ -87,7 +87,12 @@ function makeExec(overrides: {
 		throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
 	}
 
-	return { exec, calls };
+	return {
+		exec,
+		calls,
+		setCommits: (next: string[]) => { commits = next; },
+		setFmResponse: (next: string) => { fmResponse = next; },
+	};
 }
 
 function makeContext(exec: (command: string, args: string[]) => Promise<{ code: number; stdout: string }>) {
@@ -121,14 +126,29 @@ async function settle(times = 6): Promise<void> {
 	for (let index = 0; index < times; index++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-test("pure: shouldRecomputeBranchSummary", async () => {
+test("pure: computeBranchSummaryRelevance is symmetric and 0 with no incumbent", async () => {
 	const extensions = await loadFooter();
 	try {
-		const { shouldRecomputeBranchSummary } = extensions.footer;
-		assert.equal(shouldRecomputeBranchSummary(undefined, "sha1"), true);
-		assert.equal(shouldRecomputeBranchSummary("sha1", "sha1"), false);
-		assert.equal(shouldRecomputeBranchSummary("sha1", "sha2"), true);
-		assert.equal(shouldRecomputeBranchSummary("sha1", undefined), false);
+		const { computeBranchSummaryRelevance } = extensions.footer;
+		assert.equal(computeBranchSummaryRelevance(undefined, 4), 0, "no incumbent means no relevance to preserve");
+		assert.equal(computeBranchSummaryRelevance(4, 4), 1, "commit count unchanged");
+		assert.equal(computeBranchSummaryRelevance(4, 8), 0.5, "growth erodes relevance");
+		assert.equal(computeBranchSummaryRelevance(8, 4), 0.5, "shrinkage erodes relevance the same way");
+		assert.equal(computeBranchSummaryRelevance(4, 0), 0, "nothing ahead means no relevance");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: isBranchSummaryChallengerBetter rejects empty or identical challengers", async () => {
+	const extensions = await loadFooter();
+	try {
+		const { isBranchSummaryChallengerBetter } = extensions.footer;
+		assert.equal(isBranchSummaryChallengerBetter(undefined, "New headline"), true, "no incumbent — anything non-empty wins");
+		assert.equal(isBranchSummaryChallengerBetter("Old headline", ""), false, "empty challenger never wins");
+		assert.equal(isBranchSummaryChallengerBetter("Old headline", "  "), false, "whitespace-only challenger never wins");
+		assert.equal(isBranchSummaryChallengerBetter("Old headline", "old headline"), false, "case-insensitive same text is not better");
+		assert.equal(isBranchSummaryChallengerBetter("Old headline", "New headline"), true, "a different non-empty challenger wins");
 	} finally {
 		await extensions.dispose();
 	}
@@ -224,7 +244,7 @@ test("segment stays absent before the first successful compute (no commits ahead
 	}
 });
 
-test("HEAD-unchanged guard skips a second fm respond call on a repeat agent_settled", async () => {
+test("relevance guard skips a second fm respond call when the commit count hasn't moved enough", async () => {
 	const extensions = await loadFooter();
 	const { exec, calls } = makeExec();
 	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
@@ -238,7 +258,63 @@ test("HEAD-unchanged guard skips a second fm respond call on a repeat agent_sett
 		await handlers.get("agent_settled")?.({}, ctx);
 		await settle();
 		const respondCallsAfterSecond = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
-		assert.equal(respondCallsAfterSecond, 1, "HEAD did not move, so no second fm respond call should fire");
+		assert.equal(respondCallsAfterSecond, 1, "commit count did not move, so no second fm respond call should fire");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("regenerates once commit count crosses the relevance threshold and adopts a different challenger", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls, setCommits, setFmResponse } = makeExec({ commits: ["c1 one", "c2 two"] });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		assert.match(getWidget()?.render(160)[1] ?? "", /Branch summary widget/);
+
+		// 2 commits -> 6 commits is relevance 2/6 ≈ 0.33, below the 0.5 threshold, so this should regenerate.
+		setCommits(["c1 one", "c2 two", "c3 three", "c4 four", "c5 five", "c6 six"]);
+		setFmResponse("Sweeping rewrite");
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.match(line, /Sweeping rewrite/);
+		assert.doesNotMatch(line, /Branch summary widget/);
+		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCalls, 2);
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("keeps the incumbent headline visible and unchanged when a regenerated challenger is not better", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls, setCommits } = makeExec({ commits: ["c1 one", "c2 two"], fmResponse: "Branch summary widget" });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		assert.match(getWidget()?.render(160)[1] ?? "", /Branch summary widget/);
+
+		// commit count crosses the threshold, but fm returns the same text back — not a better challenger.
+		setCommits(["c1 one", "c2 two", "c3 three", "c4 four", "c5 five", "c6 six"]);
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		assert.match(getWidget()?.render(160)[1] ?? "", /Branch summary widget/, "identical challenger never blanks or changes the incumbent");
+
+		// the commit-count anchor still advanced from the identical-challenger round, so a third settle
+		// with the same commit count should not fire fm again.
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCalls, 2, "the anchor advanced even though the visible text did not change");
 	} finally {
 		disposeAll();
 		await handlers.get("session_shutdown")?.({}, ctx);

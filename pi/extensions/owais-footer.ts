@@ -232,8 +232,19 @@ function contextColor(percent: number): string {
 	return "#f28b9a";
 }
 
-export function shouldRecomputeBranchSummary(lastSha: string | undefined, currentSha: string | undefined): boolean {
-	return currentSha !== undefined && currentSha !== lastSha;
+export const BRANCH_SUMMARY_RELEVANCE_THRESHOLD = 0.5;
+
+// symmetric so growth and shrinkage both erode relevance; 1 means the commit count hasn't moved
+// since the last generation, 0 means there is no incumbent (or nothing ahead) at all.
+export function computeBranchSummaryRelevance(incumbentCommitCount: number | undefined, currentCommitCount: number): number {
+	if (incumbentCommitCount === undefined || incumbentCommitCount === 0 || currentCommitCount === 0) return 0;
+	return Math.min(incumbentCommitCount, currentCommitCount) / Math.max(incumbentCommitCount, currentCommitCount);
+}
+
+export function isBranchSummaryChallengerBetter(incumbent: string | undefined, challenger: string): boolean {
+	if (challenger.trim() === "") return false;
+	if (incumbent === undefined) return true;
+	return challenger.trim().toLowerCase() !== incumbent.trim().toLowerCase();
 }
 
 export function buildBranchSummaryPrompt(subjects: string[]): string {
@@ -290,7 +301,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let refreshGeneration = 0;
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
 	let branchSummary: string | undefined;
-	let branchSummarySha: string | undefined;
+	let branchSummaryCommitCount: number | undefined;
 	let isFoundationModelsAvailableCache: boolean | undefined;
 	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
 
@@ -299,13 +310,12 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		return result.code === 0 && /github\.com[:/]/i.test(result.stdout);
 	}
 
+	// runs on every agent_settled (and on branch establishment/change). the incumbent headline stays
+	// on screen for the whole call — nothing is blanked while a challenger generates — and is only
+	// replaced if the challenger is both non-empty and different from the incumbent. the commit-count
+	// anchor advances regardless, so an unchanged incumbent doesn't refire fm on every following turn.
 	async function refreshBranchSummary(cwd: string, generation: number): Promise<void> {
 		try {
-			const headResult = await pi.exec("git", ["rev-parse", "HEAD"], { cwd, timeout: 5_000 });
-			if (generation !== refreshGeneration || headResult.code !== 0) return;
-			const headSha = headResult.stdout.trim();
-			if (!shouldRecomputeBranchSummary(branchSummarySha, headSha)) return;
-
 			const branchPoint = await resolveBranchPointCommit(execForBranchPoint, cwd);
 			if (generation !== refreshGeneration || branchPoint === null) return;
 
@@ -318,6 +328,9 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const subjects = logResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 			if (subjects.length === 0) return;
 
+			const relevance = computeBranchSummaryRelevance(branchSummaryCommitCount, subjects.length);
+			if (relevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD) return;
+
 			if (isFoundationModelsAvailableCache === undefined) {
 				isFoundationModelsAvailableCache = await isFoundationModelsAvailable(pi.exec);
 			}
@@ -325,8 +338,11 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 
 			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
 			if (generation !== refreshGeneration || response === undefined) return;
-			branchSummary = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
-			branchSummarySha = headSha;
+			const challenger = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
+			if (isBranchSummaryChallengerBetter(branchSummary, challenger)) {
+				branchSummary = challenger;
+			}
+			branchSummaryCommitCount = subjects.length;
 		} catch {
 			return;
 		} finally {
@@ -384,12 +400,14 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			if (isBranchChanged || !branch) {
 				pullRequest = undefined;
 				branchSummary = undefined;
-				branchSummarySha = undefined;
+				branchSummaryCommitCount = undefined;
 			}
 			requestRender?.();
 			if (branch) {
 				await refreshPullRequest(cwd, generation);
-				void refreshBranchSummary(cwd, generation);
+				// steady-state recomputation is driven by agent_settled; this call only covers first
+				// population and branch switches, so an idle 15s poll tick doesn't shell out to git/fm.
+				if (isBranchChanged) void refreshBranchSummary(cwd, generation);
 			}
 		} catch {
 			if (generation !== refreshGeneration) return;
