@@ -13,6 +13,11 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - a run without a goal spawns any agent or invents a goal
   - a claim without a source URL fetched that run passing through unflagged (the
     researcher's contract owns this; the sweep must not launder it)
+  - a malformed web-research-summarizer response (fails isValidFindingsBlock) gets
+    accepted as-is, or gets retried by spinning up a fresh dispatch through the
+    gap-check/fill-gap round instead of a same-child `resume` correction (AGNT-0088):
+    handoff-shape policing belongs to the dispatch that produced the bad shape, not to
+    the coverage-retry mechanism reserved for angles nobody covered at all
 
 Topology properties graded on every case, per workflow-author:
 
@@ -25,3 +30,6 @@ Topology properties graded on every case, per workflow-author:
 - codebase dispatches route to Explore, never to web-research-summarizer, and the plan
   node decides their presence per-goal — an empty array for a purely external goal is
   correct, not a defect
+- a malformed web-research-summarizer response gets exactly one same-child `resume`
+  correction before being treated as missing; codebase (Explore) responses are never
+  shape-checked, since Explore has no repo-owned output contract to check against

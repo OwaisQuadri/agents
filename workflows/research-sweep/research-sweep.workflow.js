@@ -17,6 +17,13 @@ const MAX_CODEBASE = Math.min((args && args.max_codebase) || 2, 2)
 const MAX_FILL = 3
 const INCLUDE_CODEBASE = (args && args.includeCodebase) !== false
 
+// `label` is declared but never reaches a dispatched researcher's prompt (see
+// dispatchPrompt below) — it stays orchestration metadata for agent()'s own
+// {label, phase, agentType} opts. All five fields are required here because this
+// schema governs the PLAN NODE's own output, not the researcher's contract:
+// agents/web-research-summarizer/web-research-summarizer.md marks only `objective`
+// required, with its own defaults for the rest. The two required-lists differ on
+// purpose, not drift.
 const DISPATCH_SCHEMA = {
   type: 'object',
   properties: {
@@ -27,6 +34,28 @@ const DISPATCH_SCHEMA = {
     recency: { type: 'string' },
   },
   required: ['label', 'objective', 'boundaries', 'source_guidance', 'recency'],
+}
+
+// Checks a response against agents/web-research-summarizer/web-research-summarizer.md's
+// output contract: one ```findings fence with objective:, findings:, a claim/source pair,
+// gaps:, and sources: fetched=N cited=M. "nothing outside it" there isn't literal — that
+// agent's logging section mandates a separate trailing ```log fence — so this only rejects
+// a truncated block (missing a required part) or a second ```findings fence, never
+// surrounding text. Scoped to web-research-summarizer: Explore (codebase dispatches) has
+// no repo-owned contract to check against.
+function isValidFindingsBlock(text) {
+  const fenceStart = text.indexOf('```findings')
+  if (fenceStart === -1) return false
+  const fenceEnd = text.indexOf('```', fenceStart + '```findings'.length)
+  if (fenceEnd === -1) return false
+  const body = text.slice(fenceStart, fenceEnd)
+  if (text.indexOf('```findings', fenceEnd) !== -1) return false
+  return /^objective:/m.test(body)
+    && /^findings:/m.test(body)
+    && /^\s*-\s*claim:/m.test(body)
+    && /^\s*source:/m.test(body)
+    && /^gaps:/m.test(body)
+    && /^sources:\s*fetched=\d+\s*cited=\d+/m.test(body)
 }
 
 phase('Plan')
@@ -63,9 +92,22 @@ log(`planned ${planned.length} web dispatch(es): ${planned.map(d => d.label).joi
 const dispatchPrompt = d =>
   `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}`
 
-const runResearchers = (dispatches, phaseTitle, agentType) => parallel(dispatches.map(d => () =>
-  agent(dispatchPrompt(d), { label: d.label, phase: phaseTitle, agentType })
-    .then(text => (text ? { label: d.label, text } : null))))
+// A malformed response is corrected in place via `resume` on the SAME child — never a
+// fresh dispatch through the gap-check/fill-gap round, which stays reserved for an angle
+// nobody covered at all. `resume` can't combine with agentType/model/schema, so the
+// correction call omits agentType. Still-malformed after one correction is treated as
+// missing, same as no response.
+async function dispatchAndCheck(d, phaseTitle, agentType) {
+  const text = await agent(dispatchPrompt(d), { label: d.label, phase: phaseTitle, agentType })
+  if (!text) return null
+  if (agentType !== 'web-research-summarizer' || isValidFindingsBlock(text)) return { label: d.label, text }
+  const corrected = await agent(
+    'Your last response did not match the required output contract: exactly one ```findings fenced block, complete, with objective:, findings: (at least one claim: paired with a source: line), gaps:, and sources: fetched=N cited=M. Resend the complete, corrected findings block — your closing ```log block still goes after it as usual, per your own logging contract.',
+    { label: d.label, phase: phaseTitle, resume: d.label })
+  return (corrected && isValidFindingsBlock(corrected)) ? { label: d.label, text: corrected } : null
+}
+
+const runResearchers = (dispatches, phaseTitle, agentType) => parallel(dispatches.map(d => () => dispatchAndCheck(d, phaseTitle, agentType)))
 
 // Web and codebase round-1 dispatches share nothing — a real fan-out, not a false edge —
 // so they run inside one combined wave rather than two sequential barriers.

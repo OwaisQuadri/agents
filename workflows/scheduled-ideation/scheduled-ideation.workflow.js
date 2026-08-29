@@ -18,6 +18,10 @@ const MAX_TOOL_RADAR = Math.min((args && args.max_tool_radar) || 3, 3)
 const MAX_DIGEST_CANDIDATES = 10
 const MAX_MINING = 3
 
+// A superset of research-sweep's DISPATCH_SCHEMA, adding `category` — a legitimate,
+// workflow-specific field: it drives mining/toolRadar routing below and reaches the
+// dispatched agent via categoryInstruction, unlike `label`, which stays orchestration
+// metadata only here too.
 const DISPATCH_SCHEMA = {
   type: 'object',
   properties: {
