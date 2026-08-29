@@ -163,12 +163,15 @@ impl FileFrontierStore {
         validate_trial(&self.repository_root, &state, trial)?;
         let directory = self.existing_run_directory(run_id)?.join(TRIALS_DIRECTORY);
         let path = directory.join(format!("{}.json", trial_identity_digest(trial)?));
+        let legacy_path = directory.join(format!("{}.json", legacy_trial_identity_digest(trial)?));
         let bytes = json_bytes(trial, "frontier trial")?;
-        match fs::read(&path) {
-            Ok(stored) if stored == bytes => return Ok(()),
-            Ok(_) => return Err(invalid("frontier trial identity has conflicting evidence")),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error(&path, error)),
+        for stored_path in [&path, &legacy_path] {
+            match fs::read(stored_path) {
+                Ok(stored) if stored == bytes => return Ok(()),
+                Ok(_) => return Err(invalid("frontier trial identity has conflicting evidence")),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(io_error(stored_path, error)),
+            }
         }
         let mut file = OpenOptions::new()
             .create_new(true)
@@ -551,9 +554,12 @@ impl FileFrontierStore {
             }
             let trial: TrialRecord = read_strict_json(&entry.path(), "frontier trial")?;
             validate_trial(&self.repository_root, state, &trial)?;
-            if entry.file_name()
-                != std::ffi::OsString::from(format!("{}.json", trial_identity_digest(&trial)?))
-            {
+            let file_name = entry.file_name();
+            let current =
+                std::ffi::OsString::from(format!("{}.json", trial_identity_digest(&trial)?));
+            let legacy =
+                std::ffi::OsString::from(format!("{}.json", legacy_trial_identity_digest(&trial)?));
+            if file_name != current && file_name != legacy {
                 return Err(invalid(
                     "frontier trial path differs from its exact identity",
                 ));
@@ -1478,6 +1484,24 @@ fn trial_identity_digest(trial: &TrialRecord) -> Result<String, SkillEvalError> 
     .map_err(|error| {
         invalid(format!(
             "frontier trial identity serialization failed: {error}"
+        ))
+    })?;
+    Ok(hex_digest(&bytes))
+}
+
+fn legacy_trial_identity_digest(trial: &TrialRecord) -> Result<String, SkillEvalError> {
+    let bytes = serde_json::to_vec(&(
+        &trial.model.provider,
+        &trial.model.model,
+        trial.model.tier,
+        &trial.model.thinking,
+        &trial.key.artifact,
+        &trial.key.case,
+        trial.key.attempt,
+    ))
+    .map_err(|error| {
+        invalid(format!(
+            "legacy frontier trial identity serialization failed: {error}"
         ))
     })?;
     Ok(hex_digest(&bytes))
