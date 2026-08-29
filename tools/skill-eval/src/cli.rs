@@ -3349,6 +3349,8 @@ impl FrontierSuiteRuntime for ConcreteRuntime {
     }
 }
 
+const FRONTIER_WORKER_LIMIT: usize = 4;
+
 impl FrontierRuntime for ConcreteRuntime {
     fn lock_frontier_run(&mut self, run_id: &FrontierRunId) -> Result<(), SkillEvalError> {
         if self.frontier_run_lock.is_some() {
@@ -3363,36 +3365,34 @@ impl FrontierRuntime for ConcreteRuntime {
         jobs: Vec<FrontierTrialJob>,
     ) -> Result<Vec<FrontierTrialOutcome>, SkillEvalError> {
         let runs_root = self.runs_root.clone();
-        std::thread::scope(|scope| {
-            let handles = jobs
-                .into_iter()
-                .map(|job| {
-                    let identity = (
-                        job.model.clone(),
-                        job.key.clone(),
-                        job.infrastructure_attempt,
-                    );
-                    let runs_root = runs_root.clone();
-                    let handle = scope.spawn(move || run_concrete_frontier_job(&runs_root, job));
-                    (identity, handle)
+        let identities = jobs
+            .iter()
+            .map(|job| {
+                (
+                    job.model.clone(),
+                    job.key.clone(),
+                    job.infrastructure_attempt,
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok(identities
+            .into_iter()
+            .zip(run_bounded_frontier_jobs(jobs, |job| {
+                run_concrete_frontier_job(&runs_root, job)
+            }))
+            .map(|((model, key, infrastructure_attempt), outcome)| {
+                outcome.unwrap_or_else(|()| FrontierTrialOutcome {
+                    model,
+                    key,
+                    infrastructure_attempt,
+                    result: Err(SkillEvalError::Process {
+                        program: "frontier worker".to_owned(),
+                        exit_code: None,
+                        standard_error: "frontier worker panicked".to_owned(),
+                    }),
                 })
-                .collect::<Vec<_>>();
-            Ok(handles
-                .into_iter()
-                .map(|((model, key, infrastructure_attempt), handle)| {
-                    handle.join().unwrap_or_else(|_| FrontierTrialOutcome {
-                        model,
-                        key,
-                        infrastructure_attempt,
-                        result: Err(SkillEvalError::Process {
-                            program: "frontier worker".to_owned(),
-                            exit_code: None,
-                            standard_error: "frontier worker panicked".to_owned(),
-                        }),
-                    })
-                })
-                .collect())
-        })
+            })
+            .collect())
     }
 
     fn load_frontier_plan(
@@ -3528,6 +3528,36 @@ impl FrontierRuntime for ConcreteRuntime {
             state,
         )
     }
+}
+
+fn run_bounded_frontier_jobs<T, R>(
+    jobs: Vec<T>,
+    worker: impl Fn(T) -> R + Sync,
+) -> Vec<Result<R, ()>>
+where
+    T: Send,
+    R: Send,
+{
+    std::thread::scope(|scope| {
+        let mut jobs = jobs.into_iter();
+        let mut outcomes = Vec::new();
+        loop {
+            let handles = jobs
+                .by_ref()
+                .take(FRONTIER_WORKER_LIMIT)
+                .map(|job| scope.spawn(|| worker(job)))
+                .collect::<Vec<_>>();
+            if handles.is_empty() {
+                break;
+            }
+            outcomes.extend(
+                handles
+                    .into_iter()
+                    .map(|handle| handle.join().map_err(|_| ())),
+            );
+        }
+        outcomes
+    })
 }
 
 fn run_concrete_frontier_job(runs_root: &Path, job: FrontierTrialJob) -> FrontierTrialOutcome {

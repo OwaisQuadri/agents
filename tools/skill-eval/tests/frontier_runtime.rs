@@ -7,12 +7,13 @@ macro_rules! frontier_runtime_tests {
             use std::fs;
             use std::io::{self, Write};
             use std::path::{Path, PathBuf};
-            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+            use std::sync::{Arc, Barrier};
 
             use super::{
                 FileSuiteRuntime, RenderFrontierProgress, apply_current_frontier_suite,
                 load_frontier_plan_files, next_frontier_run_id, proposal_artifact_revisions,
-                sha256_digest, validate_proposal_sources,
+                run_bounded_frontier_jobs, sha256_digest, validate_proposal_sources,
             };
             use crate::model::{
                 ArtifactDefinition, ArtifactKind, ArtifactName, CaseId, FrontierCaseGroup,
@@ -28,6 +29,31 @@ macro_rules! frontier_runtime_tests {
             };
 
             static ROOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+            #[test]
+            fn frontier_workers_run_exactly_four_jobs_at_a_time() {
+                let active = Arc::new(AtomicUsize::new(0));
+                let maximum = Arc::new(AtomicUsize::new(0));
+                let barrier = Arc::new(Barrier::new(4));
+                let outcomes = run_bounded_frontier_jobs((0..8).collect(), {
+                    let active = active.clone();
+                    let maximum = maximum.clone();
+                    let barrier = barrier.clone();
+                    move |job| {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        maximum.fetch_max(current, Ordering::SeqCst);
+                        barrier.wait();
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        job
+                    }
+                });
+
+                assert_eq!(
+                    outcomes.into_iter().collect::<Result<Vec<_>, _>>(),
+                    Ok((0..8).collect())
+                );
+                assert_eq!(maximum.load(Ordering::SeqCst), 4);
+            }
 
             struct MockSource {
                 revisions: BTreeMap<PathBuf, String>,
