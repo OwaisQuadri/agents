@@ -27,13 +27,13 @@
 # session reads real evidence instead of extrapolating from the checker's own count
 # summary (a fabrication bug this exact mechanism ran into and had to be fixed for).
 #
-# Once a session commits a TUNING.md entry for its artifact (evidence it actually
-# reviewed the evidence, mutation or not), this script rotates that artifact's
-# logs/usage.jsonl and votes/votes.jsonl in the MAIN checkout to a dated
-# `.reviewed-<stamp>` sibling — a verified move, never a delete, per this repo's own
-# "never rm before a verified move" rule — so gepa-due stops re-firing on evidence
-# that has already been read and recorded, while the reviewed evidence itself stays on
-# disk for anyone who wants to look.
+# EVERY fire that actually dispatches a session on an artifact rotates that
+# artifact's logs/usage.jsonl and votes/votes.jsonl in the MAIN checkout to a dated
+# `.reviewed-<stamp>` sibling afterward — unconditional once the session ran, not
+# gated on whether it landed a TUNING.md commit. A verified move, never a delete, per
+# this repo's own "never rm before a verified move" rule — so gepa-due never re-fires
+# on evidence a session has already had a real, dispatched look at, while the
+# reviewed evidence itself stays on disk for anyone who wants to look.
 #
 # Every session is instructed to push its branch and open a PR itself before
 # finishing (never merge — that stays a human Decide call) so the review actually
@@ -217,18 +217,19 @@ handle_artifact() {
     return 1
   fi
   log "$tag working confirmed; waiting for it to settle (idle/done/blocked)"
+  local settle_ok=1
   if ! "$HERDR" agent wait "$agent_pane" --timeout "$PROMPT_TIMEOUT_MS" >/dev/null 2>&1; then
-    log "$tag WARN: agent wait did not settle cleanly within ${PROMPT_TIMEOUT_MS}ms — pane is still open and interactive, check it directly"
-    return 1
+    log "$tag WARN: agent wait did not settle cleanly within ${PROMPT_TIMEOUT_MS}ms — pane is still open and interactive, check it directly. Rotating evidence anyway: the session ran on it, and re-firing on the same evidence tomorrow helps nobody if the session is simply slow, stuck, or already produced a partial commit."
+    settle_ok=0
+  else
+    log "$tag SUCCESS: session settled — branch=$branch workspace=$workspace_id"
   fi
-  log "$tag SUCCESS: session settled — branch=$branch workspace=$workspace_id"
 
-  # verify the session actually did what the kickoff asked (push + open a PR) — the
-  # rotation decision below is independent of this (it only needs the LOCAL commit,
-  # so a session that committed but forgot to push still gets its evidence rotated,
-  # correctly, since the commit itself is the proof of review) but a session that
-  # never pushed leaves its record stuck in a local worktree nobody will see, so this
-  # is worth a loud WARN rather than a silent gap.
+  # verify the session actually did what the kickoff asked (push + open a PR) — purely
+  # informational at this point, logged loudly if missing, but does NOT gate rotation
+  # below: once a session has been dispatched and run on this artifact's evidence at
+  # all, that evidence is rotated, full stop — every fire clears logs/votes for the
+  # artifact it ran on, regardless of what the session did or didn't manage to land.
   if git -C "$worktree_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     local pr_url
     pr_url="$(gh pr view "$branch" --repo "$(git -C "$worktree_path" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')" --json url -q .url 2>/dev/null || true)"
@@ -241,15 +242,18 @@ handle_artifact() {
     log "$tag WARN: branch $branch was never pushed (no upstream) — its commit(s) are stuck in the local worktree, nobody will see this without manual intervention"
   fi
 
-  # rotation: only once this branch actually committed a TUNING.md entry for this
-  # artifact — real evidence the pass happened, not just that the session ran.
+  # rotation: unconditional once the session ran on this artifact at all (we're past
+  # submit_confirmed above, so it did) — every fire clears the evidence it ran on, not
+  # just fires that happened to land a TUNING.md commit. Note-only, not a gate: log
+  # whether a TUNING.md commit was actually found, since that's still useful signal
+  # for a human skimming the trigger log, even though it no longer decides anything.
   local changed
   changed="$(git -C "$worktree_path" diff --name-only "$GEPA_DUE_BASE" HEAD -- "$artifact/TUNING.md" 2>/dev/null)"
   if [ -z "$changed" ]; then
-    log "$tag no $artifact/TUNING.md commit found on $branch — not rotating logs/votes, next fire will see the same evidence"
-    return 0
+    log "$tag WARN: no $artifact/TUNING.md commit found on $branch — rotating evidence anyway per the every-fire-clears rule, but this session may not have actually reviewed anything"
+  else
+    log "$tag confirmed $artifact/TUNING.md was committed — rotating reviewed evidence"
   fi
-  log "$tag confirmed $artifact/TUNING.md was committed — rotating reviewed evidence"
   local kind_path dst
   for kind_path in "logs/usage.jsonl" "votes/votes.jsonl"; do
     local src="$REPO/$artifact/$kind_path"
@@ -263,6 +267,7 @@ handle_artifact() {
       fi
     fi
   done
+  [ "$settle_ok" -eq 1 ] || return 1
   return 0
 }
 

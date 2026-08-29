@@ -80,18 +80,24 @@ below).
 
 ## rotation (stops re-firing on evidence already reviewed)
 
-Once a session's branch has a real commit touching `<artifact>/TUNING.md`, the trigger
-treats that as proof the evidence was actually read and reasoned about — mutation
-shipped or not — and moves that artifact's `logs/usage.jsonl` and `votes/votes.jsonl`
-in the MAIN checkout to dated `.reviewed-<stamp>` siblings, then verifies the move
-(destination exists, source gone) before logging it. A move, never a `rm`, per this
-repo's own "never rm before a verified move" rule — the reviewed evidence stays on
-disk, just out of `tools/gepa-due`'s exact-filename count (it only ever reads
+Unconditional, once a session has actually been dispatched on an artifact: the
+trigger moves that artifact's `logs/usage.jsonl` and `votes/votes.jsonl` in the MAIN
+checkout to dated `.reviewed-<stamp>` siblings, then verifies the move (destination
+exists, source gone) before logging it — every fire clears the evidence it ran on,
+regardless of what the session did or didn't manage to land. A move, never a `rm`,
+per this repo's own "never rm before a verified move" rule — the reviewed evidence
+stays on disk, just out of `tools/gepa-due`'s exact-filename count (it only ever reads
 `logs/usage.jsonl` / `votes/votes.jsonl` literally, so a renamed sibling is
-automatically excluded with no checker code change needed). No commit found on the
-branch → nothing rotates, and the next fire will see the same evidence again — a
-session that ran but produced no reviewable record shouldn't get to silently mute
-future fires on that artifact.
+automatically excluded with no checker code change needed).
+
+The trigger still checks whether a `<artifact>/TUNING.md` commit actually landed on
+the branch and logs a WARN if not — useful signal that a session ran but may not have
+reviewed anything — but that check is informational only now, not a gate. Rotation
+happens either way, deliberately: the alternative (only rotate on a confirmed commit)
+meant a session that ran, decided nothing was worth writing up, and correctly
+skipped a commit would leave its artifact due again tomorrow on the exact same
+evidence — the same wasted-repeat-session problem rotation exists to solve in the
+first place, just moved one step earlier.
 
 ## install (macOS)
 
@@ -180,3 +186,11 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   (#159–#165) had to be pushed and opened by hand afterward. Fixed: the kickoff now
   instructs push + `gh pr create` before finishing (never merge), and the trigger
   verifies both happened, WARNing loudly if not.
+- 2026-08-29, same day, fourth pass. Rotation was gated on finding a real TUNING.md
+  commit on the branch — correct for distinguishing a genuine review from a session
+  that never ran, but wrong for a session that ran, genuinely reviewed the evidence,
+  and correctly decided there was nothing worth committing: that artifact would stay
+  due on the exact same evidence tomorrow, the same wasted-repeat-session problem
+  rotation exists to solve. Changed to unconditional: any fire that actually
+  dispatches a session on an artifact rotates that artifact's evidence afterward,
+  full stop. The TUNING.md-commit check stays as a WARN-only signal, not a gate.
