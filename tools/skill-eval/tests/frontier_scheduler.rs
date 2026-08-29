@@ -17,7 +17,7 @@ mod statistics;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use frontier_scheduler::next_frontier_wave;
+use frontier_scheduler::{next_frontier_wave, next_frontier_wave_with_exception};
 use model::{
     ArtifactName, CaseId, FrontierCaseGroup, FrontierCaseReference, FrontierCellEvidence,
     FrontierCellStatus, FrontierConfidenceMethod, FrontierEntrant, FrontierInfrastructureEvent,
@@ -202,6 +202,45 @@ fn infrastructure_retries_are_per_key_and_bounded() {
         FrontierScheduleAction::Pause {
             reason: PoolPauseReason::Infrastructure {
                 message: "second".to_owned(),
+            },
+        }
+    );
+}
+
+#[test]
+fn exceptional_retry_does_not_raise_other_keys_attempt_limit() {
+    let entrants = vec![
+        entrant("alpha", Tier::T1, &["off"]),
+        entrant("zeta", Tier::T1, &["off"]),
+    ];
+    let (plan, suite, mut state) = fixture(entrants);
+    let alpha = route("alpha", Tier::T1, "off");
+    let zeta = route("zeta", Tier::T1, "off");
+    let mut evidence = trials_for(&suite, &alpha, 0, 1, 10);
+    let alpha_missing = evidence.remove(0);
+    let mut zeta_evidence = trials_for(&suite, &zeta, 1, 1, 10);
+    let zeta_missing = zeta_evidence.remove(0);
+    evidence.extend(zeta_evidence);
+
+    for (model, key, label) in [
+        (&alpha, &alpha_missing.key, "alpha"),
+        (&zeta, &zeta_missing.key, "zeta"),
+    ] {
+        state
+            .infrastructure_events
+            .push(infrastructure(model, key, 1, &format!("{label} first")));
+        state
+            .infrastructure_events
+            .push(infrastructure(model, key, 2, &format!("{label} second")));
+    }
+    let authorized = state.infrastructure_events[1].clone();
+
+    assert_eq!(
+        next_frontier_wave_with_exception(&plan, &suite, &state, &evidence, Some(&authorized))
+            .unwrap(),
+        FrontierScheduleAction::Pause {
+            reason: PoolPauseReason::Infrastructure {
+                message: "zeta second".to_owned(),
             },
         }
     );
