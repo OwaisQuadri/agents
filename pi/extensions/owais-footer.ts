@@ -24,10 +24,80 @@ export type PullRequest = {
 	mergeStateStatus: string;
 };
 
-type PreInputSegment = {
+export type FooterSegmentId = "branch" | "headline" | "workspace" | "pr" | "status" | "provider" | "thinking" | "model";
+
+export type FooterForm = {
 	text: string;
 	render: () => string;
 };
+
+export type FooterDegradableSegment = {
+	id: FooterSegmentId;
+	full: FooterForm;
+	shorten?: FooterForm;
+	truncate?: FooterForm;
+};
+
+// segments touch degrade tiers low priority first: branch, headline, workspace, pr, status, provider,
+// thinking, model. every item gets a shot at its shorten form before any item is truncated, and every
+// item gets a shot at truncate before any item is hidden. degradation stops the moment the line fits.
+export function assembleFooterLine(
+	forms: Map<FooterSegmentId, FooterForm | undefined>,
+	pick: (form: FooterForm) => string,
+	dot: string,
+	arrow: string,
+): { left: string; right: string } {
+	const get = (id: FooterSegmentId): string | undefined => {
+		const form = forms.get(id);
+		return form ? pick(form) : undefined;
+	};
+	const workspace = get("workspace");
+	const branch = get("branch");
+	const leftParts: string[] = [];
+	if (workspace !== undefined && branch !== undefined) leftParts.push(`${workspace}${arrow}${branch}`);
+	else if (workspace !== undefined) leftParts.push(workspace);
+	else if (branch !== undefined) leftParts.push(branch);
+	for (const id of ["pr", "headline", "status"] as const) {
+		const text = get(id);
+		if (text !== undefined) leftParts.push(text);
+	}
+	const left = leftParts.join(dot);
+
+	const provider = get("provider");
+	const thinking = get("thinking");
+	const model = get("model");
+	const right = model !== undefined
+		? `${provider !== undefined ? `${provider}/` : ""}${model}${thinking !== undefined ? ` (${thinking})` : ""}`
+		: "";
+	return { left, right };
+}
+
+export function resolveFooterSegments(
+	items: FooterDegradableSegment[],
+	maxWidth: number,
+): Map<FooterSegmentId, FooterForm | undefined> {
+	const forms = new Map<FooterSegmentId, FooterForm | undefined>(items.map((item) => [item.id, item.full]));
+	const fits = () => {
+		const { left, right } = assembleFooterLine(forms, (form) => form.text, " · ", " > ");
+		return visibleWidth(left) + visibleWidth(right) <= maxWidth;
+	};
+	if (fits()) return forms;
+	for (const item of items) {
+		if (fits()) break;
+		if (item.shorten) forms.set(item.id, item.shorten);
+	}
+	if (fits()) return forms;
+	for (const item of items) {
+		if (fits()) break;
+		if (item.truncate) forms.set(item.id, item.truncate);
+	}
+	if (fits()) return forms;
+	for (const item of items) {
+		if (fits()) break;
+		forms.set(item.id, undefined);
+	}
+	return forms;
+}
 
 function compactPath(path: string | undefined): string {
 	if (!path) return "unknown";
@@ -65,17 +135,6 @@ const BRANCH_COLORS = ["#82b8ff", "#8ee7f5", "#a6dca8", "#c7b5ff", "#d394ff"];
 
 function branchColor(name: string): string {
 	return BRANCH_COLORS[name.length % BRANCH_COLORS.length]!;
-}
-
-function modelLabels(ctx: ExtensionContext): string[] {
-	const provider = ctx.model?.provider ?? "unknown";
-	const model = ctx.model?.id ?? "unknown";
-	const thinking = ctx.thinkingLevel ?? "off";
-	return [`${provider}/${model} (${thinking})`, `${model} (${thinking})`, model];
-}
-
-function fittingModelLabel(labels: string[], availableWidth: number): string {
-	return labels.find((label) => visibleWidth(label) <= availableWidth) ?? "";
 }
 
 function blend(start: string, end: string, fraction: number): string {
@@ -392,48 +451,104 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						const elapsedMilliseconds = Math.max(0, Date.now() - startedAt);
 						const elapsedSeconds = elapsedMilliseconds / 1000;
 						const activity = isWorking ? elapsedLabel(startedAt) : "Ready";
+						const activityLabel = isWorking ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
 						const state = repository;
-						let location: PreInputSegment;
+						const ctx = activeContext ?? ({} as ExtensionContext);
+						const provider = ctx.model?.provider ?? "unknown";
+						const model = ctx.model?.id ?? "unknown";
+						const thinking = ctx.thinkingLevel ?? "off";
+
+						// priority order low to high: items earlier in this array degrade first.
+						const items: FooterDegradableSegment[] = [];
+
 						if (state.isGit) {
-							const { project, branch } = state;
-							location = branch
-								? {
-										text: `${project} > ${branch}`,
-										render: () => theme.fg("muted", project) + theme.fg("dim", " > ") + fgHex(branchColor(branch), branch),
-									}
-								: {
-										text: `${project} > detached`,
-										render: () => theme.fg("muted", `${project} > detached`),
-									};
-						} else {
-							const { path } = state;
-							location = { text: path, render: () => theme.fg("muted", path) };
+							const branch = state.branch;
+							items.push(
+								branch
+									? {
+											id: "branch",
+											full: { text: branch, render: () => fgHex(branchColor(branch), branch) },
+											shorten: {
+												text: truncateSegmentText(branch, 24),
+												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 24)),
+											},
+											truncate: {
+												text: truncateSegmentText(branch, 12),
+												render: () => fgHex(branchColor(branch), truncateSegmentText(branch, 12)),
+											},
+										}
+									: { id: "branch", full: { text: "detached", render: () => theme.fg("muted", "detached") } },
+							);
 						}
-						const segments: PreInputSegment[] = [location];
+
+						if (branchSummary) {
+							const summaryText = branchSummary;
+							items.push({
+								id: "headline",
+								full: { text: summaryText, render: () => theme.fg("muted", summaryText) },
+								shorten: {
+									text: truncateSegmentText(summaryText, 24),
+									render: () => theme.fg("muted", truncateSegmentText(summaryText, 24)),
+								},
+								truncate: {
+									text: truncateSegmentText(summaryText, 14),
+									render: () => theme.fg("muted", truncateSegmentText(summaryText, 14)),
+								},
+							});
+						}
+
+						const workspaceText = state.isGit ? state.project : state.path;
+						items.push({
+							id: "workspace",
+							full: { text: workspaceText, render: () => theme.fg("muted", workspaceText) },
+							shorten: {
+								text: truncateSegmentText(workspaceText, 12),
+								render: () => theme.fg("muted", truncateSegmentText(workspaceText, 12)),
+							},
+							truncate: {
+								text: truncateSegmentText(workspaceText, 6),
+								render: () => theme.fg("muted", truncateSegmentText(workspaceText, 6)),
+							},
+						});
+
 						const activePullRequest = pullRequest;
 						if (activePullRequest) {
 							const tone = pullRequestTone(activePullRequest);
 							const { number, url } = activePullRequest;
-							segments.push({
-								text: `PR #${number}`,
-								render: () => {
-									const label = osc8(url, `PR #${number}`);
-									return tone === "purple" ? fgHex("#c7b5ff", label) : theme.fg(tone, label);
-								},
+							const colorize = (label: string) => tone === "purple" ? fgHex("#c7b5ff", label) : theme.fg(tone, label);
+							items.push({
+								id: "pr",
+								full: { text: `PR #${number}`, render: () => colorize(osc8(url, `PR #${number}`)) },
+								shorten: { text: `#${number}`, render: () => colorize(osc8(url, `#${number}`)) },
 							});
 						}
-						if (branchSummary) {
-							const summaryText = branchSummary;
-							segments.push({ text: summaryText, render: () => theme.fg("muted", summaryText) });
-						}
-						const activityLabel = isWorking ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
-						segments.push({
-							text: activityLabel,
-							render: () => isWorking ? fgHex(activityColor(elapsedSeconds), activityLabel) : theme.fg("success", activityLabel),
+
+						items.push({
+							id: "status",
+							full: {
+								text: activityLabel,
+								render: () => isWorking ? fgHex(activityColor(elapsedSeconds), activityLabel) : theme.fg("success", activityLabel),
+							},
+							shorten: isWorking
+								? { text: activity, render: () => fgHex(activityColor(elapsedSeconds), activity) }
+								: undefined,
 						});
-						const labels = modelLabels(activeContext ?? ({} as ExtensionContext));
-						const left = segments.map((segment) => segment.render()).join(theme.fg("dim", " · "));
-						const right = fittingModelLabel(labels, Math.max(0, safeWidth - visibleWidth(left)));
+
+						items.push({ id: "provider", full: { text: provider, render: () => provider } });
+						items.push({ id: "thinking", full: { text: thinking, render: () => thinking } });
+						items.push({
+							id: "model",
+							full: { text: model, render: () => model },
+							truncate: { text: truncateSegmentText(model, 12), render: () => truncateSegmentText(model, 12) },
+						});
+
+						const forms = resolveFooterSegments(items, safeWidth);
+						const { left, right } = assembleFooterLine(
+							forms,
+							(form) => form.render(),
+							theme.fg("dim", " · "),
+							theme.fg("dim", " > "),
+						);
 						const spacerWidth = Math.max(0, safeWidth - visibleWidth(left) - visibleWidth(right));
 						return [
 							theme.fg("border", "─".repeat(safeWidth)),

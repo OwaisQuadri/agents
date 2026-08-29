@@ -231,3 +231,107 @@ test("HEAD-unchanged guard skips a second fm respond call on a repeat agent_sett
 		await extensions.dispose();
 	}
 });
+
+function textForm(text: string): { text: string; render: () => string } {
+	return { text, render: () => text };
+}
+
+test("pure: resolveFooterSegments fits without degrading anything", async () => {
+	const extensions = await loadFooter();
+	try {
+		const items = [
+			{ id: "branch" as const, full: textForm("feature-branch") },
+			{ id: "workspace" as const, full: textForm("agents") },
+			{ id: "model" as const, full: textForm("model") },
+		];
+		const forms = extensions.footer.resolveFooterSegments(items, 80);
+		assert.equal(forms.get("branch")?.text, "feature-branch");
+		assert.equal(forms.get("workspace")?.text, "agents");
+		assert.equal(forms.get("model")?.text, "model");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: resolveFooterSegments shortens every item bottom-to-top before truncating any", async () => {
+	const extensions = await loadFooter();
+	try {
+		// full: "branch-name-long · workspace-name" (33 wide) does not fit in 20; shortening branch alone
+		// (lower priority) to "short" (7 wide) brings the line to "short · workspace-name" (23) which still
+		// does not fit, so workspace also shortens even though branch already gave up its shorten tier.
+		const items = [
+			{ id: "branch" as const, full: textForm("branch-name-long"), shorten: textForm("short"), truncate: textForm("b") },
+			{ id: "workspace" as const, full: textForm("workspace-name"), shorten: textForm("ws"), truncate: textForm("w") },
+		];
+		const forms = extensions.footer.resolveFooterSegments(items, 20);
+		assert.equal(forms.get("branch")?.text, "short");
+		assert.equal(forms.get("workspace")?.text, "ws");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: resolveFooterSegments hides the lowest-priority item before touching a higher one", async () => {
+	const extensions = await loadFooter();
+	try {
+		const items = [
+			{ id: "branch" as const, full: textForm("feature-branch") },
+			{ id: "model" as const, full: textForm("model-name") },
+		];
+		const forms = extensions.footer.resolveFooterSegments(items, 11);
+		assert.equal(forms.get("branch"), undefined, "branch has lower priority and no shorten/truncate form, so it is hidden first");
+		assert.equal(forms.get("model")?.text, "model-name", "model keeps its highest-priority slot");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: assembleFooterLine keeps the workspace/branch arrow only when both are visible", async () => {
+	const extensions = await loadFooter();
+	try {
+		const pick = (form: { text: string }) => form.text;
+		const both = new Map([
+			["workspace", textForm("agents")],
+			["branch", textForm("main")],
+		]);
+		assert.equal(extensions.footer.assembleFooterLine(both, pick, " · ", " > ").left, "agents > main");
+
+		const branchOnly = new Map([
+			["workspace", undefined],
+			["branch", textForm("main")],
+			["pr", textForm("#42")],
+		]);
+		assert.equal(extensions.footer.assembleFooterLine(branchOnly, pick, " · ", " > ").left, "main · #42");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: assembleFooterLine builds the model cluster from provider/thinking/model independently", async () => {
+	const extensions = await loadFooter();
+	try {
+		const pick = (form: { text: string }) => form.text;
+		const full = new Map([
+			["provider", textForm("anthropic")],
+			["thinking", textForm("high")],
+			["model", textForm("claude")],
+		]);
+		assert.equal(extensions.footer.assembleFooterLine(full, pick, " · ", " > ").right, "anthropic/claude (high)");
+
+		const noProviderNoThinking = new Map([
+			["provider", undefined],
+			["thinking", undefined],
+			["model", textForm("claude")],
+		]);
+		assert.equal(extensions.footer.assembleFooterLine(noProviderNoThinking, pick, " · ", " > ").right, "claude");
+
+		const modelHidden = new Map([
+			["provider", textForm("anthropic")],
+			["thinking", textForm("high")],
+			["model", undefined],
+		]);
+		assert.equal(extensions.footer.assembleFooterLine(modelHidden, pick, " · ", " > ").right, "", "provider/thinking never render without a model");
+	} finally {
+		await extensions.dispose();
+	}
+});
