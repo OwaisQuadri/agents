@@ -55,6 +55,25 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
 `launchctl bootout gui/$(id -u)/com.owaisquadri.gepa-due`. Trigger log:
 `~/.claude/gepa-due/trigger.log`.
 
+## deferred
+
+- **No dedup across consecutive fires on the same due artifact.** Live-verified
+  2026-08-29: two real launchd-triggered runs, ~3 minutes apart, both flagged
+  `agents/anchor-verifier` due (its `usage_count`/`prompt_version` hadn't changed
+  between them, since neither Reflect pass shipped a mutation) and both spun up a full
+  worktree + live Pi session that independently reached the same "no mutation
+  warranted" conclusion. Until either a real mutation ships (changing
+  `prompt_version`) or new votes/usage lines accumulate, `gepa-due` will keep
+  re-firing on the same artifact every single day, each time paying for a full
+  worktree + Pi session to re-derive a conclusion already on record in that artifact's
+  `TUNING.md`. Same shape `scheduled-ideation`'s own deferred list already names for
+  itself ("no persistent dedup across daily runs") — deferred here for the same
+  reason: no fix attempted yet, revisit once real repeated-day evidence shows how much
+  it actually costs. A cheap first mitigation, not yet built: `tools/gepa-due` could
+  read the due artifact's own `TUNING.md` for a dated "no mutation, reason: X" entry
+  newer than its last usage/vote line and skip re-firing on it — deterministic, no
+  new judgment needed, but out of scope for this pass.
+
 ## history
 
 - 2026-08-28/29, founding version. Built in the same session that added Pareto-frontier
