@@ -60,3 +60,52 @@ DECISION: REVERT both definition mutations. This follows the recorded status abo
 both mutations if [the replacement c6] still shows nothing") and the GEPA rule that ties go
 to the incumbent. The fixtures and harness fixes stay: they are real test infrastructure,
 and c6 proved it can score a guard-applying stub 0.
+
+## 2026-08-29 — scheduled gepa-due Reflect: no new mutation, votes gap named
+
+Due list flagged anchor-verifier at usage_count 65, vote_count 0 (threshold: 65 >= 15).
+prompt_version at reflect time: `76a831fda` (current). `logs/usage.jsonl` holds 240 raw
+lines; 65 carry this prompt_version exactly (34 predate it as `None`, 115 carry a stale
+8-char truncation `76a831fd`, 3 carry a stale 10-char `76a831fda8` — all dropped as stale
+per the loop's filter). `votes/votes.jsonl` does not exist: zero blind-judge votes on this
+artifact at any prompt_version, despite the contract calling for one after logging. No
+`evals/frontier.jsonl` exists either, so Propose has no frontier to sample from — mutation
+would come from the incumbent only.
+
+Of the 65 current-version lines: 42 success, 22 failure, 1 partial. Read every failure/
+partial note (22) and categorized by pattern:
+
+- **8 — dispatched verify_command itself is malformed** (unquoted jq selector under zsh,
+  awk escaping, a `status` var collision, a command matching zero tests) and the run fails
+  wholesale. This is the exact shape the first 2026-08-25 mutation targeted and the harness
+  tied on (see above) — REVERTED as not-sufficient-cause. Current spec's own
+  failure-mode watch-list explicitly mandates this exact behavior ("a broken command is a
+  quoted-error FAIL plus a note — any other handling is suspect"), so these 8 are the
+  artifact doing what it is written to do, not a new defect.
+- **6 — conservative fail on a structurally unverifiable rubric item** (a historical
+  no-network claim, a prior verifier's unanchored pass claim, a durable cross-run spend
+  total, an exact digest with no reproducible input). This is the same shape as holdout
+  case `c5` (`false-pass-unverifiable-claim`), already named in the 2026-08-25 entry as
+  "pre-existing, in the artifact's own catastrophic list, and owed its own ticket." These 6
+  production instances reinforce that the ticket is still open; they are not new evidence
+  beyond what c5 already covers.
+- **2 — invalid-dispatch on a missing required field** (verify_command, work_product_paths).
+  Correct per the input contract; not a defect.
+- **3 — the verifier caught a real problem in the work under test** (stale contract value,
+  malformed JSONL, a dishonest response-only relabel). The artifact working as intended.
+- **4 — ambiguous from the note alone**, not clearly any of the above; none repeat a
+  distinct shape on their own.
+
+DECISION: NO MUTATION THIS PASS. Every recurring shape in the 22 failures maps onto a
+pattern this artifact's history already tested (and reverted as a tie) or already logged as
+a known, ticketed gap (c5). Shipping a mutation now would either re-litigate a tied result
+with no new evidence, or narrow/widen a behavior the current holdout case already exists to
+catch — both against the loop's own narrowing rule ("needs an observed false positive,
+never an imagined one") and against re-running a harness for zero new information.
+
+NAMED FOR THE OWNER: the real gap this pass exposes is process, not prompt text — 65 real
+uses and 0 blind-judge votes. The next high-leverage action on this artifact is running the
+judge protocol (`skills/ai-author/SKILL.md` "judge protocol") against a sample of these 65
+logged uses to get independent grades before the next Propose step, and building the c5
+ticket (a `false-pass-unverifiable-claim` fixture/rule) as a fenced case + mutation pair —
+not re-testing the already-tied verify_command-abort behavior again.
