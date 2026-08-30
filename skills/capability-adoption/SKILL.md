@@ -59,19 +59,3 @@ Decision boundary:
 ## evals
 
 Run `evals/run.sh` for the non-holdout cases. Run `evals/run.sh --holdout` for the held-out case.
-
-## logging
-
-At the end of a use, append one bounded JSON(JavaScript Object Notation) line to
-`<repo-root>/skills/capability-adoption/logs/usage.jsonl`, where `<repo-root>` is the
-output of `git rev-parse --show-toplevel` — never a path relative to the caller's own
-working directory:
-
-```json
-{"ts":"<local ISO timestamp with offset>","artifact":"capability-adoption","trigger":"<what fired it>","excerpt":"<sources, plan, and user correction>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections or surprises>"}
-```
-
-- Set `ts` with `date +%Y-%m-%dT%H:%M:%S%z`. Do not use Coordinated Universal Time.
-- Set `prompt_version` with `git log -1 --format=%h -- skills/capability-adoption ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'` from the repository root.
-- Keep `excerpt` below about 2 kilobytes. Include only the trigger, key plan facts, and user correction.
-- Use `success` for a correct plan or refusal. Use `failure` when the skill changes a setup or judges without inspection. Use `partial` when a missing source or setup stops the plan.

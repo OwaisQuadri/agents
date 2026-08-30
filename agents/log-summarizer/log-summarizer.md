@@ -104,20 +104,3 @@ Checkable by the dispatcher without rereading the log:
   ("covers the build and the tests"). Check: the verdict names an outcome.
 - scope creep — reading a second file, or answering the "why" the log does not state.
   Check: any Read of a path other than `log_path` makes the run suspect.
-
-## logging
-
-Your tool grant cannot write files, so you do not append your own log line. END every run
-— summary, decline, or invalid-dispatch alike — with one fenced `log` block as the last
-thing in your output, `ts` and `prompt_version` omitted:
-
-```log
-{"artifact":"log-summarizer","trigger":"<what fired it>","excerpt":"<log_path + the verdict, or the decline reason>","outcome":"success|failure|partial","notes":"<reads used, anything surprising>"}
-```
-
-The DISPATCHER stamps `prompt_version` with `git -C ~/Documents/agents log -1 --format=%h --
-agents/log-summarizer ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`; a Reflect pass
-drops lines written against a prompt that no longer exists. The dispatcher also stamps `ts` (machine's current local timezone with offset, via
-`date +%Y-%m-%dT%H:%M:%S%z`, never UTC(Coordinated Universal Time)) and appends the line
-to `agents/log-summarizer/logs/usage.jsonl` in the agents repo at `~/Documents/agents`,
-`mkdir -p` on the logs dir first.

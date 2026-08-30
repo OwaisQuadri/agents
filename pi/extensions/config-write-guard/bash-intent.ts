@@ -23,8 +23,8 @@ const INTERPRETER_COMMANDS = new Set([
 	"ruby", "node", "xargs", "eval", "source", ".", "osascript",
 ]);
 
-// Regex-based, no quote tracking — deliberate, like logpath-guard/extract.ts. A rare
-// misparse falls through to the write default below, never to a false allow.
+// Regex-based, no quote tracking — deliberate. A rare misparse falls through to the
+// write default below, never to a false allow.
 function splitTopLevelGroups(command: string): string[] {
 	return command.split(/&&|\|\||;|\n|(?<!\|)&(?!>)/);
 }

@@ -61,20 +61,3 @@ character by character, so speech needs its own shape.
 rules. It then adds the four rules of this register: no markdown, no stacked lines, the
 banned word list, and the sentence-count guidance. Run
 `ste-check --register computah msg.txt`, or pipe the line on stdin.
-
-## logging
-
-At the end of a use, append one bounded JSON (JavaScript Object Notation) line to
-`<repo-root>/skills/computah-voice/logs/usage.jsonl`, where `<repo-root>` is the output
-of `git rev-parse --show-toplevel` — never a path relative to the caller's own working
-directory. It holds the relevant excerpt only, under a 2KB cap. Timestamp
-it with `date +%Y-%m-%dT%H:%M:%S%z` in the machine's current local timezone, and never in
-UTC (Coordinated Universal Time).
-
-```json
-{"ts":"2026-08-04T20:50:12-0400","artifact":"computah-voice","trigger":"<what fired it>","excerpt":"<bounded>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/prompt-style.md tools/ste-check/src ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.

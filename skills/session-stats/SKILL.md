@@ -38,18 +38,3 @@ tokens. `messages`: assistant-message count. `first`, `last`: ISO 8601 session b
 
 `evals/run.sh` builds the binary against the fixture store and checks row shape,
 aggregation, and dedup. Run it from `skills/session-stats/`.
-
-## logging
-
-At the end of a use, append one bounded JSON line (~2KB, local timezone with offset,
-never UTC) to `<repo-root>/skills/session-stats/logs/usage.jsonl`, where `<repo-root>`
-is the output of `git rev-parse --show-toplevel` — never a path relative to the
-caller's own working directory:
-
-```json
-{"ts":"<date +%Y-%m-%dT%H:%M:%S%z>","artifact":"session-stats","trigger":"<what fired it>","excerpt":"<question + key figures>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
