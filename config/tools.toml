@@ -8,6 +8,14 @@ source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "e3fa88d5d
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
 
 [[tools]]
+name = "reflect"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "."
+source = { url = "https://github.com/OwaisQuadri/reflect.git", revision = "271d18fd2bd7fdd157b19524da990c27917bd639" }
+installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
+
+[[tools]]
 name = "rust-code-analysis-cli"
 platforms = ["macos", "linux"]
 commands = ["target/release/rust-code-analysis-cli"]
