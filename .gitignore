@@ -11,6 +11,7 @@ agents/*/votes/
 skills/mouthpiece/examples.md
 workflows/*/logs/
 workflows/*/votes/
+workflows/gepa-due/state/
 skills/mouthpiece/evals/candidates/
 skills/byline/evals/candidates/
 skills/bro/evals/candidates/

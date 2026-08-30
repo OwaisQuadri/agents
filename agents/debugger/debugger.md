@@ -113,24 +113,3 @@ Checkable by the dispatcher without redoing the work:
   every hunk is implicated by the root_cause clause; an uninvited hunk fails the run.
 - role creep: the report grows review findings or new tests. Check: output contract
   fields only; any created test file fails the run.
-
-## logging
-
-At the end of a use, append ONE JSON(JavaScript Object Notation) line to this agent's
-`agents/debugger/logs/usage.jsonl` in the agents repo
-(`~/Documents/agents/agents/debugger/logs/usage.jsonl`), running
-`mkdir -p ~/Documents/agents/agents/debugger/logs` first — the dir does not exist
-until the first log:
-
-```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"debugger","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
-- `ts` is the machine's current local timezone with offset
-  (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user
-  analyzes these against their own day.
-- The excerpt is the relevant transcript parts only — the trigger, the key outputs,
-  any human correction. Never the full transcript; cap ~2KB per line.

@@ -1,13 +1,11 @@
 # gepa-due
 
 Daily, accumulation-gated nudge: has any skill/agent/workflow accumulated enough real,
-unacted-on usage/vote evidence since its last GEPA tune to be worth a tuning pass? Not a
+unacted-on transcript evidence since its last GEPA tune to be worth a tuning pass? Not a
 `scheduled-ideation`-style multi-agent workflow — this is a checker (`tools/gepa-due`,
-Rust, per AGENTS.md's tooling-language rule) plus a launchd-fired trigger script, the
-same shape `tools/logpath-check` + `pi/extensions/logpath-guard.ts` already use for a
-different check. It carries no `evals/`/`TUNING.md`/`logs/`/`votes/` of its own — that
-authoring contract governs skills/agents/workflows ai-author authors, not a deterministic
-checker+trigger pair.
+Rust, per AGENTS.md's tooling-language rule) plus a launchd-fired trigger script. It
+carries no `evals/`/`votes/` of its own — that authoring contract governs
+skills/agents/workflows ai-author authors, not a deterministic checker+trigger pair.
 
 ## why daily, if the trigger is accumulation-based and not time-based?
 
@@ -16,20 +14,40 @@ The clock only decides WHEN to look, never whether to act. Every day at 3pm,
 zero-LLM check. On a day nothing has accumulated past the threshold, the script exits
 right there: no herdr call, no worktree, no Pi invocation, no cost. It only escalates to
 opening a Pi session when the checker's own output is non-empty. See
-`skills/ai-author/TUNING.md`'s note on why a pure event-driven trigger (a hook firing on
-`logs/usage.jsonl` growing) isn't available today: Pi's extension API has no event for
-"a file changed on disk" or "a skill finished running" — only `tool_call`/session/agent
-lifecycle events. A daily poll of a free deterministic check is the closest available
-approximation to "fire when evidence accumulates" without that event existing.
+`skills/ai-author/SKILL.md`'s "usage evidence" section for why a pure event-driven
+trigger (a hook firing the moment a real use happens) isn't available today: Pi's
+extension API has no event for "a skill finished running" — only
+`tool_call`/session/agent lifecycle events. A daily poll of a free deterministic check
+is the closest available approximation to "fire when evidence accumulates" without that
+event existing.
+
+## evidence: real transcripts, not a self-reported log
+
+No artifact writes a usage log. `tools/gepa-due` scans real Pi session transcripts
+under `~/.pi/agent/sessions/` directly: a `read` tool_call whose path ends in an
+artifact's own definition file counts as one real use. "Since last tune" is a TIME
+cutoff — `max(the commit timestamp of that artifact's last definition change, the
+`reviewed_through` timestamp this trigger last recorded for it)` — not a hash-equality
+match (a transcript hit carries no `prompt_version` field the way a self-reported log
+line used to). See `skills/ai-author/SKILL.md`'s "usage evidence" section for the full
+definition, and `tools/gepa-due/src/main.rs`'s own doc comment for the mechanics.
+
+Known, accepted limitation: no reliable way was found to distinguish a parent Pi
+session's own transcript from a sub-agent's — every session file under
+`~/.pi/agent/sessions/` gets scanned, which can inflate counts from delegated reads.
+Stated rather than solved, same treatment as the incidental-read limitation (a `read`
+call made while merely browsing an artifact, not really "using" it) that
+`skills/ai-author/SKILL.md` already documents.
 
 ## threshold
 
-An artifact is "due" when, filtered to its CURRENT `prompt_version` (same filter GEPA
-loop step 1/Reflect already applies by hand): `logs/usage.jsonl` has ≥15 surviving
-lines, OR `votes/votes.jsonl` has ≥2 surviving lines. Fixed constants, not derived from
-any research (see `PLAN.md` from the session that built this, and
-`skills/ai-author/TUNING.md`, for why — no source discussed a trigger cadence for a
-single-user, low-volume regime).
+An artifact is "due" when its real transcript-hit `usage_count` (since the cutoff
+above) is **≥15**. `vote_count` is computed and reported too, but is informational
+only — votes are now generated exclusively by an already-due Reflect pass's judge
+protocol (see below), so a vote-count due-trigger would be circular: an artifact could
+never accumulate votes without already being due. Fixed constant, not derived from any
+research; see `PLAN.md` from the session that set it, and `skills/ai-author/TUNING.md`'s
+history where one still exists, for why.
 
 ## what happens when it fires
 
@@ -40,65 +58,62 @@ Artifacts due beyond the cap are named in the trigger log and left for the next 
 never silently dropped. Selection when capping favors the highest `usage_count` (then
 `vote_count`) first — the artifacts with the most unread evidence go first.
 
-Each session's worktree gets that ONE artifact's real `logs/usage.jsonl` and
-`votes/votes.jsonl` copied in before the kickoff prompt fires (worktree creation uses
-the same mechanism `workflows/scheduled-ideation/scripts/trigger.sh` already proved
-live — no GUI Terminal, no TCC(Transparency, Consent, and Control) prompt, every call
-over the herdr daemon's socket API). That copy step matters: `logs/`/`votes/` are
-gitignored, so a fresh git worktree never inherits them on its own — git worktrees
-only share committed history, and `hooks/post-checkout` explicitly copies only
-untracked NON-ignored files. Without the copy, the session has no real evidence to
-read and nothing stops it from confabulating plausible-sounding numbers instead — a
-real failure mode this mechanism hit and had to fix (see deferred list below).
+Before selecting, the trigger drops any due artifact whose most recent prior dispatch
+still has an open PR (checked live via `gh pr view` against
+`workflows/gepa-due/state/reviewed.jsonl`, the gitignored, main-checkout-only,
+append-only record this script itself writes after every settled session) — no value
+in reviewing the same artifact twice while a prior review sits unmerged.
+
+Each session's worktree needs no evidence copied in for USAGE: real Pi transcripts
+live under the machine-global `~/.pi/agent/sessions/`, already visible identically
+from any worktree on this machine, nothing repo-scoped about that path. Only
+`votes/votes.jsonl` (still gitignored, per-artifact) gets copied in before the kickoff
+prompt fires — the same reason it always needed copying: `git worktree` only shares
+committed history, and `hooks/post-checkout` explicitly copies only untracked
+NON-ignored files. The kickoff prompt also carries the exact `cutoff_iso` instant
+`tools/gepa-due` used for this artifact, so the dispatched session (running in a fresh
+worktree that cannot see the gitignored state file that cutoff came from) never has to
+— and never could — re-derive it itself.
 
 The kickoff differs by WHY the artifact is due:
 
 - **Zero votes on file** (usage_count alone crossed the threshold): every real run
-  of this shape (2026-08-29) concluded "no mutation" from a long essay that just
-  restated the incumbent's own contract — there was no judged critique to Reflect
-  against. So this kickoff skips straight past a Reflect essay: it dispatches
-  `JUDGE_SAMPLE_SIZE` (default 5, `GEPA_DUE_JUDGE_SAMPLE` to override) SEPARATE
-  fresh-context sub-agents — real blind judging per SKILL.md's judge protocol, not
-  the escalated session grading its own read — against that many of the artifact's
-  most recent usage lines, submitting real votes via `submit_vote.py`. Reflect only
-  runs after that, with real judge signal to work from. If it's still "no mutation"
-  (likely, off 5 fresh votes), the record is ONE short paragraph, not a re-derived
-  taxonomy.
-- **Real vote signal already exists** (vote_count crossed the threshold, or both
-  did): the session runs a normal Reflect pass and decides — a real tuning pass, or a
-  proportionate note. Only genuinely new evidence earns a long writeup; "nothing new"
-  still gets one paragraph.
+  of this shape (2026-08-29, under the older self-reported-log mechanism) concluded
+  "no mutation" from a long essay that just restated the incumbent's own contract —
+  there was no judged critique to Reflect against. So this kickoff skips straight
+  past a Reflect essay: it dispatches `JUDGE_SAMPLE_SIZE` (default 5,
+  `GEPA_DUE_JUDGE_SAMPLE` to override) SEPARATE fresh-context sub-agents — real blind
+  judging per SKILL.md's judge protocol, not the escalated session grading its own
+  read — against that many of the artifact's most recent real transcript hits,
+  submitting real votes via `submit_vote.py`. Reflect only runs after that, with real
+  judge signal to work from. If it's still "no mutation" (likely, off 5 fresh votes),
+  the record is ONE short paragraph, not a re-derived taxonomy.
+- **Real vote signal already exists** (vote_count is nonzero): the session runs a
+  normal Reflect pass and decides — a real tuning pass, or a proportionate note. Only
+  genuinely new evidence earns a long writeup; "nothing new" still gets one paragraph.
 
 Either way, it never ships a mutation without going through the GEPA loop's own
 Decide gate — this is a nudge, not an unattended prompt-editor. Whatever it
-concludes, it's told to commit a dated `TUNING.md` entry, push its branch, and open a
-PR (never merge — that stays a human Decide call) before finishing. The trigger
-checks afterward that the branch was actually pushed and a PR actually opened,
-WARNing loudly if either didn't happen, and checks for the TUNING.md commit
-specifically to decide whether to rotate the reviewed evidence (see "rotation"
-below).
+concludes, it's told to push its branch and open a PR (never merge — that stays a
+human Decide call) before finishing. The trigger checks afterward that the branch was
+actually pushed and a PR actually opened, WARNing loudly if either didn't happen —
+only a real PR number lets a future fire's open-PR dedup check above find and skip it.
 
-## rotation (stops re-firing on evidence already reviewed)
+## state (stops re-firing on evidence already reviewed)
 
 Gated on the session reaching a VERDICT — it settled (idle/done/blocked), not stuck
 or timed out — never on what that verdict was. "No mutation, nothing worth
-committing" is as much a verdict as a real mutation or a TUNING.md note: the session
-looked at the real evidence and reached a conclusion, so the trigger moves that
-artifact's `logs/usage.jsonl` and `votes/votes.jsonl` in the MAIN checkout to dated
-`.reviewed-<stamp>` siblings, then verifies the move (destination exists, source
-gone) before logging it. A move, never a `rm`, per this repo's own "never rm before a
-verified move" rule — the reviewed evidence stays on disk, just out of
-`tools/gepa-due`'s exact-filename count (it only ever reads `logs/usage.jsonl` /
-`votes/votes.jsonl` literally, so a renamed sibling is automatically excluded with no
-checker code change needed).
+committing" is as much a verdict as a real mutation: the session looked at the real
+evidence and reached a conclusion, so the trigger appends one line to
+`workflows/gepa-due/state/reviewed.jsonl` (gitignored, main-checkout-only) —
+`{"artifact", "reviewed_through", "pr_number", "branch", "dispatched_at"}` —
+recording that everything up through `reviewed_through` has now been looked at.
+Append-only: never edits or removes a prior line, so the file itself is a full dispatch
+history, not just a set of current cutoffs.
 
-A session that never settles (timed out, stuck) does NOT get its evidence rotated —
-it never reached a verdict, so leaving the artifact due for tomorrow's fire is
-correct, not a repeat of wasted work. The trigger also checks whether a
-`<artifact>/TUNING.md` commit actually landed on the branch and logs a note either
-way — useful for a human skimming the log — but that check is informational only,
-not a gate: a session that settled and correctly decided nothing was worth writing up
-still gets its evidence rotated, same as one that committed a real mutation.
+A session that never settles (timed out, stuck) gets NO entry — it never reached a
+verdict, so leaving the artifact due for tomorrow's fire, same evidence, same cutoff,
+is correct, not a repeat of wasted work.
 
 ## install (macOS)
 
@@ -116,18 +131,15 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
 
 ## deferred
 
-- **Rotation happens per-branch, not per-merge.** A session's `TUNING.md` commit
-  triggers rotation as soon as the trigger script sees it on that branch — the PR
-  doesn't need to be merged first. Deliberate: a "no mutation" record is
-  documentation, not a shipped change, so it isn't gated behind the same harness-win
-  Decide rule an actual mutation needs. But it does mean a PR that later gets rejected
-  or heavily edited on human review has already had its source evidence rotated away
-  from the live count. Not fixed — the alternative (wait for merge) can stall
-  indefinitely on human review timing, which defeats the point of the dedup fix. Worth
-  revisiting if a rejected `TUNING.md`-only PR is ever observed in practice.
-- **No cleanup of `.reviewed-<stamp>` archive files.** They accumulate on the main
-  checkout's disk forever. Harmless at current volume (gitignored, never pushed,
-  local disk only) but unbounded. Not worth its own script yet.
+- **No cleanup of `workflows/gepa-due/state/reviewed.jsonl`.** It grows by one line
+  per settled dispatch, forever. Harmless at current volume (gitignored, never pushed,
+  local disk only, tiny per-line footprint) but unbounded. Not worth its own script
+  yet.
+- **Incidental-read false positives.** A `read` tool_call on an artifact's definition
+  file made while merely browsing, authoring, or reviewing it — not actually "using"
+  it in the sense GEPA cares about — still counts as a real transcript hit. No
+  mechanical signal distinguishes the two. Accepted, same posture as the parent/child
+  transcript limitation above.
 
 ## history
 
@@ -145,7 +157,8 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   2. Two real launchd-triggered runs ~9 minutes apart both flagged the same artifact
      due (nothing had changed between them) and both spun up a full worktree + live
      Pi session that independently re-derived the same "no mutation" conclusion —
-     wasted, duplicate work. Fixed with the rotation mechanism above.
+     wasted, duplicate work. Fixed with a rotation mechanism (superseded 2026-08-30 —
+     see below).
   3. **The worst one, found while investigating #2**: none of the three live worktree
      sessions that day ever actually had access to their artifact's real
      `logs/usage.jsonl` — gitignored, never inherited by a fresh git worktree. Every
@@ -180,7 +193,7 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   file, Reflect has nothing to act on and every real run just wrote a long essay
   re-deriving the same "no mutation" conclusion from usage lines alone. Fixed by
   splitting the kickoff on trigger reason — a zero-vote fire now dispatches real
-  fresh-context judges against a usage-line sample FIRST (see "what happens when it
+  fresh-context judges against a usage-hit sample FIRST (see "what happens when it
   fires" above) instead of asking for prose about lines nobody has graded yet.
   Separately: sessions were never actually landing their work — they committed
   locally but never pushed a branch or opened a PR, so every real PR in this history
@@ -194,4 +207,30 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   due on the exact same evidence tomorrow, the same wasted-repeat-session problem
   rotation exists to solve. Changed to unconditional: any fire that actually
   dispatches a session on an artifact rotates that artifact's evidence afterward,
-  full stop. The TUNING.md-commit check stays as a WARN-only signal, not a gate.
+  full stop. The TUNING.md-commit check stayed as a WARN-only signal, not a gate.
+- 2026-08-30, self-reported logging removed entirely. `logs/usage.jsonl` — hand-written
+  by whichever session used an artifact, per its own `## logging` section — turned out
+  to be exactly as reliable as the fabrication bug above suggests: many artifacts with
+  real, confirmed usage had NO log file at all (missed by omission, session compaction,
+  or an abrupt end), so `tools/gepa-due`'s old count was a floor on real usage, not an
+  honest one. Every `## logging` section across 38 artifact definitions was removed;
+  `TUNING.md` was removed too (its narrative rationale and no-mutation history is now
+  accepted as lost — `evals/frontier.jsonl` plus candidate snapshots are the only
+  durable per-artifact record). `tools/gepa-due` now scans real Pi session transcripts
+  under `~/.pi/agent/sessions/` directly for `read` hits on an artifact's own
+  definition file, filtered to strictly after `max(that artifact's last-modification
+  commit, its `reviewed_through` in the new gitignored
+  `workflows/gepa-due/state/reviewed.jsonl`)` — a real TIME cutoff, replacing the old
+  `prompt_version` hash-equality filter a transcript hit has no field to match against.
+  `vote_count >= 2` was dropped as an independent due-trigger (it would be circular:
+  votes now only come from an already-due Reflect's judge protocol); it remains
+  informational. The old per-branch log-rotation-to-`.reviewed-<stamp>` mechanism was
+  replaced by an append-only `reviewed_through` entry in the new state file, written
+  after every settled dispatch regardless of verdict content — same trigger condition
+  as before, different storage. That same state file also now backs a genuinely new
+  guard: before selecting due artifacts to dispatch, the trigger skips any artifact
+  whose most recent prior dispatch still has an open PR (`gh pr view`), which the old
+  mechanism had no way to express. `pi/extensions/logpath-guard.ts` and
+  `tools/logpath-check` — built specifically to validate a write to a
+  `logs/usage.jsonl` path — were retired outright: there is no longer a log path for
+  either to guard.

@@ -61,20 +61,3 @@ it, then grades the content against the case expect with `evals/rubric.md`. `--h
 runs the held-out slice. A mechanical failure caps that case at 4, and an altered fact
 scores 0. GEPA (Genetic-Pareto prompt evolution) runs read the mean and use the failure
 modes as feedback.
-
-## logging
-
-At the end of a use, append ONE JSON (JavaScript Object Notation) line to
-`<repo-root>/skills/byline/logs/usage.jsonl`, where `<repo-root>` is the output of
-`git rev-parse --show-toplevel` — never a path relative to the caller's own working
-directory:
-
-```json
-{"ts":"<local iso with offset>","artifact":"byline","trigger":"<what was edited>","excerpt":"<the flags ste-check raised + what was cut>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> docs/prompt-style.md tools/ste-check/src ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
-`ts` comes from `date +%Y-%m-%dT%H:%M:%S%z` in local time with its offset, and never in
-UTC (Coordinated Universal Time). Cap the line at ~2KB.

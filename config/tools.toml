@@ -215,22 +215,6 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
-name = "logpath-guard"
-platforms = ["macos", "linux"]
-commands = []
-pi_extension = "pi/extensions/logpath-guard.ts"
-source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
-
-[[tools]]
-name = "logpath-guard-lib"
-platforms = ["macos", "linux"]
-commands = []
-pi_extension = "pi/extensions/logpath-guard"
-source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
-
-[[tools]]
 name = "prompt-snippets"
 platforms = ["macos", "linux"]
 commands = []

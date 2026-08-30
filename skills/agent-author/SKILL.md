@@ -181,33 +181,6 @@ Every authored agent ships `evals/` per skills/ai-author/templates/eval-harness.
 
 No harness = not done.
 
-## logging
-
-At the end of every use of this skill, append ONE bounded JSON line — the relevant
-transcript excerpt only, ~2KB cap — to `skills/agent-author/logs/usage.jsonl`:
-
-```sh
-cd ~/Documents/agents && mkdir -p skills/agent-author/logs && jq -cn \
-  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- skills/agent-author ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
-  --arg trigger '<what fired it>' \
-  --arg excerpt '<trigger + key outputs + any correction>' \
-  --arg outcome 'success|failure|partial' \
-  --arg notes '<surprises>' \
-  '{ts:$ts,artifact:"agent-author",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
-  >> skills/agent-author/logs/usage.jsonl
-```
-
-jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
-excerpt cannot break it. Never hand-build this line with printf: that is what cost
-the fleet 19 unreadable log lines.
-
-The timestamp is the machine's CURRENT LOCAL TIMEZONE with offset, never
-UTC(Coordinated Universal Time) — these lines get analyzed against the user's own day,
-and UTC timestamps are useless for that. Every agent this skill authors carries the
-same short "## logging" section pointing at its own `logs/usage.jsonl`; those lines are
-the GEPA(Genetic-Pareto prompt evolution) dataset the improvement loop tunes from.
-
 ## failure modes
 
 Design against these four; the watch-list in each authored agent names the role-specific

@@ -26,20 +26,3 @@ Exceptions: <none, or each exception and its reason>
 
 `evals/run.sh` checks triggering, baseline use, check reporting, and the Claude Code exclusion.
 Run `evals/run.sh` for development cases. Run `evals/run.sh --holdout` for the held-out case.
-
-## logging
-
-At the end of a use, append one bounded JSON (JavaScript Object Notation) line to
-`<repo-root>/skills/rust-style/logs/usage.jsonl`, where `<repo-root>` is the output of
-`git rev-parse --show-toplevel` run from inside this repo — never a path relative to
-the caller's own working directory, which may not be the repo root:
-
-```json
-{"ts":"<local time with offset>","artifact":"rust-style","trigger":"<what fired it>","excerpt":"<relevant input and output>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections or surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
-Use the machine's current timezone with `date +%Y-%m-%dT%H:%M:%S%z`. Never use Coordinated Universal Time.
-Keep the excerpt under 2KB. Include only the trigger, key output, and any human correction.

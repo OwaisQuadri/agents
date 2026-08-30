@@ -1,6 +1,6 @@
 ---
 name: ai-author
-description: Use when deciding whether a skill, agent, or workflow should be authored at all, when authoring one, or when tuning one from its accumulated logs and votes. The umbrella authoring skill. Owns the should-it-exist decision tree, the authoring contract (every artifact ships evals/ + logs/ + votes/), the blind fresh-context judge, and the GEPA(Genetic-Pareto prompt evolution) loop. Hands type-specific craft to skill-author, agent-author, or workflow-author. Skip for a one-off task with no reusable capability, or when the type is already decided and only craft depth is needed (go straight to the sibling author skill).
+description: Use when deciding whether a skill, agent, or workflow should be authored at all, when authoring one, or when tuning one from its measured usage evidence and votes. The umbrella authoring skill. Owns the should-it-exist decision tree, the authoring contract (every artifact ships evals/ + votes/), the blind fresh-context judge, and the GEPA(Genetic-Pareto prompt evolution) loop. Hands type-specific craft to skill-author, agent-author, or workflow-author. Skip for a one-off task with no reusable capability, or when the type is already decided and only craft depth is needed (go straight to the sibling author skill).
 metadata:
   minimum-tier: T4
   short-description: Umbrella author + GEPA-tune for skills, agents, workflows
@@ -10,8 +10,9 @@ metadata:
 
 The umbrella for authoring skills, agents, and workflows. No artifact exists without a
 reason to fire, a way to measure it, and a loop that improves it. GEPA(Genetic-Pareto
-prompt evolution) is built in: every authored artifact ships an eval harness, logs its
-uses, gets blind-judged, and mutates only on measured wins.
+prompt evolution) is built in: every authored artifact ships an eval harness, is
+measured from real Pi session transcripts rather than any self-reported log, gets
+blind-judged, and mutates only on measured wins.
 
 ## what arrived? (route before you decide)
 
@@ -47,10 +48,11 @@ tree never sanctioned. Route first, and stop at the first match:
 
 A verdict this skill reaches but does not execute this turn is tracked to execution or
 explicitly dropped, in writing. A deferred verdict that lives only in a log line is a dropped
-one — so name the destination: the artifact's `TUNING.md` under its deferred heading, or a ticket
-in the relevant project's roadmap when the verdict is project work. Either one is somewhere a
-later pass reads without being told to look, which is the whole property. Sweep every verdict the
-pass reached, not only the most recent.
+one — so name the destination: a ticket in the relevant project's roadmap when the verdict is
+project work. There is no per-artifact deferred-verdict record anymore (no `TUNING.md`) — an
+artifact-specific verdict that isn't project work has no persisted destination and is dropped
+explicitly, in writing, rather than silently. Sweep every verdict the pass reached, not only
+the most recent.
 
 ## bounded session evidence sweep
 
@@ -58,11 +60,12 @@ Run this only when the user asks to mine recent sessions for reusable improvemen
 
 1. Set the window before reading. Use the user's limit, or the ten newest parent Pi sessions.
    Exclude child-agent transcripts. Read only the excerpts needed to identify a task shape.
-2. Read no more than ten artifacts named in the session excerpts. For each artifact, read at
-   most its 20 newest `logs/usage.jsonl` or `run-history.jsonl` records when the file exists.
-   Report how many artifacts or records the cap skipped. Keep only repetition, elapsed time,
-   exposed token or dollar cost, result, and correction. Never report a prompt, transcript,
-   file content, secret, or opaque identifier.
+2. Read no more than ten artifacts named in the session excerpts. Artifacts under this
+   contract keep no self-reported usage log — rely on the session excerpts already read in
+   step 1 for their evidence. For any OTHER system with its own `run-history.jsonl`, read at
+   most its 20 newest records when the file exists. Report how many artifacts or records the
+   cap skipped. Keep only repetition, elapsed time, exposed token or dollar cost, result, and
+   correction. Never report a prompt, transcript, file content, secret, or opaque identifier.
 3. Group the evidence into task shapes. State the observed repetition and measured cost before
    any proposal. Say that cost is unavailable when the records do not expose it. Do not estimate.
 4. Reject an isolated, ambiguous, or unmeasured shape. Zero candidates is a valid result.
@@ -170,15 +173,19 @@ Every artifact this skill authors ships:
 
 ```
 <artifact>/
-  SKILL.md | <agent>.md | *.workflow.js   # ends with its own "## logging" section
-  TUNING.md          # the loop's record: mutations, deferred verdicts, the open list
-  evals/             # the GEPA harness — copy templates/eval-harness.md
+  SKILL.md | <agent>.md | *.workflow.js
+  evals/                 # the GEPA harness — copy templates/eval-harness.md
     cases.jsonl
     rubric.md
     run.sh
-  logs/usage.jsonl   # appended per the artifact's "## logging" section
-  votes/votes.jsonl  # blind judge votes; written ONLY by scripts/submit_vote.py
+    frontier.jsonl        # score-vector archive of every tested candidate — the durable record
+    frontier/<id>.md       # full text of every archived candidate
+  votes/votes.jsonl      # blind judge votes; written ONLY by scripts/submit_vote.py,
+                          # dispatched only from gepa-due's Reflect-time judge sampling
 ```
+
+No per-artifact usage log, no `TUNING.md`. Usage evidence is derived from real Pi
+session transcripts at tuning time (see "usage evidence" below), never self-reported.
 
 Frontmatter must parse under strict YAML, not just the lenient parser one client happens
 to use. A plain scalar that contains `: ` (colon plus space) is illegal YAML and breaks
@@ -189,32 +196,32 @@ written as a `>-` block scalar. Check before shipping:
 node -e "const y=require('yaml'),fs=require('fs');y.parse(fs.readFileSync(process.argv[1],'utf8').split('---')[1])" <artifact>.md
 ```
 
-No harness = not done. No `## logging` section = not done. `templates/eval-harness.md`
-carries both the harness files and the paste-ready logging section. A draft goes live
-only when every non-holdout case passes and the holdout slice holds (rule in the template).
-
-`tools/logpath-check` checks that the pasted logging section actually resolves — an
-unanchored `logs/usage.jsonl` silently lands wherever the caller's cwd happens to be
-instead of the artifact's own log. Run it before a draft goes live:
-
-```sh
-cargo run --release --manifest-path tools/logpath-check/Cargo.toml -- .
-```
+No harness = not done. `templates/eval-harness.md` carries the harness files. A draft
+goes live only when every non-holdout case passes and the holdout slice holds (rule in
+the template).
 
 ## judge protocol (blind by construction)
 
-After logging, dispatch a fresh-context judge:
+Votes are never dispatched live, in-session, by the artifact being used — there is no
+self-report step left to hang that on. The ONLY path that generates a vote is
+`gepa-due`'s own Reflect-time dispatch: when an artifact is due for tuning (its
+transcript-hit usage count crosses threshold) AND its `vote_count` is still low, the
+dispatched session samples a handful of the most recent real transcript hits found by
+the same scan that counted the evidence, and dispatches one fresh-context judge per
+sampled hit before Reflecting.
 
-- Fresh context: the judge receives the artifact's source and the just-logged usage line
-  ONLY. It must NOT read `votes/`, prior `logs/` history, or any other vote.
+- Fresh context: the judge receives the artifact's source and the real transcript
+  excerpt around the sampled use ONLY. It must NOT read `votes/`, any transcript beyond
+  that excerpt, or any other vote.
 - It grades harshly, strictly, critically, constructively: a grade (letter or 0-10) plus
   an open-ended vote on where to adjust the artifact and what it is lacking.
 - It submits ONLY via the script — never by editing files. The first line of the vote is
-  the exact `prompt_version` from the usage line it judged, so a later Reflect pass can
-  retire the vote with that prompt:
+  the exact `prompt_version` (the artifact's current definition commit, computed as in
+  "usage evidence" below) at judging time, so a later Reflect pass can retire the vote
+  once the artifact's definition has since changed:
 
 ```sh
-printf 'prompt_version: %s\n%s\n' '<short sha from usage line>' '<open-ended vote text>' | \
+printf 'prompt_version: %s\n%s\n' '<current short sha>' '<open-ended vote text>' | \
   python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>
 ```
 
@@ -225,21 +232,22 @@ construction. Aggregation across votes is a separate later pass; no judge ever s
 
 Run per artifact, on demand or once logs/votes accumulate:
 
-1. **Reflect**: compute the artifact's current `prompt_version` with the command in its
-   logging section. Read only lines in `logs/usage.jsonl` whose `prompt_version` equals that
-   value; a missing or different value is stale evidence, counted and dropped. Apply the
-   same filter to `votes/votes.jsonl`: keep only votes whose `vote` text starts with
-   `prompt_version: <current value>`; a missing or different first line is stale, counted
-   and dropped. Then read the surviving usage lines + surviving votes, AND the artifact's
-   own `TUNING.md` if it has one, whose open list is the standing input, AND this
-   artifact's own `evals/frontier.jsonl` if present — the archive of every candidate ever
-   tested for it, score vector attached, that step 2 below reads to pick a mutation parent.
-   Build a failure histogram — which criteria fail
-   most, which complaints repeat — and record it in the usage line with the vote
-   indices it came from, so the next pass can recompute it from `votes.jsonl` instead of
-   trusting this one. A blind judge cannot open `votes/`, so an asserted count is unverifiable
-   by the only fresh reader the pass gets. An open list nothing re-reads is a dead letter, which
-   is why it is an input here.
+1. **Reflect**: compute the artifact's current `prompt_version` with the command in
+   "usage evidence" below — still needed to identify frontier candidates and to filter
+   votes, though it no longer filters usage evidence directly. Scan real Pi session
+   transcripts (bounded, parent sessions only) for `read` tool_call hits on this
+   artifact's own definition path, keeping only hits after the time cutoff defined in
+   "usage evidence" below; for each surviving hit, read the actual transcript excerpt
+   around it — not a self-reported summary, since none exists — to see what happened.
+   Apply the vote filter to `votes/votes.jsonl`: keep only votes whose `vote` text starts
+   with `prompt_version: <current value>`; a missing or different first line is stale,
+   counted and dropped. Then read the surviving transcript excerpts + surviving votes,
+   AND this artifact's own `evals/frontier.jsonl` if present — the archive of every
+   candidate ever tested for it, score vector attached, that step 2 below reads to pick a
+   mutation parent. Build a failure histogram — which criteria fail most, which
+   complaints repeat — from this pass's own reading; there is no persisted place to
+   record it for a later pass to trust instead (no `TUNING.md`), so each Reflect pass
+   rebuilds it fresh from the real evidence rather than trusting a prior pass's claim.
 2. **Propose**: targeted mutations aimed at the top failure modes (sharpen the trigger,
    add a skip-when, tighten a step — or widen a trigger the logs show never firing).
    Small, named, one concern each. Every mutation states whether it is PROSE, a CHECKER, or
@@ -272,18 +280,23 @@ Run per artifact, on demand or once logs/votes accumulate:
    in a history line instead is a dead letter. Say plainly which of the two paths was used.
    Reporting a tie as a harness win is the failure this clause exists to stop.
 
-   **If the candidate was tested via `evals/run.sh` and accepted**, mark it in
-   `evals/frontier.jsonl` before moving to Record — flip that run's `candidate_id`
-   (printed by `run.sh` to stderr) to `accepted:true` in place, per the `jq` one-liner in
+   **If the candidate was tested via `evals/run.sh` and accepted**, mark it as this
+   loop's final action — flip that run's `candidate_id` (printed by `run.sh` to stderr)
+   to `accepted:true` in place in `evals/frontier.jsonl`, per the `jq` one-liner in
    `templates/eval-harness.md`'s "frontier.jsonl" section. Never re-run `run.sh` just to
    set this: that re-grades every case through the judge for zero new information.
-5. **Record**: note the accepted mutation and its rationale in the artifact's `TUNING.md` so
-   history is auditable and reversible. It never goes in the body, which every run loads.
+
+There is no Record step. `evals/frontier.jsonl`'s score-vector archive is the only
+durable record a Decide leaves behind — what was tested and whether it won, not the
+narrative reasoning; there is no `TUNING.md` to write that to. When `gepa-due`
+dispatches this loop, the dispatched session continues straight from Decide to pushing
+its branch and opening a PR without merging: the human sign-off gate is reviewing and
+merging that PR, not any pause earlier in the loop.
 
 ## applying frontier data (once an artifact has it)
 
 What to actually do, in order, the next time you tune an artifact that has
-`evals/frontier.jsonl` on file — nothing here is a new mechanism, it's the same five
+`evals/frontier.jsonl` on file — nothing here is a new mechanism, it's the same four
 steps above with frontier data folded in at the points it actually matters:
 
 1. Reflect (step 1) already reads `evals/frontier.jsonl` if present — nothing to do here
@@ -298,8 +311,7 @@ steps above with frontier data folded in at the points it actually matters:
    quick recheck, never for a run feeding a real Decide.
 4. Decide (step 4): apply the unchanged holdout-gating rule. If it accepts, run the
    mark-accepted `jq` one-liner (above) against that run's `candidate_id` — the only new
-   action frontier data adds to Decide.
-5. Record (step 5): unchanged, `TUNING.md` entry as always.
+   action frontier data adds to Decide. This is the loop's last step (no Record).
 
 Pruning `evals/frontier.jsonl` past 20 entries per artifact (drop-oldest-dominated, per
 the template) is rare enough at current volume to stay a manual "do it next time you're
@@ -315,27 +327,29 @@ nothing but the grader agreeing that the text says what it says. This is a weake
 banning self-tuning, and deliberately so: self-tuning is not the failure mode, answer-key cases
 are, and those are open to every author.
 
-## logging
+## usage evidence (no self-reported logging)
 
-Every authored skill and agent carries a short `## logging` section (paste-ready text in
-`templates/eval-harness.md`). This is ai-author's own, and the model for all of them:
+No artifact writes a usage log. `tools/gepa-due` and any dispatched Reflect pass derive
+usage evidence directly from real Pi session transcripts under `~/.pi/agent/sessions/`
+(parent sessions only, bounded scan): a `read` tool_call whose `arguments.path` matches
+this artifact's own definition file counts as one use.
 
-At the end of a use, append ONE JSON(JavaScript Object Notation) line to
-`<repo-root>/skills/ai-author/logs/usage.jsonl`, where `<repo-root>` is the output of
-`git rev-parse --show-toplevel` — never a path relative to the caller's own working
-directory:
+`prompt_version` is still computed the same way — the short commit of the last change to
+the files this artifact loads, excluding its own harness and vote history:
 
-```json
-{"ts":"2026-07-31T14:05:09-0400","artifact":"ai-author","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
+```sh
+git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/votes/**'
 ```
 
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
-- `ts` is the machine's current local timezone with offset
-  (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user
-  analyzes these against their own day.
-- Bounded: the excerpt is the relevant parts only — the trigger, the key outputs, any
-  human correction. Never the full transcript; cap ~2KB per line.
+It identifies which definition a frontier candidate or a vote was tested/cast against —
+it no longer filters usage evidence, since a transcript hit carries no `prompt_version`
+field. Usage evidence is filtered by time instead: only hits after `max(this commit's
+timestamp, the reviewed_through timestamp gepa-due last recorded for this artifact)`
+count as current. See `workflows/gepa-due/README.md` for the full cutoff mechanics and
+`tools/gepa-due`'s own implementation.
 
-These lines are the GEPA reflective dataset, not a dump nobody reads.
+**Known limitation, stated rather than solved**: a `read` tool_call on this artifact's
+definition path can't distinguish "this was the active skill guiding the turn's work"
+from an incidental read (a sibling artifact reading it while authoring, a human asking
+what it says without using it). This is accepted, not disambiguated — false positives
+inflate the usage count somewhat rather than being filtered out.
