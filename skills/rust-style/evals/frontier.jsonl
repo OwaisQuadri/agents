@@ -1,0 +1,4 @@
+{"candidate_id":"e4a2126b","tested_against":"0aceff69b","scores_nonholdout":[10,9,10,10,10],"scores_holdout":[9],"mean_nonholdout":9.8,"accepted":false,"ts":"2026-08-30T15:12:15-0400"}
+{"candidate_id":"4f95ec0a","tested_against":"0aceff69b","scores_nonholdout":[10,10,10,10,10],"scores_holdout":[9],"mean_nonholdout":10.0,"accepted":true,"ts":"2026-08-30T15:13:33-0400"}
+{"candidate_id":"e4a2126b","tested_against":"0aceff69b","scores_nonholdout":[10,9,10,10,10,3,3],"scores_holdout":[9],"mean_nonholdout":7.86,"accepted":false,"ts":"2026-08-30T15:16:41-0400"}
+{"candidate_id":"4f95ec0a","tested_against":"0aceff69b","scores_nonholdout":[10,9,10,10,10,9,9],"scores_holdout":[9],"mean_nonholdout":9.57,"accepted":true,"ts":"2026-08-30T15:19:10-0400"}
