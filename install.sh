@@ -288,8 +288,9 @@ fi
 #    under tools/, alongside no-ai-attribution on the same hook,
 #    gepa-due in the daily workflows/gepa-due launchd job, which runs with the minimal
 #    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
-#    not a live `cargo build` attempted inside the launchd environment
-for tool in ste-check no-ai-attribution session-stats logpath-check preferred-cli-guard warnings-check gepa-due; do
+#    not a live `cargo build` attempted inside the launchd environment,
+#    transcript-directed-video-processor as an on-demand command the user runs by name
+for tool in ste-check no-ai-attribution session-stats logpath-check preferred-cli-guard warnings-check gepa-due transcript-directed-video-processor; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then
