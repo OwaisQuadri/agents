@@ -44,7 +44,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; reference copies of `settings.json` and `settings.local.json` |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
 | `rules/` | Claude Code rules that load only for matching file paths |
-| `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass |
+| `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass; `transcript-directed-video-processor`, which segments a YouTube or local video's transcript into candidate moments and runs a configured vision model over selected frames |
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
 | `install.sh` | the top-level installer; it builds the local Rust tools, runs `tool-sync`, and runs `mcp-sync` when its live inputs exist |
@@ -216,6 +216,8 @@ REPO_TARGET="$PWD" ./install.sh
 ```
 
 The tracked `rag` entry installs the `rag` command from its pinned Git revision. Its Pi extension registers the `search_memory` tool.
+
+The tracked `transcript-directed-video-processor` entry has no separate installer: `install.sh` builds and links the crate under `tools/transcript-directed-video-processor` itself, alongside the repository's other Rust tools. This manifest entry exists only to link its Pi extension, `pi/extensions/transcript-directed-video-processor.ts`, which registers two tools — `video_analyze` (fetch and segment a video's transcript into candidate moments, text-only) and `video_review` (extract frames for named moments and review them with a configured vision-capable model) — so any agent session, including web research, can call the CLI without shelling out to it directly.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supported authoring path.
 

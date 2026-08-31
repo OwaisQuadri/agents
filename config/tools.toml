@@ -263,6 +263,14 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "transcript-directed-video-processor"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/transcript-directed-video-processor.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "chrome-devtools"
 platforms = ["macos", "linux"]
 commands = []
