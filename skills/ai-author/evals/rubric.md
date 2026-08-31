@@ -26,8 +26,8 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   OBSERVABLE (the named line is absent from the output), never on inferred intent:
   - a defect fix shipped with no same-pass fenced case-author dispatch; the coverage debt
     recorded in a history line is a dead letter and grades the same as no record at all
-  - a deferred verdict left only in `logs/usage.jsonl` with no destination that tracks it
-    to execution, and no explicit written drop
+  - a deferred verdict left only in a Reflect pass's own transient analysis with no
+    destination that tracks it to execution, and no explicit written drop
   - an artifact declared done or live with no `evals/` dir, or whose definition does not
     end in its own `## logging` section
   - a session-evidence candidate that omits its observed task shape and measured cost, skips

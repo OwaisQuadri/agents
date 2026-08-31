@@ -373,7 +373,7 @@ fn build_reason(rule: &Rule, kind: MatchKind, pieces: &[Piece]) -> String {
 }
 
 /// The block reason, or `None` to allow. Never panics; malformed input degrades to
-/// allow, matching `pi/extensions/logpath-guard.ts`'s posture.
+/// allow, never to a false block.
 fn blocked_command(command: &str) -> Option<String> {
     let pieces = tokenize(command);
     let (_, rule, kind) = find_violation(&pieces)?;

@@ -280,8 +280,6 @@ fi
 #    because each one sits in a path that is waited on: ste-check in the reply path,
 #    no-ai-attribution in the PreToolUse path ahead of every commit,
 #    session-stats as an on-demand command the user runs by name,
-#    logpath-check in the pi/extensions/logpath-guard tool_call path ahead of every bash
-#    write to a logs/usage.jsonl path (also runnable by name for the static SKILL.md scan),
 #    preferred-cli-guard in the pi/extensions/preferred-cli-guard tool_call path ahead of
 #    every bash call, blocking a literal find/grep invocation in favor of fd/rg,
 #    warnings-check in the PreToolUse path ahead of every commit that stages a .rs file
@@ -290,7 +288,7 @@ fi
 #    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
 #    not a live `cargo build` attempted inside the launchd environment,
 #    transcript-directed-video-processor as an on-demand command the user runs by name
-for tool in ste-check no-ai-attribution session-stats logpath-check preferred-cli-guard warnings-check gepa-due transcript-directed-video-processor; do
+for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check gepa-due transcript-directed-video-processor; do
   CRATE="$REPO_TARGET/tools/$tool"
   [[ -f "$CRATE/Cargo.toml" ]] || continue
   if command -v cargo >/dev/null 2>&1; then

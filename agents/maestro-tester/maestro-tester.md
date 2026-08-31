@@ -113,33 +113,3 @@ Checkable by the dispatcher without redoing the work:
   the log append is now the named exception to the flows_dir write boundary, outcome
   semantics cover guard/decline/blocked runs, reports are named per flow, and repair
   is limited to flow-attributable failures.
-
-## logging
-
-END every run — result, decline, or invalid-dispatch alike — by appending ONE JSON
-(JavaScript Object Notation) line to `agents/maestro-tester/logs/usage.jsonl` in the
-agents repo at `~/Documents/agents`, `mkdir -p` on the logs dir first:
-
-```sh
-cd ~/Documents/agents && mkdir -p agents/maestro-tester/logs && jq -cn \
-  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- agents/maestro-tester docs/dispatch-contract.md ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
-  --arg trigger '<the dispatched objective>' \
-  --arg excerpt '<verdict + flow path + report path + evidence gist>' \
-  --arg outcome 'success|failure|partial' \
-  --arg notes '<selector tradeoffs, flakiness, surprises>' \
-  '{ts:$ts,artifact:"maestro-tester",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
-  >> agents/maestro-tester/logs/usage.jsonl
-```
-
-jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
-excerpt cannot break it. Never hand-build this line with printf: that is what cost
-the fleet 19 unreadable log lines.
-
-`ts` is the machine's current local timezone with offset, never UTC(Coordinated
-Universal Time). The excerpt is the relevant parts only, ~2KB cap, never the full
-transcript. `outcome` grades THIS run's execution of the role, never the app: an
-honest `fail` with a clean report, a correct `missing input: <field>` reply, a
-correct out-of-trigger decline, and a correct `blocked` all log `success`. `failure`
-is the role misfiring — shape violation, weakened assertion, boundary breach.
-`partial` is a run cut short with its evidence incomplete.

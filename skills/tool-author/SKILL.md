@@ -54,7 +54,7 @@ this repo.
 
 ## 2. Author a checker (`tools/<name>/`)
 
-Layout, learned from `tools/logpath-check` and `tools/ste-check` — the two most legible
+Layout, learned from `tools/gepa-due` and `tools/ste-check` — two of the most legible
 examples in the repo:
 
 ```
@@ -300,21 +300,3 @@ slice.
 - Git hook: wired via an `install.sh` `link` line; a `PASS`/`FAIL` test script against a
   scratch git repo, exit nonzero on any failure.
 - The calling skill/agent names the tool in one sentence, no restated logic.
-
-## logging
-
-At the end of a use, append ONE JSON(JavaScript Object Notation) line to
-`<repo-root>/skills/tool-author/logs/usage.jsonl`, where `<repo-root>` is the output of
-`git rev-parse --show-toplevel` — never a path relative to the caller's own working
-directory:
-
-```json
-{"ts":"<local iso with offset, e.g. 2026-08-28T14:05:09-0400>","artifact":"tool-author","trigger":"<what fired it>","excerpt":"<checker or extension named, tests run, exit codes>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'` from the repository root.
-- `ts` is the machine's current local timezone with offset (`date +%Y-%m-%dT%H:%M:%S%z`),
-  never UTC(Coordinated Universal Time).
-- The excerpt is the relevant parts only: which tool, which test command, the exit code.
-  Never the full transcript; cap ~2KB per line.

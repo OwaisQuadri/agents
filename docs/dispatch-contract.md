@@ -56,32 +56,17 @@ A run that grades itself `success` while holding a known coverage hole is a `par
 and the hole is named. Eight blind-judge votes across the fleet were spent on this one
 distinction.
 
-## logging hygiene
+## logging hygiene (retired)
 
-Build the `logs/usage.jsonl` line with `jq -cn --arg`, never with a shell string that
-interpolates the excerpt. jq escapes the value, so a backtick, a quote, a newline, or a
-`$(...)` inside the excerpt survives intact and the line still parses.
+No agent writes a usage log anymore. `logs/usage.jsonl` and the self-report line this
+section used to describe building safely (`jq -cn --arg`, backtick/quote/`$(...)`
+escaping) are gone — usage evidence is now derived from real Pi session transcripts by
+`tools/gepa-due`, never self-reported. `prompt_version` computation is unaffected and
+still lives in `skills/ai-author/SKILL.md`'s "usage evidence" section — referenced from
+there, not restated here.
 
-Every line carries `prompt_version`: the short commit of the last change to the files the
-artifact LOADS.
-
-```sh
-git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'
-```
-
-The exclusions matter both ways. `evals/` is excluded because a new test case changes no
-behaviour, and a version that moved on test edits would discard log lines that are still
-valid. `TUNING.md` is excluded because it is written after a change, only sometimes, and it
-never loads into the body — commit ec7ca48 changed `skills/byline/SKILL.md` and wrote no
-byline TUNING entry, so a TUNING-watching stamp would have called that prompt unchanged.
-
-A Reflect pass drops every line whose `prompt_version` no longer describes the artifact it
-is about to tune. Without it a stale line and a fresh one look identical, which is the hole
-the 2026-08-24 sweep sat in: 88 engineer lines with no way to tell which predated the rules
-being judged.
-
-The fleet lost 19 log lines to this: 16 anchor-verifier lines truncated or blanked by
-backtick interpolation, and 3 debugger lines, two of which carry a literal unexpanded
-`$(date +%Y-%m-%dT%H:%M:%S%z)` where the timestamp belongs. These logs are the reflective
-dataset the GEPA(Genetic-Pareto prompt evolution) loop reads. A corrupted line is a use
-that never happened.
+Historical note, kept for context: the fleet lost 19 self-reported log lines to shell
+interpolation and unexpanded `$(date ...)` before this section existed, and a 2026-08-24
+sweep found 88 `engineer` lines with no reliable way to tell which predated the rules
+being judged. Both failure classes are structurally impossible now — there is no write
+path left for either to corrupt.

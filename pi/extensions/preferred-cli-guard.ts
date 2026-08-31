@@ -14,7 +14,8 @@ export default function preferredCliGuard(pi: ExtensionAPI): void {
 	const binary = resolve(repositoryRoot, "tools/preferred-cli-guard/target/release/preferred-cli-guard");
 
 	const check: Checker = (command) => {
-		// Missing binary (fresh checkout) degrades to allow, matching logpath-guard.ts.
+		// Missing binary (fresh checkout) degrades to allow, same posture every checker
+		// in this file's family takes — never a false block over a missing build.
 		if (!existsSync(binary)) return { blocked: false };
 		const run = spawnSync(binary, ["--check", command], { encoding: "utf8" });
 		if (run.status === 0) return { blocked: false };

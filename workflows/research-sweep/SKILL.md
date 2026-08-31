@@ -86,23 +86,3 @@ logging section; this workflow's own log line is separate and covers the sweep.
   read. Named web angles (academic, news, design/UX) moved from implicit (the plan node
   free-formed them) to an explicit prompt hint, per the owner's own phrasing of what this
   artifact should cover.
-
-## logging
-
-At the end of a use, append ONE JSON(JavaScript Object Notation) line to
-`<repo-root>/workflows/research-sweep/logs/usage.jsonl`, where `<repo-root>` is the
-output of `git rev-parse --show-toplevel` — never a path relative to the caller's own
-working directory:
-
-```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"research-sweep","trigger":"<what fired it>","excerpt":"<goal, dispatch labels, counts, critic verdict>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
-- `ts` is the machine's current local timezone with offset
-  (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC(Coordinated Universal Time): the user
-  analyzes these against their own day.
-- The excerpt is the relevant parts only — the goal, the labels, the counts, any
-  human correction. Never the full blocks; cap ~2KB per line.

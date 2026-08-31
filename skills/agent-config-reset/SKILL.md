@@ -121,23 +121,4 @@ artifact against it; phase 8 re-checks it before any deletion.
 
 ## evals
 
-evals/ follows skills/ai-author/templates/eval-harness.md: cases.jsonl, rubric.md, run.sh (`./run.sh [candidate]` grades non-holdout cases, `--holdout` the held-out slice). Unseeded by the user's call (2026-07-31); cases grow from logs/usage.jsonl and judge votes, or bootstrap on "seed the evals".
-
-## logging
-
-At the end of a use, append ONE bounded JSON (JavaScript Object Notation) line to
-`<repo-root>/skills/agent-config-reset/logs/usage.jsonl`, where `<repo-root>` is the
-output of `git rev-parse --show-toplevel` — never a path relative to the caller's own
-working directory — in exactly this shape and with exactly these keys:
-
-```json
-{"ts":"<local iso with offset, e.g. 2026-07-31T14:05:09-0400>","artifact":"agent-config-reset","prompt_version":"<short sha>","trigger":"<what fired it>","excerpt":"<relevant transcript excerpt>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
-- `ts` is the machine's CURRENT LOCAL TIMEZONE with offset
-  (`date +%Y-%m-%dT%H:%M:%S%z`), never UTC (Coordinated Universal Time): the user
-  analyzes these against their own day.
-- The excerpt is the relevant transcript parts only; cap ~2KB per line.
+evals/ follows skills/ai-author/templates/eval-harness.md: cases.jsonl, rubric.md, run.sh (`./run.sh [candidate]` grades non-holdout cases, `--holdout` the held-out slice). Unseeded by the user's call (2026-07-31); cases grow from real transcript-hit failures (found via gepa-due's own scan) and judge votes, or bootstrap on "seed the evals".

@@ -1,6 +1,6 @@
 ---
 name: skill-author
-description: Use when authoring a new skill or rewriting an existing one — its trigger description, body recipe, disclosure files, evals, or logging. Skip for agents (agent-author) and workflows (workflow-author) — different anatomy — and for merely running a skill.
+description: Use when authoring a new skill or rewriting an existing one — its trigger description, body recipe, disclosure files, or evals. Skip for agents (agent-author) and workflows (workflow-author) — different anatomy — and for merely running a skill.
 metadata:
   minimum-tier: T4
   short-description: The deep craft of authoring skills
@@ -92,8 +92,10 @@ Name each file for what it holds. Never disclose a step every run executes.
 
 ## 4. The authoring contract — every skill ships it
 
-Every skill authored here carries an "## evals" and a "## logging" section plus their
-support files. No harness = not done.
+Every skill authored here carries an "## evals" section plus its support files. No
+harness = not done. No skill carries a logging section anymore — usage evidence is
+derived from real Pi session transcripts by `tools/gepa-due`, never self-reported; see
+`skills/ai-author/SKILL.md`'s "usage evidence" section for the mechanics.
 
 ### The "## evals" section
 
@@ -101,7 +103,8 @@ Copy skills/ai-author/templates/eval-harness.md into `<skill>/evals/`:
 
 - `cases.jsonl` — ≥5 cases (`{"id","input","expect","holdout","source"}`), ~20% (min 1)
   marked holdout and never shown to the mutation-proposer. Grow cases from real
-  usage-log failures and judge votes, not imagination.
+  transcript-hit failures (found via `gepa-due`'s own scan at tuning time) and judge
+  votes, not imagination.
 - `rubric.md` — the single-sourced 0-10 grading contract; the blind post-use judge and
   the eval judge read the SAME rubric. List this skill's catastrophic, un-tradeable
   failures explicitly (false pass, wrong autonomous action, hallucinated paths) — a
@@ -115,27 +118,6 @@ Copy skills/ai-author/templates/eval-harness.md into `<skill>/evals/`:
 The authored skill's own "## evals" section is 2-4 lines: what run.sh checks, how to
 invoke it.
 
-### The "## logging" section
-
-Every authored skill ends with a short "## logging" section (paste-ready block in the
-same eval-harness template) instructing: at the end of a use, append ONE bounded JSON
-line to the skill's `logs/usage.jsonl` — the relevant
-transcript excerpt only (trigger, key outputs, any human correction), ~2KB cap, never
-the full transcript. The timestamp is the machine's CURRENT LOCAL TIMEZONE with offset,
-never UTC(Coordinated Universal Time): these logs get analyzed against the user's own
-day, and UTC lands that analysis in the wrong hours.
-
-```sh
-date +%Y-%m-%dT%H:%M:%S%z   # 2026-07-31T02:45:10-0400
-```
-
-```json
-{"ts":"2026-07-31T02:45:10-0400","artifact":"<name>","trigger":"<what fired it>","excerpt":"<bounded>","prompt_version":"<short sha>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-- `prompt_version` is the short commit of the last change to the files this artifact
-  loads: `git -C ~/Documents/agents log -1 --format=%h -- <artifact dir> ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`. A
-  Reflect pass drops lines written against a prompt that no longer exists.
 ## 5. Failure modes and drift signals
 
 Diagnose a misbehaving skill against these, in order of frequency:
@@ -154,11 +136,11 @@ Diagnose a misbehaving skill against these, in order of frequency:
   prune by relevance, line by line; shorter skills stay true longer.
 
 Any of these observed in the wild sends the skill back through GEPA(Genetic-Pareto
-prompt evolution) — the GEPA loop in skills/ai-author: reflect over logs and votes, propose
-one-concern mutations, accept only on a harness win that holds on holdout. Concrete
-tripwires: the same human correction in 2+ usage lines, `failure`/`partial` outcomes
-clustering, a judge vote naming the same lack twice, or a skill that never fires while
-its territory keeps coming up (trigger too narrow).
+prompt evolution) — the GEPA loop in skills/ai-author: reflect over real transcript
+evidence and votes, propose one-concern mutations, accept only on a harness win that
+holds on holdout. Concrete tripwires: the same human correction recurring across 2+
+transcript hits, a judge vote naming the same lack twice, or a skill that never fires
+while its territory keeps coming up (trigger too narrow).
 
 ## Done when
 
@@ -166,13 +148,5 @@ its territory keeps coming up (trigger too narrow).
 - Description: "Use when" + leading word + "Skip when"; every sentence passes the no-op
   test.
 - Every step ends on a checkable completion criterion.
-- `evals/` holds cases.jsonl, rubric.md, run.sh; "## evals" and "## logging" sections
-  present in the body.
+- `evals/` holds cases.jsonl, rubric.md, run.sh; "## evals" section present in the body.
 - `./install.sh` run, so the skill resolves from ~/.agents/skills and both agent roots.
-
-## logging
-
-At the end of a use of THIS skill, append one bounded JSON line to
-`<repo-root>/skills/skill-author/logs/usage.jsonl`, where `<repo-root>` is the output of
-`git rev-parse --show-toplevel` — never a path relative to the caller's own working
-directory — per section 4's logging spec, local timezone with offset, ~2KB cap.

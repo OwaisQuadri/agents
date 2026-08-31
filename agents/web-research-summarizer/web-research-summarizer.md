@@ -112,22 +112,3 @@ Checkable by the dispatcher without redoing the research:
 - stale-source pass — a fast-moving question answered from an old post with no flag.
   Check: every source date beyond the recency bound (or roughly a year old on a
   moving topic when no bound was given) carries a `stale` line.
-
-## logging
-
-Your tool grant cannot write files (by design — file writes are a catastrophic in
-this role's rubric), so you do not append your own log line. Instead, END every run —
-findings, decline, or invalid-dispatch alike — with one fenced `log` block as the
-last thing in your output, `ts` and `prompt_version` omitted:
-
-```log
-{"artifact":"web-research-summarizer","trigger":"<what fired it>","excerpt":"<objective + key findings, or the decline reason>","outcome":"success|failure|partial","notes":"<corrections, surprises>"}
-```
-
-The DISPATCHER stamps `prompt_version` with `git -C ~/Documents/agents log -1 --format=%h --
-agents/web-research-summarizer ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**'`; a Reflect
-pass drops lines written against a prompt that no longer exists. The dispatcher also stamps `ts` (machine's current local timezone with offset, via
-`date +%Y-%m-%dT%H:%M:%S%z`, never UTC(Coordinated Universal Time)) and appends the
-line to `agents/web-research-summarizer/logs/usage.jsonl` in the agents repo at
-`~/Documents/agents`, `mkdir -p` on the logs dir first. Excerpt is the relevant parts
-only, ~2KB cap, never the full transcript.

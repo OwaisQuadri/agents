@@ -17,36 +17,53 @@
 # Up to MAX_CONCURRENT due artifacts get their own worktree + live Pi session, run in
 # parallel (not one session handed the whole due list serially) — every session is
 # scoped to exactly one artifact so its worktree, its kickoff prompt, and its
-# post-settle rotation stay independent. Artifacts due beyond the cap are named and
+# post-settle state entry stay independent. Artifacts due beyond the cap are named and
 # left for the next fire; never silently dropped.
 #
-# `logs/` and `votes/` are gitignored, so a fresh git worktree never inherits them —
-# git worktrees only share committed history, and hooks/post-checkout explicitly only
-# copies untracked NON-ignored files. Each per-artifact worktree gets that artifact's
-# real logs/votes copied in by this script before the kickoff prompt fires, so the
-# session reads real evidence instead of extrapolating from the checker's own count
-# summary (a fabrication bug this exact mechanism ran into and had to be fixed for).
+# There is no more per-artifact logs/usage.jsonl to copy in — usage evidence is no
+# longer self-reported at all (see skills/ai-author/SKILL.md's "usage evidence"
+# section): tools/gepa-due and the dispatched session both read the SAME real Pi
+# transcripts directly from ~/.pi/agent/sessions/, a machine-global location every
+# worktree on this machine can already see without anything being copied. Only
+# votes/votes.jsonl is still gitignored-per-artifact and still needs copying in —
+# `git worktree` only carries committed history, and hooks/post-checkout explicitly
+# only copies untracked NON-ignored files.
 #
-# Every fire whose session reaches a VERDICT (settles: idle/done/blocked) rotates
-# that artifact's logs/usage.jsonl and votes/votes.jsonl in the MAIN checkout to a
-# dated `.reviewed-<stamp>` sibling afterward — gated on REACHING a verdict, never on
-# what that verdict was (a real mutation, a no-mutation note, or nothing committed at
-# all are all a reviewed conclusion). A session that times out or gets stuck never
-# reaches a verdict and does NOT get its evidence rotated — it stays due for tomorrow.
-# A verified move, never a delete, per this repo's own "never rm before a verified
-# move" rule — the reviewed evidence stays on disk for anyone who wants to look.
+# "Since last tune" is now a TIME cutoff (max of the artifact's own last-modification
+# commit and workflows/gepa-due/state/reviewed.jsonl's reviewed_through for it), not a
+# prompt_version hash match — a transcript hit carries no prompt_version field to
+# match against. tools/gepa-due computes that cutoff and reports it as cutoff_iso per
+# due artifact; this script passes it straight into the kickoff prompt so the
+# dispatched session (running in a FRESH worktree that cannot see the gitignored state
+# file the cutoff came from) never has to — and never could — re-derive it itself.
+#
+# Dedup against a still-open PR: before selecting which due artifacts to run this
+# fire, this script reads workflows/gepa-due/state/reviewed.jsonl (main checkout,
+# gitignored, written only by this script) for each due artifact's MOST RECENT prior
+# dispatch, and skips it if that dispatch's PR is still open — no sense opening a
+# second worktree to review the same artifact while a prior review sits unmerged.
 #
 # Every session is instructed to push its branch and open a PR itself before
 # finishing (never merge — that stays a human Decide call) so the review actually
 # lands somewhere visible instead of sitting silent in a local worktree; this script
-# verifies that happened afterward and WARNs loudly if it didn't.
+# verifies that happened afterward and WARNs loudly if it didn't, and only an entry
+# with a real pr_number lets a future fire's open-PR dedup check above find it.
+#
+# Every fire whose session reaches a VERDICT (settles: idle/done/blocked) appends one
+# line to workflows/gepa-due/state/reviewed.jsonl — gated on REACHING a verdict, never
+# on what that verdict was (a real mutation, a no-mutation note, or nothing committed
+# at all are all a reviewed conclusion). A session that times out or gets stuck never
+# reaches a verdict and gets NO entry — it stays due for tomorrow, same evidence,
+# same cutoff. Append-only: never edits or deletes a prior line, mirroring this
+# repo's own "never rm before a verified move" spirit — nothing here is destructive.
 #
 # A usage-only, ZERO-vote due reason gets a DIFFERENT kickoff than a real Reflect: with
 # no judge signal on file, a live Reflect pass has nothing to act on and — confirmed
 # live, repeatedly, 2026-08-29 — reliably just re-derives "no mutation" from the same
 # usage lines every time. So a zero-vote fire dispatches JUDGE_SAMPLE_SIZE fresh-context
 # sub-agents (real blind judging, per SKILL.md's judge protocol) against a sample of
-# recent usage lines FIRST, to generate real votes for next time, before Reflect runs.
+# recent REAL transcript hits FIRST, to generate real votes for next time, before
+# Reflect runs.
 set -uo pipefail
 
 REPO="${GEPA_DUE_REPO:-/Users/owaisquadri/Documents/agents}"
@@ -59,7 +76,7 @@ MAX_CONCURRENT="${GEPA_DUE_MAX_CONCURRENT:-3}"
 # restated failure taxonomy already implicit in the incumbent's own contract. The real
 # missing input is judge signal, not more prose re-reading the same usage lines, so
 # the kickoff below dispatches the judge protocol against this many of the most recent
-# current-version usage lines instead of asking for a Reflect essay on zero votes.
+# real transcript hits instead of asking for a Reflect essay on zero votes.
 JUDGE_SAMPLE_SIZE="${GEPA_DUE_JUDGE_SAMPLE:-5}"
 # install.sh builds this and symlinks it onto $HOME/.local/bin (already first on this
 # plist's own PATH) — same pattern as every other tools/ checker, per its own "8. the
@@ -67,6 +84,7 @@ JUDGE_SAMPLE_SIZE="${GEPA_DUE_JUDGE_SAMPLE:-5}"
 # build here; command -v finds the symlink once install.sh has run, falling back to
 # the raw build path only for a manual run against a checkout install.sh hasn't touched.
 GEPA_DUE_BIN="$(command -v gepa-due || echo "$REPO/tools/gepa-due/target/release/gepa-due")"
+STATE_FILE="$REPO/workflows/gepa-due/state/reviewed.jsonl"
 PRUNE_AFTER_DAYS=7
 POLL_TAB_TIMEOUT_S=30
 POLL_TAB_INTERVAL_S=2
@@ -94,6 +112,41 @@ if [ "$DUE_COUNT" -eq 0 ]; then
 fi
 
 log "due: $DUE_COUNT artifact(s) — $(printf '%s' "$DUE_JSON" | jq -c '[.[].artifact]')"
+
+# --- step 0.5: drop any due artifact whose most recent prior dispatch still has an
+#     open PR — no dedup value in reviewing it again before that review lands. Reads
+#     directly from the STATE_FILE in the main checkout (never copied, never needed
+#     to be — this step runs here, not inside a worktree). ---
+GH_REPO_SLUG=""
+if git -C "$REPO" remote get-url origin >/dev/null 2>&1; then
+  GH_REPO_SLUG="$(git -C "$REPO" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')"
+fi
+if [ -f "$STATE_FILE" ] && [ -n "$GH_REPO_SLUG" ]; then
+  LATEST_BY_ARTIFACT="$(jq -c -s 'group_by(.artifact) | map(sort_by(.dispatched_at) | last)' "$STATE_FILE" 2>/dev/null || echo '[]')"
+  SKIP_ARTIFACTS=()
+  while IFS=$'\t' read -r artifact pr_number; do
+    [ -z "$artifact" ] && continue
+    if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+      continue
+    fi
+    state="$(gh pr view "$pr_number" --repo "$GH_REPO_SLUG" --json state -q .state 2>/dev/null || echo '')"
+    if [ "$state" = "OPEN" ]; then
+      log "[$artifact] skipping this fire — prior dispatch PR #$pr_number is still open"
+      SKIP_ARTIFACTS+=("$artifact")
+    fi
+  done < <(printf '%s' "$LATEST_BY_ARTIFACT" | jq -r '.[] | [.artifact, (.pr_number // "")] | @tsv')
+
+  if [ "${#SKIP_ARTIFACTS[@]}" -gt 0 ]; then
+    SKIP_JSON="$(printf '%s\n' "${SKIP_ARTIFACTS[@]}" | jq -R . | jq -s .)"
+    DUE_JSON="$(printf '%s' "$DUE_JSON" | jq -c --argjson skip "$SKIP_JSON" '[.[] | select(([.artifact] | inside($skip)) | not)]')"
+    DUE_COUNT="$(printf '%s' "$DUE_JSON" | jq 'length')"
+  fi
+fi
+
+if [ "$DUE_COUNT" -eq 0 ]; then
+  log "nothing left to dispatch after open-PR dedup — exiting, no Pi invocation"
+  exit 0
+fi
 
 # highest-evidence artifacts first when capping — the cap decides WHICH artifacts run
 # this fire, never whether the checker's own report gets trusted.
@@ -130,7 +183,7 @@ CUTOFF_EPOCH=$(( $(date +%s) - PRUNE_AFTER_DAYS * 86400 ))
 #     up to MAX_CONCURRENT run in parallel. Every log line is prefixed with the
 #     artifact name since these interleave. ---
 handle_artifact() {
-  local artifact="$1" usage_count="$2" vote_count="$3" reason="$4"
+  local artifact="$1" usage_count="$2" vote_count="$3" reason="$4" cutoff_iso="$5"
   local slug="${artifact//\//-}"
   local branch="gepa-due/$slug/$RUN_STAMP"
   local tag="[$artifact]"
@@ -152,21 +205,14 @@ handle_artifact() {
   fi
   log "$tag worktree ready: branch=$branch workspace=$workspace_id path=$worktree_path"
 
-  # copy THIS artifact's real evidence into its own worktree — gitignored, never
-  # inherited by a fresh worktree otherwise. Copy, not symlink or move: the source
-  # (main checkout) must be untouched until rotation confirms real review happened.
-  local copied_any=0
-  for kind in logs votes; do
-    if [ -d "$REPO/$artifact/$kind" ]; then
-      mkdir -p "$worktree_path/$artifact"
-      cp -R "$REPO/$artifact/$kind" "$worktree_path/$artifact/$kind"
-      copied_any=1
-    fi
-  done
-  if [ "$copied_any" -eq 0 ]; then
-    log "$tag WARN: no logs/ or votes/ directory found at $REPO/$artifact — proceeding anyway, but the session will have no real evidence to read"
-  else
-    log "$tag copied real logs/votes into the worktree"
+  # copy THIS artifact's real vote history into its own worktree — gitignored, never
+  # inherited by a fresh worktree otherwise. Usage evidence needs no copying: real Pi
+  # transcripts under ~/.pi/agent/sessions/ are a machine-global path this worktree
+  # already sees, same as every other worktree on this machine.
+  if [ -d "$REPO/$artifact/votes" ]; then
+    mkdir -p "$worktree_path/$artifact"
+    cp -R "$REPO/$artifact/votes" "$worktree_path/$artifact/votes"
+    log "$tag copied real votes/ into the worktree"
   fi
 
   local agent_pane="" elapsed=0
@@ -197,9 +243,9 @@ handle_artifact() {
 
   local kickoff
   if [ "$vote_count" -eq 0 ]; then
-    kickoff="tools/gepa-due found this artifact due on usage_count alone ($usage_count, reason: $reason) with ZERO votes on file. Its real $artifact/logs/usage.jsonl has already been copied into THIS worktree at that exact path — read it directly. With zero votes there is no judged critique to Reflect against — writing a long Reflect essay re-reading the same usage lines is NOT the right action here (every real gepa-due run so far that hit this exact zero-vote case concluded 'no mutation' with nothing but the incumbent's own contract restated). The right action: dispatch $JUDGE_SAMPLE_SIZE SEPARATE fresh-context sub-agents (the Agent tool, general-purpose type — NOT your own context, blindness is the whole point per SKILL.md's judge protocol section), one per the $JUDGE_SAMPLE_SIZE most recent lines in $artifact/logs/usage.jsonl. Each sub-agent gets ONLY the artifact's own source file and its one assigned usage line — never this prompt, never the other lines, never prior votes — and grades harshly per the judge protocol, submitting via 'python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>' with the vote's first line being 'prompt_version: <exact value from that usage line>'. After all $JUDGE_SAMPLE_SIZE votes land, THEN run Reflect for real with actual judge signal. If it still concludes no mutation (likely, with only $JUDGE_SAMPLE_SIZE votes), commit ONE short paragraph to $artifact/TUNING.md — how many votes you generated and their grades, and why no mutation — NOT a multi-section essay re-deriving the failure taxonomy from usage lines alone. Never ship a mutation without going through the loop's own Decide gate. Whatever you conclude, commit that entry AND push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — that PR is how this trigger's evidence review actually lands instead of sitting in a local worktree only. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+    kickoff="tools/gepa-due found this artifact due on usage_count alone ($usage_count real transcript hits since $cutoff_iso, reason: $reason) with ZERO votes on file. There is no logs/usage.jsonl to read — usage evidence is real Pi session transcripts under ~/.pi/agent/sessions/ (machine-global, already visible from this worktree), a read tool_call whose path ends in this artifact's own definition file, with a timestamp strictly after $cutoff_iso. skills/ai-author/SKILL.md's Reflect step documents exactly how to scan and read these. With zero votes there is no judged critique to Reflect against — writing a long Reflect essay re-reading the same usage hits is NOT the right action here (every real gepa-due run so far that hit this exact zero-vote case concluded 'no mutation' with nothing but the incumbent's own contract restated). The right action: dispatch $JUDGE_SAMPLE_SIZE SEPARATE fresh-context sub-agents (the Agent tool, general-purpose type — NOT your own context, blindness is the whole point per SKILL.md's judge protocol section), one per the $JUDGE_SAMPLE_SIZE most recent real transcript hits you find (after $cutoff_iso) for this artifact. Each sub-agent gets ONLY the artifact's own source file and its one assigned transcript excerpt — never this prompt, never the other hits, never prior votes — and grades harshly per the judge protocol, submitting via 'python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>' with the vote's first line being 'prompt_version: <this artifact's current short commit hash>'. After all $JUDGE_SAMPLE_SIZE votes land, THEN run Reflect for real with actual judge signal. If it still concludes no mutation (likely, with only $JUDGE_SAMPLE_SIZE votes), commit ONE short paragraph somewhere durable per SKILL.md's current record-keeping guidance — how many votes you generated and their grades, and why no mutation — NOT a multi-section essay re-deriving the failure taxonomy from usage hits alone. Never ship a mutation without going through the loop's own Decide gate. Whatever you conclude, push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — that PR is how this trigger's evidence review actually lands instead of sitting in a local worktree only. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
   else
-    kickoff="tools/gepa-due found this artifact due for a GEPA tuning look: $artifact (usage_count=$usage_count, vote_count=$vote_count, reason: $reason). Its real $artifact/logs/usage.jsonl and $artifact/votes/votes.jsonl have already been copied into THIS worktree at those exact paths — read them directly, don't rely on this summary alone. Read skills/ai-author/SKILL.md's GEPA loop (Reflect/Propose/Test/Decide/Record) and its 'applying frontier data' section, then decide what to do — run a real tuning pass, or record a short 'no mutation, here is why' note (one paragraph if there is genuinely nothing new to report; longer only if the votes actually surface a new pattern worth naming in full). Never ship a mutation without going through the loop's own Decide gate; this prompt is a nudge, not an instruction to skip it. Whatever you conclude, commit a dated entry to $artifact/TUNING.md AND push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — that commit is how this trigger knows the evidence was actually reviewed and stops re-firing on it, and the PR is how it actually lands for review. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+    kickoff="tools/gepa-due found this artifact due for a GEPA tuning look: $artifact (usage_count=$usage_count real transcript hits since $cutoff_iso, vote_count=$vote_count, reason: $reason). There is no logs/usage.jsonl to read — usage evidence is real Pi session transcripts under ~/.pi/agent/sessions/ (machine-global, already visible from this worktree), a read tool_call whose path ends in this artifact's own definition file, with a timestamp strictly after $cutoff_iso. Its real $artifact/votes/votes.jsonl has already been copied into THIS worktree at that exact path — read it directly. Read skills/ai-author/SKILL.md's GEPA loop (Reflect/Propose/Test/Decide) and its 'applying frontier data' section, then decide what to do — run a real tuning pass, or record a short 'no mutation, here is why' note (one paragraph if there is genuinely nothing new to report; longer only if the votes actually surface a new pattern worth naming in full) somewhere durable per SKILL.md's current record-keeping guidance. Never ship a mutation without going through the loop's own Decide gate; this prompt is a nudge, not an instruction to skip it. Whatever you conclude, push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — the PR is how this actually lands for review. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
   fi
   "$HERDR" pane send-text "$agent_pane" "$kickoff"
 
@@ -219,18 +265,22 @@ handle_artifact() {
   fi
   log "$tag working confirmed; waiting for it to settle (idle/done/blocked)"
   if ! "$HERDR" agent wait "$agent_pane" --timeout "$PROMPT_TIMEOUT_MS" >/dev/null 2>&1; then
-    log "$tag WARN: agent wait did not settle cleanly within ${PROMPT_TIMEOUT_MS}ms — pane is still open and interactive, check it directly. NOT rotating evidence: it never reached a verdict, so re-firing tomorrow is the correct behavior, not a repeat of wasted work."
+    log "$tag WARN: agent wait did not settle cleanly within ${PROMPT_TIMEOUT_MS}ms — pane is still open and interactive, check it directly. NOT recording a reviewed-through entry: it never reached a verdict, so re-firing tomorrow is the correct behavior, not a repeat of wasted work."
     return 1
   fi
   log "$tag SUCCESS: session settled — branch=$branch workspace=$workspace_id"
 
-  # verify the session actually did what the kickoff asked (push + open a PR) — purely
-  # informational, logged loudly if missing, does NOT gate rotation below.
+  # verify the session actually did what the kickoff asked (push + open a PR), and
+  # capture the PR number for the state entry below — a future fire's open-PR dedup
+  # check (step 0.5) can only skip a re-review if this number is real.
+  local pr_number=""
   if git -C "$worktree_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
-    local pr_url
-    pr_url="$(gh pr view "$branch" --repo "$(git -C "$worktree_path" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')" --json url -q .url 2>/dev/null || true)"
-    if [ -n "$pr_url" ]; then
-      log "$tag confirmed: branch pushed, PR open at $pr_url"
+    local repo_slug pr_json
+    repo_slug="$(git -C "$worktree_path" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')"
+    pr_json="$(gh pr view "$branch" --repo "$repo_slug" --json url,number 2>/dev/null || true)"
+    pr_number="$(printf '%s' "$pr_json" | jq -r '.number // empty' 2>/dev/null)"
+    if [ -n "$pr_number" ]; then
+      log "$tag confirmed: branch pushed, PR #$pr_number open at $(printf '%s' "$pr_json" | jq -r '.url')"
     else
       log "$tag WARN: branch $branch was pushed but no open PR found for it — session may not have run 'gh pr create'"
     fi
@@ -238,34 +288,18 @@ handle_artifact() {
     log "$tag WARN: branch $branch was never pushed (no upstream) — its commit(s) are stuck in the local worktree, nobody will see this without manual intervention"
   fi
 
-  # rotation: gated on reaching a VERDICT (we're past the settle check above without
-  # returning early — the session ran to completion: idle/done/blocked, not stuck or
-  # timed out), never on the verdict's
-  # CONTENT. "No mutation, nothing to commit" is as much a verdict as a real mutation
-  # or a TUNING.md note — the session looked at the real evidence and reached a
-  # conclusion, so that evidence is reviewed, full stop, regardless of whether the
-  # conclusion produced a commit. Log whether TUNING.md was touched purely as
-  # information for a human skimming the trigger log; it changes nothing here.
-  local changed
-  changed="$(git -C "$worktree_path" diff --name-only "$GEPA_DUE_BASE" HEAD -- "$artifact/TUNING.md" 2>/dev/null)"
-  if [ -z "$changed" ]; then
-    log "$tag no $artifact/TUNING.md commit found on $branch, but the session reached a verdict — rotating evidence anyway"
-  else
-    log "$tag confirmed $artifact/TUNING.md was committed — rotating reviewed evidence"
-  fi
-  local kind_path dst
-  for kind_path in "logs/usage.jsonl" "votes/votes.jsonl"; do
-    local src="$REPO/$artifact/$kind_path"
-    if [ -f "$src" ]; then
-      dst="${src}.reviewed-${RUN_STAMP}"
-      mv "$src" "$dst"
-      if [ -f "$dst" ] && [ ! -f "$src" ]; then
-        log "$tag rotated $kind_path -> $(basename "$dst") (verified move, not a delete)"
-      else
-        log "$tag WARN: rotate of $kind_path did not verify cleanly (src=$([ -f "$src" ] && echo present || echo gone), dst=$([ -f "$dst" ] && echo present || echo missing)) — leaving as-is"
-      fi
-    fi
-  done
+  # reviewed-through: gated on reaching a VERDICT (we're past the settle check above
+  # without returning early — the session ran to completion: idle/done/blocked, not
+  # stuck or timed out), never on the verdict's CONTENT. "No mutation, nothing to
+  # commit" is as much a verdict as a real mutation — the session looked at the real
+  # evidence and reached a conclusion, so that evidence is reviewed, full stop.
+  # Append-only: this NEVER edits or removes a prior line for this or any artifact.
+  local now_iso
+  now_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  mkdir -p "$(dirname "$STATE_FILE")"
+  printf '{"artifact":"%s","reviewed_through":"%s","pr_number":%s,"branch":"%s","dispatched_at":"%s"}\n' \
+    "$artifact" "$now_iso" "${pr_number:-null}" "$branch" "$RUN_STAMP" >> "$STATE_FILE"
+  log "$tag recorded reviewed_through=$now_iso in $STATE_FILE"
   return 0
 }
 
@@ -276,7 +310,8 @@ for i in $(seq 0 $(( SELECTED_COUNT - 1 ))); do
   usage_count="$(printf '%s' "$entry" | jq -r '.usage_count')"
   vote_count="$(printf '%s' "$entry" | jq -r '.vote_count')"
   reason="$(printf '%s' "$entry" | jq -r '.reason')"
-  handle_artifact "$artifact" "$usage_count" "$vote_count" "$reason" &
+  cutoff_iso="$(printf '%s' "$entry" | jq -r '.cutoff_iso')"
+  handle_artifact "$artifact" "$usage_count" "$vote_count" "$reason" "$cutoff_iso" &
   PIDS+=("$!")
 done
 

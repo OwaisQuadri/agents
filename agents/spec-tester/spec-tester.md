@@ -134,32 +134,3 @@ Checkable by the dispatcher without redoing the work:
   input (moved to fd 3), dispatches now arrive by stdin pipe rather than argv (an
   empty redirected stdin makes the CLI ignore the prompt argument), and each
   dispatch runs with the fixture as its working directory.
-
-## logging
-
-END every run — result, decline, or invalid-dispatch alike — by appending ONE JSON
-line to `agents/spec-tester/logs/usage.jsonl` in the agents repo at
-`~/Documents/agents`, `mkdir -p` on the logs dir first:
-
-```sh
-cd ~/Documents/agents && mkdir -p agents/spec-tester/logs && jq -cn \
-  --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z)" \
-  --arg pv "$(git -C ~/Documents/agents log -1 --format=%h -- agents/spec-tester ':(exclude)**/evals/**' ':(exclude)**/TUNING.md' ':(exclude)**/logs/**' ':(exclude)**/votes/**')" \
-  --arg trigger '<mode + case count or angle>' \
-  --arg excerpt '<verdict counts + failure gist>' \
-  --arg outcome 'success|failure|partial' \
-  --arg notes '<harness gaps, flakiness, surprises>' \
-  '{ts:$ts,artifact:"spec-tester",prompt_version:$pv,trigger:$trigger,excerpt:$excerpt,outcome:$outcome,notes:$notes}' \
-  >> agents/spec-tester/logs/usage.jsonl
-```
-
-jq builds the line, so a backtick, a quote, a newline or a `$(...)` inside the
-excerpt cannot break it. Never hand-build this line with printf: that is what cost
-the fleet 19 unreadable log lines.
-
-`ts` is the machine's current local timezone with offset, never UTC(Coordinated
-Universal Time). The excerpt is the relevant parts only, ~2KB cap. `outcome` grades
-THIS run's execution of the role, never the app: honest fails, a correct
-`missing input: <field>`, a correct decline, and a correct `blocked` all log
-`success`. `failure` is the role misfiring — shape violation, SUT write, pass without
-an executed command. `partial` is a run cut short with evidence incomplete.
