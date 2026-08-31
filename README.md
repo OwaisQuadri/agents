@@ -217,6 +217,8 @@ REPO_TARGET="$PWD" ./install.sh
 
 The tracked `rag` entry installs the `rag` command from its pinned Git revision. Its Pi extension registers the `search_memory` tool.
 
+The tracked `transcript-directed-video-processor` entry has no separate installer: `install.sh` builds and links the crate under `tools/transcript-directed-video-processor` itself, alongside the repository's other Rust tools. This manifest entry exists only to link its Pi extension, `pi/extensions/transcript-directed-video-processor.ts`, which registers two tools — `video_analyze` (fetch and segment a video's transcript into candidate moments, text-only) and `video_review` (extract frames for named moments and review them with a configured vision-capable model) — so any agent session, including web research, can call the CLI without shelling out to it directly.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supported authoring path.
 
 ## pr review
