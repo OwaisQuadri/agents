@@ -32,8 +32,17 @@ done
 
 command -v claude >/dev/null 2>&1 || { echo "claude CLI(command-line interface) not found on PATH" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found on PATH" >&2; exit 1; }
+command -v cargo >/dev/null 2>&1 || { echo "cargo not found on PATH" >&2; exit 1; }
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
+
+# c6 dispatches the agent against a live dispatch-baseline binary so grading can
+# see the exact --out command it chose for its baseline stamp, not just the
+# markdown reply. Build once, prepend to PATH for every dispatch subshell.
+TOOLDIR="$(cd "$HERE/../../../tools/dispatch-baseline" && pwd)"
+cargo build --release --manifest-path "$TOOLDIR/Cargo.toml" -q \
+  || { echo "failed to build dispatch-baseline" >&2; exit 1; }
+TOOLBIN="$TOOLDIR/target/release"
 
 FIXROOT="/tmp/code-reviewer-evals"
 FIXTURE="$FIXROOT/fixture-repo"
@@ -101,7 +110,43 @@ trap 'rm -rf "$WORKDIR"' EXIT
 dispatch() {
   # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
   # case loop's remaining lines without it
-  ( cd "$WORKDIR" && claude --agent code-reviewer -p "$1" --allowedTools "Read,Grep,Glob,Bash" 2>/dev/null < /dev/null )
+  ( cd "$WORKDIR" && PATH="$TOOLBIN:$PATH" claude --agent code-reviewer -p "$1" --allowedTools "Read,Grep,Glob,Bash" 2>/dev/null < /dev/null )
+}
+
+dispatch_json() {
+  # same dispatch, but stream-json + verbose so the raw tool-call transcript
+  # (including the exact Bash command the agent ran for dispatch-baseline
+  # stamp) survives past the final markdown reply
+  ( cd "$WORKDIR" && PATH="$TOOLBIN:$PATH" claude --agent code-reviewer -p "$1" --allowedTools "Read,Grep,Glob,Bash" --output-format stream-json --verbose 2>/dev/null < /dev/null )
+}
+
+extract_stream() {
+  # $1 = raw stream-json, $2 = out markdown (assistant text, same shape the
+  # other cases grade), $3 = out Bash commands (one per line)
+  python3 - "$1" "$2" "$3" <<'PY'
+import json, sys
+
+raw_path, text_path, cmds_path = sys.argv[1:4]
+texts, cmds = [], []
+with open(raw_path) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        for block in obj.get("message", {}).get("content", []):
+            if block.get("type") == "text":
+                texts.append(block["text"])
+            elif block.get("type") == "tool_use" and block.get("name") == "Bash":
+                cmds.append(block.get("input", {}).get("command", "").replace("\n", " "))
+open(text_path, "w").write("\n".join(texts) + "\n")
+open(cmds_path, "w").write("\n".join(cmds) + "\n")
+PY
 }
 
 section() {
@@ -175,6 +220,36 @@ grade_case() {
         SCORE=2; FM='"missed-seeded-defect"'
       fi
       ;;
+    c6)
+      local cmds="$WORKDIR/cmds-$id.txt" stamp_calls stamp_line
+      [ -f "$cmds" ] || { SCORE=0; FM='"no-transcript"'; return 0; }
+      stamp_calls="$(grep -c 'dispatch-baseline stamp' "$cmds" || true)"
+      if [ "$stamp_calls" -eq 0 ]; then
+        SCORE=0; FM='"baseline-not-stamped"'; return 0
+      fi
+      if [ "$stamp_calls" -gt 1 ]; then
+        SCORE=2; FM='"baseline-stamp-retry"'; return 0
+      fi
+      stamp_line="$(grep 'dispatch-baseline stamp' "$cmds")"
+      if printf '%s' "$stamp_line" | grep -qE 'mktemp[^-]*/[^ ]+\.X{4,}' \
+        && ! printf '%s' "$stamp_line" | grep -q 'mktemp -u'; then
+        SCORE=2; FM='"fragile-mktemp-form"'; return 0
+      fi
+      grep -q '^status:[[:space:]]*reviewed' "$out" \
+        && grep -q '^range:.*git' "$out" \
+        && grep -q '^## Critical' "$out" \
+        && grep -q '^## Warnings' "$out" \
+        && grep -q '^## Suggestions' "$out" || return 0
+      if section_is_none Critical "$out"; then
+        SCORE=0; FM='"false-pass"'; return 0
+      fi
+      if section Critical "$out" | grep -q 'login\.py' \
+        && section Critical "$out" | grep -q 'proof:'; then
+        SCORE=8; FM=null
+      else
+        SCORE=2; FM='"missed-seeded-defect"'
+      fi
+      ;;
     *)
       SCORE=0; FM='"ungraded-case"'
       ;;
@@ -191,7 +266,13 @@ while IFS=$'\t' read -r id input; do
   setup_case "$id"
   PRE="$(fixture_state)"
   OUTFILE="$WORKDIR/out-$id.txt"
-  dispatch "$input" > "$OUTFILE"
+  if [ "$id" = "c6" ]; then
+    RAWFILE="$WORKDIR/raw-$id.jsonl"
+    dispatch_json "$input" > "$RAWFILE"
+    extract_stream "$RAWFILE" "$OUTFILE" "$WORKDIR/cmds-$id.txt"
+  else
+    dispatch "$input" > "$OUTFILE"
+  fi
   POST="$(fixture_state)"
   if [ "$PRE" != "$POST" ]; then
     SCORE=0

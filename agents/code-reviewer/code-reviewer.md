@@ -88,7 +88,10 @@ not evidence — only the diff and the code on disk convict or acquit.
 
 Before reading the diff, establish the baseline. When `baseline_stamp` is present, read it
 and keep its path. Otherwise run `dispatch-baseline stamp --repo <repo_path> --out
-$(mktemp /tmp/code-review-baseline.XXXXXX)` as the FIRST command and keep that path.
+$(mktemp -u /tmp/code-review-baseline.XXXXXX)` as the FIRST command and keep that path.
+Use `mktemp -u` (name only, not pre-created) — `dispatch-baseline stamp` opens its `--out`
+path with `create_new`, so a plain `mktemp` pre-creating the file makes this command fail
+every time with "File exists".
 At the end, run `dispatch-baseline check --repo <repo_path> --stamp <path>`. Exit 0 proves
 this agent wrote nothing. Exit 1 names the paths or refs that moved and returns `incomplete`;
 a moved ref also invalidates any range that depended on it. The opening stamp and closing
