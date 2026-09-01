@@ -1,40 +1,50 @@
 {
   "tiers": {
     "T1": {
-      "pi": "openrouter/openrouter/free",
+      "pi": { "model": "openai-codex/gpt-5.6-luna", "thinking": "low" },
       "fallbacks": [
-        "openai-codex/gpt-5.6-luna"
+        { "model": "anthropic/claude-haiku-4-5", "thinking": "low" },
+        { "model": "openai-codex/gpt-5.6-terra", "thinking": "minimal" },
+        { "model": "anthropic/claude-sonnet-5", "thinking": "minimal" },
+        { "model": "openai-codex/gpt-5.6-sol", "thinking": "off" },
+        { "model": "anthropic/claude-opus-5", "thinking": "off" }
       ],
-      "thinking": "low"
+      "climbOnExhaustion": "T2"
     },
     "T2": {
-      "pi": "openai-codex/gpt-5.6-luna",
+      "pi": { "model": "anthropic/claude-haiku-4-5", "thinking": "medium" },
       "fallbacks": [
-        "anthropic/claude-haiku-4-5"
-      ],
-      "thinking": "low"
+        { "model": "openai-codex/gpt-5.6-luna", "thinking": "medium" },
+        { "model": "openai-codex/gpt-5.6-terra", "thinking": "low" },
+        { "model": "anthropic/claude-sonnet-5", "thinking": "low" },
+        { "model": "openai-codex/gpt-5.6-sol", "thinking": "minimal" },
+        { "model": "anthropic/claude-opus-5", "thinking": "minimal" }
+      ]
     },
     "T3": {
-      "pi": "openai-codex/gpt-5.3-codex-spark",
+      "pi": { "model": "openai-codex/gpt-5.6-terra", "thinking": "medium" },
       "fallbacks": [
-        "anthropic/claude-sonnet-5",
-        "openai-codex/gpt-5.6-terra"
-      ],
-      "thinking": "medium"
+        { "model": "anthropic/claude-sonnet-5", "thinking": "medium" },
+        { "model": "openai-codex/gpt-5.6-sol", "thinking": "low" },
+        { "model": "anthropic/claude-opus-5", "thinking": "low" },
+        { "model": "openai-codex/gpt-5.3-codex-spark", "thinking": "medium" },
+        { "model": "anthropic/claude-fable-5", "thinking": "minimal" }
+      ]
     },
     "T4": {
-      "pi": "anthropic/claude-opus-5",
+      "pi": { "model": "anthropic/claude-opus-5", "thinking": "medium" },
       "fallbacks": [
-        "openai-codex/gpt-5.6-sol"
-      ],
-      "thinking": "high"
+        { "model": "openai-codex/gpt-5.6-sol", "thinking": "medium" },
+        { "model": "anthropic/claude-fable-5", "thinking": "low" }
+      ]
     },
     "T5": {
-      "pi": "anthropic/claude-fable-5",
+      "pi": { "model": "anthropic/claude-fable-5", "thinking": "medium" },
       "fallbacks": [
-        "anthropic/claude-opus-5"
+        { "model": "anthropic/claude-opus-5", "thinking": "high" },
+        { "model": "openai-codex/gpt-5.6-sol", "thinking": "high" }
       ],
-      "thinking": "medium"
+      "climbOnExhaustion": "T4"
     }
   },
   "orchestrator": "T3",

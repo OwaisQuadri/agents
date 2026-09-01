@@ -28,3 +28,4 @@ config/.mcp-sync-apply.lock
 config/*.pre-sync-*
 
 .memory/
+.map/GH-*/
