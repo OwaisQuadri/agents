@@ -6,10 +6,15 @@ Default to the simplest thing that works and ships today. When in doubt, write l
 
 - build for the requirement in front of you; no speculative config, plugin systems, or extension points.
 - Minimize abstraction: DO NOT use abstraction until you are literally unable to go without.
+- When a host surface cannot act directly, inspect installed integration tools before calling the request blocked. Recommend the smallest end-to-end bridge that achieves the user’s intent, and state whether it is direct or indirect.
 - Claims run the other way: among root causes, trigger descriptions, invariants, or rule
   edits that all fit the evidence, keep the WEAKEST — the one admitting the most future
   cases. Narrowing needs an observed false positive, never an imagined one
   (arXiv:2301.12987). Fix stays minimal; cause stays weak.
+
+## ticket urgency
+
+When the user asks for a feature, first check the active tracker. If an unfinished matching ticket already exists, raise its priority by one level: `low` to `med`, `med` to `high`, or `high` to `urgent`. An `urgent` ticket stays urgent. Never change a `done` or `cancelled` ticket. Apply this across GitHub Issues, Linear, and local roadmap tickets.
 
 ## abbreviations
 
