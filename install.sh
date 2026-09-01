@@ -84,6 +84,34 @@ link_config() {
   fi
 }
 
+# build_tool <crate-dir> <name> — cargo release build plus a ~/.local/bin symlink,
+# skipped with a warning when cargo is absent, a no-op when the crate is absent.
+build_tool() {
+  local crate="$1" name="$2"
+  [[ -f "$crate/Cargo.toml" ]] || return 0
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "warn: cargo not found, skipping the $name build" >&2
+    return 0
+  fi
+  plan "build $crate (release)"
+  run cargo build --release --quiet --manifest-path "$crate/Cargo.toml"
+  plan "ensure $HOME_TARGET/.local/bin"
+  run mkdir -p "$HOME_TARGET/.local/bin"
+  link "$HOME_TARGET/.local/bin/$name" "$crate/target/release/$name"
+}
+
+# json_update <file> <jq-args...> — rewrite a JSON file ('{}' when absent) through a jq
+# filter. A no-op under --dry-run, like the inline writes it replaces.
+json_update() {
+  local target="$1" current='{}' updated
+  shift
+  (( IS_DRY )) && return 0
+  [[ -f "$target" ]] && current="$(cat "$target")"
+  updated="$(printf '%s' "$current" | jq "$@")" \
+    || { echo "FATAL: $target is not valid JSON" >&2; exit 1; }
+  printf '%s\n' "$updated" > "$target"
+}
+
 retire_pi_extension() {
   local src="$1" retired_root dest
   [[ -e "$src" || -L "$src" ]] || return 0
@@ -290,17 +318,7 @@ fi
 #    not a live `cargo build` attempted inside the launchd environment,
 #    transcript-directed-video-processor as an on-demand command the user runs by name
 for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check gepa-due transcript-directed-video-processor; do
-  CRATE="$REPO_TARGET/tools/$tool"
-  [[ -f "$CRATE/Cargo.toml" ]] || continue
-  if command -v cargo >/dev/null 2>&1; then
-    plan "build $CRATE (release)"
-    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME_TARGET/.local/bin"
-    run mkdir -p "$HOME_TARGET/.local/bin"
-    link "$HOME_TARGET/.local/bin/$tool" "$CRATE/target/release/$tool"
-  else
-    echo "warn: cargo not found, skipping the $tool build" >&2
-  fi
+  build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
 
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
@@ -308,17 +326,7 @@ link "$HOME_TARGET/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"
 
 TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
 TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"
-if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" ]]; then
-  if command -v cargo >/dev/null 2>&1; then
-    plan "build $TOOL_SYNC_CRATE (release)"
-    run cargo build --release --quiet --manifest-path "$TOOL_SYNC_CRATE/Cargo.toml"
-    plan "ensure $HOME_TARGET/.local/bin"
-    run mkdir -p "$HOME_TARGET/.local/bin"
-    link "$HOME_TARGET/.local/bin/tool-sync" "$TOOL_SYNC_BIN"
-  else
-    echo "warn: cargo not found, skipping the tool-sync build" >&2
-  fi
-fi
+build_tool "$TOOL_SYNC_CRATE" tool-sync
 
 if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" && ! -x "$TOOL_SYNC_BIN" ]]; then
   echo "FATAL: tool-sync is not built; run: cargo build --release --manifest-path $TOOL_SYNC_CRATE/Cargo.toml" >&2
@@ -334,62 +342,17 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
   "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
 fi
 
-CRATE="$REPO_TARGET/tools/pr-review-filter"
-if [[ -f "$CRATE/Cargo.toml" ]]; then
-  if command -v cargo >/dev/null 2>&1; then
-    plan "build $CRATE (release)"
-    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME_TARGET/.local/bin"
-    run mkdir -p "$HOME_TARGET/.local/bin"
-    link "$HOME_TARGET/.local/bin/pr-review-filter" "$CRATE/target/release/pr-review-filter"
-  else
-    echo "warn: cargo not found, skipping the pr-review-filter build" >&2
-  fi
-fi
-
-CRATE="$REPO_TARGET/tools/tool-wizard"
-if [[ -f "$CRATE/Cargo.toml" ]]; then
-  if command -v cargo >/dev/null 2>&1; then
-    plan "build $CRATE (release)"
-    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME_TARGET/.local/bin"
-    run mkdir -p "$HOME_TARGET/.local/bin"
-    link "$HOME_TARGET/.local/bin/tool-wizard" "$CRATE/target/release/tool-wizard"
-  else
-    echo "warn: cargo not found, skipping the tool-wizard build" >&2
-  fi
-fi
+build_tool "$REPO_TARGET/tools/pr-review-filter" pr-review-filter
+build_tool "$REPO_TARGET/tools/tool-wizard" tool-wizard
 
 # 10. mcp-sync: rebuilt every pass so the binary matches the manifest it syncs
-CRATE="$REPO_TARGET/tools/mcp-sync"
-if [[ -f "$CRATE/Cargo.toml" ]]; then
-  if command -v cargo >/dev/null 2>&1; then
-    plan "build $CRATE (release)"
-    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME_TARGET/.local/bin"
-    run mkdir -p "$HOME_TARGET/.local/bin"
-    link "$HOME_TARGET/.local/bin/mcp-sync" "$CRATE/target/release/mcp-sync"
-  else
-    echo "warn: cargo not found, skipping the mcp-sync build" >&2
-  fi
-fi
+build_tool "$REPO_TARGET/tools/mcp-sync" mcp-sync
 
 # 10b. usage-limit-watch: reads a plain-text log for Codex/Claude usage-limit phrasing,
 #      secondary to the pi_extension in pi/extensions/usage-limit-continue.ts (that one
 #      covers Pi itself via the extension API; this covers headless codex/claude runs
 #      whose output is redirected to a file).
-CRATE="$REPO_TARGET/tools/usage-limit-watch"
-if [[ -f "$CRATE/Cargo.toml" ]]; then
-  if command -v cargo >/dev/null 2>&1; then
-    plan "build $CRATE (release)"
-    run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME_TARGET/.local/bin"
-    run mkdir -p "$HOME_TARGET/.local/bin"
-    link "$HOME_TARGET/.local/bin/usage-limit-watch" "$CRATE/target/release/usage-limit-watch"
-  else
-    echo "warn: cargo not found, skipping the usage-limit-watch build" >&2
-  fi
-fi
+build_tool "$REPO_TARGET/tools/usage-limit-watch" usage-limit-watch
 
 # 11. sync the live configs. the binary runs outside run() on purpose, so its own
 #     --dry-run prints the real plan. no ~/.claude.json yet → skip; the next pull converges
@@ -425,14 +388,7 @@ else
   else
     backup "$CLAUDE_SETTINGS"
     plan "set  $CLAUDE_SETTINGS shell -> $ZSH_PATH"
-    if (( IS_DRY == 0 )); then
-      CURRENT='{}'
-      [[ -f "$CLAUDE_SETTINGS" ]] && CURRENT="$(cat "$CLAUDE_SETTINGS")"
-      UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" \
-        '.env = ((.env // {}) + {CLAUDE_CODE_SHELL: $s})')" \
-        || { echo "FATAL: $CLAUDE_SETTINGS is not valid JSON" >&2; exit 1; }
-      printf '%s\n' "$UPDATED" > "$CLAUDE_SETTINGS"
-    fi
+    json_update "$CLAUDE_SETTINGS" --arg s "$ZSH_PATH" '.env = ((.env // {}) + {CLAUDE_CODE_SHELL: $s})'
   fi
 
   # shellPath is the shell preference; warnings.anthropicExtraUsage=false suppresses pi's
@@ -443,14 +399,7 @@ else
   else
     backup "$PI_SETTINGS"
     plan "set  $PI_SETTINGS shell -> $ZSH_PATH, anthropic warning off"
-    if (( IS_DRY == 0 )); then
-      CURRENT='{}'
-      [[ -f "$PI_SETTINGS" ]] && CURRENT="$(cat "$PI_SETTINGS")"
-      UPDATED="$(printf '%s' "$CURRENT" | jq --arg s "$ZSH_PATH" \
-        '.shellPath = $s | .warnings.anthropicExtraUsage = false')" \
-        || { echo "FATAL: $PI_SETTINGS is not valid JSON" >&2; exit 1; }
-      printf '%s\n' "$UPDATED" > "$PI_SETTINGS"
-    fi
+    json_update "$PI_SETTINGS" --arg s "$ZSH_PATH" '.shellPath = $s | .warnings.anthropicExtraUsage = false'
   fi
 fi
 
@@ -528,13 +477,7 @@ else
   else
     backup "$PI_WEBSEARCH"
     plan "set  $PI_WEBSEARCH curator off"
-    if (( IS_DRY == 0 )); then
-      CURRENT='{}'
-      [[ -f "$PI_WEBSEARCH" ]] && CURRENT="$(cat "$PI_WEBSEARCH")"
-      UPDATED="$(printf '%s' "$CURRENT" | jq '.workflow = "none" | .autoOpenBrowser = false')" \
-        || { echo "FATAL: $PI_WEBSEARCH is not valid JSON" >&2; exit 1; }
-      printf '%s\n' "$UPDATED" > "$PI_WEBSEARCH"
-    fi
+    json_update "$PI_WEBSEARCH" '.workflow = "none" | .autoOpenBrowser = false'
   fi
 fi
 
@@ -556,14 +499,7 @@ else
   else
     backup "$SETTINGS"
     plan "set  $SETTINGS statusLine -> $SL_LINK"
-    if (( IS_DRY == 0 )); then
-      CURRENT='{}'
-      [[ -f "$SETTINGS" ]] && CURRENT="$(cat "$SETTINGS")"
-      UPDATED="$(printf '%s' "$CURRENT" | jq --arg c "$SL_LINK" \
-        '. + {statusLine: {type: "command", command: $c}}')" \
-        || { echo "FATAL: $SETTINGS is not valid JSON" >&2; exit 1; }
-      printf '%s\n' "$UPDATED" > "$SETTINGS"
-    fi
+    json_update "$SETTINGS" --arg c "$SL_LINK" '. + {statusLine: {type: "command", command: $c}}'
   fi
 fi
 
