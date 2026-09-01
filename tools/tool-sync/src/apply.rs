@@ -240,8 +240,15 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
 }
 
 fn require_clean_repository(repository: &Path) -> Result<(), SyncError> {
+    // A git hook exports GIT_DIR and friends, which override -C and would aim
+    // this check at the hook's own repository instead of the checkout.
     let output = Command::new("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_PREFIX")
         .arg("-C")
         .arg(repository)
         .args(["status", "--porcelain", "--untracked-files=all"])
@@ -273,8 +280,15 @@ fn git(repository: &Path, args: &[&str]) -> Result<(), SyncError> {
 }
 
 fn run_git(repository: &Path, args: &[std::ffi::OsString]) -> Result<(), SyncError> {
+    // A git hook exports GIT_DIR and friends, which override -C and would aim
+    // this command at the hook's own repository instead of the checkout.
     let status = Command::new("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_PREFIX")
         .args(args)
         .status()
         .map_err(|error| SyncError::ProcessStart {

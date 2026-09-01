@@ -201,8 +201,15 @@ fn inspect_checkout(path: &Path, expected_url: &str) -> Result<(), SyncError> {
 }
 
 fn git_output(repository: &Path, args: &[&str]) -> Result<String, SyncError> {
+    // A git hook exports GIT_DIR and friends, which override -C and would aim
+    // this inspection at the hook's own repository instead of the checkout.
     let output = Command::new("git")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_PREFIX")
         .arg("-C")
         .arg(repository)
         .args(args)
