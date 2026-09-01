@@ -13,15 +13,16 @@ import {
 	isLocalModel,
 	parseResetFromHeaders,
 	parseResetFromText,
+	resolveHomeTier,
 	scheduleResume,
 } from "./usage-limit-continue.ts";
 
 // The real map is compiled from config/model-tiers.json into pi settings; the last test
 // in this file checks that file rather than restating it here.
 const SYNTHETIC_FALLBACKS = {
-	"provider-a/small": "provider-b/small",
-	"provider-a/medium": "provider-b/medium",
-	"provider-a/large": "provider-a/medium",
+	"provider-a/small": { model: "provider-b/small", thinking: "low" as const },
+	"provider-a/medium": { model: "provider-b/medium", thinking: "medium" as const },
+	"provider-a/large": { model: "provider-a/medium", thinking: "high" as const },
 };
 
 const NOW = new Date("2026-08-19T12:00:00.000-04:00").getTime();
@@ -166,9 +167,9 @@ test("computeResetPlan: detected but unparseable time reports isDetected with a 
 });
 
 test("findTierFallback: fable falls back to opus, and every other tier resolves its own backup", () => {
-	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "large"), "provider-a/medium");
-	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "medium"), "provider-b/medium");
-	assert.equal(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "small"), "provider-b/small");
+	assert.deepEqual(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "large"), { model: "provider-a/medium", thinking: "high" });
+	assert.deepEqual(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "medium"), { model: "provider-b/medium", thinking: "medium" });
+	assert.deepEqual(findTierFallback(SYNTHETIC_FALLBACKS, "provider-a", "small"), { model: "provider-b/small", thinking: "low" });
 });
 
 test("findTierFallback: a model outside the tier file has no fallback, so the resume path still owns it", () => {
@@ -177,20 +178,44 @@ test("findTierFallback: a model outside the tier file has no fallback, so the re
 	assert.equal(findTierFallback({}, "provider-a", "large"), null);
 });
 
+const SYNTHETIC_PRIMARIES = {
+	T1: { model: "provider-a/small", thinking: "low" as const },
+	T2: { model: "provider-a/large", thinking: "medium" as const },
+};
+
+test("resolveHomeTier: a tier's own primary resolves to that tier", () => {
+	assert.equal(resolveHomeTier(SYNTHETIC_PRIMARIES, "provider-a", "small"), "T1");
+	assert.equal(resolveHomeTier(SYNTHETIC_PRIMARIES, "provider-a", "large"), "T2");
+});
+
+test("resolveHomeTier: a model that is no tier's primary (a mid-chain fallback, or untiered) resolves to null", () => {
+	assert.equal(resolveHomeTier(SYNTHETIC_PRIMARIES, "provider-b", "small"), null);
+	assert.equal(resolveHomeTier({}, "provider-a", "small"), null);
+});
+
+test("resolveHomeTier: two tiers naming the same primary resolves deterministically to the first tier in sorted order", () => {
+	const dup = {
+		T3: { model: "provider-a/small", thinking: "low" as const },
+		T1: { model: "provider-a/small", thinking: "low" as const },
+	};
+	assert.equal(resolveHomeTier(dup, "provider-a", "small"), "T1");
+});
+
 test("earliestAvailable: the resume waits on the model that returns first, not the one that failed last", () => {
 	const soonest = earliestAvailable({
-		"anthropic/claude-fable-5": NOW + 20 * 60_000,
-		"anthropic/claude-opus-5": NOW + 2 * 3_600_000,
-		"openai-codex/gpt-5.6-sol": NOW + 4 * 3_600_000,
+		"anthropic/claude-fable-5": { resetAtMs: NOW + 20 * 60_000, thinking: "medium" },
+		"anthropic/claude-opus-5": { resetAtMs: NOW + 2 * 3_600_000, thinking: "high" },
+		"openai-codex/gpt-5.6-sol": { resetAtMs: NOW + 4 * 3_600_000, thinking: "high" },
 	});
-	assert.deepEqual(soonest, { model: "anthropic/claude-fable-5", resetAtMs: NOW + 20 * 60_000 });
+	assert.deepEqual(soonest, { model: "anthropic/claude-fable-5", resetAtMs: NOW + 20 * 60_000, thinking: "medium" });
 });
 
 test("earliestAvailable: nothing abandoned yields null, so the old single-reset path still owns it", () => {
 	assert.equal(earliestAvailable({}), null);
-	assert.deepEqual(earliestAvailable({ "anthropic/claude-opus-5": NOW }), {
+	assert.deepEqual(earliestAvailable({ "anthropic/claude-opus-5": { resetAtMs: NOW, thinking: "high" } }), {
 		model: "anthropic/claude-opus-5",
 		resetAtMs: NOW,
+		thinking: "high",
 	});
 });
 
@@ -218,39 +243,70 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 	}
 });
 
-test("the real tier file compiles into a chain every hop of which resolves", async () => {
+test("the real tier file compiles into a chain every hop of which resolves, one map per tier", async () => {
 	const tiersPath = join(import.meta.dirname, "..", "..", "config", "model-tiers.json");
+	type Entry = { model: string; thinking: string };
 	const tiers = JSON.parse(await readFile(tiersPath, "utf8")) as {
-		tiers: Record<string, { pi: string; fallbacks: string[] }>;
+		tiers: Record<string, { pi: Entry; fallbacks: Entry[]; climbOnExhaustion?: string }>;
 		orchestrator: string;
 		agents: Record<string, string>;
 	};
 
-	// What install.sh compiles into settings.modelTierFallbacks: each tier's first backup.
-	const compiled: Record<string, string> = {};
-	for (const tier of Object.values(tiers.tiers)) {
-		compiled[tier.pi] = tier.fallbacks[0];
+	// What install.sh compiles into settings.modelTierFallbacks: one map PER TIER, so a model
+	// shared by two tiers' chains (a real case now that thinking travels per model) never lets
+	// one tier's mapping overwrite the other's.
+	const compiled: Record<string, Record<string, string>> = {};
+	const primaries: Record<string, string> = {};
+	for (const [name, tier] of Object.entries(tiers.tiers)) {
+		const chain = [tier.pi, ...tier.fallbacks];
+		const hops: Record<string, string> = {};
+		for (let i = 0; i < chain.length - 1; i++) {
+			hops[chain[i].model] = chain[i + 1].model;
+		}
+		compiled[name] = hops;
+		primaries[name] = tier.pi.model;
 	}
 
 	for (const [name, tier] of Object.entries(tiers.tiers)) {
 		assert.ok(tier.fallbacks.length >= 1, `${name} has no fallback`);
-		assert.ok(!tier.fallbacks.includes(tier.pi), `${name} falls back to itself`);
+		assert.ok(
+			!tier.fallbacks.some((f) => f.model === tier.pi.model),
+			`${name} falls back to itself`,
+		);
+	}
+
+	// Every tier's own primary must be unique, or resolveHomeTier cannot tell which tier a
+	// session starting on that model is meant to walk.
+	const primaryOwners = new Map<string, string[]>();
+	for (const [name, model] of Object.entries(primaries)) {
+		primaryOwners.set(model, [...(primaryOwners.get(model) ?? []), name]);
+	}
+	for (const [model, owners] of primaryOwners) {
+		assert.equal(owners.length, 1, `${model} is the primary of more than one tier: ${owners.join(", ")}`);
 	}
 
 	for (const [agent, tier] of Object.entries(tiers.agents)) {
 		assert.ok(tiers.tiers[tier], `${agent} names tier ${tier}, which does not exist`);
 	}
+
+	for (const [name, tier] of Object.entries(tiers.tiers)) {
+		if (tier.climbOnExhaustion) {
+			assert.ok(tiers.tiers[tier.climbOnExhaustion], `${name} climbs to ${tier.climbOnExhaustion}, which does not exist`);
+			assert.notEqual(tier.climbOnExhaustion, name, `${name} climbs to itself`);
+		}
+	}
 	assert.ok(tiers.tiers[tiers.orchestrator], "orchestrator names a tier that does not exist");
 
 	// A cycle here would strand the session in the fallback walk instead of letting it
-	// reach the scheduled resume.
-	for (const start of Object.keys(compiled)) {
+	// reach the scheduled resume. Each tier's own chain is checked in isolation, matching how
+	// applyTierFallback only ever walks within the one tier it resolved at session start.
+	for (const [name, hops] of Object.entries(compiled)) {
 		const seen = new Set<string>();
-		let at: string | undefined = start;
-		while (at && compiled[at]) {
-			assert.ok(!seen.has(at), `fallback chain cycles at ${at}`);
+		let at: string | undefined = primaries[name];
+		while (at && hops[at]) {
+			assert.ok(!seen.has(at), `${name}'s fallback chain cycles at ${at}`);
 			seen.add(at);
-			at = compiled[at];
+			at = hops[at];
 		}
 	}
 });
@@ -264,14 +320,22 @@ test("handleMessageEnd: a print-mode worker retries the same turn on the fallbac
 		await mkdir(settingsDir, { recursive: true });
 		await writeFile(
 			join(settingsDir, "settings.json"),
-			JSON.stringify({ modelTierFallbacks: { "provider-a/small": "provider-b/small" } }),
+			JSON.stringify({
+				modelTierFallbacks: { T1: { "provider-a/small": { model: "provider-b/small", thinking: "low" } } },
+				tierPrimaries: { T1: { model: "provider-a/small", thinking: "low" } },
+			}),
 		);
 
 		const fallbackModel = { provider: "provider-b", id: "small" };
 		const sentMessages: { content: unknown; options: unknown }[] = [];
 		const notifications: string[] = [];
+		const thinkingLevels: string[] = [];
 		const pi = {
 			setModel: async () => true,
+			setThinkingLevel: (level: string) => {
+				thinkingLevels.push(level);
+			},
+			getThinkingLevel: () => "low",
 			sendUserMessage: (content: unknown, options: unknown) => {
 				sentMessages.push({ content, options });
 			},
@@ -291,6 +355,7 @@ test("handleMessageEnd: a print-mode worker retries the same turn on the fallbac
 		assert.equal(sentMessages.length, 1, "print mode must retry the turn once the fallback model is active");
 		assert.deepEqual(sentMessages[0].options, { deliverAs: "followUp" });
 		assert.ok(notifications.some((n) => n.includes("provider-b/small")), "notifies which fallback took over");
+		assert.deepEqual(thinkingLevels, ["low"], "the hop also applies the fallback's own thinking level");
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
@@ -306,13 +371,18 @@ test("handleMessageEnd: an interactive session switches models but leaves the re
 		await mkdir(settingsDir, { recursive: true });
 		await writeFile(
 			join(settingsDir, "settings.json"),
-			JSON.stringify({ modelTierFallbacks: { "provider-a/small": "provider-b/small" } }),
+			JSON.stringify({
+				modelTierFallbacks: { T1: { "provider-a/small": { model: "provider-b/small", thinking: "low" } } },
+				tierPrimaries: { T1: { model: "provider-a/small", thinking: "low" } },
+			}),
 		);
 
 		const fallbackModel = { provider: "provider-b", id: "small" };
 		const sentMessages: unknown[] = [];
 		const pi = {
 			setModel: async () => true,
+			setThinkingLevel: () => {},
+			getThinkingLevel: () => "low",
 			sendUserMessage: (content: unknown) => {
 				sentMessages.push(content);
 			},
@@ -330,6 +400,57 @@ test("handleMessageEnd: an interactive session switches models but leaves the re
 		await handleMessageEnd(message as any, ctx as any, pi as any);
 
 		assert.equal(sentMessages.length, 0, "a tui session decides for itself whether to continue");
+	} finally {
+		process.env.HOME = originalHome;
+		await rm(stateHome, { recursive: true, force: true });
+	}
+});
+
+test("handleMessageEnd: a tier whose own chain runs out climbs to climbOnExhaustion's primary, T1-rises-to-T2 style", async () => {
+	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
+	const originalHome = process.env.HOME;
+	process.env.HOME = stateHome;
+	try {
+		const settingsDir = join(stateHome, ".pi", "agent");
+		await mkdir(settingsDir, { recursive: true });
+		await writeFile(
+			join(settingsDir, "settings.json"),
+			JSON.stringify({
+				// T1's own chain has no next hop for its primary (single-entry, already exhausted).
+				modelTierFallbacks: { T1: {}, T2: { "provider-b/big": { model: "provider-c/big", thinking: "medium" } } },
+				tierPrimaries: {
+					T1: { model: "provider-a/small", thinking: "low" },
+					T2: { model: "provider-b/big", thinking: "medium" },
+				},
+				tierClimb: { T1: "T2" },
+			}),
+		);
+
+		const climbedModel = { provider: "provider-b", id: "big" };
+		const notifications: string[] = [];
+		const thinkingLevels: string[] = [];
+		const pi = {
+			setModel: async () => true,
+			setThinkingLevel: (level: string) => {
+				thinkingLevels.push(level);
+			},
+			getThinkingLevel: () => "low",
+			sendUserMessage: () => {},
+		};
+		const ctx = {
+			mode: "tui",
+			model: { provider: "provider-a", id: "small", cost: { input: 0, output: 0, cacheRead: 0 } },
+			modelRegistry: { find: () => climbedModel },
+			ui: { notify: (message: string) => notifications.push(message) },
+			sessionManager: { getSessionFile: () => null },
+		};
+		const message = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		await handleMessageEnd(message as any, ctx as any, pi as any);
+
+		assert.ok(notifications.some((n) => n.includes("provider-b/big")), "climbs to T2's own primary, not a dead end");
+		assert.deepEqual(thinkingLevels, ["medium"], "lands on T2's own thinking level, not T1's");
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });

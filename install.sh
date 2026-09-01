@@ -180,7 +180,7 @@ else
 
   # Claude Code reaches Anthropic only, so a tier resolves there by walking its chain for
   # the first Anthropic model, and climbing tiers when a chain holds none.
-  CLAUDE_ALIAS_JQ='def anthropic_in(t): [t.pi] + t.fallbacks | map(select(startswith("anthropic/"))) | first;
+  CLAUDE_ALIAS_JQ='def anthropic_in(t): [t.pi] + t.fallbacks | map(.model) | map(select(startswith("anthropic/"))) | first;
     . as $r
     | ($r.tiers | keys | sort) as $order
     | .agents | to_entries[]
@@ -242,22 +242,37 @@ else
   # modelTierFallbacks maps EVERY model in a tier's chain (pi, then each fallback in order)
   # to the next model in that same chain, so the session extension's one-hop-per-limit walk
   # (re-enter on the new model, look it up again on its own next limit) actually reaches every
-  # entry in the ordered list instead of stopping after the tier's own primary. A model shared
-  # by two chains keeps whichever tier is processed last (tiers carry no two divergent chains
-  # for the same model today; config/model-tiers.json is the source of truth). A tier with an
-  # empty fallbacks list gets no key for its own primary at all (chosen over emitting a null-valued
-  # entry) — every tier today has at least one fallback, so this has never fired. Subagents get the
+  # entry in the ordered list instead of stopping after the tier's own primary. It is nested
+  # ONE MAP PER TIER, keyed by tier name first — a model that appears in two tiers' chains
+  # (a real case now that thinking travels per model) then keeps a distinct next-hop per tier
+  # instead of one tier's mapping silently overwriting the other's. tierPrimaries records each
+  # tier's own primary model AND thinking, so a session resolves which tier's map it is walking
+  # once, at its first usage-limit hop, from whichever tier that starting model is the primary
+  # of; every hop after that reuses the tier the walk already resolved to, rather than
+  # re-deriving it from a model id that could by then belong to more than one tier.
+  # tierClimb names, for a tier whose own chain runs all the way out, the next tier to
+  # continue on from that tier's own primary (T1 rises to T2, T5 drops to T4) — explicit here
+  # rather than left to models happening to overlap at chain boundaries, which is not
+  # guaranteed once tiers are edited through the settings UI. A tier with an empty fallbacks
+  # list gets no key for its own primary at all (chosen over emitting a null-valued entry) —
+  # every tier today has at least one fallback, so this has never fired. Subagents get the
   # whole ordered list directly, so this only matters for the top-level session.
-  TIER_JQ='.modelTierFallbacks = ($t.tiers | [.[] | ([.pi] + .fallbacks) as $chain
-      | range(0; ($chain | length) - 1) | { key: $chain[.], value: $chain[. + 1] }] | from_entries)
+  TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
+      .value as $tier
+      | ([$tier.pi] + $tier.fallbacks) as $chain
+      | .value = ([range(0; ($chain | length) - 1)
+          | { key: $chain[.].model, value: { model: $chain[. + 1].model, thinking: $chain[. + 1].thinking } }]
+          | from_entries)))
+    | .tierPrimaries = ($t.tiers | with_entries(.value = .value.pi))
+    | .tierClimb = ($t.tiers | with_entries(select(.value.climbOnExhaustion != null) | .value = .value.climbOnExhaustion))
     | .subagents = ((.subagents // {})
-    | .defaultModel = $t.tiers[$t.orchestrator].pi
-    | .defaultThinking = $t.tiers[$t.orchestrator].thinking
+    | .defaultModel = $t.tiers[$t.orchestrator].pi.model
+    | .defaultThinking = $t.tiers[$t.orchestrator].pi.thinking
     | .agentOverrides = ((.agentOverrides // {}) + ($t.agents | with_entries(
         .key as $name | .value as $tier
-        | .value = { model: $t.tiers[$tier].pi,
-                     fallbackModels: $t.tiers[$tier].fallbacks }
-                   + (if ($owned | index($name)) then { thinking: $t.tiers[$tier].thinking } else {} end)))))'
+        | .value = { model: $t.tiers[$tier].pi.model,
+                     fallbackModels: ($t.tiers[$tier].fallbacks | map(.model)) }
+                   + (if ($owned | index($name)) then { thinking: $t.tiers[$tier].pi.thinking } else {} end)))))'
   if [[ -f "$PI_SETTINGS_TIERS" ]] && jq -e --argjson t "$(cat "$TIERS")" --argjson owned "$OWNED" \
       ". == ($TIER_JQ)" "$PI_SETTINGS_TIERS" >/dev/null 2>&1; then
     plan "ok   $PI_SETTINGS_TIERS subagent routing matches $TIERS"
@@ -382,9 +397,9 @@ if [[ -f "$CRATE/Cargo.toml" ]]; then
   if command -v cargo >/dev/null 2>&1; then
     plan "build $CRATE (release)"
     run cargo build --release --quiet --manifest-path "$CRATE/Cargo.toml"
-    plan "ensure $HOME/.local/bin"
-    run mkdir -p "$HOME/.local/bin"
-    link "$HOME/.local/bin/usage-limit-watch" "$CRATE/target/release/usage-limit-watch"
+    plan "ensure $HOME_TARGET/.local/bin"
+    run mkdir -p "$HOME_TARGET/.local/bin"
+    link "$HOME_TARGET/.local/bin/usage-limit-watch" "$CRATE/target/release/usage-limit-watch"
   else
     echo "warn: cargo not found, skipping the usage-limit-watch build" >&2
   fi

@@ -15,9 +15,18 @@ type ModelLike = {
 	cost: { input: number; output: number; cacheRead: number };
 };
 
-// install.sh compiles config/model-tiers.json into this flat map in pi settings, so the
-// tier file stays the one place model ids live and this file needs no repo path.
-type FallbackMap = Record<string, string>;
+// install.sh compiles config/model-tiers.json into these two structures in pi settings, so
+// the tier file stays the one place model ids and thinking levels live and this file needs no
+// repo path. modelTierFallbacks is nested ONE MAP PER TIER: a model that appears in two tiers'
+// chains (real now that thinking travels per model, e.g. luna is T1's primary and T2's first
+// fallback) keeps a distinct next hop per tier instead of one tier's mapping overwriting the
+// other's. tierPrimaries names each tier's own primary model, which is how a session resolves
+// which tier's map it is walking in the first place — see resolveHomeTier.
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type TierHop = { model: string; thinking: ThinkingLevel };
+type FallbackMap = Record<string, TierHop>;
+type TieredFallbackMap = Record<string, FallbackMap>;
+type CompiledTiers = { tiered: TieredFallbackMap; primaries: Record<string, TierHop>; climb: Record<string, string> };
 
 // AgentMessage has no exported type name from @earendil-works/pi-coding-agent either;
 // this mirrors the fields this file reads off an assistant message.
@@ -235,37 +244,71 @@ export function computeResetPlan(input: {
 }
 
 /**
- * Finds the tier fallback for a model, so a usage limit degrades one tier sideways.
- * @param fallbacks Compiled tier fallback map, keyed by `provider/id`.
+ * Finds the tier fallback for a model, within ONE tier's own map, so a usage limit degrades
+ * one tier sideways along that tier's own chain — never a different tier's chain that happens
+ * to share the same model at a different position.
+ * @param fallbacks One tier's compiled fallback map, keyed by `provider/id`.
  * @param provider Provider id of the model that hit the limit.
  * @param modelId Model id of the model that hit the limit.
- * @returns The fallback model id as `provider/id`, or null when the model has no tier.
+ * @returns The next hop's model and thinking level, or null when the chain ends here.
  */
-export function findTierFallback(fallbacks: FallbackMap, provider: string, modelId: string): string | null {
+export function findTierFallback(fallbacks: FallbackMap, provider: string, modelId: string): TierHop | null {
 	return fallbacks[`${provider}/${modelId}`] ?? null;
 }
 
 /**
- * Picks the abandoned model that comes back first, so a resume waits the shortest time.
- * @param resets Abandoned models this session, keyed by `provider/id`, valued by reset epoch ms.
- * @returns The soonest-returning model and its reset, or null when nothing was abandoned.
+ * Finds which tier a model is the PRIMARY of, so a session's first usage-limit hop knows which
+ * tier's chain to walk. A model that names more than one tier's primary (should not happen —
+ * each tier's primary is meant to be unique) resolves to the first tier in sorted order,
+ * deterministically rather than by object-key iteration order.
+ * @param primaries Each tier's own primary model and thinking level, keyed by tier name.
+ * @param provider Provider id of the model to resolve a home tier for.
+ * @param modelId Model id of the model to resolve a home tier for.
+ * @returns The tier name, or null when the model is no tier's primary.
  */
-export function earliestAvailable(resets: Record<string, number>): { model: string; resetAtMs: number } | null {
-	let soonest: { model: string; resetAtMs: number } | null = null;
-	for (const [model, resetAtMs] of Object.entries(resets)) {
-		if (!soonest || resetAtMs < soonest.resetAtMs) {
-			soonest = { model, resetAtMs };
+export function resolveHomeTier(primaries: Record<string, TierHop>, provider: string, modelId: string): string | null {
+	const qualified = `${provider}/${modelId}`;
+	const matches = Object.keys(primaries)
+		.filter((tier) => primaries[tier].model === qualified)
+		.sort();
+	return matches[0] ?? null;
+}
+
+/**
+ * Picks the abandoned model that comes back first, so a resume waits the shortest time. Each
+ * entry carries the thinking level that model was actually running at when it was abandoned,
+ * so a climb-back restores exactly how the session was running, not a tier's current default.
+ * @param resets Abandoned models this session, keyed by `provider/id`, valued by reset epoch
+ * ms and the thinking level active on that model at abandon time.
+ * @returns The soonest-returning model, its reset, and its thinking level, or null when
+ * nothing was abandoned.
+ */
+export function earliestAvailable(
+	resets: Record<string, { resetAtMs: number; thinking: ThinkingLevel }>,
+): (TierHop & { resetAtMs: number }) | null {
+	let soonest: (TierHop & { resetAtMs: number }) | null = null;
+	for (const [model, entry] of Object.entries(resets)) {
+		if (!soonest || entry.resetAtMs < soonest.resetAtMs) {
+			soonest = { model, resetAtMs: entry.resetAtMs, thinking: entry.thinking };
 		}
 	}
 	return soonest;
 }
 
-async function loadFallbacks(): Promise<FallbackMap> {
+async function loadFallbacks(): Promise<CompiledTiers> {
 	try {
-		const settings = JSON.parse(await readFile(settingsFile(), "utf8")) as { modelTierFallbacks?: FallbackMap };
-		return settings.modelTierFallbacks ?? {};
+		const settings = JSON.parse(await readFile(settingsFile(), "utf8")) as {
+			modelTierFallbacks?: TieredFallbackMap;
+			tierPrimaries?: Record<string, TierHop>;
+			tierClimb?: Record<string, string>;
+		};
+		return {
+			tiered: settings.modelTierFallbacks ?? {},
+			primaries: settings.tierPrimaries ?? {},
+			climb: settings.tierClimb ?? {},
+		};
 	} catch {
-		return {};
+		return { tiered: {}, primaries: {}, climb: {} };
 	}
 }
 
@@ -350,22 +393,61 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
 	return job;
 }
 
-async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, qualified: string): Promise<boolean> {
-	const separator = qualified.indexOf("/");
-	const candidate = ctx.modelRegistry.find(qualified.slice(0, separator), qualified.slice(separator + 1));
-	return candidate ? await pi.setModel(candidate) : false;
+async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, hop: TierHop): Promise<boolean> {
+	const separator = hop.model.indexOf("/");
+	const candidate = ctx.modelRegistry.find(hop.model.slice(0, separator), hop.model.slice(separator + 1));
+	if (!candidate || !(await pi.setModel(candidate))) {
+		return false;
+	}
+	// A fallback model can need a different thinking level than the session already had, so
+	// the hop lands on the level its own tier entry names, not whatever the prior model used.
+	pi.setThinkingLevel(hop.thinking);
+	return true;
 }
+
+/**
+ * Which tier's chain this context's usage-limit walk is on, once resolved. Resolved lazily on
+ * the first hop and reused after, so a model that later becomes ambiguous (shared by two
+ * tiers, at a different chain position in each) never re-derives a possibly different tier
+ * mid-walk — the session stays on the tier it started degrading from.
+ */
+const sessionTierByContext = new WeakMap<ExtensionContext, string>();
 
 async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string | null> {
 	const active = ctx.model as ModelLike | undefined;
 	if (!active?.id) {
 		return null;
 	}
-	const qualified = findTierFallback(await loadFallbacks(), active.provider, active.id);
-	if (!qualified) {
+	const { tiered, primaries, climb } = await loadFallbacks();
+	// A session that starts on some tier's primary (the normal case: defaultModel or an
+	// agentOverrides dispatch) resolves its home tier here. A session that starts on a model
+	// outside every tier's primary position (e.g. a manual mid-chain /model switch) resolves to
+	// null and gets no fallback — same as a model outside the tier file entirely.
+	let tier = sessionTierByContext.get(ctx) ?? resolveHomeTier(primaries, active.provider, active.id);
+	if (!tier) {
 		return null;
 	}
-	return (await switchTo(pi, ctx, qualified)) ? qualified : null;
+	let hop = findTierFallback(tiered[tier] ?? {}, active.provider, active.id);
+	// The tier's own chain can run out entirely. climbOnExhaustion names the next tier to
+	// continue on, from THAT tier's own primary, so T1 rises to T2 and T5 drops to T4 as
+	// documented — explicit here rather than left to model ids happening to overlap at chain
+	// boundaries, which is not guaranteed once tiers are edited through the settings UI.
+	if (!hop && climb[tier]) {
+		const nextTier = climb[tier];
+		const nextPrimary = primaries[nextTier];
+		if (nextPrimary) {
+			hop = nextPrimary;
+			tier = nextTier;
+		}
+	}
+	if (!hop) {
+		return null;
+	}
+	if (!(await switchTo(pi, ctx, hop))) {
+		return null;
+	}
+	sessionTierByContext.set(ctx, tier);
+	return hop.model;
 }
 
 export async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
@@ -391,7 +473,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	const active = ctx.model as ModelLike | undefined;
 	const abandoned = abandonedByContext.get(ctx) ?? {};
 	if (active?.id && plan.resetAtMs !== null) {
-		abandoned[`${active.provider}/${active.id}`] = plan.resetAtMs;
+		abandoned[`${active.provider}/${active.id}`] = { resetAtMs: plan.resetAtMs, thinking: pi.getThinkingLevel() };
 		abandonedByContext.set(ctx, abandoned);
 	}
 
@@ -429,7 +511,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		logDiagnostic(`resume already pending for ${sessionFile}, not rescheduling`);
 		return;
 	}
-	const climbedBack = returning ? await switchTo(pi, ctx, returning.model) : false;
+	const climbedBack = returning ? await switchTo(pi, ctx, returning) : false;
 	const destination = climbedBack ? ` on ${returning?.model}` : "";
 	logDiagnostic(`scheduled resume of ${sessionFile} in ${formatWait(resumeAtMs - Date.now())}${destination} (pid ${job.pid})`);
 	ctx.ui.notify(`Usage limit hit. Will continue this session${destination} in ${formatWait(resumeAtMs - Date.now())}.`, "warning");
@@ -439,7 +521,7 @@ const lastProviderResponseByContext = new WeakMap<ExtensionContext, { status: nu
 
 // Values are reset instants. A resume waits on whichever model returns first rather than
 // on whichever failed last, so the walk has to remember every model it gave up on.
-const abandonedByContext = new WeakMap<ExtensionContext, Record<string, number>>();
+const abandonedByContext = new WeakMap<ExtensionContext, Record<string, { resetAtMs: number; thinking: ThinkingLevel }>>();
 
 async function handleStatusCommand(_args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const store = await loadPendingStore();

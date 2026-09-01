@@ -917,7 +917,7 @@ fn top_level_installer_preserves_model_overrides_while_adding_managed_compatibil
     fs::write(repository.join("CLAUDE.md"), "fixture").expect("instructions fixture");
     fs::write(
         repository.join("config/model-tiers.json"),
-        r#"{"tiers":{"T1":{"pi":"openrouter/test","thinking":"off","fallbacks":["openrouter/fallback"]}},"agents":{},"orchestrator":"T1"}"#,
+        r#"{"tiers":{"T1":{"pi":{"model":"openrouter/test","thinking":"off"},"fallbacks":[{"model":"openrouter/fallback","thinking":"off"}]}},"agents":{},"orchestrator":"T1"}"#,
     )
     .expect("model tiers fixture");
     fs::copy(
