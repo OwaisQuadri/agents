@@ -114,6 +114,16 @@ Before writing any code comment, read ~/Documents/agents/docs/comment-style.md. 
 are a last resort and only its whitelisted shapes ship; a shape not on the list is
 proposed there first, never written ad hoc.
 
+## public artifacts
+
+Issues, PRs, commit messages, and code in public repositories never carry private
+network identifiers: IP addresses (including tailnet and IPv6), hostnames, usernames,
+SSH targets, or local subnets. Write a placeholder such as `<relay>` or `<user>@<host>`
+and keep the specifics in local session notes or machine-local config. GitHub keeps
+public edit history on issue and PR bodies, and the API cannot delete a revision — a
+leaked identifier means recreating the artifact and deleting the original, so check
+before posting instead.
+
 ## moves and deletes
 
 Never rm before a verified move. Verifying the destination (file counts match) is a separate step that happens before any delete.
