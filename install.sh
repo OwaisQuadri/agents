@@ -239,24 +239,10 @@ else
   # tuned its own thinking keeps it, and only its model follows the tier.
   OWNED="$(cd "$REPO_TARGET/agents" 2>/dev/null && ls -d */ 2>/dev/null | tr -d / | jq -R . | jq -sc .)"
   OWNED="${OWNED:-[]}"
-  # modelTierFallbacks maps EVERY model in a tier's chain (pi, then each fallback in order)
-  # to the next model in that same chain, so the session extension's one-hop-per-limit walk
-  # (re-enter on the new model, look it up again on its own next limit) actually reaches every
-  # entry in the ordered list instead of stopping after the tier's own primary. It is nested
-  # ONE MAP PER TIER, keyed by tier name first — a model that appears in two tiers' chains
-  # (a real case now that thinking travels per model) then keeps a distinct next-hop per tier
-  # instead of one tier's mapping silently overwriting the other's. tierPrimaries records each
-  # tier's own primary model AND thinking, so a session resolves which tier's map it is walking
-  # once, at its first usage-limit hop, from whichever tier that starting model is the primary
-  # of; every hop after that reuses the tier the walk already resolved to, rather than
-  # re-deriving it from a model id that could by then belong to more than one tier.
-  # tierClimb names, for a tier whose own chain runs all the way out, the next tier to
-  # continue on from that tier's own primary (T1 rises to T2, T5 drops to T4) — explicit here
-  # rather than left to models happening to overlap at chain boundaries, which is not
-  # guaranteed once tiers are edited through the settings UI. A tier with an empty fallbacks
-  # list gets no key for its own primary at all (chosen over emitting a null-valued entry) —
-  # every tier today has at least one fallback, so this has never fired. Subagents get the
-  # whole ordered list directly, so this only matters for the top-level session.
+  # modelTierFallbacks maps each model in a tier's chain to its next hop, one map per tier,
+  # so a model in two tiers' chains keeps a distinct next hop in each. tierPrimaries records
+  # each tier's primary model+thinking — how a session resolves, once, which map it walks.
+  # tierClimb names the tier a walk continues on when its chain runs out (T1 rises, T5 drops).
   TIER_JQ='.modelTierFallbacks = ($t.tiers | with_entries(
       .value as $tier
       | ([$tier.pi] + $tier.fallbacks) as $chain

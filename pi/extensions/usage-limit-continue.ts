@@ -15,13 +15,9 @@ type ModelLike = {
 	cost: { input: number; output: number; cacheRead: number };
 };
 
-// install.sh compiles config/model-tiers.json into these two structures in pi settings, so
-// the tier file stays the one place model ids and thinking levels live and this file needs no
-// repo path. modelTierFallbacks is nested ONE MAP PER TIER: a model that appears in two tiers'
-// chains (real now that thinking travels per model, e.g. luna is T1's primary and T2's first
-// fallback) keeps a distinct next hop per tier instead of one tier's mapping overwriting the
-// other's. tierPrimaries names each tier's own primary model, which is how a session resolves
-// which tier's map it is walking in the first place — see resolveHomeTier.
+// Compiled by install.sh from config/model-tiers.json. One fallback map per tier: a model
+// in two tiers' chains keeps a distinct next hop in each. tierPrimaries names each tier's
+// primary, which is how a session resolves the tier it walks — see resolveHomeTier.
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 type TierHop = { model: string; thinking: ThinkingLevel };
 type FallbackMap = Record<string, TierHop>;
@@ -399,18 +395,13 @@ async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, hop: TierHop): 
 	if (!candidate || !(await pi.setModel(candidate))) {
 		return false;
 	}
-	// A fallback model can need a different thinking level than the session already had, so
-	// the hop lands on the level its own tier entry names, not whatever the prior model used.
+	// Each hop applies its own tier entry's thinking level, not the prior model's.
 	pi.setThinkingLevel(hop.thinking);
 	return true;
 }
 
-/**
- * Which tier's chain this context's usage-limit walk is on, once resolved. Resolved lazily on
- * the first hop and reused after, so a model that later becomes ambiguous (shared by two
- * tiers, at a different chain position in each) never re-derives a possibly different tier
- * mid-walk — the session stays on the tier it started degrading from.
- */
+// Resolved on the walk's first hop and reused after, so a model shared by two tiers
+// never re-derives a different tier mid-walk.
 const sessionTierByContext = new WeakMap<ExtensionContext, string>();
 
 async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string | null> {
@@ -419,19 +410,15 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 		return null;
 	}
 	const { tiered, primaries, climb } = await loadFallbacks();
-	// A session that starts on some tier's primary (the normal case: defaultModel or an
-	// agentOverrides dispatch) resolves its home tier here. A session that starts on a model
-	// outside every tier's primary position (e.g. a manual mid-chain /model switch) resolves to
-	// null and gets no fallback — same as a model outside the tier file entirely.
+	// Home tier resolves only from a primary position; a session starting mid-chain
+	// (manual /model switch) gets no fallback, same as a model outside the tier file.
 	let tier = sessionTierByContext.get(ctx) ?? resolveHomeTier(primaries, active.provider, active.id);
 	if (!tier) {
 		return null;
 	}
 	let hop = findTierFallback(tiered[tier] ?? {}, active.provider, active.id);
-	// The tier's own chain can run out entirely. climbOnExhaustion names the next tier to
-	// continue on, from THAT tier's own primary, so T1 rises to T2 and T5 drops to T4 as
-	// documented — explicit here rather than left to model ids happening to overlap at chain
-	// boundaries, which is not guaranteed once tiers are edited through the settings UI.
+	// Chain exhausted: climbOnExhaustion continues from the named tier's own primary
+	// (T1 rises to T2, T5 drops to T4) instead of relying on chains happening to overlap.
 	if (!hop && climb[tier]) {
 		const nextTier = climb[tier];
 		const nextPrimary = primaries[nextTier];
