@@ -41,9 +41,11 @@ function makeExec(overrides: {
 	fmResponse?: string;
 	headSha?: string;
 	fmRespondGate?: Promise<void>;
+	workingTreeStatus?: string[];
 } = {}) {
 	let commits = overrides.commits ?? ["abc1230 add branch summary segment", "def4560 fix footer alignment"];
 	let fmResponse = overrides.fmResponse ?? "Branch summary widget";
+	let workingTreeStatus = overrides.workingTreeStatus ?? [];
 	const fmAvailable = overrides.fmAvailable ?? true;
 	const headSha = overrides.headSha ?? HEAD_SHA;
 	const fmRespondGate = overrides.fmRespondGate;
@@ -78,6 +80,9 @@ function makeExec(overrides: {
 		if (command === "git" && args[0] === "log" && args.includes(`${MERGE_BASE_SHA}..HEAD`)) {
 			return { code: 0, stdout: commits.length ? `${commits.join("\n")}\n` : "" };
 		}
+		if (command === "git" && args[0] === "status" && args[1] === "--porcelain") {
+			return { code: 0, stdout: workingTreeStatus.length ? `${workingTreeStatus.join("\n")}\n` : "" };
+		}
 		if (command === "fm" && args[0] === "available") {
 			return fmAvailable
 				? { code: 0, stdout: "System model available\n" }
@@ -95,6 +100,7 @@ function makeExec(overrides: {
 		calls,
 		setCommits: (next: string[]) => { commits = next; },
 		setFmResponse: (next: string) => { fmResponse = next; },
+		setWorkingTreeStatus: (next: string[]) => { workingTreeStatus = next; },
 	};
 }
 
@@ -318,6 +324,102 @@ test("keeps the incumbent headline visible and unchanged when a regenerated chal
 		await settle();
 		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
 		assert.equal(respondCalls, 2, "the anchor advanced even though the visible text did not change");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("pure: buildBranchSummaryPrompt blends committed subjects with uncommitted file names", async () => {
+	const extensions = await loadFooter();
+	try {
+		const prompt = extensions.footer.buildBranchSummaryPrompt(["fix bug"], ["pi/extensions/owais-footer.ts", "new-file.ts"]);
+		assert.match(prompt, /fix bug/);
+		assert.match(prompt, /pi\/extensions\/owais-footer\.ts/);
+		assert.match(prompt, /new-file\.ts/);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: parseWorkingTreeFiles strips the status code and keeps the path", async () => {
+	const extensions = await loadFooter();
+	try {
+		const files = extensions.footer.parseWorkingTreeFiles(" M pi/extensions/owais-footer.ts\n?? new-file.ts\n");
+		assert.deepEqual(files, ["pi/extensions/owais-footer.ts", "new-file.ts"]);
+		assert.deepEqual(extensions.footer.parseWorkingTreeFiles(""), []);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("uncommitted working-tree changes trigger a refresh even when the commit count hasn't moved", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls, setWorkingTreeStatus, setFmResponse } = makeExec({ commits: ["c1 one", "c2 two"] });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		assert.match(getWidget()?.render(160)[1] ?? "", /Branch summary widget/);
+
+		// same commits (relevance 1, above threshold) — only the working tree moved, so this should still regenerate.
+		setWorkingTreeStatus([" M pi/extensions/owais-footer.ts"]);
+		setFmResponse("In-flight rewrite");
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.match(line, /In-flight rewrite/, "an uncommitted change alone should still trigger a regeneration");
+		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCalls, 2);
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("uncommitted-only changes produce a headline with zero new commits", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls, setWorkingTreeStatus, setFmResponse } = makeExec({ commits: [] });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		assert.doesNotMatch(getWidget()?.render(160)[1] ?? "", /Branch summary widget/, "no commits and a clean tree means nothing to summarize yet");
+
+		setWorkingTreeStatus([" M pi/extensions/owais-footer.ts", "?? new-file.ts"]);
+		setFmResponse("Footer headline work");
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.match(line, /Footer headline work/, "uncommitted changes alone should produce a headline with zero new commits");
+		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCalls, 1);
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("commit-count-only path stays unchanged when the working tree never moves", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls } = makeExec({ commits: ["c1 one", "c2 two"] });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		assert.match(getWidget()?.render(160)[1] ?? "", /Branch summary widget/);
+
+		// commit count unchanged and the working tree stayed clean both times — no second fm call.
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCalls, 1, "neither signal moved, so the commit-count-only gate behaves exactly as before");
 	} finally {
 		disposeAll();
 		await handlers.get("session_shutdown")?.({}, ctx);
