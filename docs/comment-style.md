@@ -24,6 +24,14 @@ code instead. `tools/comment-check` enforces the mechanical part: a PreToolUse h
   the docstring, and never the body, so those four facts have nowhere else to live at the
   call site. Approved by the owner on 2026-08-10. The format per language lives in
   docs/docstring-style.md, which covers every language that generates inline documentation.
+- commented-out reference template — inert example content, like config or a code
+  snippet, a reader uncomments and adapts, never prose that explains surrounding code.
+  Only literal target-syntax lines (valid TOML, YAML, shell) count toward this shape.
+  An English explanation beside it still owes its own 3-line budget. The owner approved
+  it on 2026-08-02, with three guardrails. Every use gets an explicit callout to the
+  owner, never a silent ship. More than 2-3 occurrences in one file signals a move to a
+  separate file or directory. A block of mostly English sentences never qualifies,
+  whatever the justification.
 
 ## whitelisting a new shape
 
@@ -37,3 +45,8 @@ used before the gate clears.
 - 2026-08-10 docstring on a public API declaration. The owner's note asked to "make sure
   docstrings are formatted like google and apple (research more)", which presumes a shape
   this list did not carry. He approved it the same day.
+- 2026-08-02 commented-out reference template. Raised while fixing rag PR #42's comment
+  violations. install.sh carries two commented-out TOML blocks, a remote-source example
+  and an embedding-model override, that a reader uncomments to use. Splitting them
+  mid-struct to dodge comment-check's line budget made the file worse. He approved the
+  shape with the three guardrails the same day.
