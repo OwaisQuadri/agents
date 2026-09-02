@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Live smoke test for next-issue.sh / gh-edge-guard.sh against the real GitHub repo
-# via gh. NOT run by run.sh's default path (would spam the real issue tracker on
-# every eval run) — invoke explicitly: skills/task-graph/evals/smoke-gh.sh
-#
-# Assertions check RELATIVE ranking/flags among the scratch issues this script
-# creates, never the global next-issue.sh pick — the real repo backlog is live
-# alongside these, so a scratch issue can never be guaranteed the global #1 slot
-# (an existing lower-numbered same-priority issue always wins a tie).
+# Live smoke of next-issue.sh / gh-edge-guard.sh against the real tracker; run
+# explicitly, never from run.sh (spams real issues). Asserts RELATIVE rank among
+# its own scratch issues only — the live backlog makes the global pick unstable.
 set -euo pipefail
 cd "$(dirname "$0")"
 
