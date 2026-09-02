@@ -406,6 +406,7 @@ fi
 link_config "$REPO_TARGET/pi/themes/owais.json" "$HOME_TARGET/.pi/agent/themes/owais.json" "Pi theme link"
 link_config "$REPO_TARGET/config/herdr/config.toml" "$HOME_TARGET/.config/herdr/config.toml" "Herdr config link"
 link_config "$REPO_TARGET/config/pi-transcribe.json" "$HOME_TARGET/.pi/agent/pi-transcribe.json" "Pi transcription configuration link"
+link_config "$REPO_TARGET/config/plannotator.json" "$HOME_TARGET/.pi/agent/plannotator.json" "Plannotator configuration link"
 
 if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 && "$(uname -s)" == "Darwin" ]]; then
   if ! command -v uv >/dev/null 2>&1; then
