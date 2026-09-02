@@ -307,6 +307,7 @@ if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-rewrite" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
   link "$REPO_TARGET/.git/hooks/pre-push" "$REPO_TARGET/hooks/pre-push"
+  link "$REPO_TARGET/.git/hooks/pre-commit" "$REPO_TARGET/hooks/pre-commit"
 fi
 
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
@@ -322,8 +323,9 @@ fi
 #    gepa-due in the daily workflows/gepa-due launchd job, which runs with the minimal
 #    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
 #    not a live `cargo build` attempted inside the launchd environment,
-#    transcript-directed-video-processor as an on-demand command the user runs by name
-for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor; do
+#    transcript-directed-video-processor as an on-demand command the user runs by name,
+#    privacy-lint in the pre-commit path, blocking staged private network identifiers
+for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor privacy-lint; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
 
