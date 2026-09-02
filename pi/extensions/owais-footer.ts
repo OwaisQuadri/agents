@@ -446,13 +446,17 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						: theme.fg("muted", "context unknown");
 					const quota = quotaLabel();
 					const lines = [splitLine(context, theme.fg("muted", omLabel()), width)];
+					let quotaLeft = "";
 					if (quota) {
 						const usageText = quota.left.match(/^\d+%/)?.[0] ?? "";
-						const quotaLeft = quota.isOverPace
+						quotaLeft = quota.isOverPace
 							? fgHex("#f28b9a", usageText) + theme.fg("muted", quota.left.slice(usageText.length))
 							: theme.fg("muted", quota.left);
-						const availableRightWidth = Math.max(0, width - visibleWidth(quotaLeft) - 1);
-						lines.push(splitLine(quotaLeft, worldClockLabel(availableRightWidth), width));
+					}
+					const availableRightWidth = Math.max(0, width - visibleWidth(quotaLeft) - 1);
+					const worldClock = worldClockLabel(availableRightWidth);
+					if (quotaLeft || worldClock) {
+						lines.push(splitLine(quotaLeft, worldClock, width));
 					}
 					return lines;
 				},
