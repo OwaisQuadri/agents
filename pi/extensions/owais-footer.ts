@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { homedir } from "node:os";
 import { basename, relative } from "node:path";
@@ -10,6 +10,9 @@ const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "
 const BRANCH_SUMMARY_MAX_COMMITS = 20;
 const BRANCH_SUMMARY_MAX_WORKING_TREE_FILES = 20;
 const BRANCH_SUMMARY_MAX_WIDTH = 40;
+const BRANCH_SUMMARY_MAX_TRANSCRIPT_ASKS = 12;
+const BRANCH_SUMMARY_MAX_TRANSCRIPT_ASK_WIDTH = 160;
+export const NEW_SESSION_HEADLINE = "New session";
 const BRANCH_SUMMARY_INSTRUCTIONS =
 	"Reply with exactly one short noun phrase, 1 to 4 words total, naming the overall work described below. Never one phrase per commit or file. Present tense or no verb, never past tense. No markdown, no quotes, no trailing period, single line only.";
 
@@ -276,10 +279,27 @@ export function parseWorkingTreeFiles(porcelainOutput: string): string[] {
 		.filter(Boolean);
 }
 
-export function buildBranchSummaryPrompt(subjects: string[], workingTreeFiles: string[] = []): string {
+// the pi transcript is the only signal for read-only sessions (research, review, Q&A) — commits and
+// working-tree files stay empty the whole time, so without this the headline never has anything to draw on.
+export function extractTranscriptAsks(entries: SessionEntry[], maxCount = BRANCH_SUMMARY_MAX_TRANSCRIPT_ASKS): string[] {
+	const asks: string[] = [];
+	for (const entry of entries) {
+		if (entry.type !== "message" || entry.message.role !== "user") continue;
+		const content = entry.message.content;
+		const text = typeof content === "string"
+			? content
+			: content.filter((part) => part.type === "text").map((part) => part.text).join(" ");
+		const trimmed = text.replace(/\s+/g, " ").trim();
+		if (trimmed) asks.push(truncateSegmentText(trimmed, BRANCH_SUMMARY_MAX_TRANSCRIPT_ASK_WIDTH));
+	}
+	return asks.slice(-maxCount);
+}
+
+export function buildBranchSummaryPrompt(subjects: string[], workingTreeFiles: string[] = [], transcriptAsks: string[] = []): string {
 	const blocks: string[] = [];
 	if (subjects.length > 0) blocks.push(`Commits so far:\n${subjects.join("\n")}`);
 	if (workingTreeFiles.length > 0) blocks.push(`Files with uncommitted changes right now:\n${workingTreeFiles.join("\n")}`);
+	if (transcriptAsks.length > 0) blocks.push(`What the user asked for in this conversation:\n${transcriptAsks.join("\n")}`);
 	return `Name what this branch's work is about, as one short label, not a sentence:\n${blocks.join("\n\n")}`;
 }
 
@@ -334,6 +354,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
 	let branchSummary: string | undefined;
 	let branchSummaryCommitCount: number | undefined;
+	let branchSummaryTranscriptAskCount: number | undefined;
 	let branchSummaryWorkingTreeFingerprint: string | undefined;
 	let isBranchSummaryGenerating = false;
 	let isFoundationModelsAvailableCache: boolean | undefined;
@@ -366,11 +387,22 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const workingTreeFiles = parseWorkingTreeFiles(statusResult.stdout).slice(0, BRANCH_SUMMARY_MAX_WORKING_TREE_FILES);
 			const workingTreeFingerprint = workingTreeFiles.join("\n");
 
-			if (subjects.length === 0 && workingTreeFiles.length === 0) return;
+			// commits and working-tree files stay empty for a read-only session (research, review, Q&A) —
+			// the pi transcript is the only signal left, so it feeds the prompt and the regeneration anchor too.
+			const transcriptAsks = extractTranscriptAsks(activeContext?.sessionManager?.getEntries?.() ?? []);
 
+			if (subjects.length === 0 && workingTreeFiles.length === 0 && transcriptAsks.length === 0) return;
+
+			// a commit-count signal with zero entries this whole session must not force a regen every tick —
+			// computeBranchSummaryRelevance is 0 for "nothing ahead", so an unused signal is excluded from the
+			// gate rather than read as "always moved". the transcript signal skips this ratio throttle entirely:
+			// every new user ask regenerates on its very next agent_settled, since a read-only session has no
+			// other signal and a stale headline for several turns reads as broken, not as intentional batching.
 			const commitRelevance = computeBranchSummaryRelevance(branchSummaryCommitCount, subjects.length);
 			const isWorkingTreeMoved = workingTreeFingerprint !== (branchSummaryWorkingTreeFingerprint ?? "");
-			if (commitRelevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD && !isWorkingTreeMoved) return;
+			const isCommitSignalStale = subjects.length === 0 || commitRelevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD;
+			const isTranscriptSignalStale = transcriptAsks.length === 0 || transcriptAsks.length === (branchSummaryTranscriptAskCount ?? 0);
+			if (isCommitSignalStale && isTranscriptSignalStale && !isWorkingTreeMoved) return;
 
 			if (isFoundationModelsAvailableCache === undefined) {
 				isFoundationModelsAvailableCache = await isFoundationModelsAvailable(pi.exec);
@@ -381,7 +413,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			requestRender?.();
 			let response: string | undefined;
 			try {
-				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles));
+				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles, transcriptAsks));
 			} finally {
 				isBranchSummaryGenerating = false;
 			}
@@ -391,6 +423,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 				branchSummary = challenger;
 			}
 			branchSummaryCommitCount = subjects.length;
+			branchSummaryTranscriptAskCount = transcriptAsks.length;
 			branchSummaryWorkingTreeFingerprint = workingTreeFingerprint;
 		} catch {
 			return;
@@ -450,6 +483,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 				pullRequest = undefined;
 				branchSummary = undefined;
 				branchSummaryCommitCount = undefined;
+				branchSummaryTranscriptAskCount = undefined;
 				branchSummaryWorkingTreeFingerprint = undefined;
 			}
 			requestRender?.();
@@ -569,6 +603,11 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 								id: "headline",
 								full: textForm(`${brailleOrbit(Date.now())} Generating headline\u2026`, colorize),
 							});
+						} else {
+							// idle with nothing generated yet — a brand-new session, or one where fm never ran
+							// (no signal, system model unavailable). placeholder beats a blank slot either way.
+							const colorize = (text: string) => theme.fg("muted", text);
+							items.push({ id: "headline", full: textForm(NEW_SESSION_HEADLINE, colorize) });
 						}
 
 						const workspaceText = state.isGit ? state.project : state.path;

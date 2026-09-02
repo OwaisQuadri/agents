@@ -104,7 +104,10 @@ function makeExec(overrides: {
 	};
 }
 
-function makeContext(exec: (command: string, args: string[]) => Promise<{ code: number; stdout: string }>) {
+function makeContext(
+	exec: (command: string, args: string[]) => Promise<{ code: number; stdout: string }>,
+	userAsks: string[] = [],
+) {
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	const theme = { fg(_color: string, text: string) { return text; } };
 	let widget: { dispose?(): void; render(width: number): string[] } | undefined;
@@ -119,6 +122,11 @@ function makeContext(exec: (command: string, args: string[]) => Promise<{ code: 
 		model: { provider: "test", id: "model", contextWindow: 1 },
 		thinkingLevel: "off",
 		getContextUsage() { return undefined; },
+		// mirrors ReadonlySessionManager.getEntries() closely enough for buildBranchSummaryPrompt's
+		// transcript signal — only the "message"/"user" shape refreshBranchSummary actually reads.
+		sessionManager: {
+			getEntries: () => userAsks.map((text) => ({ type: "message", message: { role: "user", content: text, timestamp: 0 } })),
+		},
 		ui: {
 			setFooter(factory: (tui: unknown, theme: typeof theme, footerData: { onBranchChange(callback: () => void): () => void }) => { dispose?(): void }) {
 				footer = factory({ requestRender() {} }, theme, { onBranchChange() { return () => {}; } });
@@ -649,6 +657,138 @@ test("pure: assembleFooterLine builds the model cluster from provider/thinking/m
 		]);
 		assert.equal(extensions.footer.assembleFooterLine(modelHidden, pick, " · ", " > ").right, "", "provider/thinking never render without a model");
 	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: extractTranscriptAsks pulls user text and drops other roles", async () => {
+	const extensions = await loadFooter();
+	try {
+		const { extractTranscriptAsks } = extensions.footer;
+		const entries = [
+			{ type: "message", message: { role: "user", content: "explain the auth flow", timestamp: 0 } },
+			{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "here's how it works" }], timestamp: 0 } },
+			{ type: "message", message: { role: "user", content: [{ type: "text", text: "now trace " }, { type: "text", text: "the token refresh" }], timestamp: 0 } },
+			{ type: "thinking_level_change", thinkingLevel: "high", timestamp: 0 },
+		];
+		assert.deepEqual(extractTranscriptAsks(entries), ["explain the auth flow", "now trace the token refresh"]);
+		assert.deepEqual(extractTranscriptAsks([]), []);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: extractTranscriptAsks keeps only the most recent maxCount asks", async () => {
+	const extensions = await loadFooter();
+	try {
+		const { extractTranscriptAsks } = extensions.footer;
+		const entries = ["one", "two", "three"].map((text) => ({ type: "message", message: { role: "user", content: text, timestamp: 0 } }));
+		assert.deepEqual(extractTranscriptAsks(entries, 2), ["two", "three"]);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("pure: buildBranchSummaryPrompt includes what the user asked for", async () => {
+	const extensions = await loadFooter();
+	try {
+		const prompt = extensions.footer.buildBranchSummaryPrompt([], [], ["summarize the billing service", "walk me through retries"]);
+		assert.match(prompt, /summarize the billing service/);
+		assert.match(prompt, /walk me through retries/);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("a read-only session with no commits and no working-tree changes still produces a headline from the transcript", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls, setFmResponse } = makeExec({ commits: [] });
+	setFmResponse("Auth flow review");
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec, ["explain the auth flow", "trace the token refresh"]);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.match(line, /Auth flow review/, "a pure read-only session (no commits, no working-tree changes) still gets a headline");
+		const respondCall = calls.find((call) => call.command === "fm" && call.args[0] === "respond");
+		const prompt = respondCall?.args.at(-1) ?? "";
+		assert.match(prompt, /explain the auth flow/, "the transcript, not just commits, drives the read-only headline");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("a new transcript ask regenerates on its very next agent_settled, unthrottled by the commit relevance ratio", async () => {
+	const extensions = await loadFooter();
+	const { exec, calls, setFmResponse } = makeExec({ commits: [] });
+	const userAsks = ["explain the auth flow"];
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec, userAsks);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		const respondCallsAfterFirst = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCallsAfterFirst, 1);
+
+		// one new ask (2 asks total) is only a 1/2 = 0.5 relevance move — the commit-style ratio throttle would
+		// have skipped this, but the transcript signal must regenerate on the very next settle regardless.
+		userAsks.push("now trace the token refresh");
+		setFmResponse("Token refresh trace");
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.match(line, /Token refresh trace/, "a single new ask must regenerate on the very next settle, not be throttled");
+		const respondCallsAfterSecond = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCallsAfterSecond, 2);
+
+		// no new ask this time — the transcript signal is genuinely unchanged, so it should not regenerate again.
+		await handlers.get("agent_settled")?.({}, ctx);
+		await settle();
+		const respondCallsAfterThird = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
+		assert.equal(respondCallsAfterThird, 2, "an unchanged transcript must not regenerate again");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("a new session shows a 'New session' placeholder before any headline exists", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec({ fmAvailable: false });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.match(line, /New session/, "idle with nothing generated yet (here: fm unavailable) shows the placeholder, never a blank slot");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("the 'New session' placeholder yields to 'Generating headline…' once fm respond is actually in flight", async () => {
+	const extensions = await loadFooter();
+	const gate = deferred();
+	const { exec } = makeExec({ fmRespondGate: gate.promise });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		const inFlightLine = getWidget()?.render(160)[1] ?? "";
+		assert.match(inFlightLine, /Generating headline…/);
+		assert.doesNotMatch(inFlightLine, /New session/, "once generation actually starts, the transient text replaces the placeholder");
+		gate.resolve();
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
 		await extensions.dispose();
 	}
 });
