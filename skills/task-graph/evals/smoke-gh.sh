@@ -20,6 +20,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The board's item-list view lags field writes by a few seconds; a scratch issue
+# added moments ago can transiently read as missing its Status. Bounded retry.
+rank() {
+  local tries=0 out
+  while :; do
+    out=$(../scripts/next-issue.sh 2>&1 >/dev/null || true)
+    if grep -q "missing project Status" <<<"$out" && [[ $tries -lt 5 ]]; then
+      tries=$((tries + 1)); sleep 10; continue
+    fi
+    printf '%s' "$out"; return 0
+  done
+}
+
 mk() {
   # mk <title> <status> [gh-issue-create extra args...]
   local title=$1 status=$2
@@ -39,7 +52,7 @@ B=$(mk "smoke-gh B" todo --blocked-by "$A"); created+=("$B")
 C=$(mk "smoke-gh C" todo --blocked-by "$B"); created+=("$C")
 D=$(mk "smoke-gh D" todo --blocked-by "$A"); created+=("$D")
 
-diag=$(../scripts/next-issue.sh 2>&1 >/dev/null || true)
+diag=$(rank)
 b_line=$(grep -n "^  #$B " <<<"$diag" | cut -d: -f1)
 d_line=$(grep -n "^  #$D " <<<"$diag" | cut -d: -f1)
 grep -q "^  #$B \[urgent\] unlocks 1" <<<"$diag" || { echo "smoke-gh: #$B wrong unlocks count" >&2; echo "$diag" >&2; exit 1; }
@@ -49,7 +62,8 @@ grep -q "^  #$D \[urgent\] unlocks 0" <<<"$diag" || { echo "smoke-gh: #$D wrong 
 echo "smoke-gh: cancelled-blocker replan flag" >&2
 gh issue close "$B" --reason "not planned" >/dev/null
 ../scripts/gh-issue-field.sh "$B" Status cancelled >/dev/null 2>&1
-err=$(../scripts/next-issue.sh 2>&1 >/dev/null || true)
+sleep 10 # settle: the ranked view lags the field update above
+err=$(rank)
 grep -q "needs-replan: #$C" <<<"$err" || { echo "smoke-gh: replan warning missing for #$C" >&2; exit 1; }
 grep -q "^  #$C " <<<"$err" && { echo "smoke-gh: replanned #$C wrongly appeared in ranked list" >&2; exit 1; }
 
