@@ -4,11 +4,11 @@ description: >-
   Use when the user asks to review PRs (Pull Requests), work through the review queue,
   or invokes /pr-review. Picks the next PR from tools/pr-review-filter, runs
   fresh-context dimension review plus a blast-radius pass over files the diff didn't
-  touch, drafts a severity-ranked review with a manual test checklist, and gates on your
-  own approval through tools/pr-review-gate before anything posts. Skip for reviewing
-  your own PR or uncommitted local changes (code-reviewer, or /review-bugbot,
-  /review-security own that); skip for a one-off diff read with no intent to post a
-  review (dispatch code-reviewer directly).
+  touch, drafts a severity-ranked review with a manual test checklist, shows every
+  drafted comment in chat through mouthpiece, and gates on your own approval before
+  anything posts. Skip for reviewing your own PR or uncommitted local changes
+  (code-reviewer, or /review-bugbot, /review-security own that); skip for a one-off diff
+  read with no intent to post a review (dispatch code-reviewer directly).
 metadata:
   minimum-tier: T3
   short-description: Pick a PR, review it fresh-context, gate your own sign-off, post
@@ -20,9 +20,9 @@ JOB: carry one pull request from the review queue to a posted, human-approved re
 IN:  nothing (picks the next PR itself), or a specific PR number to review directly,
      skipping the picker
 OUT: one review posted to the PR: approve, comment, or request-changes, with
-     severity-ranked line comments. Posting happens only after an explicit Approve in
-     `tools/pr-review-gate`. A clean exit with nothing posted happens when there is
-     nothing to review, or the human declines.
+     severity-ranked line comments. Posting happens only after an explicit approve typed
+     in chat, against the plain-text draft shown there. A clean exit with nothing posted
+     happens when there is nothing to review, or the human declines.
 
 Seven phases, one PR per run. Run the skill again for the next PR. This matches
 `engineer`'s one-ticket-per-run granularity.
@@ -122,46 +122,27 @@ DraftReview = {
 
 ## 5. Gate
 
-Write the `GateInput` the gate reads:
+Run every comment's `text` and the one-line PR summary through `mouthpiece`'s register
+before you show them. The human reads these as your own drafted words, not a raw model
+dump.
 
-```
-GateInput = {
-  pr: { number, title, url },
-  diff: [ { file, is_related: bool, patch_or_content: string, reason: string|null } ],
-  draft: DraftReview,
-}
-```
-
-`diff` carries one entry per changed file and one entry per `related_files` row. A
-changed-file entry sets `is_related` to false, sets `patch_or_content` to that file's
-unified diff hunk, and sets `reason` to null. A related-file entry sets `is_related` to
-true, sets `patch_or_content` to that file's current content read from `<tmp-dir>`, and
-copies `reason` from the matching `related_files` row.
-
-Write that JSON to a scratch path. Run:
-
-```
-tools/pr-review-gate --input <path-to-json>
-```
-
-This opens a local browser page automatically. The page shows a file tree on the left:
-changed files and blast-radius related files, marked apart. It shows the diff or content
-for the selected file in the middle. It shows the draft review on the right: the overall
-verdict, every comment, and the manual test checklist. Run that checklist against the
-real PR branch at `<tmp-dir>` before you decide.
+Print the draft in chat as plain text, grouped by file. For each file, print every
+comment on it: severity, line, and the mouthpiece-passed text. After the comments, print
+the overall verdict, the full `related_files` list, and the full `manual_test_checklist`.
+Run that checklist against the real PR branch at `<tmp-dir>` before you decide.
 
 This step is not a rubber stamp on the AI's findings. It is your own review. Read the
-diff. Check each drafted comment against what you see. Run the manual test checklist.
-Decide whether you would send this review yourself.
+diff yourself, in `<tmp-dir>` or on GitHub. Check each drafted comment against what you
+see. Run the manual test checklist. Decide whether you would send this review yourself.
 
-An approve here means you stand behind the review as your own work, not that a checker
-looked at it. The tool blocks until you act, then prints one JSON line to stdout:
-`{"verdict":"approve","feedback":null}` or
-`{"verdict":"decline","feedback":"<your text>"}`.
+Ask for one of three answers. Approve the draft as printed. Edit it: name which comments
+to drop, change, or add, plus any new text. Decline it with feedback. An approve here
+means you stand behind the review as your own work, not that a checker looked at it.
 
-On decline, fold the feedback back into phase 3 and phase 4. Rebuild the `DraftReview`.
-Reopen the gate with the revised draft. Nothing in phase 6 runs without an approve from
-this gate. This is the one step in the skill that never gets skipped.
+On edit or decline, fold the answer back into phase 3 and phase 4. Rebuild the
+`DraftReview` with the changes applied. Reprint the revised draft and ask again. Nothing
+in phase 6 runs without an explicit approve. This is the one step in the skill that
+never gets skipped.
 
 ## 6. Post and report
 
@@ -192,7 +173,8 @@ never infer success from an exit code alone.
 
 Report to the user: the verdict, the comment count by severity, and the PR link. This
 report, plus the review now visible on GitHub, is the outcome record. This skill keeps
-no separate log file.
+no separate log file. Post the exact text the human approved in phase 5. Never rewrite
+it again.
 
 Remove the phase-1 worktree, `git worktree remove <tmp-dir>`, regardless of the outcome:
 approved or declined, posted or failed.
