@@ -12,6 +12,7 @@ const protectedRelativePaths = [
 	[".config", "herdr", "config.toml"],
 	[".pi", "agent", "agents"],
 	[".pi", "agent", "extensions"],
+	[".pi", "agent", "keybindings.json"],
 	[".pi", "agent", "settings.json"],
 ] as const;
 
