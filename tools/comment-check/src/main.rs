@@ -15,9 +15,21 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-const MAX_COMMENT_LINES: usize = 4;
+const MAX_COMMENT_LINES: usize = 3;
 
-const SOURCE_EXTENSIONS: &[&str] = &["rs", "ts", "tsx"];
+const SLASH_EXTENSIONS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "swift", "c", "h", "cc", "cpp",
+    "hpp", "java", "kt", "kts", "cs", "zig", "scala", "m", "mm",
+];
+
+const HASH_EXTENSIONS: &[&str] =
+    &["py", "sh", "zsh", "bash", "rb", "pl", "toml", "yaml", "yml"];
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Lang {
+    Slash { is_rust: bool },
+    Hash { is_python: bool },
+}
 
 const VALUE_OPTIONS: &[&str] = &[
     "-c",
@@ -110,16 +122,45 @@ fn run_hook() {
 }
 
 fn is_source_path(path: &str) -> bool {
-    path.rsplit_once('.')
-        .is_some_and(|(_, ext)| SOURCE_EXTENSIONS.contains(&ext))
+    lang_for_extension(path).is_some()
+}
+
+fn lang_for_extension(path: &str) -> Option<Lang> {
+    let (_, ext) = path.rsplit_once('.')?;
+    if SLASH_EXTENSIONS.contains(&ext) {
+        return Some(Lang::Slash { is_rust: ext == "rs" });
+    }
+    if HASH_EXTENSIONS.contains(&ext) {
+        return Some(Lang::Hash { is_python: ext == "py" });
+    }
+    None
+}
+
+/// An extensionless file is classified by its shebang, so hook scripts and other
+/// bare executables stay inside the budget too.
+fn lang_for_shebang(text: &str) -> Option<Lang> {
+    let first = text.lines().next()?;
+    if !first.starts_with("#!") {
+        return None;
+    }
+    if first.contains("python") {
+        return Some(Lang::Hash { is_python: true });
+    }
+    if ["sh", "zsh", "bash", "ruby", "perl"].iter().any(|name| first.contains(name)) {
+        return Some(Lang::Hash { is_python: false });
+    }
+    None
 }
 
 fn check_path(path: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    let is_rust = path.extension().is_some_and(|ext| ext == "rs");
-    long_blocks(&text, is_rust)
+    let lang = match path.to_str().and_then(lang_for_extension).or_else(|| lang_for_shebang(&text)) {
+        Some(lang) => lang,
+        None => return Vec::new(),
+    };
+    long_blocks(&text, lang)
         .into_iter()
         .map(|(start, end)| {
             format!(
@@ -145,10 +186,13 @@ struct CommentSpan {
 }
 
 /// 1-based (start, end) line spans of every non-doc comment block longer than the
-/// budget. Consecutive full-line `//` comments merge into one block; a trailing
+/// budget. Consecutive full-line comments merge into one block; a trailing
 /// comment after code never merges with the lines below it.
-fn long_blocks(text: &str, is_rust: bool) -> Vec<(usize, usize)> {
-    let spans = comment_spans(text, is_rust);
+fn long_blocks(text: &str, lang: Lang) -> Vec<(usize, usize)> {
+    let spans = match lang {
+        Lang::Slash { is_rust } => comment_spans(text, is_rust),
+        Lang::Hash { is_python } => hash_comment_spans(text, is_python),
+    };
     let mut blocks: Vec<CommentSpan> = Vec::new();
     for span in spans {
         if let Some(last) = blocks.last_mut() {
@@ -190,12 +234,12 @@ fn comment_spans(text: &str, is_rust: bool) -> Vec<CommentSpan> {
                 i += 1;
             }
             '/' if next == Some('/') => {
+                let third = chars.get(i + 2).copied();
+                let fourth = chars.get(i + 3).copied();
                 let is_doc = if is_rust {
-                    let third = chars.get(i + 2).copied();
-                    let fourth = chars.get(i + 3).copied();
                     third == Some('!') || (third == Some('/') && fourth != Some('/'))
                 } else {
-                    false
+                    third == Some('!') || third == Some('/')
                 };
                 let is_full_line = is_line_blank_so_far;
                 while i < chars.len() && chars[i] != '\n' {
@@ -319,6 +363,91 @@ fn comment_spans(text: &str, is_rust: bool) -> Vec<CommentSpan> {
                 if !c.is_whitespace() {
                     is_line_blank_so_far = false;
                 }
+                i += 1;
+            }
+        }
+    }
+    spans
+}
+
+/// Lexes hash-comment languages: `#` opens a comment only at line start or after
+/// whitespace, so `$#`, `${#x}`, and mid-word hashes stay code. Python's
+/// triple-quoted strings and both quote styles are skipped; a shebang is exempt.
+fn hash_comment_spans(text: &str, is_python: bool) -> Vec<CommentSpan> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    let mut line = 1;
+    let mut is_line_blank_so_far = true;
+    let mut prev_is_boundary = true;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '\n' => {
+                line += 1;
+                is_line_blank_so_far = true;
+                prev_is_boundary = true;
+                i += 1;
+            }
+            '#' if prev_is_boundary => {
+                let is_shebang = line == 1 && chars.get(i + 1) == Some(&'!');
+                let is_full_line = is_line_blank_so_far;
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+                spans.push(CommentSpan {
+                    start_line: line,
+                    end_line: line,
+                    kind: if is_shebang { CommentKind::Doc } else { CommentKind::Plain },
+                    is_full_line,
+                });
+            }
+            '"' | '\'' => {
+                let quote = c;
+                is_line_blank_so_far = false;
+                prev_is_boundary = false;
+                let is_triple = is_python
+                    && chars.get(i + 1) == Some(&quote)
+                    && chars.get(i + 2) == Some(&quote);
+                if is_triple {
+                    i += 3;
+                    while i < chars.len() {
+                        if chars[i] == '\n' {
+                            line += 1;
+                        } else if chars[i] == '\\' {
+                            i += 1;
+                        } else if chars[i] == quote
+                            && chars.get(i + 1) == Some(&quote)
+                            && chars.get(i + 2) == Some(&quote)
+                        {
+                            i += 3;
+                            break;
+                        }
+                        i += 1;
+                    }
+                } else {
+                    i += 1;
+                    while i < chars.len() {
+                        match chars[i] {
+                            q if q == quote => {
+                                i += 1;
+                                break;
+                            }
+                            '\\' if quote == '"' || is_python => i += 2,
+                            '\n' => {
+                                line += 1;
+                                i += 1;
+                            }
+                            _ => i += 1,
+                        }
+                    }
+                }
+            }
+            _ => {
+                if !c.is_whitespace() {
+                    is_line_blank_so_far = false;
+                }
+                prev_is_boundary = c.is_whitespace();
                 i += 1;
             }
         }
@@ -452,20 +581,25 @@ fn json_quote(value: &str) -> String {
 mod tests {
     use super::*;
 
+    const RUST: Lang = Lang::Slash { is_rust: true };
+    const TS: Lang = Lang::Slash { is_rust: false };
+    const PYTHON: Lang = Lang::Hash { is_python: true };
+    const SHELL: Lang = Lang::Hash { is_python: false };
+
     fn rust_blocks(text: &str) -> Vec<(usize, usize)> {
-        long_blocks(text, true)
+        long_blocks(text, RUST)
     }
 
     #[test]
     fn short_comment_blocks_pass() {
-        let text = "// one\n// two\n// three\n// four\nfn main() {}\n";
+        let text = "// one\n// two\n// three\nfn main() {}\n";
         assert!(rust_blocks(text).is_empty());
     }
 
     #[test]
-    fn a_five_line_run_of_line_comments_is_flagged() {
-        let text = "// one\n// two\n// three\n// four\n// five\nfn main() {}\n";
-        assert_eq!(rust_blocks(text), vec![(1, 5)]);
+    fn a_four_line_run_of_line_comments_is_flagged() {
+        let text = "// one\n// two\n// three\n// four\nfn main() {}\n";
+        assert_eq!(rust_blocks(text), vec![(1, 4)]);
     }
 
     #[test]
@@ -473,14 +607,14 @@ mod tests {
         let text = "//! a\n//! b\n//! c\n//! d\n//! e\n//! f\n/// g\n/// h\n/// i\n/// j\n/// k\nfn main() {}\n";
         assert!(rust_blocks(text).is_empty());
         let jsdoc = "/**\n * a\n * b\n * c\n * d\n * e\n */\nexport function f() {}\n";
-        assert!(long_blocks(jsdoc, false).is_empty());
+        assert!(long_blocks(jsdoc, TS).is_empty());
     }
 
     #[test]
     fn a_long_block_comment_is_flagged() {
         let text = "fn main() {}\n/* a\nb\nc\nd\ne */\n";
         assert_eq!(rust_blocks(text), vec![(2, 6)]);
-        assert_eq!(long_blocks(text, false), vec![(2, 6)]);
+        assert_eq!(long_blocks(text, TS), vec![(2, 6)]);
     }
 
     #[test]
@@ -491,7 +625,7 @@ mod tests {
 
     #[test]
     fn a_trailing_comment_does_not_merge_with_the_run_below() {
-        let text = "let x = 1; // trailing\n// a\n// b\n// c\n// d\nfn main() {}\n";
+        let text = "let x = 1; // trailing\n// a\n// b\n// c\nfn main() {}\n";
         assert!(rust_blocks(text).is_empty());
     }
 
@@ -502,7 +636,7 @@ mod tests {
         let raw = "let a = r#\"// one\n// two\n// three\n// four\n// five\"#;\n";
         assert!(rust_blocks(raw).is_empty());
         let template = "const a = `// one\n// two\n// three\n// four\n// five`;\n";
-        assert!(long_blocks(template, false).is_empty());
+        assert!(long_blocks(template, TS).is_empty());
     }
 
     #[test]
@@ -512,18 +646,53 @@ mod tests {
     }
 
     #[test]
-    fn typescript_line_comments_have_no_doc_form() {
+    fn triple_slash_is_doc_in_every_slash_language() {
         let text = "/// a\n/// b\n/// c\n/// d\n/// e\nexport {}\n";
-        assert_eq!(long_blocks(text, false), vec![(1, 5)]);
+        assert!(long_blocks(text, TS).is_empty());
     }
 
     #[test]
-    fn only_source_extensions_are_scanned() {
+    fn a_four_line_hash_run_is_flagged() {
+        let text = "# one\n# two\n# three\n# four\nx = 1\n";
+        assert_eq!(long_blocks(text, PYTHON), vec![(1, 4)]);
+        assert!(long_blocks("# one\n# two\n# three\nx = 1\n", SHELL).is_empty());
+    }
+
+    #[test]
+    fn hash_inside_strings_and_words_is_not_a_comment() {
+        let text = "a = \"# one\"\nb = \"# two\"\nc = \"# three\"\nd = \"# four\"\n";
+        assert!(long_blocks(text, PYTHON).is_empty());
+        let doc = "def f():\n    \"\"\"\n    # a\n    # b\n    # c\n    # d\n    \"\"\"\n";
+        assert!(long_blocks(doc, PYTHON).is_empty());
+        let shell = "echo $#\nn=${#arr}\ncase x#y in esac\nz=1\n";
+        assert!(long_blocks(shell, SHELL).is_empty());
+    }
+
+    #[test]
+    fn a_shebang_does_not_merge_with_the_run_below() {
+        let text = "#!/bin/zsh\n# a\n# b\n# c\nx=1\n";
+        assert!(long_blocks(text, SHELL).is_empty());
+        let text = "#!/bin/zsh\n# a\n# b\n# c\n# d\nx=1\n";
+        assert_eq!(long_blocks(text, SHELL), vec![(2, 5)]);
+    }
+
+    #[test]
+    fn source_extensions_span_both_comment_families() {
         assert!(is_source_path("tools/foo/src/main.rs"));
         assert!(is_source_path("pi/extensions/guard.ts"));
         assert!(is_source_path("web/app.tsx"));
+        assert!(is_source_path("install.sh"));
+        assert!(is_source_path("scripts/run.py"));
+        assert!(is_source_path("config/settings.toml"));
         assert!(!is_source_path("docs/comment-style.md"));
-        assert!(!is_source_path("install.sh"));
+        assert!(!is_source_path("README"));
+    }
+
+    #[test]
+    fn extensionless_files_are_classified_by_shebang() {
+        assert_eq!(lang_for_shebang("#!/bin/zsh\n# a\n"), Some(SHELL));
+        assert_eq!(lang_for_shebang("#!/usr/bin/env python3\n"), Some(PYTHON));
+        assert_eq!(lang_for_shebang("plain text\n"), None);
     }
 
     #[test]
