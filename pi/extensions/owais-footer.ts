@@ -8,9 +8,10 @@ const HERDR_WORKTREE_MARKER = "/.herdr/worktrees/";
 const PR_POLL_INTERVAL_MS = 15 * 1000;
 const BRAILLE_ORBIT = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const BRANCH_SUMMARY_MAX_COMMITS = 20;
+const BRANCH_SUMMARY_MAX_WORKING_TREE_FILES = 20;
 const BRANCH_SUMMARY_MAX_WIDTH = 40;
 const BRANCH_SUMMARY_INSTRUCTIONS =
-	"Reply with exactly one short noun phrase, 1 to 4 words total, naming the overall work across every commit listed. Never one phrase per commit. Present tense or no verb, never past tense. No markdown, no quotes, no trailing period, single line only.";
+	"Reply with exactly one short noun phrase, 1 to 4 words total, naming the overall work described below. Never one phrase per commit or file. Present tense or no verb, never past tense. No markdown, no quotes, no trailing period, single line only.";
 
 type RepositoryState =
 	| { isGit: true; project: string; branch: string | undefined }
@@ -265,8 +266,21 @@ export function isBranchSummaryChallengerBetter(incumbent: string | undefined, c
 	return challenger.trim().toLowerCase() !== incumbent.trim().toLowerCase();
 }
 
-export function buildBranchSummaryPrompt(subjects: string[]): string {
-	return `Name what these git commits implement, as one short label, not a sentence:\n${subjects.join("\n")}`;
+// file names / diffstat only, never full diff bodies — keeps the prompt small for the 15s-timeout on-device call.
+export function parseWorkingTreeFiles(porcelainOutput: string): string[] {
+	return porcelainOutput
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => line.slice(2).trim())
+		.filter(Boolean);
+}
+
+export function buildBranchSummaryPrompt(subjects: string[], workingTreeFiles: string[] = []): string {
+	const blocks: string[] = [];
+	if (subjects.length > 0) blocks.push(`Commits so far:\n${subjects.join("\n")}`);
+	if (workingTreeFiles.length > 0) blocks.push(`Files with uncommitted changes right now:\n${workingTreeFiles.join("\n")}`);
+	return `Name what this branch's work is about, as one short label, not a sentence:\n${blocks.join("\n\n")}`;
 }
 
 export function truncateSegmentText(text: string, maxWidth: number, fromStart = false): string {
@@ -320,6 +334,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
 	let branchSummary: string | undefined;
 	let branchSummaryCommitCount: number | undefined;
+	let branchSummaryWorkingTreeFingerprint: string | undefined;
 	let isBranchSummaryGenerating = false;
 	let isFoundationModelsAvailableCache: boolean | undefined;
 	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
@@ -343,10 +358,19 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			);
 			if (generation !== refreshGeneration || logResult.code !== 0) return;
 			const subjects = logResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-			if (subjects.length === 0) return;
 
-			const relevance = computeBranchSummaryRelevance(branchSummaryCommitCount, subjects.length);
-			if (relevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD) return;
+			// mid-session uncommitted work never shows up in commit count, so a second signal watches the
+			// working tree directly — any change to the changed-file list counts as "the branch moved" too.
+			const statusResult = await pi.exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 });
+			if (generation !== refreshGeneration || statusResult.code !== 0) return;
+			const workingTreeFiles = parseWorkingTreeFiles(statusResult.stdout).slice(0, BRANCH_SUMMARY_MAX_WORKING_TREE_FILES);
+			const workingTreeFingerprint = workingTreeFiles.join("\n");
+
+			if (subjects.length === 0 && workingTreeFiles.length === 0) return;
+
+			const commitRelevance = computeBranchSummaryRelevance(branchSummaryCommitCount, subjects.length);
+			const isWorkingTreeMoved = workingTreeFingerprint !== (branchSummaryWorkingTreeFingerprint ?? "");
+			if (commitRelevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD && !isWorkingTreeMoved) return;
 
 			if (isFoundationModelsAvailableCache === undefined) {
 				isFoundationModelsAvailableCache = await isFoundationModelsAvailable(pi.exec);
@@ -357,7 +381,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			requestRender?.();
 			let response: string | undefined;
 			try {
-				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles));
 			} finally {
 				isBranchSummaryGenerating = false;
 			}
@@ -367,6 +391,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 				branchSummary = challenger;
 			}
 			branchSummaryCommitCount = subjects.length;
+			branchSummaryWorkingTreeFingerprint = workingTreeFingerprint;
 		} catch {
 			return;
 		} finally {
@@ -425,6 +450,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 				pullRequest = undefined;
 				branchSummary = undefined;
 				branchSummaryCommitCount = undefined;
+				branchSummaryWorkingTreeFingerprint = undefined;
 			}
 			requestRender?.();
 			if (branch) {
