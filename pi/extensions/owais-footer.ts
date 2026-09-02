@@ -222,6 +222,22 @@ export function brailleOrbit(elapsedMilliseconds: number): string {
 	return BRAILLE_ORBIT[Math.floor(elapsedMilliseconds / 80) % BRAILLE_ORBIT.length]!;
 }
 
+const PULSE_STEP_MILLISECONDS = 150;
+
+// index of the character to bold this tick, cycling once through the whole string per pass.
+export function pulsingCharacterIndex(elapsedMilliseconds: number, length: number): number {
+	if (length <= 0) return 0;
+	return Math.floor(elapsedMilliseconds / PULSE_STEP_MILLISECONDS) % length;
+}
+
+// bolds one character of `text` per tick, cycling through the string — the loading cue for a
+// headline that already has an incumbent value shown while a challenger regenerates in the background.
+export function pulsingHeadlineText(text: string, elapsedMilliseconds: number): string {
+	if (text.length === 0) return text;
+	const index = pulsingCharacterIndex(elapsedMilliseconds, text.length);
+	return `${text.slice(0, index)}\x1b[1m${text[index]}\x1b[22m${text.slice(index + 1)}`;
+}
+
 function fgHex(hex: string, text: string): string {
 	const [r, g, b] = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
 	return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
@@ -304,6 +320,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
 	let branchSummary: string | undefined;
 	let branchSummaryCommitCount: number | undefined;
+	let isBranchSummaryGenerating = false;
 	let isFoundationModelsAvailableCache: boolean | undefined;
 	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
 
@@ -336,7 +353,14 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			}
 			if (generation !== refreshGeneration || !isFoundationModelsAvailableCache) return;
 
-			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+			isBranchSummaryGenerating = true;
+			requestRender?.();
+			let response: string | undefined;
+			try {
+				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+			} finally {
+				isBranchSummaryGenerating = false;
+			}
 			if (generation !== refreshGeneration || response === undefined) return;
 			const challenger = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
 			if (isBranchSummaryChallengerBetter(branchSummary, challenger)) {
@@ -504,12 +528,20 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 
 						if (branchSummary) {
 							const summaryText = branchSummary;
-							const colorize = (text: string) => theme.fg("muted", text);
+							const isPulsing = isBranchSummaryGenerating;
+							const colorize = (text: string) =>
+								theme.fg("muted", isPulsing ? pulsingHeadlineText(text, Date.now()) : text);
 							items.push({
 								id: "headline",
 								full: textForm(summaryText, colorize),
 								shorten: textForm(truncateSegmentText(summaryText, 24), colorize),
 								truncate: textForm(truncateSegmentText(summaryText, 14), colorize),
+							});
+						} else if (isBranchSummaryGenerating) {
+							const colorize = (text: string) => theme.fg("muted", text);
+							items.push({
+								id: "headline",
+								full: textForm(`${brailleOrbit(Date.now())} Generating headline\u2026`, colorize),
 							});
 						}
 
