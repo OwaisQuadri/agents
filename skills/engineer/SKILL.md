@@ -79,6 +79,11 @@ Write `.context/<task-slug>/plan.md` covering, at minimum:
   only (no bodies yet). Every externally-owned shape gets probed against the real
   thing, not read off documentation \u2014 paste the probe output beside the declaration.
   `/show-me` for the shape diagram when there's more than a couple of types in play.
+- **Harness-shaped tasks route through /ai-author first** — a checker in `tools/`, a
+  hook, or a skill/agent/workflow edit is harness-shaped. Such a task runs /ai-author's
+  should-it-exist gate before you write this plan. /ai-author routes the work to
+  tool-author, skill-author, agent-author, or workflow-author. Product-code tasks skip
+  this bullet.
 - **TDD or not** \u2014 name the call and why: tests-first suits a shape with a clear
   contract and edge cases worth pinning down before code exists; tests-after suits
   exploratory or UI-heavy work where the shape itself is still moving. Either way, Test
