@@ -27,7 +27,7 @@ name = "pi-subagents"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
-source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "8302d1062f6a13a8c08a09f7463637eebe326d8b" }
+source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "0d37af96e5e0705d90f1bc52d357c8f79422fa8b" }
 installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
