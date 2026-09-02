@@ -53,8 +53,9 @@ OUT: candidate ideas filed into the task backend (GitHub Issues/Projects, Linear
    before writing anything. On approval: check for a connected task system first (`gh
    issue list`/`gh project`, Linear MCP tools) the same way pick-task does; file there
    if one exists, otherwise append to root `roadmap.json` with a fresh id. Filing into
-   GitHub Issues means `gh issue create` with `status:todo` and `priority:<p>` labels
-   and `--blocked-by <ids>` for any dependency — the same conventions
+   GitHub Issues means `gh issue create` with `--blocked-by <ids>` for any dependency,
+   then `skills/task-graph/scripts/gh-issue-field.sh <id> Status todo` and
+   `... <id> Priority <p>` to set the project's native fields — the same conventions
    `skills/task-graph/SKILL.md`'s "GitHub Issues backend" section documents, so
    `next-issue.sh` picks the new item up correctly. A candidate citing a new adopted
    reference gets that reference appended to `inspiration.md`. No manifest or snapshot

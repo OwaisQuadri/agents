@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# test/build — sandbox install only, no pi launch. Runs every install step against the
+# gitignored .install-test-home in this worktree and returns. test/run drops into pi.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$SCRIPT_DIR/../install.sh" --test "$@"

@@ -6,7 +6,9 @@
 # ~/.pi, ~/.local/bin, or ~/.zshrc — e.g. HOME_TARGET=/tmp/pi-sandbox ./install.sh
 # --test is shorthand for that: it pins HOME_TARGET to a scratch dir inside THIS worktree
 # (.install-test-home, gitignored), so the worktree tests only itself, every run starts
-# from the same state, and nothing leaves the checkout.
+# from the same state, and nothing leaves the checkout. --test runs the install steps and
+# returns; test/run drops into an interactive pi against the sandbox, and test/build_run
+# chains both.
 set -euo pipefail
 shopt -s nullglob
 
@@ -298,11 +300,14 @@ else
 fi
 
 # 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;
-#    post-checkout carries the live checkout's uncommitted work into worktrees cut from main
+#    post-checkout carries the live checkout's uncommitted work into worktrees cut from main;
+#    pre-push rejects any push that updates main, so main only moves through a PR
 if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-merge" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-rewrite" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
+  link "$REPO_TARGET/.git/hooks/pre-push" "$REPO_TARGET/hooks/pre-push"
+  link "$REPO_TARGET/.git/hooks/pre-commit" "$REPO_TARGET/hooks/pre-commit"
 fi
 
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,
@@ -313,11 +318,14 @@ fi
 #    every bash call, blocking a literal find/grep invocation in favor of fd/rg,
 #    warnings-check in the PreToolUse path ahead of every commit that stages a .rs file
 #    under tools/, alongside no-ai-attribution on the same hook,
+#    comment-check in the PreToolUse path ahead of every commit that stages a source
+#    file, denying a non-doc comment block over docs/comment-style.md's length budget,
 #    gepa-due in the daily workflows/gepa-due launchd job, which runs with the minimal
 #    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
 #    not a live `cargo build` attempted inside the launchd environment,
-#    transcript-directed-video-processor as an on-demand command the user runs by name
-for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check gepa-due transcript-directed-video-processor; do
+#    transcript-directed-video-processor as an on-demand command the user runs by name,
+#    privacy-lint in the pre-commit path, blocking staged private network identifiers
+for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor privacy-lint; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
 
@@ -658,13 +666,12 @@ fi
 
 plan "done"
 
-# 19. --test drops into pi against the sandbox home so the run is inspectable right away.
-#     The auth symlink borrows the real credential instead of copying it: the sandbox never
-#     holds its own token, and deleting .install-test-home deletes only the link.
+# 19. --test borrows the real pi credential through a symlink instead of copying it: the
+#     sandbox never holds its own token, and deleting .install-test-home deletes only the
+#     link. The interactive drop into pi lives in test/run, opt-in, never here — --test
+#     stays non-interactive so it can run from hooks and background checks.
 if (( IS_TEST )) && ! (( IS_DRY )); then
   if [[ -f "$HOME/.pi/agent/auth.json" ]]; then
     link "$HOME_TARGET/.pi/agent/auth.json" "$HOME/.pi/agent/auth.json"
   fi
-  plan "launch pi with HOME=$HOME_TARGET"
-  exec env HOME="$HOME_TARGET" pi
 fi

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# test/run — interactive pi against an existing sandbox home. test/build creates the
+# sandbox; this script only performs the drop, so it stays out of non-interactive paths.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SANDBOX="$SCRIPT_DIR/../.install-test-home"
+[[ -d "$SANDBOX" ]] || { echo "FATAL: $SANDBOX not found; run test/build first" >&2; exit 1; }
+exec env HOME="$SANDBOX" pi

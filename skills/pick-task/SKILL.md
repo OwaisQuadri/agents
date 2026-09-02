@@ -39,8 +39,8 @@ which only you know. Read the backlog for context, never as the answer.
    either exists and holds live items, that's the system of record — read it instead of
    (or alongside) `roadmap.json`. If none exists, root `roadmap.json` is the backlog.
    Done when you know which backend holds the real list. When the backend is GitHub
-   Issues with `task-graph`'s label/dependency conventions in place (`status:*`,
-   `priority:*`, native `blockedBy`), `skills/task-graph/scripts/next-issue.sh` ranks
+   Issues with `task-graph`'s conventions in place (native project Status/Priority
+   fields, native `blockedBy`), `skills/task-graph/scripts/next-issue.sh` ranks
    the backlog the same way `next-ticket.sh` ranks roadmap.json — reach for it instead
    of eyeballing the issue list by hand.
 

@@ -35,9 +35,9 @@ No task on hand \u2192 dispatch `/pick-task`, use what it returns, continue. A t
 in hand (an id, a clear description) skips straight to Research.
 
 A backend-tracked task (GitHub Issue, Linear item, `roadmap.json` entry) gets flipped
-to in-progress before Research starts: GitHub swaps the `status:*` label to
-`status:in-progress` (`task-graph`'s convention \u2014 `gh issue edit <id> --remove-label
-status:<old> --add-label status:in-progress`); Linear moves the issue to its "In
+to in-progress before Research starts: GitHub sets the project's native Status field
+(`task-graph`'s convention \u2014 `skills/task-graph/scripts/gh-issue-field.sh <id>
+Status in-progress`); Linear moves the issue to its "In
 Progress" state via MCP(Model Context Protocol); `roadmap.json` sets the entry's
 `status` field to `in progress`. A one-off description with no backend id has no
 status to flip \u2014 skip.
@@ -79,6 +79,11 @@ Write `.context/<task-slug>/plan.md` covering, at minimum:
   only (no bodies yet). Every externally-owned shape gets probed against the real
   thing, not read off documentation \u2014 paste the probe output beside the declaration.
   `/show-me` for the shape diagram when there's more than a couple of types in play.
+- **Harness-shaped tasks route through /ai-author first** — a checker in `tools/`, a
+  hook, or a skill/agent/workflow edit is harness-shaped. Such a task runs /ai-author's
+  should-it-exist gate before you write this plan. /ai-author routes the work to
+  tool-author, skill-author, agent-author, or workflow-author. Product-code tasks skip
+  this bullet.
 - **TDD or not** \u2014 name the call and why: tests-first suits a shape with a clear
   contract and edge cases worth pinning down before code exists; tests-after suits
   exploratory or UI-heavy work where the shape itself is still moving. Either way, Test

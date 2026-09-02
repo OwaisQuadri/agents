@@ -12,6 +12,14 @@ set -euo pipefail
 is_branch_checkout="${3:-1}"
 [[ "$is_branch_checkout" == 1 ]] || exit 0
 
+# every branch checkout gets a backgrounded sandbox install (test/build, never
+# build_run) so install-script breakage surfaces without a manual --test run; the
+# checkout itself never waits on it. Output lands in .install-test-home.log.
+repo_root="$(git rev-parse --show-toplevel)"
+if [[ -x "$repo_root/test/build" ]]; then
+  ("$repo_root/test/build" >"$repo_root/.install-test-home.log" 2>&1 &)
+fi
+
 live="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
 here="$(git rev-parse --show-toplevel)"
 [[ "$here" != "$live" ]] || exit 0

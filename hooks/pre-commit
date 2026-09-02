@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# pre-commit — linked into .git/hooks by install.sh. Runs privacy-lint over the staged
+# diff's added lines and blocks the commit on any hit, per the public-artifacts rule in
+# AGENTS.md. No auto-repair: an identifier has no single safe rewrite, so this reports
+# file:line and stops. Private-repo escape hatch, default strict:
+#   git config privacy-lint.enforce false
+set -euo pipefail
+
+[[ "$(git config --get privacy-lint.enforce || true)" == false ]] && exit 0
+
+lint="$HOME/.local/bin/privacy-lint"
+if [[ ! -x "$lint" ]]; then
+  if command -v privacy-lint >/dev/null 2>&1; then
+    lint=privacy-lint
+  else
+    echo "pre-commit: privacy-lint not built, run install.sh; commit allowed" >&2
+    exit 0
+  fi
+fi
+
+if ! git diff --cached --unified=0 --diff-filter=ACMR | "$lint" --diff; then
+  echo "pre-commit: private identifiers staged, replace them with placeholders" >&2
+  exit 1
+fi

@@ -19,7 +19,14 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+// 10s under the 120s hook timeout in config/settings.json and
+// config/managed-settings.json. The CLI's PreToolUse timeout is fail-open: it kills
+// the hook and lets the commit through with no trace. This deadline fires first, so a
+// slow cold build denies loudly instead of skipping enforcement silently.
+const BUILD_BUDGET: Duration = Duration::from_secs(110);
 
 const VALUE_OPTIONS: &[&str] = &[
     "-c",
@@ -59,37 +66,65 @@ fn main() {
         return;
     }
 
-    let failures = check_crates(&repo_root.join("tools"), &crates);
-    if failures.is_empty() {
+    let outcome = check_crates(&repo_root.join("tools"), &crates, BUILD_BUDGET);
+    if outcome.failures.is_empty() && outcome.unchecked.is_empty() {
         return;
     }
 
-    let mut reason = String::from(
-        "Blocked: a staged commit would build a Rust crate with a compiler warning.\n\n\
-         Standing rule: docs/code-style.md's \"warnings as errors\" bullet — fix every \
-         rustc warning, or mark an intentional exception with #[expect(..., reason = \
-         \"...\")] per skills/rust-style/rust-baseline.md.\n",
-    );
-    for failure in &failures {
+    let mut reason = String::new();
+    if !outcome.failures.is_empty() {
+        reason.push_str(
+            "Blocked: a staged commit would build a Rust crate with a compiler warning.\n\n\
+             Standing rule: docs/code-style.md's \"warnings as errors\" bullet — fix every \
+             rustc warning, or mark an intentional exception with #[expect(..., reason = \
+             \"...\")] per skills/rust-style/rust-baseline.md.\n",
+        );
+        for failure in &outcome.failures {
+            reason.push_str(&format!(
+                "\n--- {} ---\n{}\n",
+                failure.crate_name,
+                failure.output.trim()
+            ));
+        }
+    }
+    if !outcome.unchecked.is_empty() {
+        if !reason.is_empty() {
+            reason.push('\n');
+        }
         reason.push_str(&format!(
-            "\n--- {} ---\n{}\n",
-            failure.crate_name,
-            failure.output.trim()
+            "Blocked: warnings-check hit its {}s build budget before these staged \
+             crate(s) finished building: {}.\n\nBuild each one yourself with \
+             RUSTFLAGS='-D warnings' cargo build --manifest-path \
+             tools/<crate>/Cargo.toml, fix any warning, then retry the commit — the \
+             warm cache makes the retry fast.\n",
+            BUILD_BUDGET.as_secs(),
+            outcome.unchecked.join(", ")
         ));
     }
 
+    let summary = if outcome.failures.is_empty() {
+        "Blocked a commit: warnings-check ran out of build time before checking every \
+         staged crate."
+    } else {
+        "Blocked a commit: a Rust crate under tools/ builds with a warning."
+    };
     print!(
         "{{\"hookSpecificOutput\":{{\"hookEventName\":\"PreToolUse\",\
          \"permissionDecision\":\"deny\",\"permissionDecisionReason\":{}}},\
          \"systemMessage\":{}}}",
         json_quote(&reason),
-        json_quote("Blocked a commit: a Rust crate under tools/ builds with a warning.")
+        json_quote(summary)
     );
 }
 
 struct CrateFailure {
     crate_name: String,
     output: String,
+}
+
+struct CheckOutcome {
+    failures: Vec<CrateFailure>,
+    unchecked: Vec<String>,
 }
 
 /// Names of `tools/<name>/` directories that own at least one staged `.rs` path, in
@@ -117,38 +152,88 @@ fn staged_tool_crates(paths: &[String]) -> Vec<String> {
 }
 
 /// Runs `cargo build` with warnings promoted to errors for each named crate directly
-/// under `tools_dir/<name>/`. Returns one `CrateFailure` per crate whose build fails —
-/// empty when `cargo` is missing or every named crate is clean. A crate with no
-/// `Cargo.toml` (already deleted, or the name doesn't match a real directory) is
-/// silently skipped rather than treated as a failure.
-fn check_crates(tools_dir: &Path, crate_names: &[String]) -> Vec<CrateFailure> {
+/// under `tools_dir/<name>/`, within one shared wall-clock `budget`. Returns the
+/// failed builds plus the crates the budget ran out on — both empty when `cargo` is
+/// missing or every named crate builds clean in time. A crate with no `Cargo.toml`
+/// (already deleted, or the name doesn't match a real directory) is silently skipped
+/// rather than treated as a failure.
+fn check_crates(tools_dir: &Path, crate_names: &[String], budget: Duration) -> CheckOutcome {
+    let deadline = Instant::now() + budget;
     let mut failures = Vec::new();
+    let mut unchecked = Vec::new();
     for crate_name in crate_names {
         let manifest = tools_dir.join(crate_name).join("Cargo.toml");
         if !manifest.is_file() {
             continue;
         }
-        let output = Command::new("cargo")
-            .arg("build")
-            .arg("--quiet")
-            .arg("--manifest-path")
-            .arg(&manifest)
-            .env("RUSTFLAGS", "-D warnings")
-            .output();
-        let Ok(output) = output else {
+        if Instant::now() >= deadline {
+            unchecked.push(crate_name.clone());
+            continue;
+        }
+        match run_build(&manifest, deadline) {
             // cargo itself missing, or failed to spawn for this crate — degrade to
             // silence for this crate rather than deny on an infrastructure problem.
-            continue;
-        };
-        if !output.status.success() {
-            let text = String::from_utf8_lossy(&output.stderr).to_string();
-            failures.push(CrateFailure {
+            None => continue,
+            Some(Build::TimedOut) => unchecked.push(crate_name.clone()),
+            Some(Build::Finished { is_success: true, .. }) => {}
+            Some(Build::Finished { stderr, .. }) => failures.push(CrateFailure {
                 crate_name: crate_name.clone(),
-                output: text,
-            });
+                output: stderr,
+            }),
         }
     }
-    failures
+    CheckOutcome { failures, unchecked }
+}
+
+enum Build {
+    Finished { is_success: bool, stderr: String },
+    TimedOut,
+}
+
+/// Builds one crate with warnings promoted to errors, killing the build at `deadline`.
+/// Returns `None` when the build fails to spawn or its status cannot be read.
+fn run_build(manifest: &Path, deadline: Instant) -> Option<Build> {
+    let mut child = Command::new("cargo")
+        .arg("build")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(manifest)
+        .env("RUSTFLAGS", "-D warnings")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let mut stderr_pipe = child.stderr.take()?;
+    // Drained on its own thread so a build with more diagnostics than the pipe buffer
+    // holds cannot block against a full pipe and stall past the deadline.
+    let reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buffer);
+        buffer
+    });
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stderr = reader
+                    .join()
+                    .map(|buffer| String::from_utf8_lossy(&buffer).to_string())
+                    .unwrap_or_default();
+                return Some(Build::Finished {
+                    is_success: status.success(),
+                    stderr,
+                });
+            }
+            Ok(None) => {}
+            Err(_) => return None,
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Some(Build::TimedOut);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn staged_files(repo_root: &Path) -> Option<Vec<String>> {
@@ -327,6 +412,25 @@ mod tests {
     #[test]
     fn a_staged_rust_file_outside_tools_names_no_crate() {
         assert!(staged_tool_crates(&["pi/extensions/foo.rs".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn an_exhausted_budget_marks_the_crate_unchecked_not_failed() {
+        let dir = std::env::temp_dir().join(format!("warnings-check-test-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("foo")).unwrap();
+        std::fs::write(dir.join("foo/Cargo.toml"), "[package]\nname = \"foo\"\n").unwrap();
+        let outcome = check_crates(&dir, &["foo".to_string()], Duration::ZERO);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(outcome.failures.is_empty());
+        assert_eq!(outcome.unchecked, vec!["foo".to_string()]);
+    }
+
+    #[test]
+    fn a_missing_manifest_is_skipped_not_marked_unchecked() {
+        let dir = std::env::temp_dir().join("warnings-check-test-none");
+        let outcome = check_crates(&dir, &["ghost".to_string()], Duration::ZERO);
+        assert!(outcome.failures.is_empty());
+        assert!(outcome.unchecked.is_empty());
     }
 
     #[test]
