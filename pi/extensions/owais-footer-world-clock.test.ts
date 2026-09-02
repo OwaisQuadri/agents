@@ -139,6 +139,55 @@ test("renders the compact Git label and linked pull request", async () => {
 	}
 });
 
+test("keeps the world-clock row visible when no quota state is set", async () => {
+	const extensions = await loadExtensions();
+	const handlers = new Map<string, (...args: any[]) => unknown>();
+	let footer: { dispose?(): void; render(width: number): string[] } | undefined;
+	const theme = {
+		fg(_color: string, text: string) {
+			return text;
+		},
+	};
+	const api = {
+		on(event: string, handler: (...args: any[]) => unknown) {
+			handlers.set(event, handler);
+		},
+		async exec() {
+			return { code: 1, stdout: "" };
+		},
+	};
+	const ctx = {
+		mode: "tui",
+		cwd: "/Users/user/project",
+		model: { provider: "test", id: "model", contextWindow: 1 },
+		thinkingLevel: "off",
+		getContextUsage() {
+			return undefined;
+		},
+		ui: {
+			setFooter(factory: (tui: unknown, theme: typeof theme, footerData: { onBranchChange(callback: () => void): () => void }) => { dispose?(): void; render(width: number): string[] }) {
+				footer = factory({ requestRender() {} }, theme, { onBranchChange: () => () => {} });
+			},
+			setWidget() {},
+			setWorkingVisible() {},
+		},
+	};
+	const worldClockState = globalThis as typeof globalThis & { __owaisWorldClockState?: { render(availableWidth: number): string } };
+	try {
+		worldClockState.__owaisWorldClockState = { render: () => "12:00 Local" };
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		const lines = footer?.render(80) ?? [];
+		assert.equal(lines.length, 2);
+		assert.match(lines[1] ?? "", /12:00 Local/);
+	} finally {
+		delete worldClockState.__owaisWorldClockState;
+		footer?.dispose?.();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
 test("renders compact observational-memory gauges and its off state", async () => {
 	const extensions = await loadExtensions();
 	const footerState = globalThis as typeof globalThis & { __owaisOmFooterState?: Record<string, unknown> };
