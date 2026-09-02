@@ -317,11 +317,13 @@ fi
 #    every bash call, blocking a literal find/grep invocation in favor of fd/rg,
 #    warnings-check in the PreToolUse path ahead of every commit that stages a .rs file
 #    under tools/, alongside no-ai-attribution on the same hook,
+#    comment-check in the PreToolUse path ahead of every commit that stages a source
+#    file, denying a non-doc comment block over docs/comment-style.md's length budget,
 #    gepa-due in the daily workflows/gepa-due launchd job, which runs with the minimal
 #    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
 #    not a live `cargo build` attempted inside the launchd environment,
 #    transcript-directed-video-processor as an on-demand command the user runs by name
-for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check gepa-due transcript-directed-video-processor; do
+for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
 

@@ -33,6 +33,12 @@
             "command": "$HOME/.local/bin/warnings-check",
             "timeout": 120,
             "statusMessage": "Checking Rust crates for warnings"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.local/bin/comment-check",
+            "timeout": 10,
+            "statusMessage": "Checking staged comments against the whitelist budget"
           }
         ]
       }

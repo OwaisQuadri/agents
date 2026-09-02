@@ -7,7 +7,8 @@ naturally. Fewer comments beat more; zero is the default target.
 ## the whitelist
 
 A comment ships only if it is one of these shapes. Anything else: delete it and fix the
-code instead.
+code instead. `tools/comment-check` enforces the mechanical part: a PreToolUse hook on
+`git commit` denies a staged source file whose non-doc comment block runs past 4 lines.
 
 - inexpressible concept or architecture — a design decision, invariant, or
   cross-component contract that cannot be made implicit in the code itself
