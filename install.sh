@@ -6,7 +6,9 @@
 # ~/.pi, ~/.local/bin, or ~/.zshrc — e.g. HOME_TARGET=/tmp/pi-sandbox ./install.sh
 # --test is shorthand for that: it pins HOME_TARGET to a scratch dir inside THIS worktree
 # (.install-test-home, gitignored), so the worktree tests only itself, every run starts
-# from the same state, and nothing leaves the checkout.
+# from the same state, and nothing leaves the checkout. --test runs the install steps and
+# returns; test/run drops into an interactive pi against the sandbox, and test/build_run
+# chains both.
 set -euo pipefail
 shopt -s nullglob
 
@@ -660,13 +662,12 @@ fi
 
 plan "done"
 
-# 19. --test drops into pi against the sandbox home so the run is inspectable right away.
-#     The auth symlink borrows the real credential instead of copying it: the sandbox never
-#     holds its own token, and deleting .install-test-home deletes only the link.
+# 19. --test borrows the real pi credential through a symlink instead of copying it: the
+#     sandbox never holds its own token, and deleting .install-test-home deletes only the
+#     link. The interactive drop into pi lives in test/run, opt-in, never here — --test
+#     stays non-interactive so it can run from hooks and background checks.
 if (( IS_TEST )) && ! (( IS_DRY )); then
   if [[ -f "$HOME/.pi/agent/auth.json" ]]; then
     link "$HOME_TARGET/.pi/agent/auth.json" "$HOME/.pi/agent/auth.json"
   fi
-  plan "launch pi with HOME=$HOME_TARGET"
-  exec env HOME="$HOME_TARGET" pi
 fi
