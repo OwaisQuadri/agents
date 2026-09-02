@@ -387,17 +387,13 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			const workingTreeFiles = parseWorkingTreeFiles(statusResult.stdout).slice(0, BRANCH_SUMMARY_MAX_WORKING_TREE_FILES);
 			const workingTreeFingerprint = workingTreeFiles.join("\n");
 
-			// commits and working-tree files stay empty for a read-only session (research, review, Q&A) —
-			// the pi transcript is the only signal left, so it feeds the prompt and the regeneration anchor too.
+			// a read-only session has no commits or working-tree diff — the transcript is the only signal.
 			const transcriptAsks = extractTranscriptAsks(activeContext?.sessionManager?.getEntries?.() ?? []);
 
 			if (subjects.length === 0 && workingTreeFiles.length === 0 && transcriptAsks.length === 0) return;
 
-			// a commit-count signal with zero entries this whole session must not force a regen every tick —
-			// computeBranchSummaryRelevance is 0 for "nothing ahead", so an unused signal is excluded from the
-			// gate rather than read as "always moved". the transcript signal skips this ratio throttle entirely:
-			// every new user ask regenerates on its very next agent_settled, since a read-only session has no
-			// other signal and a stale headline for several turns reads as broken, not as intentional batching.
+			// an all-zero signal is excluded from the gate, not read as "always moved". the transcript
+			// signal skips the ratio throttle entirely: any new ask regenerates on the next settle.
 			const commitRelevance = computeBranchSummaryRelevance(branchSummaryCommitCount, subjects.length);
 			const isWorkingTreeMoved = workingTreeFingerprint !== (branchSummaryWorkingTreeFingerprint ?? "");
 			const isCommitSignalStale = subjects.length === 0 || commitRelevance >= BRANCH_SUMMARY_RELEVANCE_THRESHOLD;
@@ -604,8 +600,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 								full: textForm(`${brailleOrbit(Date.now())} Generating headline\u2026`, colorize),
 							});
 						} else {
-							// idle with nothing generated yet — a brand-new session, or one where fm never ran
-							// (no signal, system model unavailable). placeholder beats a blank slot either way.
+							// idle with no summary yet (new session, or fm unavailable) — show a placeholder, not a blank slot.
 							const colorize = (text: string) => theme.fg("muted", text);
 							items.push({ id: "headline", full: textForm(NEW_SESSION_HEADLINE, colorize) });
 						}
