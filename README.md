@@ -41,7 +41,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
-| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; reference copies of `settings.json` and `settings.local.json` |
+| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; managed settings, including the Plannotator plan-writing instructions |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
 | `rules/` | Claude Code rules that load only for matching file paths |
 | `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass; `transcript-directed-video-processor`, which segments a YouTube or local video's transcript into candidate moments and runs a configured vision model over selected frames |
