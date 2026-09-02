@@ -1,6 +1,5 @@
 onboarding = false
 [keys]
-# new_worktree keeps its default prefix+shift+g
 focus_agent = "ctrl+1..9"
 
 [[keys.command]]
@@ -8,6 +7,14 @@ key = "prefix+shift+o"
 type = "popup"
 command = "/Users/owaisquadri/Documents/agents/herdr/worktree-picker.zsh"
 description = "open any workspace/worktree"
+width = "70%"
+height = "60%"
+
+[[keys.command]]
+key = "prefix+shift+g"
+type = "popup"
+command = "/Users/owaisquadri/Documents/agents/herdr/worktree-new-from-main.zsh"
+description = "new worktree off freshest origin/main"
 width = "70%"
 height = "60%"
 
