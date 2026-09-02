@@ -298,11 +298,13 @@ else
 fi
 
 # 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;
-#    post-checkout carries the live checkout's uncommitted work into worktrees cut from main
+#    post-checkout carries the live checkout's uncommitted work into worktrees cut from main;
+#    pre-push rejects any push that updates main, so main only moves through a PR
 if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-merge" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-rewrite" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-checkout" "$REPO_TARGET/hooks/post-checkout"
+  link "$REPO_TARGET/.git/hooks/pre-push" "$REPO_TARGET/hooks/pre-push"
 fi
 
 # 8. the rust tools. these are the artifacts the installer compiles rather than links,

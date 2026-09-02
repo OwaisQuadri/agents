@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# pre-push — linked into .git/hooks by install.sh. main only moves through a PR
+# (issue #172): any push that updates refs/heads/main is rejected, whatever local
+# branch it comes from, so a direct commit-and-push to main dies here instead of
+# landing unreviewed
+set -euo pipefail
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  if [[ "$remote_ref" == refs/heads/main ]]; then
+    echo "pre-push: direct push to main is blocked — open a PR instead" >&2
+    exit 1
+  fi
+done
+exit 0
