@@ -84,6 +84,9 @@ Name each file for what it holds. Never disclose a step every run executes.
   When a sentence fails, delete the whole sentence — don't trim words from it.
 - Single source of truth: each meaning lives in exactly one place. Repeating it costs
   tokens and inflates the meaning's apparent importance.
+- Plan, then validate: when the skill body drives a batch or destructive operation,
+  have it write the plan to a structured file first. Validate that file with a script.
+  Apply the change only after the script passes.
 - Match the register of the config it lives in. Terse imperative gets executed;
   enterprise documentation gets skimmed.
 - Before writing step prose, exit criteria, or dispatch text, read
