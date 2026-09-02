@@ -40,11 +40,13 @@ function makeExec(overrides: {
 	fmAvailable?: boolean;
 	fmResponse?: string;
 	headSha?: string;
+	fmRespondGate?: Promise<void>;
 } = {}) {
 	let commits = overrides.commits ?? ["abc1230 add branch summary segment", "def4560 fix footer alignment"];
 	let fmResponse = overrides.fmResponse ?? "Branch summary widget";
 	const fmAvailable = overrides.fmAvailable ?? true;
 	const headSha = overrides.headSha ?? HEAD_SHA;
+	const fmRespondGate = overrides.fmRespondGate;
 	const calls: Array<{ command: string; args: string[] }> = [];
 
 	async function exec(command: string, args: string[]) {
@@ -82,6 +84,7 @@ function makeExec(overrides: {
 				: { code: 1, stdout: "" };
 		}
 		if (command === "fm" && args[0] === "respond") {
+			if (fmRespondGate) await fmRespondGate;
 			return { code: 0, stdout: `${fmResponse}\n` };
 		}
 		throw new Error(`unexpected command: ${command} ${args.join(" ")}`);
@@ -315,6 +318,77 @@ test("keeps the incumbent headline visible and unchanged when a regenerated chal
 		await settle();
 		const respondCalls = calls.filter((call) => call.command === "fm" && call.args[0] === "respond").length;
 		assert.equal(respondCalls, 2, "the anchor advanced even though the visible text did not change");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+	let resolve!: () => void;
+	const promise = new Promise<void>((res) => { resolve = res; });
+	return { promise, resolve };
+}
+
+test("shows the generating segment only while fm respond is in flight, then swaps to the real headline", async () => {
+	const extensions = await loadFooter();
+	const gate = deferred();
+	const { exec } = makeExec({ fmRespondGate: gate.promise });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		const inFlightLine = getWidget()?.render(160)[1] ?? "";
+		assert.match(inFlightLine, /Generating headline…/, "the fm respond call is still gated, so the transient segment should be showing");
+		assert.doesNotMatch(inFlightLine, /Branch summary widget/, "no summary exists yet — only the transient segment stands in");
+
+		gate.resolve();
+		await settle();
+		const doneLine = getWidget()?.render(160)[1] ?? "";
+		assert.match(doneLine, /Branch summary widget/, "the real summary replaces the transient segment once fm respond resolves");
+		assert.doesNotMatch(doneLine, /Generating headline…/, "the transient segment does not linger once a summary exists");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("never shows the generating segment while idle — fm respond never fires when the system model is unavailable", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec({ fmAvailable: false });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.doesNotMatch(line, /Generating headline…/, "an idle 120ms render tick must never fabricate an in-flight state");
+	} finally {
+		disposeAll();
+		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("clears the generating segment to nothing, never stuck, when fm respond returns an empty response", async () => {
+	const extensions = await loadFooter();
+	const gate = deferred();
+	const { exec } = makeExec({ fmRespondGate: gate.promise, fmResponse: "" });
+	const { api, ctx, handlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await settle();
+		assert.match(getWidget()?.render(160)[1] ?? "", /Generating headline…/, "still in flight");
+
+		gate.resolve();
+		await settle();
+		const line = getWidget()?.render(160)[1] ?? "";
+		assert.doesNotMatch(line, /Generating headline…/, "a failed/empty response must not leave the transient segment stuck");
+		assert.doesNotMatch(line, /Branch summary widget/, "no summary was produced, so nothing takes its place");
 	} finally {
 		disposeAll();
 		await handlers.get("session_shutdown")?.({}, ctx);

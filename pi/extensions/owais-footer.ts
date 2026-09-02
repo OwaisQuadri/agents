@@ -304,6 +304,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
 	let branchSummary: string | undefined;
 	let branchSummaryCommitCount: number | undefined;
+	let isBranchSummaryGenerating = false;
 	let isFoundationModelsAvailableCache: boolean | undefined;
 	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
 
@@ -336,7 +337,14 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			}
 			if (generation !== refreshGeneration || !isFoundationModelsAvailableCache) return;
 
-			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+			isBranchSummaryGenerating = true;
+			requestRender?.();
+			let response: string | undefined;
+			try {
+				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects));
+			} finally {
+				isBranchSummaryGenerating = false;
+			}
 			if (generation !== refreshGeneration || response === undefined) return;
 			const challenger = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
 			if (isBranchSummaryChallengerBetter(branchSummary, challenger)) {
@@ -506,6 +514,12 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 								full: textForm(summaryText, colorize),
 								shorten: textForm(truncateSegmentText(summaryText, 24), colorize),
 								truncate: textForm(truncateSegmentText(summaryText, 14), colorize),
+							});
+						} else if (isBranchSummaryGenerating) {
+							const colorize = (text: string) => theme.fg("muted", text);
+							items.push({
+								id: "headline",
+								full: textForm(`${brailleOrbit(Date.now())} Generating headline\u2026`, colorize),
 							});
 						}
 
