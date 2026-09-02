@@ -48,20 +48,27 @@ primary roadmap backend — `roadmap.json` is the fallback shape for a repo with
 one. Migrated 2026-08-27 (AGNT-0072); `tasks.json` is unaffected either way (always
 local scratch under `.context/`, never promoted to Issues).
 
-**Status** lives in a `status:todo|in-progress|resolved|cancelled|done` label — the
-source of truth, one value per issue (`next-issue.sh` hard-errors, naming the issue,
-on either zero or more-than-one `status:*` label present at once — an issue must
-carry exactly one). Values are hyphenated (`in-progress`, not `in progress`) since a
-GitHub label is friendlier to grep/CLI-pass without an embedded space; this is a
-spelling difference from roadmap.json's own enum (which used a literal space), not a
-meaning difference — the five values still mean exactly what they meant there.
-GitHub's native `state`/`stateReason` (open/closed/completed/not_planned) get set in
-parallel purely as a UX mirror for the ordinary Issues UI; no script reads them as
-the source of truth, since that 2-axis pair alone can't tell `done` from `resolved`
-(both close as `COMPLETED`).
+**Status** lives in the repo's single linked GitHub Projects v2 project, in its
+native single-select `Status` field, with one option per enum value
+(`todo|in-progress|resolved|cancelled|done`) — the source of truth, one value per
+issue by construction (a single-select holds at most one; `next-issue.sh` still
+hard-errors, naming the issue, on an issue missing from the project or missing a
+`Status` value). Scripts normalize the option's display name (lowercase, spaces to
+hyphens), so "In progress" reads as `in-progress` — the five values still mean
+exactly what roadmap.json's enum means. GitHub's native `state`/`stateReason`
+(open/closed/completed/not_planned) get set in parallel purely as a UX mirror for
+the ordinary Issues UI; no script reads them as the source of truth, since that
+2-axis pair alone can't tell `done` from `resolved` (both close as `COMPLETED`).
 
-**Priority** lives in a `priority:urgent|high|med|low` label. Missing label reads as
-`med`, same default as roadmap.json.
+**Priority** lives in the same project's single-select `Priority` field
+(`urgent|high|med|low`, same normalization). A missing value reads as `med`, same
+default as roadmap.json.
+
+`scripts/gh-issue-field.sh <issue> <Status|Priority> <value>` is the write path for
+both fields: it resolves the linked project, adds the issue to it when absent, sets
+the field, and round-trips (`gh project item-list`) to confirm the reported value
+actually landed (AGNT-INV-003). Reads and writes both need a `gh` token carrying
+the `project` scope (`gh auth refresh -s project`).
 
 **Dependency edges** are GitHub's native `blockedBy`/`blocking` relationship (GA
 2025-08-21), not a `deps` array or free-text convention. `gh issue create/edit
@@ -81,7 +88,9 @@ same guarantee step 4's `dag-mermaid.sh` validate-before-commit gives roadmap.js
 provided natively here, to the extent confirmed.
 
 `scripts/next-issue.sh` (no file argument — reads the current repo via `gh`) is the
-GitHub-backed sibling of `next-ticket.sh`: same ranking algorithm (priority, then
+GitHub-backed sibling of `next-ticket.sh` — it joins `gh issue list` (numbers,
+`blockedBy` edges) with `gh project item-list` (Status/Priority field values): same
+ranking algorithm (priority, then
 most transitive todo descendants unlocked, then lowest number), same needs-replan
 flagging for a cancelled blocker, same stdout/stderr contract. The same bidirectional-
 injection warning from step 3 above applies unchanged: a newly filed issue that
@@ -99,7 +108,7 @@ actually landed the edge sent, not just that the CLI call returned 0 (AGNT-INV-0
 `evals/run.sh` smoke-tests both scripts on fixtures (cycle rejected, waves rendered, next-in-line computed), then grades every non-holdout case in `evals/cases.jsonl` against this file, or a candidate via `./run.sh candidate.md`, using `evals/rubric.md`; `--holdout` runs the held-out slice. One JSON line per case to stdout, mean to stderr.
 
 `evals/smoke-gh.sh` covers the GitHub Issues backend (`next-issue.sh`,
-`gh-edge-guard.sh`) the same way, but against real live `gh` issues on the current
+`gh-edge-guard.sh`, `gh-issue-field.sh`) the same way, but against real live `gh` issues on the current
 repo — it is NOT run by `run.sh`'s default path, since a live smoke test on every eval
 run would spam the real issue tracker. Invoke it explicitly; it creates and always
 deletes its own scratch issues, verified via a trap-based cleanup.
