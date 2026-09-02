@@ -212,22 +212,28 @@ export default function statusline(pi: ExtensionAPI) {
 
 	function render(ctx: ExtensionContext) {
 		if (!isCtxActive(ctx)) return;
-		const provider = activeProvider(ctx);
-		const usage = provider ? usageByProvider.get(provider) : undefined;
-		const selected = usage ? selectWindow(usage) : null;
-		if (!provider || !selected) {
-			(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = undefined;
-			return;
+		// isCtxActive already cleared staleness above -- anything thrown past this point is a genuine
+		// render fault, and the fire-and-forget call sites (refresh(), onResize) have no other catch.
+		try {
+			const provider = activeProvider(ctx);
+			const usage = provider ? usageByProvider.get(provider) : undefined;
+			const selected = usage ? selectWindow(usage) : null;
+			if (!provider || !selected) {
+				(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = undefined;
+				return;
+			}
+			const nowSeconds = Math.round(Date.now() / 1000);
+			const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
+			(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = {
+				provider,
+				usedPercent: Math.floor(selected.window.usedPercent),
+				pacePercent: Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)),
+				label: selected.label,
+				reset: selected.label === "5h" ? formatCalendarReset(selected.window.resetAtEpochSeconds || nowSeconds) : `in ${formatReset(diff)}`,
+			};
+		} catch (error) {
+			console.error("[statusline] render failed:", error);
 		}
-		const nowSeconds = Math.round(Date.now() / 1000);
-		const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
-		(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = {
-			provider,
-			usedPercent: Math.floor(selected.window.usedPercent),
-			pacePercent: Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)),
-			label: selected.label,
-			reset: selected.label === "5h" ? formatCalendarReset(selected.window.resetAtEpochSeconds || nowSeconds) : `in ${formatReset(diff)}`,
-		};
 	}
 
 	const onResize = () => {
@@ -236,26 +242,33 @@ export default function statusline(pi: ExtensionAPI) {
 
 	async function refresh(ctx: ExtensionContext, isForced = false) {
 		if (!isCtxActive(ctx)) return;
-		const provider = activeProvider(ctx);
-		if (!provider) {
-			render(ctx);
-			return;
-		}
-		const now = Date.now();
-		if (!isForced && now - (lastFetchAtByProvider.get(provider) ?? 0) < MIN_FETCH_INTERVAL_MS) {
-			render(ctx);
-			return;
-		}
-		lastFetchAtByProvider.set(provider, now);
+		// this whole body runs fire-and-forget (`void refresh(ctx)` at every call site below), so
+		// any throw past this point -- not just a fetch failure, which the inner catch already
+		// covers -- would otherwise escape as an unhandled rejection with a raw stack trace.
 		try {
-			const usage =
-				provider === "anthropic" ? await fetchAnthropicUsage(ctx) : await fetchCodexUsage(ctx);
-			if (usage) usageByProvider.set(provider, usage);
-		} catch {
-			// A fetch failure keeps the previous bar; the next poll retries.
+			const provider = activeProvider(ctx);
+			if (!provider) {
+				render(ctx);
+				return;
+			}
+			const now = Date.now();
+			if (!isForced && now - (lastFetchAtByProvider.get(provider) ?? 0) < MIN_FETCH_INTERVAL_MS) {
+				render(ctx);
+				return;
+			}
+			lastFetchAtByProvider.set(provider, now);
+			try {
+				const usage =
+					provider === "anthropic" ? await fetchAnthropicUsage(ctx) : await fetchCodexUsage(ctx);
+				if (usage) usageByProvider.set(provider, usage);
+			} catch {
+				// A fetch failure keeps the previous bar; the next poll retries.
+			}
+			if (!isCtxActive(ctx)) return;
+			render(ctx);
+		} catch (error) {
+			if (isCtxActive(ctx)) console.error("[statusline] refresh failed:", error);
 		}
-		if (!isCtxActive(ctx)) return;
-		render(ctx);
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
