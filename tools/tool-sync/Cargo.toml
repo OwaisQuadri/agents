@@ -8,4 +8,5 @@ path = "src/error.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+time = "0.3"
 toml = "0.8"

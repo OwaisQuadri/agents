@@ -27,6 +27,14 @@ fn render_action(action: &Action, is_dry_run: bool) -> String {
         Action::FetchRepository { repository } => {
             format!("fetch repository {}", repository.display())
         }
+        Action::RetireForeignCheckout {
+            checkout,
+            destination,
+        } => format!(
+            "retire foreign checkout {} -> {}",
+            checkout.display(),
+            destination.display()
+        ),
         Action::CheckoutRevision {
             repository,
             revision,
@@ -132,13 +140,24 @@ pub fn run(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
 }
 
 fn is_unfetched_git_source(plan: &Plan, working_directory: &Path) -> bool {
-    matches!(
+    let is_absent = matches!(
         fs::metadata(working_directory),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound
-    ) && plan.actions.iter().any(|action| {
+    );
+    (is_absent || is_retired_checkout(plan, working_directory))
+        && plan.actions.iter().any(|action| {
+            matches!(
+                action,
+                Action::CloneRepository { destination, .. } if destination == working_directory
+            )
+        })
+}
+
+fn is_retired_checkout(plan: &Plan, path: &Path) -> bool {
+    plan.actions.iter().any(|action| {
         matches!(
             action,
-            Action::CloneRepository { destination, .. } if destination == working_directory
+            Action::RetireForeignCheckout { checkout, .. } if checkout == path
         )
     })
 }
@@ -147,7 +166,26 @@ fn check_stale_state(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
     for action in &plan.actions {
         match action {
             Action::CreateDirectory { path } => require_missing(path)?,
-            Action::CloneRepository { destination, .. } => require_missing(destination)?,
+            Action::CloneRepository { destination, .. } => {
+                if !is_retired_checkout(plan, destination) {
+                    require_missing(destination)?;
+                }
+            }
+            Action::RetireForeignCheckout {
+                checkout,
+                destination,
+            } => {
+                let metadata = fs::metadata(checkout).map_err(|error| {
+                    stale_or_io(checkout, "foreign checkout disappeared", error)
+                })?;
+                if !metadata.is_dir() {
+                    return Err(SyncError::StaleState(
+                        checkout.clone(),
+                        "foreign checkout is no longer a directory".to_owned(),
+                    ));
+                }
+                require_missing(destination)?;
+            }
             Action::FetchRepository { repository } => {
                 let metadata = fs::metadata(repository)
                     .map_err(|error| stale_or_io(repository, "repository disappeared", error))?;
@@ -234,6 +272,10 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
             )
         }
         Action::FetchRepository { repository } => git(repository, &["fetch", "--all", "--prune"]),
+        Action::RetireForeignCheckout {
+            checkout,
+            destination,
+        } => retire_foreign_checkout(checkout, destination),
         Action::CheckoutRevision {
             repository,
             revision,
@@ -265,6 +307,21 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
         } => create_verified_link(source, destination),
         Action::LinkHerdrPlugin { tool, source } => link_herdr_plugin(tool, source),
         Action::SkipPlatform { .. } => Ok(()),
+    }
+}
+
+fn retire_foreign_checkout(checkout: &Path, destination: &Path) -> Result<(), SyncError> {
+    fs::rename(checkout, destination)
+        .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+    fs::symlink_metadata(destination)
+        .map_err(|error| stale_or_io(destination, "retired checkout is missing", error))?;
+    match fs::symlink_metadata(checkout) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(SyncError::StaleState(
+            checkout.to_path_buf(),
+            "foreign checkout survived its own retirement".to_owned(),
+        )),
+        Err(error) => Err(SyncError::Io(checkout.to_path_buf(), error)),
     }
 }
 
@@ -705,6 +762,103 @@ mod tests {
 
         assert!(!marker.exists(), "installer child was invoked");
         assert!(!fixture.0.join("cache").exists(), "dry run wrote cache");
+    }
+
+    #[test]
+    fn retires_a_foreign_checkout_and_keeps_its_contents() {
+        let fixture = Fixture::new();
+        let checkout = fixture.0.join("cache/rag");
+        fs::create_dir_all(&checkout).expect("foreign checkout");
+        fs::write(checkout.join("revision"), "someone else's work").expect("foreign file");
+        let aside = fixture.0.join("cache/rag.foreign-20231114-221320");
+        let plan = Plan {
+            actions: vec![Action::RetireForeignCheckout {
+                checkout: checkout.clone(),
+                destination: aside.clone(),
+            }],
+        };
+
+        run(&plan, false).expect("retire succeeds");
+
+        assert_eq!(
+            fs::read_to_string(aside.join("revision")).expect("retired file"),
+            "someone else's work"
+        );
+        assert!(!checkout.exists());
+    }
+
+    #[test]
+    fn refuses_to_retire_onto_an_occupied_destination() {
+        let fixture = Fixture::new();
+        let checkout = fixture.0.join("cache/rag");
+        fs::create_dir_all(&checkout).expect("foreign checkout");
+        fs::write(checkout.join("revision"), "someone else's work").expect("foreign file");
+        let aside = fixture.0.join("cache/rag.foreign-20231114-221320");
+        fs::create_dir_all(&aside).expect("occupied aside");
+        let plan = Plan {
+            actions: vec![Action::RetireForeignCheckout {
+                checkout: checkout.clone(),
+                destination: aside.clone(),
+            }],
+        };
+
+        let error = run(&plan, false).expect_err("occupied aside must fail");
+
+        assert!(matches!(error, SyncError::StaleState(_, _)));
+        assert_eq!(
+            fs::read_to_string(checkout.join("revision")).expect("untouched foreign file"),
+            "someone else's work"
+        );
+        assert!(fs::read_dir(&aside)
+            .expect("aside entries")
+            .next()
+            .is_none());
+    }
+
+    #[test]
+    fn dry_run_neither_retires_nor_previews_a_foreign_checkout() {
+        let fixture = Fixture::new();
+        let marker = fixture.0.join("installer-ran");
+        let script = fixture.0.join("preview.sh");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch {:?}\n", marker.display().to_string()),
+        )
+        .expect("script");
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("executable");
+        let checkout = fixture.0.join("cache/rag");
+        fs::create_dir_all(&checkout).expect("foreign checkout");
+        fs::write(checkout.join("revision"), "someone else's work").expect("foreign file");
+        let aside = fixture.0.join("cache/rag.foreign-20231114-221320");
+        let plan = Plan {
+            actions: vec![
+                Action::RetireForeignCheckout {
+                    checkout: checkout.clone(),
+                    destination: aside.clone(),
+                },
+                Action::CloneRepository {
+                    url: "https://example.test/rag.git".into(),
+                    destination: checkout.clone(),
+                },
+                Action::RunInstaller {
+                    tool: "rag".into(),
+                    working_directory: checkout.clone(),
+                    command: script.to_string_lossy().into_owned(),
+                    args: vec!["apply".into()],
+                    preview_args: vec!["preview".into()],
+                },
+            ],
+        };
+
+        run(&plan, true).expect("a retiring plan is only rendered");
+
+        assert_eq!(
+            fs::read_to_string(checkout.join("revision")).expect("untouched foreign file"),
+            "someone else's work"
+        );
+        assert!(!aside.exists(), "dry run created the aside");
+        assert!(!marker.exists(), "installer child was invoked");
     }
 
     #[test]

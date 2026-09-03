@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use time::OffsetDateTime;
 
 use crate::manifest::Platform;
 
@@ -6,6 +9,21 @@ pub(crate) fn pi_extension_backup(destination: &std::path::Path) -> PathBuf {
     let mut backup = destination.as_os_str().to_os_string();
     backup.push(".pre-tool-sync");
     backup.into()
+}
+
+pub(crate) fn foreign_checkout_aside(checkout: &Path, at: SystemTime) -> PathBuf {
+    let stamp = OffsetDateTime::from(at);
+    let mut aside = checkout.as_os_str().to_os_string();
+    aside.push(format!(
+        ".foreign-{:04}{:02}{:02}-{:02}{:02}{:02}",
+        stamp.year(),
+        u8::from(stamp.month()),
+        stamp.day(),
+        stamp.hour(),
+        stamp.minute(),
+        stamp.second()
+    ));
+    aside.into()
 }
 
 /// Holds installation actions in application order.
@@ -30,6 +48,10 @@ pub enum Action {
     },
     FetchRepository {
         repository: PathBuf,
+    },
+    RetireForeignCheckout {
+        checkout: PathBuf,
+        destination: PathBuf,
     },
     CheckoutRevision {
         repository: PathBuf,
@@ -97,5 +119,22 @@ mod tests {
         assert!(matches!(plan.actions[0], Action::CreateDirectory { .. }));
         assert!(matches!(plan.actions[1], Action::FetchRepository { .. }));
         assert!(matches!(plan.actions[2], Action::RunInstaller { .. }));
+    }
+
+    #[test]
+    fn foreign_aside_names_the_checkout_with_a_utc_timestamp() {
+        let checkout = Path::new("/cache/rag");
+
+        assert_eq!(
+            foreign_checkout_aside(
+                checkout,
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000)
+            ),
+            PathBuf::from("/cache/rag.foreign-20231114-221320")
+        );
+        assert_eq!(
+            foreign_checkout_aside(checkout, SystemTime::UNIX_EPOCH),
+            PathBuf::from("/cache/rag.foreign-19700101-000000")
+        );
     }
 }
