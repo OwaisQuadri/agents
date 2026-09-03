@@ -322,7 +322,7 @@ test("telemetry status command notifies active and failed counts including zero"
 	});
 
 	const api = createFakeExtensionAPI();
-	registerCommands(api.api, runtime);
+	registerCommands(api.api, async () => runtime);
 	assert.deepEqual(api.commandNames(), ["telemetry-status", "telemetry-runs", "telemetry-feedback"]);
 
 	const recordingUi = createRecordingUi();
@@ -333,7 +333,7 @@ test("telemetry status command notifies active and failed counts including zero"
 
 	const emptyRuntime = createTelemetryRuntime({ path: "/tmp/empty-telemetry.jsonl", records: [] });
 	const emptyApi = createFakeExtensionAPI();
-	registerCommands(emptyApi.api, emptyRuntime);
+	registerCommands(emptyApi.api, async () => emptyRuntime);
 	const emptyRecordingUi = createRecordingUi();
 	await invokeCommand(emptyApi.command("telemetry-status"), "", createFakeCommandContext(emptyRecordingUi));
 
@@ -347,7 +347,7 @@ test("telemetry lifecycle does not add a footer status", async () => {
 	await withTelemetryDirectory(directory, async () => {
 		const runtime = createTelemetryRuntime({ path: join(directory, "telemetry.jsonl"), records: [] });
 		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 
 		const recordingUi = createRecordingUi();
 		await invoke(api.event("subagents:started"), { id: "async-1", type: "subagent-a" });
@@ -442,7 +442,7 @@ test("telemetry filtered-run command returns matching runs in storage order", as
 	};
 
 	const api = createFakeExtensionAPI();
-	registerCommands(api.api, createTelemetryRuntime(store));
+	registerCommands(api.api, async () => createTelemetryRuntime(store));
 	assert.deepEqual(api.commandNames(), ["telemetry-status", "telemetry-runs", "telemetry-feedback"]);
 
 	const recordingUi = createRecordingUi();
@@ -474,7 +474,7 @@ test("telemetry feedback command accepts categorical feedback and rejects free t
 		await appendRecord(store, validRunRecord);
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
-		registerCommands(api.api, runtime);
+		registerCommands(api.api, async () => runtime);
 
 		const recordingUi = createRecordingUi();
 		await invokeCommand(api.command("telemetry-feedback"), "run-1 accepted", createFakeCommandContext(recordingUi));
@@ -815,7 +815,7 @@ test("telemetry parent lifecycle records runtime package and null metrics", asyn
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 
 		const startHandler = api.on("agent_start");
 		const settledHandler = api.on("agent_settled");
@@ -860,7 +860,7 @@ test("telemetry subagents lifecycle records pinned package and normalized usage"
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 
 		const startedHandler = api.event("subagents:started");
 		const completedHandler = api.event("subagents:completed");
@@ -920,7 +920,7 @@ test("telemetry subagents lifecycle maps steered, failure, and cancellation", as
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 
 		const startedHandler = api.event("subagents:started");
 		const completedHandler = api.event("subagents:completed");
@@ -971,7 +971,7 @@ test("telemetry rejects malformed and re-settled lifecycle events", async () => 
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 
 		const startedHandler = api.event("subagents:started");
 		const completedHandler = api.event("subagents:completed");
@@ -1018,7 +1018,7 @@ test("telemetry shutdown cancels remaining active runs", async () => {
 		const store = await loadStore();
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 
 		const startHandler = api.on("agent_start");
 		const startedHandler = api.event("subagents:started");
@@ -1056,7 +1056,7 @@ test("telemetry shutdown attempts every run and reports partial failure", async 
 		const runtime = createTelemetryRuntime(store);
 		const api = createFakeExtensionAPI();
 		const recordingUi = createRecordingUi();
-		registerLifecycle(api.api, runtime);
+		registerLifecycle(api.api, async () => runtime);
 		startRun(runtime, "invalid-shutdown", "other-package", null, "2026-08-17T02:24:00.000Z");
 		startRun(runtime, "valid-shutdown", runtime.packageName, null, "2026-08-17T02:24:01.000Z");
 
