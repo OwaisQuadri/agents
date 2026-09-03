@@ -57,6 +57,10 @@ if (!task || !repo || !models || !models.T3 || !models.T4 || !models.T4ReviewAft
   state.blockers.push('invalid-input')
   return result('blocked', state, 'invalid-input')
 }
+if (models.T4.split('/')[0] === models.T4ReviewAfterRepair.split('/')[0]) {
+  state.blockers.push('cross-provider-review-required')
+  return result('blocked', state, 'cross-provider-review-required')
+}
 
 const taskMarkers = [...(Array.isArray(task.labels) ? task.labels : []), ...(Array.isArray(task.markers) ? task.markers : [])]
   .map(marker => typeof marker === 'string' ? marker.toLowerCase() : marker && typeof marker.name === 'string' ? marker.name.toLowerCase() : '')
