@@ -39,6 +39,7 @@ fn run() -> Result<ExitCode, String> {
                             baseline.repo
                         ));
                     }
+                    clear_stale_output(&path)?;
                     let mut file = std::fs::OpenOptions::new()
                         .write(true)
                         .create_new(true)
@@ -87,6 +88,18 @@ fn run() -> Result<ExitCode, String> {
             })
         }
         other => Err(format!("unknown subcommand {other}\n{USAGE}")),
+    }
+}
+
+fn clear_stale_output(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
+            "stamp output {} is a symlink; refusing to write through it",
+            path.display()
+        )),
+        Ok(_) => std::fs::remove_file(path).map_err(|error| format!("{}: {error}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("{}: {error}", path.display())),
     }
 }
 
