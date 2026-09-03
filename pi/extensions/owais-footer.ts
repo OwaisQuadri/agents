@@ -126,6 +126,14 @@ export function projectName(cwd: string, repositoryRoot: string): string {
 	return basename(repositoryRoot) || "unknown";
 }
 
+export function isPullRequest(value: unknown): value is PullRequest {
+	if (value === null || typeof value !== "object") return false;
+	const candidate = value as Partial<PullRequest>;
+	return typeof candidate.url === "string" && typeof candidate.number === "number" &&
+		typeof candidate.state === "string" && typeof candidate.isDraft === "boolean" &&
+		typeof candidate.mergeStateStatus === "string";
+}
+
 export function pullRequestTone(pullRequest: PullRequest): "success" | "warning" | "error" | "purple" | "muted" {
 	if (pullRequest.isDraft) return "muted";
 	if (pullRequest.state === "MERGED") return "purple";
@@ -437,22 +445,22 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 
 	async function refreshPullRequest(cwd: string, generation: number): Promise<void> {
 		try {
-			if (!(await hasGitHubRemote(cwd))) return;
+			const hasRemote = await hasGitHubRemote(cwd);
+			if (generation !== refreshGeneration) return;
+			if (!hasRemote) {
+				pullRequest = undefined;
+				return;
+			}
 			const result = await pi.exec(
 				"gh",
 				["pr", "view", "--json", "url,number,state,isDraft,mergeStateStatus"],
 				{ cwd, timeout: 5_000 },
 			);
-			if (generation !== refreshGeneration || result.code !== 0) return;
-			const candidate = JSON.parse(result.stdout) as Partial<PullRequest>;
-			if (
-				typeof candidate.url !== "string" || typeof candidate.number !== "number" ||
-				typeof candidate.state !== "string" || typeof candidate.isDraft !== "boolean" ||
-				typeof candidate.mergeStateStatus !== "string"
-			) {
-				return;
-			}
-			pullRequest = candidate as PullRequest;
+			if (generation !== refreshGeneration) return;
+			// invariant: the footer only ever shows a pull request the newest concluded lookup found, so a
+			// concluded lookup owns the segment outright and a superseded generation never writes to it.
+			const candidate = result.code === 0 ? JSON.parse(result.stdout) as unknown : undefined;
+			pullRequest = isPullRequest(candidate) ? candidate : undefined;
 		} catch {
 			return;
 		} finally {
