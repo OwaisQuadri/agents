@@ -16,9 +16,20 @@ metadata:
 
 JOB: land on ONE task to work on right now, through interrogation rather than a queue
 IN:  nothing required — an optional hint ("something for the statusline", "whatever's
-     blocking the release"), or a caller (engineer) asking for a task before it can start
+     blocking the release"), a caller (engineer) asking for a task, or autonomous approval
+     with a standing driver and exclusions
 OUT: one chosen task — either an existing backlog id (with its short/long) or a fresh
      one-off description — handed back to the caller, plus the reasoning for the pick
+
+## autonomous-caller mode
+
+Only an approved standing driver may use this mode. The caller passes autonomous approval,
+the exact driver, and exclusions. Reuse that driver. Select one existing runnable backend
+item. Never invent or file an item. Return the pick without another human confirmation.
+
+Treat the exact driver `priority tickets` as complete. For a GitHub Issues backend, use
+`skills/task-graph/scripts/next-issue.sh` for that driver. Do not replace its ranking with
+an issue-list guess. For another backend, use its existing runnable-item ranking.
 
 ## why interrogation, not a queue read
 
@@ -28,8 +39,9 @@ which only you know. Read the backlog for context, never as the answer.
 
 ## steps
 
-1. **Ask what's driving this.** One or two direct questions: what's prompting a task
-   right now (a bug just hit, a release is coming, idle time to spend, a specific itch)?
+1. **Ask what's driving this.** Outside autonomous-caller mode, ask one or two direct
+   questions: what's prompting a task right now (a bug just hit, a release is coming,
+   idle time to spend, a specific itch)?
    Don't accept a vague answer — press once more if the first answer is "whatever's
    next" or similarly non-committal. Done when you can state, in one sentence, what
    outcome the user actually wants from this session.
