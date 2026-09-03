@@ -6,10 +6,16 @@
 //! than the budget is flagged; doc comments (`///`, `//!`, `/**`) are exempt because
 //! the docstring shape is whitelisted and docs/docstring-style.md owns their form.
 //!
-//! Two modes, matching the two sibling shapes:
-//!   comment-check <file>...   ste-check shape: print FAIL lines, exit nonzero
-//!   comment-check             warnings-check shape: PreToolUse(Bash) hook payload on
-//!                             stdin, deny travels in JSON, always exits 0
+//! Three modes:
+//!   comment-check <file>...             ste-check shape: print FAIL lines, exit nonzero
+//!   comment-check                       warnings-check shape: PreToolUse(Bash) hook
+//!                                       payload on stdin, deny travels in JSON, exits 0
+//!   comment-check --list-json --lang X  reads stdin as source text, prints every
+//!                                       comment span (doc and non-doc) as a JSON
+//!                                       array with its own text. Whitelist-shape and
+//!                                       docstring-position judgment happen downstream
+//!                                       of this: this mode is extraction only, same
+//!                                       zero-judgment posture as the other two.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -43,13 +49,16 @@ const VALUE_OPTIONS: &[&str] = &[
     "--repo",
 ];
 
-const USAGE: &str = "usage: comment-check [file]...  (no arguments: PreToolUse hook payload on stdin)";
+const USAGE: &str = "usage: comment-check [file]...  |  comment-check --list-json --lang EXT  (no arguments: PreToolUse hook payload on stdin)";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
+    }
+    if args.iter().any(|a| a == "--list-json") {
+        return run_list_json(&args);
     }
     if args.is_empty() {
         run_hook();
@@ -67,6 +76,31 @@ fn main() -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// `--list-json --lang EXT`: reads source text from stdin, prints a JSON array of every
+/// comment span (doc and non-doc) with its own text. Extraction only — no verbosity or
+/// shape judgment — mirroring the other two modes' own zero-judgment posture.
+fn run_list_json(args: &[String]) -> ExitCode {
+    let Some(lang_index) = args.iter().position(|a| a == "--lang") else {
+        eprintln!("--list-json requires --lang EXT\n{USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let Some(ext) = args.get(lang_index + 1) else {
+        eprintln!("--lang requires a value\n{USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let Some(lang) = lang_for_extension(&format!("x.{ext}")) else {
+        eprintln!("unrecognized --lang extension: {ext}");
+        return ExitCode::FAILURE;
+    };
+    let mut text = String::new();
+    if std::io::stdin().read_to_string(&mut text).is_err() {
+        eprintln!("failed to read stdin");
+        return ExitCode::FAILURE;
+    }
+    println!("{}", spans_to_json(&text, lang));
+    ExitCode::SUCCESS
 }
 
 fn run_hook() {
@@ -189,6 +223,18 @@ struct CommentSpan {
 /// budget. Consecutive full-line comments merge into one block; a trailing
 /// comment after code never merges with the lines below it.
 fn long_blocks(text: &str, lang: Lang) -> Vec<(usize, usize)> {
+    merged_spans(text, lang)
+        .into_iter()
+        .filter(|b| b.kind == CommentKind::Plain)
+        .filter(|b| b.end_line - b.start_line + 1 > MAX_COMMENT_LINES)
+        .map(|b| (b.start_line, b.end_line))
+        .collect()
+}
+
+/// Every comment block (doc and non-doc), consecutive full-line comments merged into
+/// one span the same way `long_blocks` merges them — shared so `--list-json` and the
+/// length check see identical block boundaries.
+fn merged_spans(text: &str, lang: Lang) -> Vec<CommentSpan> {
     let spans = match lang {
         Lang::Slash { is_rust } => comment_spans(text, is_rust),
         Lang::Hash { is_python } => hash_comment_spans(text, is_python),
@@ -208,11 +254,35 @@ fn long_blocks(text: &str, lang: Lang) -> Vec<(usize, usize)> {
         blocks.push(span);
     }
     blocks
-        .into_iter()
-        .filter(|b| b.kind == CommentKind::Plain)
-        .filter(|b| b.end_line - b.start_line + 1 > MAX_COMMENT_LINES)
-        .map(|b| (b.start_line, b.end_line))
-        .collect()
+}
+
+/// Renders every comment block in `text` (doc and non-doc) as a JSON array of
+/// `{start_line, end_line, kind, text}`, `text` being the exact source lines (with
+/// their own leading comment markers) the span covers.
+fn spans_to_json(text: &str, lang: Lang) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = String::from("[");
+    for (i, span) in merged_spans(text, lang).into_iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let kind = match span.kind {
+            CommentKind::Doc => "doc",
+            CommentKind::Plain => "plain",
+        };
+        let span_text = lines
+            .get(span.start_line - 1..span.end_line)
+            .map(|slice| slice.join("\n"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            r#"{{"start_line":{},"end_line":{},"kind":"{kind}","text":{}}}"#,
+            span.start_line,
+            span.end_line,
+            json_quote(&span_text)
+        ));
+    }
+    out.push(']');
+    out
 }
 
 /// Lexes the source just enough to find comments without being fooled by comment
@@ -708,5 +778,51 @@ mod tests {
     fn extracts_command_from_pretooluse_payload() {
         let payload = r#"{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}"#;
         assert_eq!(extract_command(payload).as_deref(), Some("git commit -m x"));
+    }
+
+    #[test]
+    fn list_json_includes_doc_and_plain_spans_with_their_own_text() {
+        let text = "/// docstring\nfn public_fn() {}\n\n// plain comment\n// second line\nfn private_helper() {}\n";
+        let json = spans_to_json(text, RUST);
+        assert_eq!(
+            json,
+            r#"[{"start_line":1,"end_line":1,"kind":"doc","text":"/// docstring"},{"start_line":4,"end_line":5,"kind":"plain","text":"// plain comment\n// second line"}]"#
+        );
+    }
+
+    #[test]
+    fn list_json_never_filters_by_length_unlike_long_blocks() {
+        // a run over MAX_COMMENT_LINES: long_blocks flags it, --list-json still lists
+        // it verbatim -- length filtering is long_blocks's job alone, list-json is pure
+        // extraction for a downstream judge to classify.
+        let text = "// one\n// two\n// three\n// four\nfn main() {}\n";
+        assert_eq!(rust_blocks(text), vec![(1, 4)]);
+        let json = spans_to_json(text, RUST);
+        assert!(json.contains(r#""start_line":1,"end_line":4,"kind":"plain"#));
+    }
+
+    #[test]
+    fn list_json_escapes_quotes_and_newlines_in_span_text() {
+        let text = "// says \"hi\"\nfn main() {}\n";
+        let json = spans_to_json(text, RUST);
+        assert_eq!(
+            json,
+            r#"[{"start_line":1,"end_line":1,"kind":"plain","text":"// says \"hi\""}]"#
+        );
+    }
+
+    #[test]
+    fn list_json_on_empty_input_is_an_empty_array() {
+        assert_eq!(spans_to_json("", RUST), "[]");
+        assert_eq!(spans_to_json("fn main() {}\n", RUST), "[]");
+    }
+
+    #[test]
+    fn list_json_works_across_hash_and_slash_languages() {
+        let py = "# a note\ndef f():\n    pass\n";
+        assert_eq!(
+            spans_to_json(py, PYTHON),
+            r##"[{"start_line":1,"end_line":1,"kind":"plain","text":"# a note"}]"##
+        );
     }
 }
