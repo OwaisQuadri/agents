@@ -68,6 +68,7 @@ test("renders the compact Git label and linked pull request", async () => {
 		on(event: string, handler: (...args: any[]) => unknown) {
 			handlers.set(event, handler);
 		},
+		events: { on: () => () => {} },
 		async exec(command: string, args: string[]) {
 			calls.push({ command, args });
 			if (command === "git" && args[0] === "rev-parse") return { code: 0, stdout: "/Users/user/.herdr/worktrees/agents/add-to-pi-config\n" };
@@ -152,6 +153,7 @@ test("keeps the world-clock row visible when no quota state is set", async () =>
 		on(event: string, handler: (...args: any[]) => unknown) {
 			handlers.set(event, handler);
 		},
+		events: { on: () => () => {} },
 		async exec() {
 			return { code: 1, stdout: "" };
 		},

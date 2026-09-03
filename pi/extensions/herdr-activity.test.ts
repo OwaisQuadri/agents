@@ -22,6 +22,12 @@ test("reports working, needs-attention, done, and idle states in one sequence", 
 		on(event: string, handler: (event: unknown, ctx: any) => Promise<void> | void) {
 			handlers.set(event, handler);
 		},
+		events: {
+			on() {
+				return () => {};
+			},
+			emit() {},
+		},
 		async exec(command: string, args: string[]) {
 			calls.push({ command, args });
 			return { code: 0, stdout: "", stderr: "" };
@@ -54,6 +60,93 @@ test("reports working, needs-attention, done, and idle states in one sequence", 
 		process.env.HERDR_SOCKET_PATH = previous.socket;
 		process.env.HERDR_BIN_PATH = previous.binary;
 	}
+});
+
+test("reports aggregate background activity through the Herdr event boundary", () => {
+	const eventHandlers = new Map<string, (payload: unknown) => void>();
+	const emitted: Array<{ channel: string; payload: unknown }> = [];
+	const api = {
+		on() {},
+		events: {
+			on(channel: string, handler: (payload: unknown) => void) {
+				eventHandlers.set(channel, handler);
+				return () => {};
+			},
+			emit(channel: string, payload: unknown) {
+				emitted.push({ channel, payload });
+			},
+		},
+	};
+
+	herdrActivity(api as any);
+	const started = eventHandlers.get("subagents:started");
+	const completed = eventHandlers.get("subagents:completed");
+	const failed = eventHandlers.get("subagents:failed");
+
+	started?.(null);
+	started?.(42);
+	started?.({});
+	started?.({ id: "" });
+	started?.({ id: "   " });
+	assert.deepEqual(emitted, []);
+
+	started?.({ id: "child-1" });
+	started?.({ id: "child-1" });
+	started?.({ id: "child-2" });
+	completed?.({ id: "child-1" });
+	completed?.({ id: "missing" });
+	assert.deepEqual(emitted, [{ channel: "herdr:busy", payload: { active: true } }]);
+
+	failed?.({ id: "child-2" });
+	failed?.({ id: "child-2" });
+	assert.deepEqual(emitted, [
+		{ channel: "herdr:busy", payload: { active: true } },
+		{ channel: "herdr:busy", payload: { active: false } },
+	]);
+
+	started?.({ id: "child-3" });
+	completed?.({ id: "child-3" });
+	assert.deepEqual(emitted.slice(-2), [
+		{ channel: "herdr:busy", payload: { active: true } },
+		{ channel: "herdr:busy", payload: { active: false } },
+	]);
+});
+
+test("session boundaries clear active background work", async () => {
+	const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void> | void>();
+	const eventHandlers = new Map<string, (payload: unknown) => void>();
+	const emitted: Array<{ channel: string; payload: unknown }> = [];
+	const api = {
+		on(event: string, handler: (event: unknown, ctx: any) => Promise<void> | void) {
+			handlers.set(event, handler);
+		},
+		events: {
+			on(channel: string, handler: (payload: unknown) => void) {
+				eventHandlers.set(channel, handler);
+				return () => {};
+			},
+			emit(channel: string, payload: unknown) {
+				emitted.push({ channel, payload });
+			},
+		},
+	};
+	const context = {
+		mode: "rpc",
+		sessionManager: { getSessionId: () => "session-1" },
+	};
+
+	herdrActivity(api as any);
+	eventHandlers.get("subagents:started")?.({ id: "child-1" });
+	await handlers.get("session_start")?.({}, context);
+	eventHandlers.get("subagents:started")?.({ id: "child-2" });
+	await handlers.get("session_shutdown")?.({}, context);
+
+	assert.deepEqual(emitted, [
+		{ channel: "herdr:busy", payload: { active: true } },
+		{ channel: "herdr:busy", payload: { active: false } },
+		{ channel: "herdr:busy", payload: { active: true } },
+		{ channel: "herdr:busy", payload: { active: false } },
+	]);
 });
 
 test("one settle after several starts still reports idle, not a leaked working state", async () => {
