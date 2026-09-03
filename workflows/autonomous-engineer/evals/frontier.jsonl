@@ -1,2 +1,2 @@
-{"candidate":"current","tier":"static","slice":"nonholdout","cases":11,"mean":5.0,"ceiling":5,"date":"2026-09-03"}
+{"candidate":"current","tier":"static","slice":"nonholdout","cases":12,"mean":5.0,"ceiling":5,"date":"2026-09-03"}
 {"candidate":"current","tier":"static","slice":"holdout","cases":1,"mean":5.0,"ceiling":5,"date":"2026-09-03"}

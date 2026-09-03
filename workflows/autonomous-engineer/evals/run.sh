@@ -41,6 +41,7 @@ checks=(
   "manual-only"
   "closingIssuesReferences"
   "workflow("
+  "stopBeforeDraft"
   "resume-draft"
   "<!-- autonomous-engineer repairs=\${state.repairs} -->"
   "Closes #\${task.id}"

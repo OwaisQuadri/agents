@@ -72,8 +72,9 @@ if (taskMarkers.includes('manual-only')) {
 const taskReference = task.backend === 'github' ? `#${task.id}` : `${task.id} (${task.url})`
 const closingReference = task.backend === 'github' ? `Closes #${task.id}` : `Tracks ${task.url}`
 
-async function tracked(prompt, options) {
-  if (state.expected >= maxAgents) return { control: 'agent-cap' }
+async function tracked(prompt, options, isCleanup = false) {
+  const cap = isCleanup ? maxAgents : maxAgents - 1
+  if (state.expected >= cap) return { control: 'agent-cap' }
   state.expected += 1
   try {
     const value = await agent(prompt, options)
@@ -125,7 +126,7 @@ Run these checks before you return:
 8. For actions after-draft and before-repair, require the connected marked draft to remain open and non-conflicting. Return resume-draft when it does.
 9. For action start, record the prior status and set the selected item active through its backend's existing write path. GitHub Projects uses skills/task-graph/scripts/gh-issue-field.sh ${task.id} Status in-progress; roadmap.json uses in progress; Linear uses its configured active state.
 10. For action verified-ready, confirm that the connected Pull Request is OPEN, isDraft, marked, and non-conflicting. Run verification_command and require exit zero. Then run cd ${repo} && gh pr ready <number>. Set is_remote_draft to the confirmed pre-transition state and is_verified=true. Set GitHub Projects or roadmap.json to resolved; set Linear to its configured review state, or leave it active when none exists. Return control=clear.
-11. For action discard, close only the connected marked unverified draft, delete its remote branch, verify closure, and restore ${task.prior_status} through the same backend.
+11. For action discard, ignore task blockers, close only the connected marked unverified draft, delete its remote branch, verify closure, and restore ${task.prior_status} through the same backend. Return control=discarded after restoration.
 
 Return control=discarded only after command-backed draft cleanup and status restoration. Return control=blocked when the task is manual-only or native blockedBy has an unresolved blocker. Return the marker's integer N in repairs, or repairs=0 when no marker exists. Return control=resume-draft only for a connected OPEN draft with the marker <!-- autonomous-engineer repairs=N --> and is_verified=false. Return control=already-verified only from command-backed status, not a comment. Return control=overlap for changed-file overlap with another open Pull Request. Return control=merge-conflict for a non-mergeable connected draft. Return control=clear only when implementation may safely proceed. Return control=stopped only when a command cannot complete. Return only the required schema.`
 }
@@ -137,13 +138,21 @@ async function safety(action, plannedFiles = [], verificationProof = '') {
     agentType: 'general-purpose',
     model: models.T3,
     schema: SAFETY_SCHEMA,
-  })
+  }, action === 'discard')
   if (output && output.checks) state.checks.push(...output.checks)
   if (output && output.blockers) state.blockers.push(...output.blockers)
   if (output && output.pr) state.pr = output.pr
   if (output && output.branch) state.branch = output.branch
   if (output && output.commit) state.commit = output.commit
   return output || { control: 'stopped' }
+}
+
+async function stopBeforeDraft(status, reason) {
+  const restored = await safety('discard')
+  if (!['clear', 'discarded'].includes(restored.control)) {
+    state.blockers.push(`status-restore-${restored.control}`)
+  }
+  return result(status, state, reason)
 }
 
 phase('Safety')
@@ -173,7 +182,7 @@ try {
   )
 } catch (_) {
   state.blockers.push('research-stopped')
-  return result('blocked', state, 'research-stopped')
+  return stopBeforeDraft('blocked', 'research-stopped')
 }
 const researchExpected = research && Number.isInteger(research.expected) ? research.expected : 0
 const researchReturned = research && Number.isInteger(research.returned) ? research.returned : 0
@@ -181,11 +190,11 @@ state.expected += researchExpected
 state.returned += researchReturned
 if (!research || researchReturned < 1) {
   state.blockers.push('research-stopped')
-  return result('blocked', state, 'research-stopped')
+  return stopBeforeDraft('blocked', 'research-stopped')
 }
 if (researchExpected > researchReturned) state.blockers.push('research-partial')
 
-if (stopMode === 'after-research') return result('blocked', state, 'stopped-after-research')
+if (stopMode === 'after-research') return stopBeforeDraft('blocked', 'stopped-after-research')
 
 const PLAN_SCHEMA = {
   type: 'object',
@@ -238,14 +247,14 @@ while (planVerdicts < maxPlanVerdicts) {
   if (judgment && judgment.verdict === 'blocked') break
 }
 
-if (!plan) return result('blocked', state, planVerdicts >= maxPlanVerdicts ? 'plan-verdict-cap' : 'plan-blocked')
-if (stopMode === 'before-implementation') return result('blocked', state, 'stopped-before-implementation')
+if (!plan) return stopBeforeDraft('blocked', planVerdicts >= maxPlanVerdicts ? 'plan-verdict-cap' : 'plan-blocked')
+if (stopMode === 'before-implementation') return stopBeforeDraft('blocked', 'stopped-before-implementation')
 
 phase('Safety')
 const implementationSafety = await safety('before-implementation', plan.planned_files)
-if (!implementationSafety.is_real_worktree) return result('blocked', state, 'worktree-invalid')
+if (!implementationSafety.is_real_worktree) return stopBeforeDraft('blocked', 'worktree-invalid')
 if (implementationSafety.control !== 'clear' && implementationSafety.control !== 'resume-draft') {
-  return result('blocked', state, implementationSafety.control)
+  return stopBeforeDraft('blocked', implementationSafety.control)
 }
 
 const IMPLEMENT_SCHEMA = {
