@@ -328,7 +328,7 @@ fi
 #    worktree-hygiene in the 5-minute launchd hygiene job — its plist sets a minimal PATH
 #    with no cargo on it, exactly like gepa-due above, so the binary must already be built
 #    and symlinked here rather than compiled inside the launchd environment
-for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor privacy-lint worktree-hygiene; do
+for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor privacy-lint worktree-hygiene autonomous-engineer-state; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
 
