@@ -53,7 +53,7 @@ const state = {
   changedPaths: [],
 }
 
-if (!task || !repo || !models || !models.T3 || !models.T4 || !models.T5 || !validStopModes.includes(stopMode)) {
+if (!task || !repo || !models || !models.T3 || !models.T4 || !models.T4ReviewAfterRepair || !models.T5 || !validStopModes.includes(stopMode)) {
   state.blockers.push('invalid-input')
   return result('blocked', state, 'invalid-input')
 }
@@ -303,7 +303,7 @@ async function verifyDraft() {
   const verifierType = plan.verification_kind === 'anchor' ? 'anchor-verifier' : plan.verification_kind === 'spec' ? 'spec-tester' : 'maestro-tester'
   const [verification, review] = await parallel([
     () => tracked(verifyPrompt, { label: `verify-${state.repairs}`, phase: 'Verify', agentType: verifierType, model: models.T3, schema: VERIFY_SCHEMA }),
-    () => tracked(`repo_path: ${repo}\nfetch origin and resolve its default branch from refs/remotes/origin/HEAD; review diff_range: <resolved-default>...origin/${state.branch || 'HEAD'}\nfocus: selected task ${taskReference}`, { label: `review-${state.repairs}`, phase: 'Verify', agentType: 'code-reviewer', model: models.T4, schema: REVIEW_SCHEMA }),
+    () => tracked(`repo_path: ${repo}\nfetch origin and resolve its default branch from refs/remotes/origin/HEAD; review diff_range: <resolved-default>...origin/${state.branch || 'HEAD'}\nfocus: selected task ${taskReference}`, { label: `review-${state.repairs}`, phase: 'Verify', agentType: 'code-reviewer', model: state.repairs > 0 ? models.T4ReviewAfterRepair : models.T4, schema: REVIEW_SCHEMA }),
   ])
   state.checks.push(verification && verification.evidence ? verification.evidence : 'verification-stopped')
   if (review && review.findings) state.checks.push(...review.findings)

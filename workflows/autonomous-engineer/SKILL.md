@@ -23,7 +23,7 @@ GOAL:      produce one independently verified draft Pull Request for the selecte
            or return an anchored stop result that preserves any partial draft state.
 INPUT:     selected_task has backend id, title, body, URL, and prior status.
 REPOSITORY: canonical_repo names the repository.
-MODELS:    runtime_models supplies resolved T3, T4, and T5 models.
+MODELS:    `runtime_models` supplies resolved T3, T4, T5, and cross-provider post-repair T4 review models.
 SAFETY:    a deterministic safety agent runs exact backend and gh checks before research
            and before implementation. It runs autonomous-engineer-state repair-worktree
            and stops unless its round trip reports a real worktree. It checks native
@@ -72,8 +72,9 @@ REPORT:    return the task, repository, status, expected and returned counts, re
 
 Pass an object with `selected_task`, `canonical_repo`, `support_repo`, and `runtime_models`. `canonical_repo` is the target. `support_repo` contains this workflow and `research-sweep`. The
 `selected_task` object has `backend`, `id`, `title`, `body`, `url`, `prior_status`, and its backend `labels` or `markers`.
+
 The controller resolves `runtime_models.T3`, `runtime_models.T4`, and `runtime_models.T5`
-from `config/model-tiers.json`. Do not put model identifiers in this workflow.
+from `config/model-tiers.json`. It resolves `T4ReviewAfterRepair` from a T4 fallback whose provider differs from the T4 repair model. Do not put model identifiers in this workflow.
 
 Optional caps are `max_plan_verdicts`, `max_repairs`, and `max_agents`. Their defaults
 are 2, 2, and 24. The workflow accepts its boundary modes and the controller modes. It maps `after-current` to `none`, and maps `discard-current` or `all` to `discard`.

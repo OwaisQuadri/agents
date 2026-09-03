@@ -39,12 +39,13 @@ OUT: active work, leases, pull request watches, and backend statuses that match 
 8. Use only the returned runnable backend item. Do not create or file work. Release the task lease when no item is runnable.
 9. Record the task and prior status with `autonomous-engineer-state heartbeat --run <run> --task <id> --prior-status <status> --stage selected`.
 10. Set the selected item active through its backend. GitHub Projects uses `in-progress`. Linear uses its active state. For roadmap.json, set `in progress`.
-11. Resolve the support repository from the installed autonomous-engineer skill symlink. Dispatch its `workflows/autonomous-engineer/autonomous-engineer.workflow.js` and pass that root as `support_repo`. Keep one active task per repository.
-12. The running watcher discovers each marked draft Pull Request. A changed watch state dispatches `/autopilot` under the explicit `pr-care` lease command from the start procedure. Keep task cycles running while that repair runs.
-13. On every wake, inspect each changed Pull Request. If it merged, set its backend item to done. If it remains open, let `/autopilot` handle it without merging.
-14. Keep Pull Request questions in pull request comments. Do not stop unrelated work for a question.
-15. After verified ready work, set GitHub Projects and roadmap.json to `resolved`. Set Linear to its review state. Set done only after the pull request merges.
-16. Release the task lease after the workflow ends. Start another cycle only when quota_admission admits work, a runnable item exists, and the stop mode permits it.
+11. Resolve the support repository from the installed autonomous-engineer skill symlink. Resolve T3, T4, and T5 from its tier file. Resolve `T4ReviewAfterRepair` from a T4 fallback on a different provider than T4.
+12. Dispatch its `workflows/autonomous-engineer/autonomous-engineer.workflow.js` and pass that root as `support_repo`. Keep one active task per repository.
+13. The running watcher discovers each marked draft Pull Request. A changed watch state dispatches `/autopilot` under the explicit `pr-care` lease command from the start procedure. Keep task cycles running while that repair runs.
+14. On every wake, inspect each changed Pull Request. If it merged, set its backend item to done. If it remains open, let `/autopilot` handle it without merging.
+15. Keep Pull Request questions in pull request comments. Do not stop unrelated work for a question.
+16. After verified ready work, set GitHub Projects and roadmap.json to `resolved`. Set Linear to its review state. Set done only after the pull request merges.
+17. Release the task lease after the workflow ends. Start another cycle only when quota_admission admits work, a runnable item exists, and the stop mode permits it.
 
 ## Stop modes
 

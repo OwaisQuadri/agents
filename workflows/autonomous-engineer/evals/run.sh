@@ -50,6 +50,7 @@ checks=(
   "model: models.T3"
   "isolation: 'worktree'"
   "model: models.T4"
+  "models.T4ReviewAfterRepair"
   "model: models.T5"
   "while (!verification.is_pass && state.repairs < maxRepairs)"
   "return result('verified-ready'"
