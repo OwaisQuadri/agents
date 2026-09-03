@@ -24,12 +24,13 @@ OUT: one chosen task — either an existing backlog id (with its short/long) or 
 ## autonomous-caller mode
 
 Only an approved standing driver may use this mode. The caller passes autonomous approval,
-the exact driver, and exclusions. Reuse that driver. Select one existing runnable backend
-item. Never invent or file an item. Return the pick without another human confirmation.
+the exact driver, and exclusions. Reuse that driver.
+
+Always add `manual-only` to the exclusions. Select one existing runnable backend item. Never invent or file an item. Return the pick without another human confirmation.
 
 Treat the exact driver `priority tickets` as complete. For a GitHub Issues backend, use
 `skills/task-graph/scripts/next-issue.sh` for that driver. Do not replace its ranking with
-an issue-list guess. For another backend, use its existing runnable-item ranking.
+an issue-list guess. Verify the returned issue's labels before selection. If it has `manual-only`, return no runnable autonomous item. For another backend, use its existing runnable-item ranking and reject the same normalized marker.
 
 ## why interrogation, not a queue read
 

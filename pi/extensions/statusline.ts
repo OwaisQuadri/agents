@@ -220,26 +220,6 @@ function formatCalendarReset(epochSeconds: number): string {
 	return `${day} at ${reset.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 
-function renderBar(usage: ProviderUsage, theme: { fg: (color: string, text: string) => string }): string | null {
-	const selected = selectWindow(usage);
-	if (!selected) return null;
-	const { window, label } = selected;
-	const nowSeconds = Math.round(Date.now() / 1000);
-	const percent = Math.floor(window.usedPercent);
-	const diff = Math.max(0, (window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
-	const pace = clampPercent(((window.windowSeconds - diff) / window.windowSeconds) * 100);
-	const width = Math.floor((process.stdout.columns ?? 80) / 2);
-	const fill = Math.floor((percent * width) / 100);
-	const mark = Math.min(width - 1, Math.max(0, Math.floor((pace * width) / 100)));
-	let bar = "";
-	for (let index = 0; index < width; index++) {
-		if (index === mark) bar += theme.fg("warning", "│");
-		else if (index < fill) bar += "█";
-		else bar += theme.fg("dim", "░");
-	}
-	return `${theme.fg("dim", label)} ${bar} ${percent}% ${theme.fg("dim", `(resets in ${formatReset(diff)})`)}`;
-}
-
 function quotaAdmissionFor(usage: ProviderUsage | null, nowSeconds: number): ProviderAdmission {
 	const selected = usage ? selectWindow(usage) : null;
 	if (!selected) {
@@ -313,10 +293,8 @@ export default function statusline(pi: ExtensionAPI) {
 			const selected = usage ? selectWindow(usage) : null;
 			if (!provider || !selected) {
 				(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = undefined;
-				ctx.ui.setStatus("statusline", undefined);
 				return;
 			}
-			ctx.ui.setStatus("statusline", renderBar(usage, ctx.ui.theme) ?? undefined);
 			const nowSeconds = Math.round(Date.now() / 1000);
 			const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
 			(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = {

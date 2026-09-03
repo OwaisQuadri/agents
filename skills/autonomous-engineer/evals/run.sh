@@ -48,7 +48,7 @@ CASES:
 """
 
 commands = [
-    ["pi", "-p", "--", prompt],
+    ["pi", "--no-tools", "--no-extensions", "-p", "--", prompt],
     ["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "mcp_servers={}", prompt],
 ]
 verdicts = None

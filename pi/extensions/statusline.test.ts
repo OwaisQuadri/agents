@@ -683,7 +683,7 @@ test("quota_admission rejects plans when both providers are ahead of pace", asyn
 	assert.equal(admission.isAdmitted, false);
 });
 
-test("quota_admission fails closed when one provider fetch is missing", async () => {
+test("quota_admission keeps a missing provider ineligible when the other admits", async () => {
 	const restoreFetch = installMockFetch(async (input) =>
 		requestUrl(input).includes("api/oauth/usage")
 			? jsonResponse(anthropicUsage(50, 3_600))

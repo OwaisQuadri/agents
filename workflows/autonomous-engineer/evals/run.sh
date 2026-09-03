@@ -3,12 +3,18 @@ set -eu
 here=${0:A:h}
 def=$here/../autonomous-engineer.workflow.js
 cases=$here/cases.jsonl
-mode=${1:-all}
+mode=all
 
-if [[ $mode != all && $mode != --holdout ]]; then
-  print -u2 "usage: $0 [--holdout]"
-  exit 2
-fi
+for argument in "$@"; do
+  if [[ $argument == --holdout ]]; then
+    mode=--holdout
+  elif [[ $def == $here/../autonomous-engineer.workflow.js ]]; then
+    def=$argument
+  else
+    print -u2 "usage: $0 [--holdout] [candidate-workflow.js]"
+    exit 2
+  fi
+done
 
 node - "$def" <<'NODE'
 const fs = require('fs')
@@ -31,6 +37,9 @@ checks=(
   "autonomous-engineer-state repair-worktree --repo \${repo}"
   "is_real_worktree"
   "blockedBy"
+  "manual-only"
+  "closingIssuesReferences"
+  "workflow("
   "resume-draft"
   "<!-- autonomous-engineer repairs=\${state.repairs} -->"
   "Closes #\${task.id}"
@@ -38,6 +47,7 @@ checks=(
   "agentType: 'code-reviewer'"
   "'anchor-verifier'"
   "model: models.T3"
+  "isolation: 'worktree'"
   "model: models.T4"
   "model: models.T5"
   "while (!verification.is_pass && state.repairs < maxRepairs)"
@@ -70,7 +80,7 @@ count=0
 while IFS= read -r line; do
   [[ $line == *$selected* ]] || continue
   id=$(print -r -- "$line" | node -e 'let input=""; process.stdin.on("data", d => input += d).on("end", () => process.stdout.write(JSON.parse(input).id))')
-  print -r -- "{\"id\":\"$id\",\"tier\":\"static\",\"score\":10}"
+  print -r -- "{\"id\":\"$id\",\"tier\":\"static\",\"score\":5}"
   (( count += 1 ))
 done < "$cases"
 
@@ -78,4 +88,4 @@ done < "$cases"
   print -u2 'selected eval slice is empty'
   exit 1
 }
-print -u2 "passed $count static workflow cases ($mode)"
+print -u2 "passed $count static workflow cases at the 5/10 mechanical ceiling ($mode)"
