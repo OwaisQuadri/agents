@@ -16,15 +16,10 @@ instead of your real home. `--dry-run` on top of it means the whole run is read-
 plan only, nothing written, and it returns to your shell. This is the safe default for
 an agent checking its own change: fast, non-destructive, no surprises.
 
-**Without `--dry-run`, `./install.sh --test` writes real symlinks into the sandbox home
-and then drops you into an interactive `pi` session at the very end (it `exec`s into
-`pi`, so the script never returns to your shell).** That's the shape to reach for when
-you want to poke around the sandboxed result by hand, and the shape to avoid when you
-just want a pass/fail signal — a foreground agent invoking it bare will hang waiting on
-an interactive session it can't drive. This split is exactly what AGNT-0064 (open,
-`roadmap.json`) tracks fixing properly (separate `build`/`run`/`build_run` scripts,
-`build` wired into `hooks/post-checkout`); until that lands, always pair `--test` with
-`--dry-run` from a script or an agent.
+Without `--dry-run`, `./install.sh --test` writes links into the sandbox home and
+returns to the shell. Use `./test/build` for the same build-only behavior. Use
+`./test/run` to open the existing sandbox, or use `./test/build_run` to rebuild it and
+open an interactive Pi session.
 
 ## the env var is `REPO_TARGET`, not `REPO_ROOT`
 

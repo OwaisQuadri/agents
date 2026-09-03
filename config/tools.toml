@@ -206,7 +206,7 @@ pi_package = "npm"
 # Pinned to our fork (fix/viewport-leak-startup-banner) until upstream
 # PR dondai44423/donsetch#111 lands: silences a raw stderr write that
 # corrupted the pi TUI viewport on every session.
-source = { url = "https://github.com/OwaisQuadri/donsetch.git", revision = "b8d8b259c32752ca0e9a4ef3c4a8851c91ae8687" }
+source = { url = "https://github.com/OwaisQuadri/donsetch.git", revision = "cc58faaa22df0dd12db553ed77d7ad6eefde3da2" }
 installer = { command = "/bin/zsh", args = ["-lc", "cargo build --release && mkdir -p npm/binaries && cp target/release/donsetch npm/binaries/donsetch.tmp && mv npm/binaries/donsetch.tmp npm/binaries/donsetch"], preview_args = ["-lc", "cargo --version"] }
 
 [[tools]]
