@@ -96,7 +96,14 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
             add_directory(&extension_directory, &mut planned_paths, &mut actions)?;
 
             if let Some(extension) = &tool.pi_extension {
-                let source = resolve_inside(&context.repository_root, extension, "Pi extension")?;
+                let (source, source_root) = if tool.is_pi_extension_from_source {
+                    (working_directory.join(extension), working_directory.clone())
+                } else {
+                    (
+                        resolve_inside(&context.repository_root, extension, "Pi extension")?,
+                        context.repository_root.clone(),
+                    )
+                };
                 let destination = extension_directory.join(
                     extension
                         .file_name()
@@ -106,6 +113,7 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                 reserve_destination(&destination, &mut planned_paths, "Pi extension")?;
                 actions.push(Action::LinkPiExtension {
                     source,
+                    source_root,
                     destination,
                 });
             }
@@ -361,6 +369,7 @@ mod tests {
             commands: vec![PathBuf::from("bin/rag")],
             mcp_server: None,
             pi_extension: None,
+            is_pi_extension_from_source: false,
             pi_package: None,
             skills: Vec::new(),
             herdr_plugin: None,
@@ -428,6 +437,60 @@ mod tests {
     }
 
     #[test]
+    fn links_a_pi_extension_from_a_git_source() {
+        let fixture = Fixture::new();
+        let mut spec = tool(ToolSource::Git {
+            url: "https://example.test/herdr.git".to_owned(),
+            revision: "abc123".to_owned(),
+        });
+        spec.commands.clear();
+        spec.pi_extension = Some(PathBuf::from(
+            "src/integration/assets/pi/herdr-agent-state.ts",
+        ));
+        spec.is_pi_extension_from_source = true;
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan");
+
+        assert_eq!(
+            plan.actions[5],
+            Action::LinkPiExtension {
+                source: context
+                    .cache_root
+                    .join("rag/src/integration/assets/pi/herdr-agent-state.ts"),
+                source_root: context.cache_root.join("rag"),
+                destination: context
+                    .home_root
+                    .join(".pi/agent/extensions/herdr-agent-state.ts"),
+            }
+        );
+    }
+
+    #[test]
+    fn plans_a_source_extension_that_the_next_revision_adds() {
+        let fixture = Fixture::new();
+        let checkout = fixture.root.join("cache/rag");
+        initialize_checkout(&checkout, "https://example.test/herdr.git");
+        let mut spec = tool(ToolSource::Git {
+            url: "https://example.test/herdr.git".to_owned(),
+            revision: "next-revision".to_owned(),
+        });
+        spec.commands.clear();
+        spec.pi_extension = Some(PathBuf::from("next/herdr-agent-state.ts"));
+        spec.is_pi_extension_from_source = true;
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("plan before revision checkout");
+
+        assert!(matches!(
+            &plan.actions[4],
+            Action::LinkPiExtension { source, source_root, .. }
+                if source == &checkout.join("next/herdr-agent-state.ts")
+                    && source_root == &checkout
+        ));
+    }
+
+    #[test]
     fn plans_resource_only_package_extension_and_skill_links() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.root.join("bundle")).expect("bundle source");
@@ -468,6 +531,7 @@ mod tests {
             Action::LinkPiExtension {
                 source: fs::canonicalize(fixture.root.join("extensions/rag.ts"))
                     .expect("canonical extension"),
+                source_root: fixture.root.clone(),
                 destination: context.home_root.join(".pi/agent/extensions/rag.ts"),
             }
         );
@@ -673,6 +737,7 @@ mod tests {
             Action::LinkPiExtension {
                 source: fs::canonicalize(fixture.root.join("extensions/rag.ts"))
                     .expect("canonical extension"),
+                source_root: fixture.root.clone(),
                 destination: context.home_root.join(".pi/agent/extensions/rag.ts"),
             }
         );

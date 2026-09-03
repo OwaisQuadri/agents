@@ -20,6 +20,7 @@ pub struct ToolSpec {
     pub commands: Vec<PathBuf>,
     pub mcp_server: Option<String>,
     pub pi_extension: Option<PathBuf>,
+    pub is_pi_extension_from_source: bool,
     pub pi_package: Option<PathBuf>,
     pub skills: Vec<PathBuf>,
     pub herdr_plugin: Option<PathBuf>,
@@ -62,6 +63,8 @@ struct RawTool {
     mcp_server: Option<String>,
     #[serde(default)]
     pi_extension: Option<PathBuf>,
+    #[serde(default)]
+    is_pi_extension_from_source: bool,
     #[serde(default)]
     pi_package: Option<PathBuf>,
     #[serde(default)]
@@ -192,6 +195,12 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         {
             return Err(tool_invalid(name, "MCP server reference is empty"));
         }
+        if raw_tool.is_pi_extension_from_source && raw_tool.pi_extension.is_none() {
+            return Err(tool_invalid(
+                name,
+                "is_pi_extension_from_source requires pi_extension",
+            ));
+        }
         if let Some(extension) = &raw_tool.pi_extension {
             validate_relative(name, "Pi extension", extension)?;
             let provided = extension.file_name().ok_or_else(|| {
@@ -247,6 +256,7 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
             commands: raw_tool.commands,
             mcp_server: raw_tool.mcp_server,
             pi_extension: raw_tool.pi_extension,
+            is_pi_extension_from_source: raw_tool.is_pi_extension_from_source,
             pi_package: raw_tool.pi_package,
             skills: raw_tool.skills,
             herdr_plugin: raw_tool.herdr_plugin,
@@ -407,6 +417,7 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             tool.pi_extension.as_deref(),
             Some(Path::new("pi/extensions/rag.ts"))
         );
+        assert!(!tool.is_pi_extension_from_source);
         assert_eq!(
             tool.pi_package.as_deref(),
             Some(Path::new("pi/packages/rag"))
@@ -420,6 +431,20 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
         );
         assert_eq!(tool.installer.preview_args, ["--dry-run"]);
         assert!(matches!(tool.source, ToolSource::Git { .. }));
+    }
+
+    #[test]
+    fn rejects_source_extension_selection_without_an_extension() {
+        let text = TOOL
+            .replace("pi_extension = \"pi/extensions/rag.ts\"\n", "")
+            .replace(
+                "pi_package = \"pi/packages/rag\"",
+                "pi_package = \"pi/packages/rag\"\nis_pi_extension_from_source = true",
+            );
+        let error = load_text(&text).expect_err("source extension requires an extension");
+        assert!(error
+            .to_string()
+            .contains("is_pi_extension_from_source requires pi_extension"));
     }
 
     #[test]
@@ -616,6 +641,30 @@ installer = { command = "/usr/bin/true", args = [], preview_args = [] }
             ToolSource::Git { url, revision }
                 if url == "https://github.com/mozilla/rust-code-analysis.git"
                     && revision == "37e5d83c056c8cbf827223d5814a93c5218df1a9"
+        ));
+    }
+
+    #[test]
+    fn repository_manifest_declares_herdr_pi_integration() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/tools.toml");
+        let manifest = load(&path).expect("repository manifest loads");
+        let tool = manifest
+            .tools
+            .iter()
+            .find(|tool| tool.name == "herdr-pi-agent-state")
+            .expect("Herdr Pi integration exists");
+        assert_eq!(tool.platforms, [Platform::Macos, Platform::Linux]);
+        assert!(tool.commands.is_empty());
+        assert_eq!(
+            tool.pi_extension.as_deref(),
+            Some(Path::new("src/integration/assets/pi/herdr-agent-state.ts"))
+        );
+        assert!(tool.is_pi_extension_from_source);
+        assert!(matches!(
+            &tool.source,
+            ToolSource::Git { url, revision }
+                if url == "https://github.com/OwaisQuadri/herdr.git"
+                    && revision == "6a3b4919f691212dd727f3cbb3777f3de1a60f3a"
         ));
     }
 

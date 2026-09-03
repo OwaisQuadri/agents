@@ -54,6 +54,7 @@ fn render_action(action: &Action, is_dry_run: bool) -> String {
         Action::LinkPiExtension {
             source,
             destination,
+            ..
         } => format!(
             "link Pi extension {} -> {}",
             source.display(),
@@ -218,11 +219,15 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
             args,
             ..
         } => run_installer(tool, working_directory, command, args),
-        Action::LinkCommand {
+        Action::LinkPiExtension {
             source,
+            source_root,
             destination,
+        } => {
+            verify_source_inside(source, source_root)?;
+            create_verified_link(source, destination)
         }
-        | Action::LinkPiExtension {
+        Action::LinkCommand {
             source,
             destination,
         }
@@ -349,6 +354,24 @@ fn link_herdr_plugin(tool: &str, source: &Path) -> Result<(), SyncError> {
             status,
         })
     }
+}
+
+fn verify_source_inside(source: &Path, source_root: &Path) -> Result<(), SyncError> {
+    let resolved_source =
+        fs::canonicalize(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
+    let resolved_root = fs::canonicalize(source_root)
+        .map_err(|error| SyncError::Io(source_root.to_path_buf(), error))?;
+    if !resolved_source.starts_with(&resolved_root) {
+        return Err(SyncError::StaleState(
+            source.to_path_buf(),
+            format!(
+                "source resolves outside {} to {}",
+                resolved_root.display(),
+                resolved_source.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn create_verified_link(source: &Path, destination: &Path) -> Result<(), SyncError> {
@@ -571,6 +594,36 @@ mod tests {
 
         assert!(!fixture.0.join("home/.pi/agent/extensions").exists());
         assert!(!fixture.0.join("home/.agents/skills").exists());
+    }
+
+    #[test]
+    fn refuses_a_pi_extension_symlink_that_escapes_its_source() {
+        let fixture = Fixture::new();
+        let source_root = fixture.0.join("checkout");
+        let destination_root = fixture.0.join("home/.pi/agent/extensions");
+        fs::create_dir_all(&source_root).expect("source root");
+        let outside = fixture.0.join("outside.ts");
+        fs::write(&outside, "outside").expect("outside source");
+        let source = source_root.join("herdr-agent-state.ts");
+        std::os::unix::fs::symlink(&outside, &source).expect("escaping source link");
+        let destination = destination_root.join("herdr-agent-state.ts");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: destination_root,
+                },
+                Action::LinkPiExtension {
+                    source: source.clone(),
+                    source_root,
+                    destination: destination.clone(),
+                },
+            ],
+        };
+
+        let error = run(&plan, false).expect_err("escaping source must fail");
+
+        assert!(error.to_string().contains("source resolves outside"));
+        assert!(!destination.exists());
     }
 
     #[test]

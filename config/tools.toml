@@ -135,6 +135,15 @@ source = { url = "https://github.com/nicobailon/pi-web-access", revision = "3b87
 installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["ci", "--omit=dev", "--dry-run"] }
 
 [[tools]]
+name = "herdr-pi-agent-state"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "src/integration/assets/pi/herdr-agent-state.ts"
+is_pi_extension_from_source = true
+source = { url = "https://github.com/OwaisQuadri/herdr.git", revision = "6a3b4919f691212dd727f3cbb3777f3de1a60f3a" }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "herdr-fresh-worktree"
 platforms = ["macos", "linux"]
 commands = []

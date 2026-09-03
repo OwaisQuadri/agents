@@ -42,6 +42,7 @@ pub enum Action {
     },
     LinkPiExtension {
         source: PathBuf,
+        source_root: PathBuf,
         destination: PathBuf,
     },
     LinkPiPackage {
