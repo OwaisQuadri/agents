@@ -1,9 +1,10 @@
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 use crate::manifest::Platform;
-use crate::plan::{Action, Plan};
+use crate::plan::{pi_extension_backup, Action, Plan};
 use crate::SyncError;
 
 /// Renders a plan as one stable line per action in application order.
@@ -54,10 +55,17 @@ fn render_action(action: &Action, is_dry_run: bool) -> String {
         Action::LinkPiExtension {
             source,
             destination,
+            is_takeover_allowed,
+            ..
         } => format!(
-            "link Pi extension {} -> {}",
+            "link Pi extension {} -> {}{}",
             source.display(),
-            destination.display()
+            destination.display(),
+            if *is_takeover_allowed {
+                " with managed-file takeover enabled"
+            } else {
+                ""
+            }
         ),
         Action::LinkPiPackage {
             source,
@@ -153,8 +161,12 @@ fn check_stale_state(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
                     require_clean_repository(repository)?;
                 }
             }
+            Action::LinkPiExtension {
+                destination,
+                is_takeover_allowed,
+                ..
+            } => check_pi_extension_destination(destination, *is_takeover_allowed)?,
             Action::LinkCommand { destination, .. }
-            | Action::LinkPiExtension { destination, .. }
             | Action::LinkPiPackage { destination, .. }
             | Action::LinkSkill { destination, .. } => check_link_destination(destination)?,
             Action::CheckoutRevision { .. }
@@ -182,6 +194,21 @@ fn stale_or_io(path: &Path, detail: &str, error: std::io::Error) -> SyncError {
         SyncError::StaleState(path.to_path_buf(), detail.to_owned())
     } else {
         SyncError::Io(path.to_path_buf(), error)
+    }
+}
+
+fn check_pi_extension_destination(
+    destination: &Path,
+    is_takeover_allowed: bool,
+) -> Result<(), SyncError> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Ok(()),
+        Ok(metadata) if metadata.is_file() && is_takeover_allowed => {
+            require_missing(&pi_extension_backup(destination))
+        }
+        Ok(_) => Err(SyncError::DestinationCollision(destination.to_path_buf())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
     }
 }
 
@@ -218,11 +245,13 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
             args,
             ..
         } => run_installer(tool, working_directory, command, args),
-        Action::LinkCommand {
+        Action::LinkPiExtension {
             source,
+            source_root,
             destination,
-        }
-        | Action::LinkPiExtension {
+            is_takeover_allowed,
+        } => link_pi_extension(source, source_root, destination, *is_takeover_allowed),
+        Action::LinkCommand {
             source,
             destination,
         }
@@ -349,6 +378,143 @@ fn link_herdr_plugin(tool: &str, source: &Path) -> Result<(), SyncError> {
             status,
         })
     }
+}
+
+fn link_pi_extension(
+    source: &Path,
+    source_root: &Path,
+    destination: &Path,
+    is_takeover_allowed: bool,
+) -> Result<(), SyncError> {
+    verify_source_inside(source, source_root)?;
+    let is_regular_file = fs::symlink_metadata(destination)
+        .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink());
+    if !is_regular_file {
+        create_verified_link(source, destination)?;
+        return verify_source_inside(destination, source_root);
+    }
+    if !is_takeover_allowed {
+        return Err(SyncError::DestinationCollision(destination.to_path_buf()));
+    }
+
+    let backup = pi_extension_backup(destination);
+    let (snapshot, identity) = create_verified_backup(destination, &backup)?;
+    verify_unchanged(destination, &snapshot, identity)?;
+    verify_source_inside(source, source_root)?;
+    atomic_replace_with_link(source, source_root, destination)
+}
+
+fn create_verified_backup(
+    source: &Path,
+    backup: &Path,
+) -> Result<(Vec<u8>, (u64, u64)), SyncError> {
+    let identity = file_identity(source)?;
+    let temporary_backup = backup.with_extension(format!("tmp.{}", std::process::id()));
+    let snapshot = copy_new(source, &temporary_backup)?;
+    if let Err(error) = fs::hard_link(&temporary_backup, backup) {
+        let _ = fs::remove_file(&temporary_backup);
+        return Err(SyncError::Io(backup.to_path_buf(), error));
+    }
+    let observed = fs::read(backup).map_err(|error| SyncError::Io(backup.to_path_buf(), error))?;
+    if observed != snapshot {
+        return Err(SyncError::StaleState(
+            backup.to_path_buf(),
+            "backup does not match its source".to_owned(),
+        ));
+    }
+    fs::remove_file(&temporary_backup).map_err(|error| SyncError::Io(temporary_backup, error))?;
+    Ok((snapshot, identity))
+}
+
+fn verify_unchanged(
+    source: &Path,
+    snapshot: &[u8],
+    expected_identity: (u64, u64),
+) -> Result<(), SyncError> {
+    let current = fs::read(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
+    if current != snapshot || file_identity(source)? != expected_identity {
+        return Err(SyncError::StaleState(
+            source.to_path_buf(),
+            "managed file changed while it was backed up".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn file_identity(path: &Path) -> Result<(u64, u64), SyncError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::metadata(path).map_err(|error| SyncError::Io(path.to_path_buf(), error))?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+fn atomic_replace_with_link(
+    source: &Path,
+    source_root: &Path,
+    destination: &Path,
+) -> Result<(), SyncError> {
+    let temporary_link = destination.with_extension(format!("link.{}", std::process::id()));
+    std::os::unix::fs::symlink(source, &temporary_link)
+        .map_err(|error| SyncError::Io(temporary_link.clone(), error))?;
+    if let Err(error) = verify_source_inside(&temporary_link, source_root) {
+        let _ = fs::remove_file(&temporary_link);
+        return Err(error);
+    }
+    fs::rename(&temporary_link, destination)
+        .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+    verify_source_inside(destination, source_root)
+}
+
+fn copy_new(source: &Path, destination: &Path) -> Result<Vec<u8>, SyncError> {
+    let contents = fs::read(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
+    let permissions =
+        fs::metadata(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
+    let mut destination_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+    let copy_result = (|| {
+        destination_file
+            .write_all(&contents)
+            .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+        destination_file
+            .sync_all()
+            .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+        fs::set_permissions(destination, permissions.permissions())
+            .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+        let observed = fs::read(destination)
+            .map_err(|error| SyncError::Io(destination.to_path_buf(), error))?;
+        if observed != contents {
+            return Err(SyncError::StaleState(
+                destination.to_path_buf(),
+                "copied file does not match its source".to_owned(),
+            ));
+        }
+        Ok(contents)
+    })();
+    if copy_result.is_err() {
+        let _ = fs::remove_file(destination);
+    }
+    copy_result
+}
+
+fn verify_source_inside(source: &Path, source_root: &Path) -> Result<(), SyncError> {
+    let resolved_source =
+        fs::canonicalize(source).map_err(|error| SyncError::Io(source.to_path_buf(), error))?;
+    let resolved_root = fs::canonicalize(source_root)
+        .map_err(|error| SyncError::Io(source_root.to_path_buf(), error))?;
+    if !resolved_source.starts_with(&resolved_root) {
+        return Err(SyncError::StaleState(
+            source.to_path_buf(),
+            format!(
+                "source resolves outside {} to {}",
+                resolved_root.display(),
+                resolved_source.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn create_verified_link(source: &Path, destination: &Path) -> Result<(), SyncError> {
@@ -571,6 +737,86 @@ mod tests {
 
         assert!(!fixture.0.join("home/.pi/agent/extensions").exists());
         assert!(!fixture.0.join("home/.agents/skills").exists());
+    }
+
+    #[test]
+    fn refuses_a_pi_extension_symlink_that_escapes_its_source() {
+        let fixture = Fixture::new();
+        let source_root = fixture.0.join("checkout");
+        let destination_root = fixture.0.join("home/.pi/agent/extensions");
+        fs::create_dir_all(&source_root).expect("source root");
+        let outside = fixture.0.join("outside.ts");
+        fs::write(&outside, "outside").expect("outside source");
+        let source = source_root.join("herdr-agent-state.ts");
+        std::os::unix::fs::symlink(&outside, &source).expect("escaping source link");
+        let destination = destination_root.join("herdr-agent-state.ts");
+        let plan = Plan {
+            actions: vec![
+                Action::CreateDirectory {
+                    path: destination_root,
+                },
+                Action::LinkPiExtension {
+                    source: source.clone(),
+                    source_root,
+                    destination: destination.clone(),
+                    is_takeover_allowed: false,
+                },
+            ],
+        };
+
+        let error = run(&plan, false).expect_err("escaping source must fail");
+
+        assert!(error.to_string().contains("source resolves outside"));
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn backs_up_an_allowed_pi_extension_takeover() {
+        let fixture = Fixture::new();
+        let source_root = fixture.0.join("checkout");
+        let destination_root = fixture.0.join("home/.pi/agent/extensions");
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&destination_root).expect("destination root");
+        let source = source_root.join("herdr-agent-state.ts");
+        fs::write(&source, "version 9").expect("source");
+        let destination = destination_root.join("herdr-agent-state.ts");
+        fs::write(&destination, "version 8").expect("existing extension");
+        let plan = Plan {
+            actions: vec![Action::LinkPiExtension {
+                source: source.clone(),
+                source_root,
+                destination: destination.clone(),
+                is_takeover_allowed: true,
+            }],
+        };
+
+        run(&plan, false).expect("takeover succeeds");
+
+        assert_eq!(
+            fs::read_to_string(pi_extension_backup(&destination)).unwrap(),
+            "version 8"
+        );
+        assert_eq!(fs::read_link(destination).unwrap(), source);
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_takeover_backup_created_after_preflight() {
+        let fixture = Fixture::new();
+        let source_root = fixture.0.join("checkout");
+        fs::create_dir_all(&source_root).expect("source root");
+        let source = source_root.join("herdr-agent-state.ts");
+        fs::write(&source, "version 9").expect("source");
+        let destination = fixture.0.join("herdr-agent-state.ts");
+        fs::write(&destination, "version 8").expect("existing extension");
+        let backup = pi_extension_backup(&destination);
+        fs::write(&backup, "protected backup").expect("racing backup");
+
+        let error = link_pi_extension(&source, &source_root, &destination, true)
+            .expect_err("existing backup must block takeover");
+
+        assert!(matches!(error, SyncError::Io(_, _)));
+        assert_eq!(fs::read_to_string(destination).unwrap(), "version 8");
+        assert_eq!(fs::read_to_string(backup).unwrap(), "protected backup");
     }
 
     #[test]

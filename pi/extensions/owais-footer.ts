@@ -20,6 +20,12 @@ type RepositoryState =
 	| { isGit: true; project: string; branch: string | undefined }
 	| { isGit: false; path: string };
 
+type ActivityKind = "working" | "delegated" | "ready";
+
+type SubagentLifecycleEvent = {
+	id?: unknown;
+};
+
 export type PullRequest = {
 	url: string;
 	number: number;
@@ -349,6 +355,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let pullRequest: PullRequest | undefined;
 	let isWorking = false;
 	let startedAt = 0;
+	const activeSubagentIds = new Set<string>();
 	let requestRender: (() => void) | undefined;
 	let refreshGeneration = 0;
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
@@ -501,7 +508,19 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		requestRender?.();
 	}
 
+	function setSubagentActive(payload: unknown, isActive: boolean): void {
+		if (payload === null || typeof payload !== "object") return;
+		const { id } = payload as SubagentLifecycleEvent;
+		if (typeof id !== "string" || id.trim().length === 0) return;
+		const sizeBefore = activeSubagentIds.size;
+		if (isActive) activeSubagentIds.add(id);
+		else activeSubagentIds.delete(id);
+		if (activeSubagentIds.size !== sizeBefore) requestRender?.();
+	}
+
 	pi.on("session_start", (_event, ctx) => {
+		isWorking = false;
+		activeSubagentIds.clear();
 		if (ctx.mode !== "tui") return;
 		activeContext = ctx;
 		ctx.ui.setWorkingVisible?.(false);
@@ -557,8 +576,17 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 						const safeWidth = Math.max(0, width);
 						const elapsedMilliseconds = Math.max(0, Date.now() - startedAt);
 						const elapsedSeconds = elapsedMilliseconds / 1000;
-						const activity = isWorking ? elapsedLabel(startedAt) : "Ready";
-						const activityLabel = isWorking ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
+						let activityKind: ActivityKind = "ready";
+						let activity = "Ready";
+						if (activeSubagentIds.size > 0) {
+							activityKind = "delegated";
+							activity = "Delegated";
+						}
+						if (isWorking) {
+							activityKind = "working";
+							activity = elapsedLabel(startedAt);
+						}
+						const activityLabel = activityKind === "working" ? `${brailleOrbit(elapsedMilliseconds)} ${activity}` : activity;
 						const state = repository;
 						const ctx = activeContext ?? ({} as ExtensionContext);
 						const provider = ctx.model?.provider ?? "unknown";
@@ -627,11 +655,15 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 							});
 						}
 
-						const statusColorize = (text: string) => isWorking ? fgHex(activityColor(elapsedSeconds), text) : theme.fg("success", text);
+						const statusColorize = (text: string) => {
+							if (activityKind === "working") return fgHex(activityColor(elapsedSeconds), text);
+							if (activityKind === "delegated") return theme.fg("accent", text);
+							return theme.fg("success", text);
+						};
 						items.push({
 							id: "status",
 							full: textForm(activityLabel, statusColorize),
-							shorten: isWorking ? textForm(activity, statusColorize) : undefined,
+							shorten: activityKind === "working" ? textForm(activity, statusColorize) : undefined,
 						});
 
 						const identity = (text: string) => text;
@@ -669,6 +701,9 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			void refreshBranchSummary(activeContext.cwd, refreshGeneration);
 		}
 	});
+	pi.events.on("subagents:started", (payload) => setSubagentActive(payload, true));
+	pi.events.on("subagents:completed", (payload) => setSubagentActive(payload, false));
+	pi.events.on("subagents:failed", (payload) => setSubagentActive(payload, false));
 	pi.on("model_select", (_event, ctx) => {
 		activeContext = ctx;
 		requestRender?.();
@@ -676,6 +711,9 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
 		if (pullRequestTimer) clearInterval(pullRequestTimer);
 		pullRequestTimer = undefined;
+		isWorking = false;
+		activeSubagentIds.clear();
+		requestRender?.();
 		activeContext = undefined;
 		requestRender = undefined;
 	});

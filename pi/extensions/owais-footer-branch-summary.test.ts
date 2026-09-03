@@ -109,11 +109,18 @@ function makeContext(
 	userAsks: string[] = [],
 ) {
 	const handlers = new Map<string, (...args: unknown[]) => unknown>();
+	const customEventHandlers = new Map<string, (payload: unknown) => unknown>();
 	const theme = { fg(_color: string, text: string) { return text; } };
 	let widget: { dispose?(): void; render(width: number): string[] } | undefined;
 	let footer: { dispose?(): void } | undefined;
 	const api = {
 		on(event: string, handler: (...args: unknown[]) => unknown) { handlers.set(event, handler); },
+		events: {
+			on(event: string, handler: (payload: unknown) => unknown) {
+				customEventHandlers.set(event, handler);
+				return () => customEventHandlers.delete(event);
+			},
+		},
 		async exec(command: string, args: string[]) { return exec(command, args); },
 	};
 	const ctx = {
@@ -136,7 +143,14 @@ function makeContext(
 			},
 		},
 	};
-	return { api, ctx, handlers, getWidget: () => widget, disposeAll: () => { widget?.dispose?.(); footer?.dispose?.(); } };
+	return {
+		api,
+		ctx,
+		handlers,
+		customEventHandlers,
+		getWidget: () => widget,
+		disposeAll: () => { widget?.dispose?.(); footer?.dispose?.(); },
+	};
 }
 
 async function settle(times = 6): Promise<void> {
@@ -206,6 +220,108 @@ test("pure: truncateSegmentText fromStart keeps the trailing text and leads with
 		assert.ok(truncated.endsWith("a59b"), "the distinguishing suffix survives");
 		assert.equal(truncated.length, 12);
 	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("one background child shows Delegated after the parent settles", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec();
+	const { api, ctx, handlers, customEventHandlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await customEventHandlers.get("subagents:started")?.({ id: "child-1" });
+		await handlers.get("agent_settled")?.({}, ctx);
+		assert.match(getWidget()?.render(160)[1] ?? "", /Delegated/);
+	} finally {
+		await handlers.get("session_shutdown")?.({}, ctx);
+		disposeAll();
+		await extensions.dispose();
+	}
+});
+
+test("overlapping children keep Delegated until both reach terminal events", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec();
+	const { api, ctx, handlers, customEventHandlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await customEventHandlers.get("subagents:started")?.({ id: "child-1" });
+		await customEventHandlers.get("subagents:started")?.({ id: "child-2" });
+		await handlers.get("agent_settled")?.({}, ctx);
+		await customEventHandlers.get("subagents:completed")?.({ id: "child-1" });
+		assert.match(getWidget()?.render(160)[1] ?? "", /Delegated/);
+		await customEventHandlers.get("subagents:completed")?.({ id: "child-2" });
+		assert.match(getWidget()?.render(160)[1] ?? "", /Ready/);
+	} finally {
+		await handlers.get("session_shutdown")?.({}, ctx);
+		disposeAll();
+		await extensions.dispose();
+	}
+});
+
+test("failed, duplicate, and invalid child events keep the delegated count correct", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec();
+	const { api, ctx, handlers, customEventHandlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await customEventHandlers.get("subagents:started")?.({ id: "" });
+		await customEventHandlers.get("subagents:started")?.({ id: "   " });
+		await customEventHandlers.get("subagents:started")?.({});
+		await customEventHandlers.get("subagents:started")?.(null);
+		await customEventHandlers.get("subagents:started")?.(42);
+		assert.match(getWidget()?.render(160)[1] ?? "", /Ready/);
+
+		await customEventHandlers.get("subagents:started")?.({ id: "child-1" });
+		await customEventHandlers.get("subagents:started")?.({ id: "child-1" });
+		assert.match(getWidget()?.render(160)[1] ?? "", /Delegated/);
+		await customEventHandlers.get("subagents:failed")?.({ id: "child-1" });
+		await customEventHandlers.get("subagents:failed")?.({ id: "child-1" });
+		assert.match(getWidget()?.render(160)[1] ?? "", /Ready/);
+	} finally {
+		await handlers.get("session_shutdown")?.({}, ctx);
+		disposeAll();
+		await extensions.dispose();
+	}
+});
+
+test("parent work takes priority over delegated work", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec();
+	const { api, ctx, handlers, customEventHandlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await customEventHandlers.get("subagents:started")?.({ id: "child-1" });
+		await handlers.get("agent_start")?.({}, ctx);
+		const workingLine = getWidget()?.render(160)[1] ?? "";
+		assert.doesNotMatch(workingLine, /Delegated|Ready/);
+		await handlers.get("agent_settled")?.({}, ctx);
+		assert.match(getWidget()?.render(160)[1] ?? "", /Delegated/);
+	} finally {
+		await handlers.get("session_shutdown")?.({}, ctx);
+		disposeAll();
+		await extensions.dispose();
+	}
+});
+
+test("session shutdown clears delegated work", async () => {
+	const extensions = await loadFooter();
+	const { exec } = makeExec();
+	const { api, ctx, handlers, customEventHandlers, getWidget, disposeAll } = makeContext(exec);
+	try {
+		extensions.footer.default(api);
+		await handlers.get("session_start")?.({}, ctx);
+		await customEventHandlers.get("subagents:started")?.({ id: "child-1" });
+		assert.match(getWidget()?.render(160)[1] ?? "", /Delegated/);
+		await handlers.get("session_shutdown")?.({}, ctx);
+		assert.match(getWidget()?.render(160)[1] ?? "", /Ready/);
+	} finally {
+		disposeAll();
 		await extensions.dispose();
 	}
 });

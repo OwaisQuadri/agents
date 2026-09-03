@@ -28,7 +28,7 @@ IS_TEST=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) IS_DRY=1 ;;
-    --test) IS_TEST=1; HOME_TARGET="$SCRIPT_DIR/.install-test-home" ;;
+    --test) IS_TEST=1; REPO_TARGET="$SCRIPT_DIR"; HOME_TARGET="$SCRIPT_DIR/.install-test-home" ;;
   esac
 done
 SKILLS_ROOT="$HOME_TARGET/.agents/skills"
@@ -345,7 +345,7 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
     --manifest "$REPO_TARGET/config/tools.toml"
     --home "$HOME_TARGET"
   )
-  (( IS_DRY || IS_TEST )) && TOOL_SYNC_ARGS+=(--dry-run)
+  (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
   plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
   "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
 fi
