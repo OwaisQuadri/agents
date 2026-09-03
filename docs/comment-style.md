@@ -7,8 +7,14 @@ naturally. Fewer comments beat more; zero is the default target.
 ## the whitelist
 
 A comment ships only if it is one of these shapes. Anything else: delete it and fix the
-code instead. `tools/comment-check` enforces the mechanical part: a PreToolUse hook on
-`git commit` denies a staged source file whose non-doc comment block runs past 3 lines.
+code instead. Two mechanical checks enforce this now.
+
+`tools/comment-check` denies a staged source file, at commit time, whose non-doc
+comment block runs past 3 lines. `pi/extensions/comment-shape-guard.ts` judges the
+shape itself, at write time. It asks a small headless model whether a new or changed
+comment fits one of the shapes below. It also checks whether a docstring actually
+sits on a public declaration. It caches the verdict and blocks the edit on a clear
+miss. A timeout or an infrastructure error allows the edit through instead.
 
 - inexpressible concept or architecture — a design decision, invariant, or
   cross-component contract that cannot be made implicit in the code itself
