@@ -52,10 +52,34 @@ test("blocks managed file writes and destination shell commands", () => {
 test("allows read-only bash access to managed config", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.pi/agent/settings.json` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `less ${home}/.claude/AGENTS.md` }, home), undefined);
-	assert.equal(blockedConfigToolCall("bash", { command: `grep -r foo ${home}/.agents/skills` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `ls -la ${home}/.pi/agent/extensions` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.pi/agent/settings.json | less` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude diff` }, home), undefined);
+});
+
+test("allows read-only navigation and search commands", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: `fd -t f . ${home}/.pi/agent/sessions` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `cd ${home}/.pi/agent/sessions && ls -la` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `rg foo ${home}/.agents/skills` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `rg foo ${home}/.pi/agent/extensions | head -1` }, home), undefined);
+});
+
+test("blocks grep against managed config after its allowlist removal", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `grep -r foo ${home}/.agents/skills` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `grep foo ${home}/.claude/AGENTS.md | head -1` }, home) ?? "", /Blocked/);
+});
+
+test("allows egrep and fgrep, which the grep removal deliberately left in place", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: `egrep foo ${home}/.claude/AGENTS.md` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `fgrep foo ${home}/.claude/AGENTS.md` }, home), undefined);
+});
+
+test("leaves a pipe stage naming no protected path out of the judgment", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: `ls -la ${home}/.pi/agent/extensions | grep foo` }, home), undefined);
+});
+
+test("allows a write whose group carries no protected path, after cd joined the allowlist", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: `cd ${home}/.claude && rm AGENTS.md` }, home), undefined);
 });
 
 test("blocks direct write and delete commands touching managed config", () => {
