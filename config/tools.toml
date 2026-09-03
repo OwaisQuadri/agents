@@ -79,6 +79,22 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "comment-shape-guard"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/comment-shape-guard.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "comment-shape-guard-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/comment-shape-guard"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "preferred-cli-guard"
 platforms = ["macos", "linux"]
 commands = []
