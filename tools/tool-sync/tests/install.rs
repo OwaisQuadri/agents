@@ -109,8 +109,15 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
     }
 
     fn manifest(&self, revision: &str, platforms: &str) -> PathBuf {
-        let manifest = self.root.join(format!("manifest-{platforms}.toml"));
-        let remote = self.remote_path();
+        self.manifest_from_remote(&self.remote_path(), revision, platforms)
+    }
+
+    fn manifest_from_remote(&self, remote: &Path, revision: &str, platforms: &str) -> PathBuf {
+        let label = remote
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("remote directory name is UTF-8");
+        let manifest = self.root.join(format!("manifest-{label}-{platforms}.toml"));
         fs::write(
             &manifest,
             format!(
@@ -124,7 +131,7 @@ skills = ["skills/show-me", "skills/grilling"]
 source = {{ url = {:?}, revision = {:?} }}
 installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["preview"] }}
 "#,
-                path_text(&remote),
+                path_text(remote),
                 revision
             ),
         )
@@ -637,6 +644,85 @@ fn refuses_a_dirty_checkout_before_advancing_revision_or_mutating_home() {
     assert_eq!(
         normalize_private_prefix(&fs::read_to_string(fixture.record()).expect("dirty record")),
         normalize_private_prefix(&format!("{}|apply\n", checkout.display()))
+    );
+}
+
+#[test]
+fn self_heals_a_checkout_whose_origin_changed() {
+    let fixture = Fixture::new();
+    let home = fixture.home("origin-change-home");
+    fs::create_dir_all(&home).expect("origin change home");
+    fs::write(home.join("notes.txt"), b"keep this home content\n").expect("home notes");
+    let home = canonical_path(&home);
+    let first_manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
+    let first = fixture.run(&home, &first_manifest, "linux", false);
+    assert!(first.status.success(), "{}", error_text(&first));
+    let checkout = fixture.checkout(&home);
+    let retired_contents = fs::read(checkout.join("revision")).expect("pre-move revision");
+
+    let fork = fixture.root.join("fork.git");
+    git(
+        &fixture.root,
+        &[
+            "clone",
+            "--bare",
+            "-q",
+            path_text(&fixture.remote_path()),
+            path_text(&fork),
+        ],
+    );
+    let fork_path = canonical_path(&fork);
+    let fork_manifest =
+        fixture.manifest_from_remote(&fork_path, &fixture.second_revision, "\"linux\"");
+
+    let second = fixture.run(&home, &fork_manifest, "linux", false);
+
+    assert!(second.status.success(), "{}", error_text(&second));
+    let error = error_text(&second);
+    assert!(!error.contains("foreign checkout"), "{error}");
+    let report = normalize_private_prefix(&output_text(&second));
+    assert!(report.contains("retire foreign checkout"), "{report}");
+    let mut asides = fs::read_dir(home.join(".cache/tool-sync"))
+        .expect("cache directory")
+        .map(|entry| entry.expect("cache entry").path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("rag.foreign-"))
+        })
+        .collect::<Vec<_>>();
+    asides.sort();
+    assert_eq!(asides.len(), 1, "{asides:?}");
+    assert_eq!(
+        fs::read(asides[0].join("revision")).expect("retired revision contents"),
+        retired_contents
+    );
+    assert_eq!(
+        git_text(&checkout, &["remote", "get-url", "origin"]),
+        path_text(&fork_path)
+    );
+    assert_eq!(
+        git_text(&checkout, &["rev-parse", "HEAD"]),
+        fixture.second_revision
+    );
+    let checkout_root = canonical_path(&checkout);
+    for link in [
+        ".local/bin/rag",
+        ".pi/agent/extensions/rag",
+        ".agents/skills/show-me",
+        ".agents/skills/grilling",
+    ] {
+        let resolved = fs::canonicalize(home.join(link)).expect("resolve installed link");
+        assert!(
+            resolved.starts_with(&checkout_root),
+            "{link} resolves to {} outside {}",
+            resolved.display(),
+            checkout_root.display()
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(home.join("notes.txt")).expect("notes after self-heal"),
+        "keep this home content\n"
     );
 }
 

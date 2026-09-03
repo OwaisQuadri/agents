@@ -2,9 +2,10 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 use crate::manifest::{Platform, ToolManifest, ToolSource};
-use crate::plan::{pi_extension_backup, Action, Plan};
+use crate::plan::{foreign_checkout_aside, pi_extension_backup, Action, Plan};
 use crate::SyncError;
 
 /// Supplies absolute roots and the selected platform to plan construction.
@@ -42,13 +43,28 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
             ToolSource::Git { url, revision } => {
                 let checkout = context.cache_root.join(&tool.name);
                 let is_checkout_present = match fs::symlink_metadata(&checkout) {
-                    Ok(_) => {
-                        inspect_checkout(&checkout, url)?;
-                        actions.push(Action::FetchRepository {
-                            repository: checkout.clone(),
-                        });
-                        true
-                    }
+                    Ok(_) => match inspect_checkout(&checkout, url)? {
+                        CheckoutVerdict::Reusable => {
+                            actions.push(Action::FetchRepository {
+                                repository: checkout.clone(),
+                            });
+                            true
+                        }
+                        CheckoutVerdict::Foreign => {
+                            let aside = foreign_checkout_aside(&checkout, SystemTime::now());
+                            reject_occupied_aside(&aside)?;
+                            actions.push(Action::RetireForeignCheckout {
+                                checkout: checkout.clone(),
+                                destination: aside,
+                            });
+                            add_directory(&context.cache_root, &mut planned_paths, &mut actions)?;
+                            actions.push(Action::CloneRepository {
+                                url: url.clone(),
+                                destination: checkout.clone(),
+                            });
+                            false
+                        }
+                    },
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                         add_directory(&context.cache_root, &mut planned_paths, &mut actions)?;
                         actions.push(Action::CloneRepository {
@@ -192,15 +208,17 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
     Ok(Plan { actions })
 }
 
-fn inspect_checkout(path: &Path, expected_url: &str) -> Result<(), SyncError> {
+enum CheckoutVerdict {
+    Reusable,
+    Foreign,
+}
+
+fn inspect_checkout(path: &Path, expected_url: &str) -> Result<CheckoutVerdict, SyncError> {
     let observed_url = git_output(path, &["remote", "get-url", "origin"])
         .map(|output| output.trim().to_owned())
         .unwrap_or_else(|_| "<missing origin>".to_owned());
     if observed_url != expected_url {
-        return Err(planning_error(format!(
-            "foreign checkout {}: expected origin {expected_url}, observed {observed_url}",
-            path.display()
-        )));
+        return Ok(CheckoutVerdict::Foreign);
     }
 
     let status = git_output(path, &["status", "--porcelain", "--untracked-files=all"])?;
@@ -210,7 +228,18 @@ fn inspect_checkout(path: &Path, expected_url: &str) -> Result<(), SyncError> {
             path.display()
         )));
     }
-    Ok(())
+    Ok(CheckoutVerdict::Reusable)
+}
+
+fn reject_occupied_aside(aside: &Path) -> Result<(), SyncError> {
+    match fs::symlink_metadata(aside) {
+        Ok(_) => Err(planning_error(format!(
+            "foreign checkout aside {} already exists",
+            aside.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SyncError::Io(aside.to_path_buf(), error)),
+    }
 }
 
 fn git_output(repository: &Path, args: &[&str]) -> Result<String, SyncError> {
@@ -897,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_dirty_and_foreign_checkouts() {
+    fn refuses_a_dirty_managed_checkout() {
         let fixture = Fixture::new();
         let checkout = fixture.root.join("cache/rag");
         initialize_checkout(&checkout, "https://example.test/rag.git");
@@ -906,20 +935,114 @@ mod tests {
             url: "https://example.test/rag.git".to_owned(),
             revision: "abc123".to_owned(),
         };
+
         let error = build(&manifest(tool(source)), &fixture.context(Platform::Linux))
             .expect_err("dirty checkout rejected");
-        assert!(error.to_string().contains("dirty"));
 
-        fs::remove_file(checkout.join("untracked")).expect("clean checkout");
-        let source = ToolSource::Git {
+        assert!(error.to_string().contains("dirty"));
+    }
+
+    fn assert_retire_and_reclone(fixture: &Fixture) {
+        let mut spec = tool(ToolSource::Git {
             url: "https://foreign.test/rag.git".to_owned(),
             revision: "abc123".to_owned(),
+        });
+        spec.commands.clear();
+        spec.pi_package = Some(PathBuf::from("packages/rag"));
+        spec.skills = vec![PathBuf::from("skills/show-me")];
+
+        let context = fixture.context(Platform::Linux);
+        let plan = build(&manifest(spec), &context).expect("self-healing plan");
+        let checkout = context.cache_root.join("rag");
+
+        let aside = match &plan.actions[0] {
+            Action::RetireForeignCheckout {
+                checkout: retired,
+                destination,
+            } => {
+                assert_eq!(retired, &checkout);
+                destination.clone()
+            }
+            other => panic!("expected a retire action, found {other:?}"),
         };
-        let error = build(&manifest(tool(source)), &fixture.context(Platform::Linux))
-            .expect_err("foreign checkout rejected");
-        let message = error.to_string();
-        assert!(message.contains("https://foreign.test/rag.git"));
-        assert!(message.contains("https://example.test/rag.git"));
+        assert!(aside
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("rag.foreign-")));
+        assert_eq!(aside.parent(), Some(context.cache_root.as_path()));
+        assert_eq!(
+            plan.actions[1],
+            Action::CloneRepository {
+                url: "https://foreign.test/rag.git".to_owned(),
+                destination: checkout.clone(),
+            }
+        );
+        assert_eq!(
+            plan.actions[2],
+            Action::CheckoutRevision {
+                repository: checkout.clone(),
+                revision: "abc123".to_owned(),
+            }
+        );
+        assert!(!plan
+            .actions
+            .iter()
+            .any(|action| matches!(action, Action::FetchRepository { .. })));
+        assert_eq!(
+            plan.actions[5],
+            Action::LinkPiPackage {
+                source: checkout.join("packages/rag"),
+                destination: context.home_root.join(".pi/agent/extensions/rag"),
+            }
+        );
+        assert_eq!(
+            plan.actions[7],
+            Action::LinkSkill {
+                source: checkout.join("skills/show-me"),
+                destination: context.home_root.join(".agents/skills/show-me"),
+            }
+        );
+    }
+
+    #[test]
+    fn retires_a_foreign_checkout_and_reclones() {
+        let fixture = Fixture::new();
+        initialize_checkout(
+            &fixture.root.join("cache/rag"),
+            "https://example.test/rag.git",
+        );
+
+        assert_retire_and_reclone(&fixture);
+    }
+
+    #[test]
+    fn retires_a_cache_directory_that_is_not_a_repository() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("cache/rag")).expect("junk cache directory");
+
+        assert_retire_and_reclone(&fixture);
+    }
+
+    #[test]
+    fn retires_a_foreign_checkout_that_is_dirty() {
+        let fixture = Fixture::new();
+        let checkout = fixture.root.join("cache/rag");
+        initialize_checkout(&checkout, "https://example.test/rag.git");
+        fs::write(checkout.join("untracked"), "someone else's work").expect("dirty file");
+
+        assert_retire_and_reclone(&fixture);
+    }
+
+    #[test]
+    fn rejects_an_occupied_foreign_aside() {
+        let fixture = Fixture::new();
+        let aside = fixture.root.join("rag.foreign-20231114-221320");
+        assert!(reject_occupied_aside(&aside).is_ok());
+        fs::create_dir_all(&aside).expect("occupied aside");
+
+        let error = reject_occupied_aside(&aside).expect_err("occupied aside rejected");
+
+        assert!(error.to_string().contains("already exists"));
     }
 
     #[test]
