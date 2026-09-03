@@ -324,10 +324,16 @@ fi
 #    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
 #    not a live `cargo build` attempted inside the launchd environment,
 #    transcript-directed-video-processor as an on-demand command the user runs by name,
-#    privacy-lint in the pre-commit path, blocking staged private network identifiers
-for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor privacy-lint; do
+#    privacy-lint in the pre-commit path, blocking staged private network identifiers,
+#    worktree-hygiene in the 5-minute launchd hygiene job — its plist sets a minimal PATH
+#    with no cargo on it, exactly like gepa-due above, so the binary must already be built
+#    and symlinked here rather than compiled inside the launchd environment
+for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check gepa-due transcript-directed-video-processor privacy-lint worktree-hygiene; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
+
+plan "ensure $HOME_TARGET/.claude/worktree-hygiene"
+run mkdir -p "$HOME_TARGET/.claude/worktree-hygiene"
 
 # 9. codex reads CLAUDE.md through this symlink: one source, no second file to drift
 link "$HOME_TARGET/.codex/AGENTS.md" "$REPO_TARGET/CLAUDE.md"

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.owaisquadri.worktree-hygiene</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/owaisquadri/.local/bin/worktree-hygiene</string>
+        <string>/Users/owaisquadri/Documents/agents</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/owaisquadri/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>/Users/owaisquadri</string>
+    </dict>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>StandardOutPath</key>
+    <string>/Users/owaisquadri/.claude/worktree-hygiene/hygiene.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/owaisquadri/.claude/worktree-hygiene/hygiene.log</string>
+</dict>
+</plist>
