@@ -256,20 +256,36 @@ Run per artifact, on demand or once logs/votes accumulate:
    it answers; none logged → don't narrow.
 
    **Pick the mutation parent from the Pareto frontier, not always the incumbent.** Compute
-   the frontier from `evals/frontier.jsonl`: a candidate (the incumbent always counts as one)
-   is ON the frontier if no other archived candidate's score vector beats-or-ties it on every
-   case with at least one strict win — i.e. it's the best-known scorer on at least one case,
-   even with a lower mean overall. When the frontier has **≥2 non-incumbent members** (the
-   incumbent plus 2 or more others — below that, behave exactly as before and mutate from the
+   the frontier from `evals/frontier.jsonl`, TIER BY TIER — `evals/run.sh` now writes one
+   line per tier tested per candidate (see `templates/eval-harness.md`'s "frontier.jsonl"
+   section), so dominance is only ever compared WITHIN the same `tier` value; a candidate's
+   T3 score vector and its T1 score vector are never compared against each other, since a
+   different tier ran a different model and the numbers aren't the same measurement. A
+   candidate (the incumbent always counts as one) is ON the frontier AT A GIVEN TIER if no
+   other archived candidate's score vector at THAT SAME TIER beats-or-ties it on every case
+   with at least one strict win — i.e. it's the best-known scorer on at least one case at
+   that tier, even with a lower mean overall at that tier. When the frontier AT THE TIER
+   `evals/run.sh` will test next has **≥2 non-incumbent members** (the incumbent plus 2 or
+   more others at that same tier — below that, behave exactly as before and mutate from the
    incumbent), weight parent selection toward whichever frontier member owns the most
    uniquely-best cases, load its text from `evals/frontier/<candidate_id>.md`, and mutate
    from there instead of the incumbent. This changes only which text step 2 starts from —
    it never changes what step 4 ships; the incumbent is still the only thing that can become
    the live artifact, gated by the unchanged rule below.
-3. **Test**: run `evals/run.sh` — incumbent vs candidate on the same cases.
-4. **Decide**: accept ONLY on a harness win — no new catastrophic failure, higher mean
-   score, and the win holds on the holdout slice. Ties go to the incumbent; two
-   candidates tying each other → the one adding fewer conditions ships (weakest wins).
+3. **Test**: run `evals/run.sh` — incumbent vs candidate on the same cases. Every available
+   tier is tested, every run (exhaustive, per the owner's override of an earlier
+   walk-up-from-cheapest design) via `tools/tier-dispatch`'s execution arm — this is real
+   cost on every Test step, including every GEPA candidate, not only on a periodic audit; a
+   tier whose own fallback chain is fully exhausted on quota is skipped for that run, not
+   guessed.
+4. **Decide**: accept ONLY on a harness win, evaluated ACROSS EVERY TIER THAT RAN THIS TIME —
+   no new catastrophic failure at any tier, a higher mean score at every tier tested with at
+   least one strict improvement somewhere, and the win holds on the holdout slice at every
+   tier tested. A candidate that wins at some tiers and regresses at others is not a harness
+   win; it's exactly the frontier case step 2 already handles (it may still be worth keeping
+   as a non-incumbent frontier member for a future Propose to mutate from, without shipping
+   as the incumbent). Ties go to the incumbent; two candidates tying each other → the one
+   adding fewer conditions ships (weakest wins).
    No churn on noise. **That rule assumes the harness can see the change, and it silently
    assumes the mutation is a tuning tweak.** When the mutation is a DEFECT FIX whose effect no
    existing case measures, a tie is the expected result and rejecting on it would mean a proven
@@ -302,20 +318,23 @@ steps above with frontier data folded in at the points it actually matters:
 1. Reflect (step 1) already reads `evals/frontier.jsonl` if present — nothing to do here
    beyond the loop's existing Reflect.
 2. Propose (step 2) already samples its mutation parent from the Pareto frontier once the
-   artifact has ≥ 2 non-incumbent frontier members; below that, it mutates from the
-   incumbent exactly as before. Nothing to choose here either — it's automatic once
-   enough real candidates exist.
+   artifact has ≥ 2 non-incumbent frontier members AT THE TIER BEING TESTED; below that, it
+   mutates from the incumbent exactly as before. Nothing to choose here either — it's
+   automatic once enough real candidates exist at that tier.
 3. Test (step 3): run `evals/run.sh <candidate>` with NO `--holdout` flag. This grades
-   both slices and appends a frontier line + candidate text automatically, whether the
+   both slices, at every available tier (exhaustive — not a walk-up-and-stop sweep), and
+   appends one frontier line PER TIER TESTED plus candidate text automatically, whether the
    candidate wins or loses — `--holdout` alone skips this and should only be used for a
    quick recheck, never for a run feeding a real Decide.
-4. Decide (step 4): apply the unchanged holdout-gating rule. If it accepts, run the
-   mark-accepted `jq` one-liner (above) against that run's `candidate_id` — the only new
-   action frontier data adds to Decide. This is the loop's last step (no Record).
+4. Decide (step 4): apply the unchanged, now tier-scoped holdout-gating rule (see step 4
+   above — a win at every tier tested, not just one). If it accepts, run the mark-accepted
+   `jq` one-liner (above) against that run's `candidate_id` — it flips every tier line for
+   that `candidate_id` together, since acceptance is a property of the candidate's text, not
+   of any single tier. This is the loop's last step (no Record).
 
-Pruning `evals/frontier.jsonl` past 20 entries per artifact (drop-oldest-dominated, per
-the template) is rare enough at current volume to stay a manual "do it next time you're
-in there" instruction — not yet worth its own script.
+Pruning `evals/frontier.jsonl` past 20 entries per artifact PER TIER (drop-oldest-dominated
+WITHIN that tier, per the template) is rare enough at current volume to stay a manual "do
+it next time you're in there" instruction — not yet worth its own script.
 
 Fence: the mutation-proposer never writes `evals/` cases, the rubric, or `votes/`. The
 exam stays out of the student's hands — and dispatching someone else to type it does not
