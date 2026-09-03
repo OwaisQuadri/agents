@@ -1,5 +1,4 @@
 #!/bin/zsh
-# run.sh — pick-task eval runner
 # usage: ./run.sh [candidate-skill.md]   (non-holdout slice; defaults to ../SKILL.md)
 #        ./run.sh --holdout [skill.md]   (held-out slice)
 set -euo pipefail

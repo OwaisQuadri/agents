@@ -70,14 +70,13 @@ REPORT:    return the task, repository, status, expected and returned counts, re
 
 ## Input contract
 
-Pass an object with `selected_task`, `canonical_repo`, and `runtime_models`. The
+Pass an object with `selected_task`, `canonical_repo`, `support_repo`, and `runtime_models`. `canonical_repo` is the target. `support_repo` contains this workflow and `research-sweep`. The
 `selected_task` object has `backend`, `id`, `title`, `body`, `url`, `prior_status`, and its backend `labels` or `markers`.
 The controller resolves `runtime_models.T3`, `runtime_models.T4`, and `runtime_models.T5`
 from `config/model-tiers.json`. Do not put model identifiers in this workflow.
 
 Optional caps are `max_plan_verdicts`, `max_repairs`, and `max_agents`. Their defaults
-are 2, 2, and 24. `stop_mode` is `none`, `after-research`, `before-implementation`,
-`after-draft`, `after-verification`, or `discard`.
+are 2, 2, and 24. The workflow accepts its boundary modes and the controller modes. It maps `after-current` to `none`, and maps `discard-current` or `all` to `discard`.
 
 ## Output contract
 

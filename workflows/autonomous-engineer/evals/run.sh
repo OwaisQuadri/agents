@@ -1,3 +1,4 @@
+#!/bin/zsh
 set -eu
 
 here=${0:A:h}

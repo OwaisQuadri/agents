@@ -25,7 +25,7 @@ OUT: active work, leases, pull request watches, and backend statuses that match 
 6. Read the current state. A sibling invocation owns separate state through autonomous-engineer-state. Do not infer sibling work from local files.
 7. Use `/loop` dynamic mode for Pull Request care. Arm `autonomous-engineer-state watch-prs --repo <canonical repo> --interval-seconds 300` as its monitored watcher. Use `^AGENT_LOOP_WAKE_autonomous_prs` as the wake pattern and a 30-minute fallback heartbeat.
 8. Register the watcher process with `autonomous-engineer-state register-watcher --repo <canonical repo> --pid <watcher pid>`. Do not arm a duplicate watcher.
-9. Repair marked draft pull requests before new work. Acquire a `pr-care` lease with the Pi process identifier before dispatching `/autopilot` in the background. Release it when that dispatch ends. Do not wait before a task cycle.
+9. Repair marked draft Pull Requests before new work. Run `autonomous-engineer-state acquire --run <run> --repo <canonical repo> --kind pr-care --pr <number> --pid "$PPID"` before dispatching `/autopilot` in the background. Release it when that dispatch ends. Do not wait before a task cycle.
 
 ## Task cycle
 
@@ -39,8 +39,8 @@ OUT: active work, leases, pull request watches, and backend statuses that match 
 8. Use only the returned runnable backend item. Do not create or file work. Release the task lease when no item is runnable.
 9. Record the task and prior status with `autonomous-engineer-state heartbeat --run <run> --task <id> --prior-status <status> --stage selected`.
 10. Set the selected item active through its backend. GitHub Projects uses `in-progress`. Linear uses its active state. For roadmap.json, set `in progress`.
-11. Dispatch `workflows/autonomous-engineer/autonomous-engineer.workflow.js` for the selected issue. Keep one active task per repository.
-12. The running watcher discovers each marked draft Pull Request. A changed watch state dispatches `/autopilot` under a `pr-care` lease. Keep task cycles running while that repair runs.
+11. Resolve the support repository from the installed autonomous-engineer skill symlink. Dispatch its `workflows/autonomous-engineer/autonomous-engineer.workflow.js` and pass that root as `support_repo`. Keep one active task per repository.
+12. The running watcher discovers each marked draft Pull Request. A changed watch state dispatches `/autopilot` under the explicit `pr-care` lease command from the start procedure. Keep task cycles running while that repair runs.
 13. On every wake, inspect each changed Pull Request. If it merged, set its backend item to done. If it remains open, let `/autopilot` handle it without merging.
 14. Keep Pull Request questions in pull request comments. Do not stop unrelated work for a question.
 15. After verified ready work, set GitHub Projects and roadmap.json to `resolved`. Set Linear to its review state. Set done only after the pull request merges.

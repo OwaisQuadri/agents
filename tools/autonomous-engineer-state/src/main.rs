@@ -316,7 +316,7 @@ fn parse_acquire(arguments: &[String]) -> Result<Acquire> {
         task: optional_option(arguments, "--task")?,
         prior_status: optional_option(arguments, "--prior-status")?,
         pr: optional_number(arguments, "--pr")?,
-        pid: optional_pid(arguments)?.unwrap_or_else(controller_pid),
+        pid: required_pid(arguments)?,
     })
 }
 
@@ -417,13 +417,16 @@ fn optional_number(arguments: &[String], option: &str) -> Result<Option<u64>> {
     })
 }
 
-fn optional_pid(arguments: &[String]) -> Result<Option<u32>> {
-    optional_option(arguments, "--pid")?.map_or(Ok(None), |value| {
-        value
-            .parse()
-            .map(Some)
-            .map_err(|_| format!("--pid needs a process identifier, got {value}"))
-    })
+fn required_pid(arguments: &[String]) -> Result<u32> {
+    let value = required_option(arguments, "--pid")?;
+    let pid = value
+        .parse::<u32>()
+        .map_err(|_| format!("--pid needs a process identifier, got {value}"))?;
+    if pid == 0 {
+        Err("--pid needs a positive process identifier".to_owned())
+    } else {
+        Ok(pid)
+    }
 }
 
 fn reject_arguments(arguments: &[String]) -> Result<()> {
@@ -566,15 +569,6 @@ fn cleanup_stale(registry: &mut Registry) {
     }
 }
 
-fn controller_pid() -> u32 {
-    let pid = unsafe { libc::getppid() };
-    if pid > 0 {
-        pid as u32
-    } else {
-        std::process::id()
-    }
-}
-
 fn is_process_definitely_dead(pid: u32) -> bool {
     if pid == 0 || pid > i32::MAX as u32 {
         return false;
@@ -602,18 +596,21 @@ fn watch_prs_command(arguments: &[String]) -> Result<String> {
     reject_unknown_options(arguments, &["--repo", "--interval-seconds"])?;
     let mut previous = None;
     loop {
-        let snapshot = fetch_pr_snapshot(&repo)?;
-        if snapshot.is_empty() {
-            if previous.is_some() {
+        let snapshot = match fetch_pr_snapshot(&repo) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                eprintln!("{error}");
+                thread::sleep(Duration::from_secs(interval));
+                continue;
+            }
+        };
+        if previous.as_ref() != Some(&snapshot) {
+            if previous.is_some() || !snapshot.is_empty() {
                 println!(
                     "{}",
-                    render_wake(&repo, previous.as_deref().unwrap_or_default())?
+                    render_wake(&repo, previous.as_deref().unwrap_or_default(), &snapshot)?
                 );
             }
-            return Ok(String::new());
-        }
-        if previous.as_ref() != Some(&snapshot) {
-            println!("{}", render_wake(&repo, &snapshot)?);
             previous = Some(snapshot);
         }
         thread::sleep(Duration::from_secs(interval));
@@ -654,7 +651,16 @@ struct IssueReference {
 fn fetch_pr_snapshot(repo: &str) -> Result<Vec<PrSnapshot>> {
     let output = Command::new("gh")
         .current_dir(repo)
-        .args(["pr", "list", "--state", "open", "--json", WATCH_FIELDS])
+        .args([
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--limit",
+            "1000",
+            "--json",
+            WATCH_FIELDS,
+        ])
         .output()
         .map_err(|error| format!("cannot run gh: {error}"))?;
     if !output.status.success() {
@@ -666,11 +672,13 @@ fn fetch_pr_snapshot(repo: &str) -> Result<Vec<PrSnapshot>> {
     parse_pr_snapshot(&output.stdout)
 }
 
-fn render_wake(repo: &str, snapshots: &[PrSnapshot]) -> Result<String> {
-    let snapshot = serde_json::to_string(snapshots)
-        .map_err(|error| format!("cannot render Pull Request snapshot: {error}"))?;
+fn render_wake(repo: &str, previous: &[PrSnapshot], current: &[PrSnapshot]) -> Result<String> {
+    let previous = serde_json::to_string(previous)
+        .map_err(|error| format!("cannot render prior Pull Request snapshot: {error}"))?;
+    let current = serde_json::to_string(current)
+        .map_err(|error| format!("cannot render current Pull Request snapshot: {error}"))?;
     let prompt = format!(
-        "Read the autonomous Pull Request state change for {repo}. Acquire a pr-care lease, run /autopilot for affected marked Pull Requests, release the lease, and keep unrelated task cycles running. Snapshot: {snapshot}"
+        "Read the autonomous Pull Request state change for {repo}. Acquire a pr-care lease, inspect each changed Pull Request, run /autopilot for open work, update merged task status, release the lease, and keep unrelated task cycles running. Previous: {previous}. Current: {current}"
     );
     let payload = serde_json::json!({ "prompt": prompt });
     Ok(format!("AGENT_LOOP_WAKE_autonomous_prs {payload}"))
@@ -995,6 +1003,16 @@ mod tests {
 
     #[test]
     fn parses_repository_configuration_and_machine_stop() {
+        assert!(parse_acquire(&[
+            "--run".to_owned(),
+            "run".to_owned(),
+            "--repo".to_owned(),
+            "/repo".to_owned(),
+            "--kind".to_owned(),
+            "task".to_owned(),
+        ])
+        .is_err());
+
         let configure = parse_configure(&[
             "--repo".to_owned(),
             "/repo".to_owned(),
@@ -1036,7 +1054,7 @@ mod tests {
             snapshots[1].tracked_task_url.as_deref(),
             Some("https://tracker.example/LIN-1")
         );
-        let wake = render_wake("/repo", &snapshots).expect("wake");
+        let wake = render_wake("/repo", &[], &snapshots).expect("wake");
         let payload = wake
             .strip_prefix("AGENT_LOOP_WAKE_autonomous_prs ")
             .expect("sentinel");
