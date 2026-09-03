@@ -480,7 +480,7 @@ test("telemetry lifecycle append path failures preserve runtime state", async (t
 
 					const runtime = createTelemetryRuntime({ path: storePath, records: [] });
 					const lifecycle = createFakeLifecycleApi();
-					registerLifecycle(lifecycle.api, runtime);
+					registerLifecycle(lifecycle.api, async () => runtime);
 					const context = { ui: { setStatus() {} } };
 					let completion: () => Promise<unknown>;
 

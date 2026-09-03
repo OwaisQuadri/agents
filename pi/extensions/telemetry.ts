@@ -1102,7 +1102,7 @@ export async function attachFeedback(
 	}
 }
 
-export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): void {
+export function registerCommands(pi: ExtensionAPI, getRuntime: () => Promise<TelemetryRuntime>): void {
 	pi.registerCommand("telemetry-status", {
 		description: "Show telemetry counts",
 		handler: async (args, ctx) => {
@@ -1110,7 +1110,7 @@ export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): v
 				throw new Error("telemetry-status takes no arguments");
 			}
 
-			const counts = telemetryCounts(runtime);
+			const counts = telemetryCounts(await getRuntime());
 			ctx.ui.notify(`active: ${counts.active} failed: ${counts.failed}`);
 		},
 	});
@@ -1118,6 +1118,7 @@ export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): v
 	pi.registerCommand("telemetry-runs", {
 		description: "List telemetry runs",
 		handler: async (args, ctx) => {
+			const runtime = await getRuntime();
 			const runs = filterRuns(runtime.store, parseTelemetryFilterArgument(args)).map(projectRunRecord);
 			ctx.ui.notify(JSON.stringify(runs));
 		},
@@ -1127,7 +1128,7 @@ export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): v
 		description: "Attach telemetry feedback",
 		handler: async (args) => {
 			const { runId, value } = parseFeedbackCommandArguments(args);
-			await attachFeedback(runtime, runId, value, new Date().toISOString());
+			await attachFeedback(await getRuntime(), runId, value, new Date().toISOString());
 		},
 	});
 }
@@ -1136,51 +1137,64 @@ export function registerCommands(pi: ExtensionAPI, runtime: TelemetryRuntime): v
  * Registers private wide-event telemetry for Pi and pi-subagents runs.
  *
  * @param pi - The Pi extension interface that supplies lifecycle events and commands.
- * @returns A promise that resolves after the local store loads and handlers register.
- * @throws An error when the telemetry store cannot be read or validated.
+ * @param getRuntime - Resolves the telemetry runtime, loading the store on first call.
+ * @param isStoreLoaded - Reports whether the store already loaded; shutdown skips the load when it never happened.
+ * @returns Nothing; handlers register synchronously and load the store on first event.
+ * @throws An error when a handler fires and the telemetry store cannot be read or validated.
  */
-export function registerLifecycle(pi: ExtensionAPI, runtime: TelemetryRuntime): void {
+export function registerLifecycle(pi: ExtensionAPI, getRuntime: () => Promise<TelemetryRuntime>, isStoreLoaded: () => boolean = () => true): void {
 	pi.on("agent_start", async () => {
+		const runtime = await getRuntime();
 		const runId = randomUUID();
 		startRun(runtime, runId, runtime.packageName, null, new Date().toISOString());
 		runtime.currentParentRunId = runId;
 	});
 
 	pi.on("agent_settled", async () => {
-		await settleParentRun(runtime, "succeeded");
+		await settleParentRun(await getRuntime(), "succeeded");
 	});
 
 	pi.on("session_shutdown", async (event: ShutdownEvent) => {
 		parseShutdownEvent(event);
-		await settleAllActiveRuns(runtime, "cancelled");
+		if (!isStoreLoaded()) return;
+		await settleAllActiveRuns(await getRuntime(), "cancelled");
 	});
 
 	pi.events.on("subagents:started", async (payload: SubagentsStartedEvent) => {
+		const runtime = await getRuntime();
 		const runId = resolveSubagentsRunId(payload);
 		const agentName = parseSubagentsType(payload);
 		startRun(runtime, runId, PinnedSubagentPackageName, agentName, new Date().toISOString());
 	});
 
 	pi.events.on("subagents:completed", async (payload: SubagentsSettledEvent) => {
-		await settleRunFromSubagentsEvent(runtime, payload);
+		await settleRunFromSubagentsEvent(await getRuntime(), payload);
 	});
 	pi.events.on("subagents:failed", async (payload: SubagentsSettledEvent) => {
-		await settleRunFromSubagentsEvent(runtime, payload);
+		await settleRunFromSubagentsEvent(await getRuntime(), payload);
 	});
 }
 
 /**
- * Loads the telemetry store and registers lifecycle handlers.
+ * Registers lifecycle handlers and commands; the telemetry store loads lazily on first use.
  *
  * @param pi - The Pi extension interface that supplies lifecycle events and commands.
- * @returns A promise that resolves after the local store loads and handlers register.
- * @throws An error when the telemetry store cannot be read or validated.
+ * @returns A promise that resolves after handlers register; no store read happens here.
+ * @throws An error when a handler or command fires and the store cannot be read or validated.
  */
 const telemetryExtension: TelemetryExtension = async (pi) => {
-	const store = await loadStore();
-	const runtime = createTelemetryRuntime(store);
-	registerLifecycle(pi, runtime);
-	registerCommands(pi, runtime);
+	let runtimePromise: Promise<TelemetryRuntime> | undefined;
+	const getRuntime = () => {
+		runtimePromise ??= loadStore()
+			.then(createTelemetryRuntime)
+			.catch((error: unknown) => {
+				runtimePromise = undefined;
+				throw error;
+			});
+		return runtimePromise;
+	};
+	registerLifecycle(pi, getRuntime, () => runtimePromise !== undefined);
+	registerCommands(pi, getRuntime);
 };
 
 export default telemetryExtension;

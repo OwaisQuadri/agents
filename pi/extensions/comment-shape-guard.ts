@@ -35,6 +35,9 @@ function listCommentSpans(binary: string, ext: string, text: string): Promise<Co
 				resolvePromise([]);
 			}
 		});
+		// EPIPE lands on the stdin stream, not the process 'error' event; unhandled it
+		// kills the whole pi session when the child exits before consuming stdin.
+		proc.stdin.on("error", () => resolvePromise([]));
 		proc.stdin.write(text);
 		proc.stdin.end();
 	});
