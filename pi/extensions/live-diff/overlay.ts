@@ -133,19 +133,26 @@ export function rebuildRows(
 	return { ...model, rows, cursor };
 }
 
-function viewerLineCount(hunks: Hunk[] | null): number {
+// The viewer scrolls in RENDERED rows, so its row count depends on the width a
+// long line wraps at. A caller with no width yet (no render has happened) gets
+// the unwrapped count, which is the row count at any width wide enough.
+function viewerRowCount(hunks: Hunk[] | null, width: number): number {
 	if (hunks === null) {
 		return 0;
 	}
-	return hunks.reduce((total, hunk) => total + 1 + hunk.lines.length, 0);
+	if (!Number.isFinite(width)) {
+		return hunks.reduce((total, hunk) => total + 1 + hunk.lines.length, 0);
+	}
+	return viewerBodyLines(hunks, width).length;
 }
 
 function clampViewerOffset(
 	offset: number,
 	hunks: Hunk[] | null,
 	visibleLines = 1,
+	width: number = Number.POSITIVE_INFINITY,
 ): number {
-	const lineCount = viewerLineCount(hunks);
+	const lineCount = viewerRowCount(hunks, width);
 	const keptOnScreen = Math.max(Math.ceil(visibleLines * 0.8), 1);
 	const maxOffset = Math.max(lineCount - keptOnScreen, 0);
 	return Math.min(Math.max(offset, 0), maxOffset);
@@ -155,6 +162,7 @@ function reduceViewer(
 	model: OverlayModel,
 	key: OverlayKey,
 	viewportHeight: number,
+	viewerWidth: number,
 ): OverlayStep {
 	const viewer = model.viewer;
 	if (viewer === null) {
@@ -166,7 +174,12 @@ function reduceViewer(
 			...model,
 			viewer: {
 				...viewer,
-				offset: clampViewerOffset(viewer.offset + delta, viewer.hunks, viewportHeight),
+				offset: clampViewerOffset(
+					viewer.offset + delta,
+					viewer.hunks,
+					viewportHeight,
+					viewerWidth,
+				),
 			},
 		},
 		effect: null,
@@ -188,7 +201,12 @@ function reduceViewer(
 					...model,
 					viewer: {
 						...viewer,
-						offset: clampViewerOffset(Number.POSITIVE_INFINITY, viewer.hunks, viewportHeight),
+						offset: clampViewerOffset(
+							Number.POSITIVE_INFINITY,
+							viewer.hunks,
+							viewportHeight,
+							viewerWidth,
+						),
 					},
 				},
 				effect: null,
@@ -240,6 +258,10 @@ function reduceViewer(
  *
  * @param model current model
  * @param key mapped key
+ * @param viewportHeight rows the overlay may occupy, header and hint included
+ * @param viewerWidth panel width the viewer last rendered at, in display
+ *   columns; it sets how far a wrapped diff can scroll. Omitted or infinite
+ *   means "no render yet", which scrolls as though no line wraps
  * @returns next model plus at most one effect; unknown transitions return
  *   the same model and null effect
  */
@@ -247,9 +269,10 @@ export function reduce(
 	model: OverlayModel,
 	key: OverlayKey,
 	viewportHeight = 20,
+	viewerWidth: number = Number.POSITIVE_INFINITY,
 ): OverlayStep {
 	if (model.viewer !== null) {
-		return reduceViewer(model, key, viewportHeight);
+		return reduceViewer(model, key, viewportHeight, viewerWidth);
 	}
 	if (isColumnScopedKey(key)) {
 		return reduceColumnScoped(model, key);
@@ -563,6 +586,29 @@ function gutter(lineNumber: number | null, gutterWidth: number): string {
 	return text.padStart(gutterWidth, " ") + " ";
 }
 
+function wrapToColumns(text: string, width: number): string[] {
+	if (width <= 0) {
+		return [""];
+	}
+	const segments: string[] = [];
+	let current = "";
+	let used = 0;
+	for (const char of text) {
+		const size = charWidth(char);
+		if (used + size > width) {
+			segments.push(current);
+			current = "";
+			used = 0;
+		}
+		current += char;
+		used += size;
+	}
+	if (current.length > 0 || segments.length === 0) {
+		segments.push(current);
+	}
+	return segments;
+}
+
 function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 	const lines: RenderRow[] = [];
 	let highestLine = 1;
@@ -575,14 +621,16 @@ function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 		);
 	}
 	const gutterWidth = String(highestLine).length;
+	const interiorWidth = Math.max(width - 2, 0);
+	const contentWidth = Math.max(interiorWidth - (gutterWidth + 1), 1);
+	const pushRow = (spans: RenderSpan[]): void => {
+		lines.push(railed(fit(spans, interiorWidth, false), width));
+	};
 	for (const hunk of hunks) {
 		const counters = hunkStartLines(hunk.header);
-		lines.push(
-			railed(
-				fit([{ text: sanitize(hunk.header), tone: "hunkHeader" }], width, false),
-				width,
-			),
-		);
+		for (const segment of wrapToColumns(sanitize(hunk.header), interiorWidth)) {
+			pushRow([{ text: segment, tone: "hunkHeader" }]);
+		}
 		for (const hunkLine of hunk.lines) {
 			const shown =
 				hunkLine.origin === "-" ? counters.oldLine : counters.newLine;
@@ -594,22 +642,20 @@ function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 				counters.oldLine += 1;
 				counters.newLine += 1;
 			}
-			lines.push(
-				railed(
-					fit(
-						[
-							{ text: gutter(shown, gutterWidth), tone: "truncation" },
-							{
-								text: sanitize(hunkLine.origin + hunkLine.text),
-								tone: hunkTone(hunkLine.origin),
-							},
-						],
-						width,
-						false,
-					),
-					width,
-				),
+			const segments = wrapToColumns(
+				sanitize(hunkLine.origin + hunkLine.text),
+				contentWidth,
 			);
+			segments.forEach((segment, segmentIndex) => {
+				const gutterText =
+					segmentIndex === 0
+						? gutter(shown, gutterWidth)
+						: " ".repeat(gutterWidth + 1);
+				pushRow([
+					{ text: gutterText, tone: "truncation" },
+					{ text: segment, tone: hunkTone(hunkLine.origin) },
+				]);
+			});
 		}
 	}
 	return lines;
@@ -647,11 +693,14 @@ function renderViewer(
 			viewer.isBinaryPath ? "binary file, no text diff" : "no textual changes",
 		);
 	}
-	const allLines = viewerBodyLines(viewer.hunks, width);
-	const offset = clampViewerOffset(viewer.offset, viewer.hunks);
-	const visible = allLines.slice(offset, offset + bodyHeight);
-	const hiddenAbove = offset;
-	const hiddenBelow = Math.max(allLines.length - offset - visible.length, 0);
+	const bodyLines = viewerBodyLines(viewer.hunks, width);
+	const startRow = Math.min(
+		Math.max(viewer.offset, 0),
+		Math.max(bodyLines.length - bodyHeight, 0),
+	);
+	const visible = bodyLines.slice(startRow, startRow + bodyHeight);
+	const hiddenAbove = startRow;
+	const hiddenBelow = Math.max(bodyLines.length - startRow - visible.length, 0);
 	const scrollHint =
 		hiddenAbove > 0 || hiddenBelow > 0
 			? [
@@ -689,7 +738,10 @@ function renderViewer(
  *   row's key legend; when the header has no room for the count it is
  *   dropped whole rather than clipped mid-word, and the hint row is never
  *   touched. When model.viewer is open, a read-only bordered diff viewer is
- *   rendered instead of the list, and no row is selected.
+ *   rendered instead of the list, and no row is selected; a diff line or hunk
+ *   header longer than the frame interior wraps onto continuation rows at a
+ *   hard column break (always on, no toggle, because a column break never
+ *   hides a character), and a continuation row's line-number gutter is blank.
  */
 export function renderRows(
 	model: OverlayModel,

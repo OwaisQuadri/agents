@@ -1564,7 +1564,7 @@ test("W9 viewer: the box closes at 40, 60 and 100, and every row is exactly that
 	}
 });
 
-test("W9 viewer: a diff line longer than the interior clips without displacing the right rail", () => {
+test("W9 viewer: a diff line longer than the interior wraps without displacing the right rail", () => {
 	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
 	model = applyPatch(model, "request", "a.ts", [
 		{
@@ -1572,7 +1572,7 @@ test("W9 viewer: a diff line longer than the interior clips without displacing t
 			lines: [
 				{
 					origin: "-",
-					text: "a very long removed line that is far longer than any interior width used in this test and must be clipped cleanly",
+					text: "a very long removed line that is far longer than any interior width used in this test and must wrap cleanly to TAIL-A",
 				},
 			],
 		},
@@ -1583,12 +1583,18 @@ test("W9 viewer: a diff line longer than the interior clips without displacing t
 			assert.equal(testDisplayWidth(rowText(row)), width, `width ${width}: ${JSON.stringify(rowText(row))}`);
 		}
 		const contentRow = rows.find((r) => rowText(r).includes("a very long"));
-		assert.ok(contentRow, `width ${width}: the clipped content row must still be present`);
-		assert.ok(rowText(contentRow).endsWith("│"), `width ${width}: a clipped long line must not push the right rail out of place: ${JSON.stringify(rowText(contentRow))}`);
+		assert.ok(contentRow, `width ${width}: the wrapped content row must still be present`);
+		assert.ok(rowText(contentRow).endsWith("│"), `width ${width}: a wrapped long line must not push the right rail out of place: ${JSON.stringify(rowText(contentRow))}`);
+		const tall = renderRows(model, width, false, 30);
+		assert.match(
+			tall.map((r) => rowText(r)).join("\n"),
+			/TAIL-A/,
+			`width ${width}: the tail of the long line must wrap onto a continuation row, not be dropped`,
+		);
 	}
 });
 
-test("W9 viewer: a full-width CJK diff line clips without displacing the right rail", () => {
+test("W9 viewer: a full-width CJK diff line wraps without displacing the right rail", () => {
 	let model = reduce(initialModel(threeFileRequest(), null), "open-diff").model;
 	model = applyPatch(model, "request", "a.ts", [
 		{
@@ -1606,6 +1612,12 @@ test("W9 viewer: a full-width CJK diff line clips without displacing the right r
 		const contentRow = rows.find((r) => rowText(r).includes("中文"));
 		assert.ok(contentRow, `width ${width}: the CJK content row must still be present`);
 		assert.ok(rowText(contentRow).endsWith("│"), `width ${width}: a full-width character must not push the right rail out of place: ${JSON.stringify(rowText(contentRow))}`);
+		const tall = renderRows(model, width, false, 30);
+		const cjkRows = tall.filter((r) => rowText(r).includes("中文"));
+		assert.ok(
+			cjkRows.length > 1,
+			`width ${width}: a CJK line wider than the interior must occupy more than one row`,
+		);
 	}
 });
 
@@ -1639,5 +1651,233 @@ test("W9 viewer: the key hint appears in the bottom border and degrades by dropp
 	assert.ok(narrowItems.length > 0, "at least one whole hint item must be present at width 40");
 	for (const item of narrowItems) {
 		assert.ok(wideBottom.includes(item), `narrow-width item ${JSON.stringify(item)} must be a whole item from the full hint, not a mid-word fragment`);
+	}
+});
+
+type TestRow = { spans: { text: string }[] };
+
+function stripDisplayUnsafe(text: string): string {
+	return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "");
+}
+
+function viewerGutterWidth(rows: TestRow[]): number {
+	for (const row of rows) {
+		const match = /^│( *)(\d+) /.exec(rowText(row));
+		if (match !== null) {
+			return match[1].length + match[2].length;
+		}
+	}
+	return 0;
+}
+
+function interiorOf(row: TestRow): string {
+	return rowText(row).slice(1, -1);
+}
+
+function contentRowInteriors(rows: TestRow[]): string[] {
+	return rows
+		.slice(1, -1)
+		.map((row) => interiorOf(row))
+		.filter(
+			(inner) => inner.trim().length > 0 && !inner.trimStart().startsWith("@@"),
+		);
+}
+
+function reassembleContent(rows: TestRow[]): string {
+	const gutterWidth = viewerGutterWidth(rows);
+	return contentRowInteriors(rows)
+		.map((inner) => inner.slice(gutterWidth + 1).trimEnd())
+		.join("");
+}
+
+function reassembleHeader(rows: TestRow[]): string {
+	const gutterWidth = viewerGutterWidth(rows);
+	const parts: string[] = [];
+	for (const row of rows.slice(1, -1)) {
+		const inner = interiorOf(row);
+		if (/\d/.test(inner.slice(0, gutterWidth + 1))) {
+			break;
+		}
+		parts.push(inner.trimEnd());
+	}
+	return parts.join("");
+}
+
+function viewerWith(lines: Hunk["lines"], header = "@@ hdr @@"): OverlayModel {
+	const opened = reduce(
+		initialModel(threeFileRequest(), null),
+		"open-diff",
+	).model;
+	return applyPatch(opened, "request", "a.ts", [{ header, lines }]);
+}
+
+test("W9 viewer: a long diff line wraps onto continuation rows instead of being clipped", () => {
+	const text =
+		"aaaa-bbbb-cccc-dddd-eeee-ffff-gggg-hhhh-iiii-jjjj-kkkk-llll-mmmm-nnnn-TAIL-SENTINEL";
+	const model = viewerWith([{ origin: "-", text }]);
+	for (const width of [30, 40, 50]) {
+		const rows = renderRows(model, width, false, 30);
+		for (const row of rows) {
+			assert.equal(
+				testDisplayWidth(rowText(row)),
+				width,
+				`width ${width}: every row must stay exactly ${width} wide: ${JSON.stringify(rowText(row))}`,
+			);
+		}
+		assert.match(
+			reassembleContent(rows),
+			/TAIL-SENTINEL/,
+			`width ${width}: the tail of a wrapped line must reach the screen, not be clipped away`,
+		);
+		assert.equal(
+			reassembleContent(rows),
+			`-${text}`,
+			`width ${width}: the continuation rows must reproduce the source line in order`,
+		);
+	}
+});
+
+test("W9 viewer: a continuation row shows a blank line-number gutter, never a repeated number", () => {
+	const model = viewerWith([
+		{ origin: "+", text: "first-".repeat(20) },
+		{ origin: "+", text: "second-".repeat(20) },
+	]);
+	const width = 40;
+	const rows = renderRows(model, width, false, 40);
+	const gutterWidth = viewerGutterWidth(rows);
+	assert.ok(gutterWidth > 0, "the viewer must render a line-number gutter");
+	const interiors = contentRowInteriors(rows);
+	assert.ok(
+		interiors.length > 2,
+		`two long lines must produce continuation rows, got ${interiors.length}`,
+	);
+	const numbered: string[] = [];
+	for (const inner of interiors) {
+		const gutterCell = inner.slice(0, gutterWidth + 1);
+		if (gutterCell.trim().length === 0) {
+			continue;
+		}
+		numbered.push(gutterCell.trim());
+	}
+	assert.equal(
+		numbered.length,
+		2,
+		`exactly one numbered row per logical diff line, got ${JSON.stringify(numbered)}`,
+	);
+	assert.equal(
+		new Set(numbered).size,
+		numbered.length,
+		`no line number may appear twice in the frame: ${JSON.stringify(numbered)}`,
+	);
+});
+
+test("W9 viewer: wrapping never splits a wide character and every row is exactly width", () => {
+	const text = "中文测试中文测试中文测试中文测试中文测试中文测试中文测试";
+	const model = viewerWith([{ origin: "+", text }]);
+	for (const width of [31, 41, 51]) {
+		const rows = renderRows(model, width, false, 30);
+		for (const row of rows) {
+			assert.equal(
+				testDisplayWidth(rowText(row)),
+				width,
+				`width ${width} (CJK): ${JSON.stringify(rowText(row))}`,
+			);
+		}
+		assert.equal(
+			reassembleContent(rows),
+			`+${text}`,
+			`width ${width}: every wide character must survive wrapping whole`,
+		);
+	}
+});
+
+test("W9 viewer: no span carries an escape byte while wrapping", () => {
+	const text = `long-\u001b]0;x\u0007wrapped-${"payload-".repeat(10)}end`;
+	const model = viewerWith([{ origin: " ", text }]);
+	const rows = renderRows(model, 36, false, 30);
+	for (const row of rows) {
+		for (const span of row.spans) {
+			assert.ok(
+				!span.text.includes("\u001b"),
+				`no span may carry an escape byte: ${JSON.stringify(span.text)}`,
+			);
+		}
+	}
+	assert.equal(
+		reassembleContent(rows),
+		stripDisplayUnsafe(` ${text}`),
+		"the wrapped rows must reproduce the sanitized source line",
+	);
+});
+
+test("W9 viewer: the tail of a heavily wrapped diff is reachable by scrolling to the bottom", () => {
+	const width = 40;
+	const height = 12;
+	const text = `${"chunk-".repeat(60)}FINAL-SENTINEL`;
+	let model = viewerWith([{ origin: "+", text: "short head line" }, { origin: "+", text }]);
+	model = reduce(model, "bottom", height, width).model;
+	const rows = renderRows(model, width, false, height);
+	for (const row of rows) {
+		assert.equal(
+			testDisplayWidth(rowText(row)),
+			width,
+			`every row must stay exactly ${width} wide: ${JSON.stringify(rowText(row))}`,
+		);
+	}
+	assert.match(
+		reassembleContent(rows),
+		/FINAL-SENTINEL/,
+		"the tail of a diff that wraps past one screen must be reachable",
+	);
+});
+
+test("W9 viewer: an empty-text diff line still emits exactly one railed row", () => {
+	const width = 40;
+	const model = viewerWith([{ origin: " ", text: "" }]);
+	const rows = renderRows(model, width, false, 30);
+	const interiors = rows
+		.slice(1, -1)
+		.map((row) => interiorOf(row))
+		.filter((inner) => /\d/.test(inner.slice(0, viewerGutterWidth(rows) + 1)));
+	assert.equal(interiors.length, 1, "an empty diff line renders exactly one row");
+	for (const row of rows) {
+		assert.equal(testDisplayWidth(rowText(row)), width);
+	}
+});
+
+test("W9 viewer: an over-long hunk header wraps too, and no header row grows a line number", () => {
+	const header =
+		"@@ -1,2 +1,3 @@ an extremely long hunk header context suffix ending in HEADER-SENTINEL";
+	const model = viewerWith([{ origin: "+", text: "x" }], header);
+	const width = 40;
+	const rows = renderRows(model, width, false, 30);
+	for (const row of rows) {
+		assert.equal(
+			testDisplayWidth(rowText(row)),
+			width,
+			`every row must stay exactly ${width} wide: ${JSON.stringify(rowText(row))}`,
+		);
+	}
+	assert.equal(
+		reassembleHeader(rows),
+		header,
+		"a long hunk header must wrap onto continuation rows in order",
+	);
+	const gutterWidth = viewerGutterWidth(rows);
+	const headerRows: string[] = [];
+	for (const row of rows.slice(1, -1)) {
+		const inner = interiorOf(row);
+		if (/\d/.test(inner.slice(0, gutterWidth + 1))) {
+			break;
+		}
+		headerRows.push(inner);
+	}
+	assert.ok(headerRows.length > 1, "the long header must occupy more than one row");
+	for (const inner of headerRows) {
+		assert.doesNotMatch(
+			inner,
+			/^ *\d+ /,
+			`a header row must not grow a line number: ${JSON.stringify(inner)}`,
+		);
 	}
 });

@@ -524,6 +524,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 						}
 					}
 					const viewerHeight = overlayHeightBudget();
+					let viewerWidth = Number.POSITIVE_INFINITY;
 					return {
 						render(width: number): string[] {
 							const stats =
@@ -532,6 +533,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 								1,
 								width - OVERLAY_PADDING_X * 2 - SELECTED_GUTTER.length,
 							);
+							viewerWidth = contentWidth;
 							const rows = renderRows(
 								model,
 								contentWidth,
@@ -560,7 +562,7 @@ export default function liveDiff(pi: ExtensionAPI): void {
 							if (key === null) {
 								return;
 							}
-							const step = reduce(model, key, viewerHeight);
+							const step = reduce(model, key, viewerHeight, viewerWidth);
 							model = step.model;
 							if (key === "mode-left" || key === "mode-right") {
 								model = rebuildRows(model, state.requestStats, state.overallStats);
