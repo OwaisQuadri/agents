@@ -2,6 +2,12 @@ use std::path::PathBuf;
 
 use crate::manifest::Platform;
 
+pub(crate) fn pi_extension_backup(destination: &std::path::Path) -> PathBuf {
+    let mut backup = destination.as_os_str().to_os_string();
+    backup.push(".pre-tool-sync");
+    backup.into()
+}
+
 /// Holds installation actions in application order.
 /// It takes no inputs beyond its action vector, returns data consumed by renderers
 /// and appliers, and cannot fail.
@@ -44,6 +50,7 @@ pub enum Action {
         source: PathBuf,
         source_root: PathBuf,
         destination: PathBuf,
+        is_takeover_allowed: bool,
     },
     LinkPiPackage {
         source: PathBuf,

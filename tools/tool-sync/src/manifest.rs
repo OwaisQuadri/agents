@@ -21,6 +21,7 @@ pub struct ToolSpec {
     pub mcp_server: Option<String>,
     pub pi_extension: Option<PathBuf>,
     pub is_pi_extension_from_source: bool,
+    pub is_pi_extension_takeover_allowed: bool,
     pub pi_package: Option<PathBuf>,
     pub skills: Vec<PathBuf>,
     pub herdr_plugin: Option<PathBuf>,
@@ -65,6 +66,8 @@ struct RawTool {
     pi_extension: Option<PathBuf>,
     #[serde(default)]
     is_pi_extension_from_source: bool,
+    #[serde(default)]
+    is_pi_extension_takeover_allowed: bool,
     #[serde(default)]
     pi_package: Option<PathBuf>,
     #[serde(default)]
@@ -195,10 +198,12 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
         {
             return Err(tool_invalid(name, "MCP server reference is empty"));
         }
-        if raw_tool.is_pi_extension_from_source && raw_tool.pi_extension.is_none() {
+        if (raw_tool.is_pi_extension_from_source || raw_tool.is_pi_extension_takeover_allowed)
+            && raw_tool.pi_extension.is_none()
+        {
             return Err(tool_invalid(
                 name,
-                "is_pi_extension_from_source requires pi_extension",
+                "Pi extension options require pi_extension",
             ));
         }
         if let Some(extension) = &raw_tool.pi_extension {
@@ -257,6 +262,7 @@ fn validate(raw: RawManifest) -> Result<ToolManifest, SyncError> {
             mcp_server: raw_tool.mcp_server,
             pi_extension: raw_tool.pi_extension,
             is_pi_extension_from_source: raw_tool.is_pi_extension_from_source,
+            is_pi_extension_takeover_allowed: raw_tool.is_pi_extension_takeover_allowed,
             pi_package: raw_tool.pi_package,
             skills: raw_tool.skills,
             herdr_plugin: raw_tool.herdr_plugin,
@@ -418,6 +424,7 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
             Some(Path::new("pi/extensions/rag.ts"))
         );
         assert!(!tool.is_pi_extension_from_source);
+        assert!(!tool.is_pi_extension_takeover_allowed);
         assert_eq!(
             tool.pi_package.as_deref(),
             Some(Path::new("pi/packages/rag"))
@@ -444,7 +451,7 @@ installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] 
         let error = load_text(&text).expect_err("source extension requires an extension");
         assert!(error
             .to_string()
-            .contains("is_pi_extension_from_source requires pi_extension"));
+            .contains("Pi extension options require pi_extension"));
     }
 
     #[test]
@@ -660,6 +667,7 @@ installer = { command = "/usr/bin/true", args = [], preview_args = [] }
             Some(Path::new("src/integration/assets/pi/herdr-agent-state.ts"))
         );
         assert!(tool.is_pi_extension_from_source);
+        assert!(tool.is_pi_extension_takeover_allowed);
         assert!(matches!(
             &tool.source,
             ToolSource::Git { url, revision }

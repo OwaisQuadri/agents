@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::manifest::{Platform, ToolManifest, ToolSource};
-use crate::plan::{Action, Plan};
+use crate::plan::{pi_extension_backup, Action, Plan};
 use crate::SyncError;
 
 /// Supplies absolute roots and the selected platform to plan construction.
@@ -109,12 +109,17 @@ pub fn build(manifest: &ToolManifest, context: &Context) -> Result<Plan, SyncErr
                         .file_name()
                         .expect("validated Pi extension paths have file names"),
                 );
-                reject_non_symlink(&destination, "Pi extension")?;
+                if tool.is_pi_extension_takeover_allowed {
+                    validate_takeover_destination(&destination)?;
+                } else {
+                    reject_non_symlink(&destination, "Pi extension")?;
+                }
                 reserve_destination(&destination, &mut planned_paths, "Pi extension")?;
                 actions.push(Action::LinkPiExtension {
                     source,
                     source_root,
                     destination,
+                    is_takeover_allowed: tool.is_pi_extension_takeover_allowed,
                 });
             }
 
@@ -267,6 +272,29 @@ fn resource_source(
     }
 }
 
+fn validate_takeover_destination(destination: &Path) -> Result<(), SyncError> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Ok(()),
+        Ok(metadata) if metadata.is_file() => {
+            let backup = pi_extension_backup(destination);
+            match fs::symlink_metadata(&backup) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Ok(_) => Err(planning_error(format!(
+                    "Pi extension backup {} already exists",
+                    backup.display()
+                ))),
+                Err(error) => Err(SyncError::Io(backup, error)),
+            }
+        }
+        Ok(_) => Err(planning_error(format!(
+            "Pi extension destination {} collides with a non-file",
+            destination.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SyncError::Io(destination.to_path_buf(), error)),
+    }
+}
+
 fn reject_non_symlink(destination: &Path, field: &str) -> Result<(), SyncError> {
     match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() => Ok(()),
@@ -370,6 +398,7 @@ mod tests {
             mcp_server: None,
             pi_extension: None,
             is_pi_extension_from_source: false,
+            is_pi_extension_takeover_allowed: false,
             pi_package: None,
             skills: Vec::new(),
             herdr_plugin: None,
@@ -448,13 +477,23 @@ mod tests {
             "src/integration/assets/pi/herdr-agent-state.ts",
         ));
         spec.is_pi_extension_from_source = true;
+        spec.is_pi_extension_takeover_allowed = true;
 
         let context = fixture.context(Platform::Linux);
+        let extension_directory = context.home_root.join(".pi/agent/extensions");
+        fs::create_dir_all(&extension_directory).expect("extension directory");
+        fs::write(
+            extension_directory.join("herdr-agent-state.ts"),
+            "managed extension",
+        )
+        .expect("managed extension");
         let plan = build(&manifest(spec), &context).expect("plan");
 
         assert_eq!(
-            plan.actions[5],
-            Action::LinkPiExtension {
+            plan.actions
+                .iter()
+                .find(|action| matches!(action, Action::LinkPiExtension { .. })),
+            Some(&Action::LinkPiExtension {
                 source: context
                     .cache_root
                     .join("rag/src/integration/assets/pi/herdr-agent-state.ts"),
@@ -462,7 +501,8 @@ mod tests {
                 destination: context
                     .home_root
                     .join(".pi/agent/extensions/herdr-agent-state.ts"),
-            }
+                is_takeover_allowed: true,
+            })
         );
     }
 
@@ -533,6 +573,7 @@ mod tests {
                     .expect("canonical extension"),
                 source_root: fixture.root.clone(),
                 destination: context.home_root.join(".pi/agent/extensions/rag.ts"),
+                is_takeover_allowed: false,
             }
         );
         assert_eq!(
@@ -739,6 +780,7 @@ mod tests {
                     .expect("canonical extension"),
                 source_root: fixture.root.clone(),
                 destination: context.home_root.join(".pi/agent/extensions/rag.ts"),
+                is_takeover_allowed: false,
             }
         );
         assert_eq!(
@@ -878,6 +920,19 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("https://foreign.test/rag.git"));
         assert!(message.contains("https://example.test/rag.git"));
+    }
+
+    #[test]
+    fn rejects_invalid_pi_extension_takeover_destinations() {
+        let fixture = Fixture::new();
+        let destination = fixture.root.join("herdr-agent-state.ts");
+        fs::create_dir_all(&destination).expect("directory collision");
+        assert!(validate_takeover_destination(&destination).is_err());
+
+        fs::remove_dir(&destination).expect("remove directory fixture");
+        fs::write(&destination, "version 8").expect("managed extension");
+        fs::write(pi_extension_backup(&destination), "existing backup").expect("existing backup");
+        assert!(validate_takeover_destination(&destination).is_err());
     }
 
     #[test]
