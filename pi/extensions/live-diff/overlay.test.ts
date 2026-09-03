@@ -1690,6 +1690,26 @@ function reassembleContent(rows: TestRow[]): string {
 		.join("");
 }
 
+function expectedSegments(source: string, contentWidth: number): string[] {
+	const segments: string[] = [];
+	let current = "";
+	let used = 0;
+	for (const char of source) {
+		const charWidth = testDisplayWidth(char);
+		if (current !== "" && used + charWidth > contentWidth) {
+			segments.push(current);
+			current = "";
+			used = 0;
+		}
+		current += char;
+		used += charWidth;
+	}
+	segments.push(current);
+	return segments.map(
+		(segment) => segment + " ".repeat(contentWidth - testDisplayWidth(segment)),
+	);
+}
+
 function reassembleHeader(rows: TestRow[]): string {
 	const gutterWidth = viewerGutterWidth(rows);
 	const parts: string[] = [];
@@ -1729,10 +1749,16 @@ test("W9 viewer: a long diff line wraps onto continuation rows instead of being 
 			/TAIL-SENTINEL/,
 			`width ${width}: the tail of a wrapped line must reach the screen, not be clipped away`,
 		);
-		assert.equal(
-			reassembleContent(rows),
-			`-${text}`,
-			`width ${width}: the continuation rows must reproduce the source line in order`,
+		const gutterWidth = viewerGutterWidth(rows);
+		const expected = expectedSegments(`-${text}`, width - 2 - (gutterWidth + 1));
+		assert.ok(
+			expected.length > 1,
+			`width ${width}: the fixture must wrap, got ${expected.length} segment(s)`,
+		);
+		assert.deepEqual(
+			paddedContentRows(rows, gutterWidth, expected.length),
+			expected,
+			`width ${width}: the continuation rows must reproduce the source line in order, segment for segment`,
 		);
 	}
 });
@@ -1783,10 +1809,16 @@ test("W9 viewer: wrapping never splits a wide character and every row is exactly
 				`width ${width} (CJK): ${JSON.stringify(rowText(row))}`,
 			);
 		}
-		assert.equal(
-			reassembleContent(rows),
-			`+${text}`,
-			`width ${width}: every wide character must survive wrapping whole`,
+		const gutterWidth = viewerGutterWidth(rows);
+		const expected = expectedSegments(`+${text}`, width - 2 - (gutterWidth + 1));
+		assert.ok(
+			expected.length > 1,
+			`width ${width}: the CJK fixture must wrap, got ${expected.length} segment(s)`,
+		);
+		assert.deepEqual(
+			paddedContentRows(rows, gutterWidth, expected.length),
+			expected,
+			`width ${width}: every wide character must survive wrapping whole, and every segment must keep its padding`,
 		);
 	}
 });
@@ -1803,10 +1835,19 @@ test("W9 viewer: no span carries an escape byte while wrapping", () => {
 			);
 		}
 	}
-	assert.equal(
-		reassembleContent(rows),
+	const gutterWidth = viewerGutterWidth(rows);
+	const expected = expectedSegments(
 		stripDisplayUnsafe(` ${text}`),
-		"the wrapped rows must reproduce the sanitized source line",
+		36 - 2 - (gutterWidth + 1),
+	);
+	assert.ok(
+		expected.length > 1,
+		`the escape-byte fixture must wrap, got ${expected.length} segment(s)`,
+	);
+	assert.deepEqual(
+		paddedContentRows(rows, gutterWidth, expected.length),
+		expected,
+		"the wrapped rows must reproduce the sanitized source line, segment for segment",
 	);
 });
 
@@ -1869,10 +1910,7 @@ test("W9 viewer: a run of spaces straddling a wrap boundary survives with its pa
 	const gutterWidth = viewerGutterWidth(rows);
 	const contentWidth = width - 2 - (gutterWidth + 1);
 	assert.ok(contentWidth > 0, "the fixture must leave room for content");
-	const expected: string[] = [];
-	for (let at = 0; at < source.length; at += contentWidth) {
-		expected.push(source.slice(at, at + contentWidth).padEnd(contentWidth, " "));
-	}
+	const expected = expectedSegments(source, contentWidth);
 	assert.ok(
 		expected.length > 1,
 		`the fixture must wrap, got ${expected.length} segment(s)`,
@@ -1978,4 +2016,41 @@ test("W9 viewer: the render and the reducer share one maximum offset, so an up p
 			`up press ${press} after bottom must move the frame, not just the stored offset`,
 		);
 	}
+});
+
+test("W9 viewer: the render and the reducer share one maximum offset when neither call is given a height", () => {
+	const width = 60;
+	const shortLines = Array.from({ length: 60 }, (_unused, index) => ({
+		origin: "+" as const,
+		text: `line-${index}`,
+	}));
+	let model = viewerWith(shortLines);
+
+	const frame = (m: OverlayModel): string =>
+		renderRows(m, width, false)
+			.map((row) => rowText(row))
+			.join("\n");
+
+	const atTop = renderRows(model, width, false);
+	const bodyHeight = atTop.length - 2;
+	const rowCount = bodyHeight + hiddenBelowCount(atTop);
+	assert.ok(
+		rowCount > bodyHeight,
+		`the fixture must overflow the default body, got ${rowCount} rows for a body of ${bodyHeight}`,
+	);
+
+	model = reduce(model, "bottom").model;
+	assert.equal(
+		model.viewer?.offset,
+		rowCount - bodyHeight,
+		"the reducer's default height must clamp to the same maximum the default render does",
+	);
+
+	const atBottom = frame(model);
+	model = reduce(model, "up").model;
+	assert.notEqual(
+		frame(model),
+		atBottom,
+		"an up press after bottom must move the frame even when no height is passed",
+	);
 });

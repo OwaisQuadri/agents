@@ -14,6 +14,8 @@ import type {
 	ViewerState,
 } from "./types.ts";
 
+const DEFAULT_VIEWER_HEIGHT = 20;
+
 function isColumnScopedKey(key: OverlayKey): key is "close" | "mode-left" | "mode-right" {
 	return key === "close" || key === "mode-left" || key === "mode-right";
 }
@@ -261,7 +263,9 @@ function reduceViewer(
  *
  * @param model current model
  * @param key mapped key
- * @param viewportHeight rows the overlay may occupy, header and hint included
+ * @param viewportHeight rows the overlay may occupy, header and hint
+ *   included; its default matches the height `renderRows` falls back to when
+ *   it is given none, so the two paths clamp the viewer offset alike
  * @param viewerWidth panel width the viewer last rendered at, in display
  *   columns; it sets how far a wrapped diff can scroll. Omitted or infinite
  *   means "no render yet", which scrolls as though no line wraps
@@ -271,7 +275,7 @@ function reduceViewer(
 export function reduce(
 	model: OverlayModel,
 	key: OverlayKey,
-	viewportHeight = 20,
+	viewportHeight = DEFAULT_VIEWER_HEIGHT,
 	viewerWidth: number = Number.POSITIVE_INFINITY,
 ): OverlayStep {
 	if (model.viewer !== null) {
@@ -690,7 +694,7 @@ function renderViewer(
 	visibleHeight: number,
 ): RenderRow[] {
 	const bodyHeight = Math.max(
-		(Number.isFinite(visibleHeight) ? visibleHeight : 24) - 2,
+		(Number.isFinite(visibleHeight) ? visibleHeight : DEFAULT_VIEWER_HEIGHT) - 2,
 		1,
 	);
 	const framed = (message: string): RenderRow[] => {
@@ -751,7 +755,9 @@ function renderViewer(
  * @param isTruncated whether the current mode's stats were capped
  * @param visibleHeight maximum number of rows to emit, header and hint
  *   included; omitted or infinite means no windowing, which is every
- *   existing caller's behaviour
+ *   existing caller's behaviour. The viewer always needs a finite body, so
+ *   an omitted height falls back there to the same default `reduce` uses,
+ *   keeping the render and the reducer on one maximum scroll offset
  * @returns rows padded or clipped to exactly `width` display columns, with
  *   the cursor row and only the cursor row selected. The header is always
  *   first and the hint always last; when the body is windowed, the cursor's
