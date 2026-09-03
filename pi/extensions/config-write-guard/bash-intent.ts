@@ -1,9 +1,12 @@
 // KNOWN GAP, accepted: a path written to a file in one group and executed in a later
 // group (`echo "..." > x.sh; bash x.sh`) is not caught — closing it, and every encoded
-// variant, needs a real shell parser. This guard targets an agent's typical or mistaken
-// bash usage, not a deliberate bypass of its own rail.
+// variant, needs a real shell parser.
+
+// KNOWN GAP, accepted: `cd` on the allowlist lets a group's only protected-path
+// reference sit in a `cd` stage while a later group writes an unqualified path
+// (`cd ~/.claude && rm x`). Both gaps target mistaken usage, not a deliberate bypass.
 const READ_ONLY_COMMANDS = new Set([
-	"cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "wc",
+	"cat", "less", "more", "head", "tail", "egrep", "fgrep", "rg", "cd", "fd", "ls", "stat", "file", "wc",
 	"diff", "cmp", "md5sum", "shasum", "sha1sum", "sha256sum", "realpath", "readlink", "dirname",
 	"basename", "pwd", "which", "type", "jq", "tree", "du", "xxd", "hexdump", "bat", "nl", "column",
 	"od", "strings", "echo", "printf", "true", "test", "[",
