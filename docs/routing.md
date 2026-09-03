@@ -9,6 +9,13 @@ models. To swap a model, edit that file and run install.sh. You can also use `/t
 Each model in a tier's chain carries its OWN `thinking` level. That includes the primary
 and each fallback.
 
+`tools/tier-dispatch` is another reader of this file, alongside install.sh and the pi-side
+extensions below — it resolves a tier name to its own ordered chain (primary, then
+fallbacks, in file order) for the ai-author eval harness's execution arm, walking that
+same chain on a quota error and reporting the whole tier unavailable rather than crossing
+into a different tier's models. It never derives a model id any other way, so this file
+stays the one place a model id actually lives, per the rule above.
+
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
 you lean on a price argument.
 
