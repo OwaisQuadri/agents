@@ -66,7 +66,13 @@ tools/tool-sync/target/release/tool-sync \
   --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check
 
 ./install-policy.sh --dry-run
+
+cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
+  --verify-registry --tiers-file config/model-tiers.json
 ```
+
+The registry check finds Pi's registry from `HOME`; do not put its home-directory path on
+the command line. This keeps the command runnable inside Pi sessions.
 
 ## before landing a change
 
