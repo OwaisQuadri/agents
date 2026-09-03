@@ -609,7 +609,29 @@ function wrapToColumns(text: string, width: number): string[] {
 	return segments;
 }
 
+// A hunk array is replaced, never mutated in place, so its identity keys the
+// wrapped body safely. One entry is enough: a key press asks for the same
+// (hunks, width) pair twice, once to clamp the offset and once to render.
+let viewerBodyCache: {
+	hunks: Hunk[];
+	width: number;
+	rows: RenderRow[];
+} | null = null;
+
 function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
+	if (
+		viewerBodyCache !== null &&
+		viewerBodyCache.hunks === hunks &&
+		viewerBodyCache.width === width
+	) {
+		return viewerBodyCache.rows;
+	}
+	const rows = buildViewerBodyLines(hunks, width);
+	viewerBodyCache = { hunks, width, rows };
+	return rows;
+}
+
+function buildViewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 	const lines: RenderRow[] = [];
 	let highestLine = 1;
 	for (const hunk of hunks) {

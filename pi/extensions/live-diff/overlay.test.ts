@@ -1845,6 +1845,58 @@ test("W9 viewer: an empty-text diff line still emits exactly one railed row", ()
 	}
 });
 
+function paddedContentRows(
+	rows: TestRow[],
+	gutterWidth: number,
+	count: number,
+): string[] {
+	const interiors = rows.slice(1, -1).map((row) => interiorOf(row));
+	const first = interiors.findIndex((inner) =>
+		/\d/.test(inner.slice(0, gutterWidth + 1)),
+	);
+	assert.ok(first !== -1, "the frame must carry at least one numbered content row");
+	return interiors
+		.slice(first, first + count)
+		.map((inner) => inner.slice(gutterWidth + 1));
+}
+
+test("W9 viewer: a run of spaces straddling a wrap boundary survives with its padding intact", () => {
+	const width = 40;
+	const text = `${"alpha-".repeat(4)}${" ".repeat(60)}${"omega-".repeat(4)}TAIL`;
+	const source = `+${text}`;
+	const model = viewerWith([{ origin: "+", text }]);
+	const rows = renderRows(model, width, false, 30);
+	const gutterWidth = viewerGutterWidth(rows);
+	const contentWidth = width - 2 - (gutterWidth + 1);
+	assert.ok(contentWidth > 0, "the fixture must leave room for content");
+	const expected: string[] = [];
+	for (let at = 0; at < source.length; at += contentWidth) {
+		expected.push(source.slice(at, at + contentWidth).padEnd(contentWidth, " "));
+	}
+	assert.ok(
+		expected.length > 1,
+		`the fixture must wrap, got ${expected.length} segment(s)`,
+	);
+	assert.ok(
+		expected.slice(0, -1).some((segment) => segment.endsWith(" ")),
+		"the fixture must place whitespace on a wrap boundary",
+	);
+	assert.ok(
+		expected.some((segment) => segment.trim().length === 0),
+		"the fixture must produce one segment made only of spaces",
+	);
+	assert.deepEqual(
+		paddedContentRows(rows, gutterWidth, expected.length),
+		expected,
+		"every wrapped segment must keep its spaces, including those on the boundary",
+	);
+	assert.equal(
+		paddedContentRows(rows, gutterWidth, expected.length).join("").trimEnd(),
+		source,
+		"the segments must reassemble into the source line with its interior spaces",
+	);
+});
+
 test("W9 viewer: an over-long hunk header wraps too, and no header row grows a line number", () => {
 	const header =
 		"@@ -1,2 +1,3 @@ an extremely long hunk header context suffix ending in HEADER-SENTINEL";
