@@ -153,7 +153,10 @@ function clampViewerOffset(
 	width: number = Number.POSITIVE_INFINITY,
 ): number {
 	const lineCount = viewerRowCount(hunks, width);
-	const keptOnScreen = Math.max(Math.ceil(visibleLines * 0.8), 1);
+	// The reducer and renderViewer must agree on the maximum offset, or the first
+	// presses after `bottom` move the offset without moving the frame. Both use
+	// the body height: the visible height less the two border rows.
+	const keptOnScreen = Math.max(visibleLines - 2, 1);
 	const maxOffset = Math.max(lineCount - keptOnScreen, 0);
 	return Math.min(Math.max(offset, 0), maxOffset);
 }
@@ -596,7 +599,9 @@ function wrapToColumns(text: string, width: number): string[] {
 	for (const char of text) {
 		const size = charWidth(char);
 		if (used + size > width) {
-			segments.push(current);
+			if (current !== "") {
+				segments.push(current);
+			}
 			current = "";
 			used = 0;
 		}
@@ -610,24 +615,20 @@ function wrapToColumns(text: string, width: number): string[] {
 }
 
 // A hunk array is replaced, never mutated in place, so its identity keys the
-// wrapped body safely. One entry is enough: a key press asks for the same
-// (hunks, width) pair twice, once to clamp the offset and once to render.
-let viewerBodyCache: {
-	hunks: Hunk[];
-	width: number;
-	rows: RenderRow[];
-} | null = null;
+// wrapped body safely. The weak key releases the rows once the viewer closes
+// and drops the hunks, which a module-global entry would retain for the process.
+const viewerBodyCache = new WeakMap<
+	Hunk[],
+	{ width: number; rows: RenderRow[] }
+>();
 
 function viewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
-	if (
-		viewerBodyCache !== null &&
-		viewerBodyCache.hunks === hunks &&
-		viewerBodyCache.width === width
-	) {
-		return viewerBodyCache.rows;
+	const cached = viewerBodyCache.get(hunks);
+	if (cached !== undefined && cached.width === width) {
+		return cached.rows;
 	}
 	const rows = buildViewerBodyLines(hunks, width);
-	viewerBodyCache = { hunks, width, rows };
+	viewerBodyCache.set(hunks, { width, rows });
 	return rows;
 }
 
@@ -644,7 +645,7 @@ function buildViewerBodyLines(hunks: Hunk[], width: number): RenderRow[] {
 	}
 	const gutterWidth = String(highestLine).length;
 	const interiorWidth = Math.max(width - 2, 0);
-	const contentWidth = Math.max(interiorWidth - (gutterWidth + 1), 1);
+	const contentWidth = Math.max(interiorWidth - (gutterWidth + 1), 2);
 	const pushRow = (spans: RenderSpan[]): void => {
 		lines.push(railed(fit(spans, interiorWidth, false), width));
 	};

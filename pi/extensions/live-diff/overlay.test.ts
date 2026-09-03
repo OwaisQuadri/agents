@@ -1933,3 +1933,49 @@ test("W9 viewer: an over-long hunk header wraps too, and no header row grows a l
 		);
 	}
 });
+
+function hiddenBelowCount(rows: TestRow[]): number {
+	const match = /↓ (\d+)/.exec(rowText(rows[0]));
+	assert.ok(match !== null, `the top border must report the hidden row count: ${JSON.stringify(rowText(rows[0]))}`);
+	return Number(match[1]);
+}
+
+test("W9 viewer: the render and the reducer share one maximum offset, so an up press after bottom moves the frame", () => {
+	const width = 45;
+	const height = 30;
+	const bodyHeight = height - 2;
+	const wrappingLines = Array.from({ length: 60 }, (_unused, index) => ({
+		origin: "+" as const,
+		text: `line-${index}-${"payload-".repeat(14)}`,
+	}));
+	let model = viewerWith(wrappingLines);
+
+	const atTop = renderRows(model, width, false, height);
+	const rowCount = bodyHeight + hiddenBelowCount(atTop);
+	assert.ok(
+		rowCount > bodyHeight * 2,
+		`the fixture must overflow the body by more than one page, got ${rowCount} rows for a body of ${bodyHeight}`,
+	);
+
+	model = reduce(model, "bottom", height, width).model;
+	assert.equal(
+		model.viewer?.offset,
+		rowCount - bodyHeight,
+		"the reducer's bottom offset must be the same maximum the render clamps to",
+	);
+
+	const atBottom = renderRows(model, width, false, height)
+		.map((row) => rowText(row))
+		.join("\n");
+	for (let press = 1; press <= 3; press += 1) {
+		model = reduce(model, "up", height, width).model;
+		const afterUp = renderRows(model, width, false, height)
+			.map((row) => rowText(row))
+			.join("\n");
+		assert.notEqual(
+			afterUp,
+			atBottom,
+			`up press ${press} after bottom must move the frame, not just the stored offset`,
+		);
+	}
+});
