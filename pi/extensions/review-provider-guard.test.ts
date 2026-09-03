@@ -100,6 +100,17 @@ test("resolves a model reference to the providers it could land on", () => {
 	assert.deepEqual(providersForModelRef("5", models).sort(), ["anthropic", "openai-codex"]);
 });
 
+test("takes an exact qualified name over another provider's model that merely mentions it", () => {
+	const mirrored: ModelEntry[] = [
+		{ id: "claude-opus-5", name: "Claude Opus 5", provider: "anthropic" },
+		{ id: "mirror-1", name: "anthropic/claude-opus-5 (mirror)", provider: "openrouter" },
+	];
+	assert.deepEqual(providersForModelRef("anthropic/claude-opus-5", mirrored), ["anthropic"]);
+
+	const ctx = context({ sessionProvider: "anthropic", sessionModelId: "claude-opus-5", availableModels: mirrored });
+	assert.match(blockedReviewDispatch("Agent", { subagent_type: "code-reviewer", model: "anthropic/claude-opus-5" }, ctx) ?? "", /Blocked a code-reviewer dispatch/);
+});
+
 test("reads the agent default model out of the persisted subagent settings", () => {
 	const settings = {
 		subagents: {
