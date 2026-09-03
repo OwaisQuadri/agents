@@ -303,6 +303,28 @@ fn existing_output_symlink_cannot_overwrite_a_repository_file() {
 }
 
 #[test]
+fn stamping_twice_over_the_same_output_path_succeeds() {
+    let fixture = Fixture::new("stamp-twice");
+    let first = fixture.stamp();
+    let second = fixture.stamp();
+    assert_eq!(first, second);
+    let raw = std::fs::read_to_string(&second).unwrap();
+    assert!(raw.contains("\"schema_version\""), "{raw}");
+    assert!(raw.trim_end().ends_with('}'), "{raw}");
+}
+
+#[test]
+fn a_longer_stale_file_at_the_output_path_is_fully_replaced() {
+    let fixture = Fixture::new("stale-output");
+    std::fs::write(fixture.root.join("stamp.json"), "x".repeat(64 * 1024)).unwrap();
+    let stamp = fixture.stamp();
+    let raw = std::fs::read_to_string(&stamp).unwrap();
+    assert!(!raw.contains("xxxx"), "stale bytes survived the rewrite");
+    assert!(raw.contains("\"schema_version\""), "{raw}");
+    assert!(raw.trim_end().ends_with('}'), "{raw}");
+}
+
+#[test]
 fn stamp_output_inside_repository_is_rejected() {
     let fixture = Fixture::new("stamp-inside-repo");
     let stamp = fixture.dir.join("stamp.json");
