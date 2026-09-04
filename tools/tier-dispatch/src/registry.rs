@@ -43,6 +43,10 @@ impl Registry {
             .is_some_and(|models| models.contains(model))
     }
 
+    fn has_provider(&self, provider: &str) -> bool {
+        self.models.contains_key(provider)
+    }
+
     fn model_ids(&self) -> impl Iterator<Item = (&str, &str)> {
         self.models.iter().flat_map(|(provider, models)| {
             models
@@ -114,7 +118,9 @@ pub fn unknown_models(tiers: &TiersFile, registry: &Registry) -> Vec<Finding> {
 pub fn unknown_model_overrides(overrides: &ModelOverrides, registry: &Registry) -> Vec<String> {
     overrides
         .model_ids()
-        .filter(|(provider, model)| !registry.contains(provider, model))
+        .filter(|(provider, model)| {
+            registry.has_provider(provider) && !registry.contains(provider, model)
+        })
         .map(|(provider, model)| format!("{provider}/{model}"))
         .collect()
 }
@@ -321,6 +327,23 @@ mod tests {
             unknown_model_overrides(&overrides, &registry),
             vec!["anthropic/claude-does-not-exist"]
         );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn overrides_for_an_unavailable_provider_are_skipped() {
+        let directory = test_dir("unavailable-provider-override");
+        let registry = Registry::load(&write_registry(
+            &directory,
+            r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]}}"#,
+        ))
+        .unwrap();
+        let overrides = ModelOverrides::load(&write_overrides(
+            &directory,
+            r#"{"providers":{"openrouter":{"modelOverrides":{"vendor/model":{}}}}}"#,
+        ))
+        .unwrap();
+        assert!(unknown_model_overrides(&overrides, &registry).is_empty());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

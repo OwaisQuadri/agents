@@ -9,9 +9,17 @@ models. To swap a model, edit that file and run install.sh. You can also use `/t
 Each model in a tier's chain carries its OWN `thinking` level. That includes the primary
 and each fallback.
 
-`tools/tier-dispatch` also reads this file. It resolves a tier to its ordered model chain for the ai-author evaluation harness. The primary model comes before its listed fallbacks. A quota error moves the dispatch to the next model in that chain. Exhaustion makes the complete tier unavailable.
+`tools/tier-dispatch` also reads this file. It resolves a tier to its ordered model
+chain for the ai-author evaluation harness. The primary model comes before its listed
+fallbacks. A quota error moves the dispatch to the next model in that chain. Model
+limits can differ within one provider, so the dispatch tests every configured fallback.
+Exhaustion makes the complete tier unavailable.
 
-The `--verify-registry` mode checks each tier entry against Pi's local registry. It also checks each override in `config/models.json`. The default models file sits beside the supplied tiers file. It does not dispatch a model or write a file. The tool never derives a model identifier from another source.
+The `--verify-registry` mode checks each tier entry against Pi's local registry. It also
+checks overrides for providers that the local registry contains. The required default
+models file sits beside the supplied tiers file. Use `--models-file` to select another
+file. This mode does not dispatch a model or write a file. The tool never derives a
+model identifier from another source.
 
 ## reconcile tiers
 
@@ -22,8 +30,10 @@ cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
   --verify-registry --tiers-file config/model-tiers.json
 ```
 
-Exit 0 means every tier entry resolves in the registry. It also means that every configured model override resolves. Exit 1 names each missing entry. Exit 2 means that an input is invalid or unavailable. The command may print newer unreferenced family members as advisories on
-standard error; advisories never change its exit code.
+Exit 0 means every tier entry resolves in the registry. It also means that each checked
+model override resolves. Exit 1 names each missing entry. Exit 2 means that an input is
+invalid or unavailable. The command can print newer unreferenced family members as
+advisories on standard error. Advisories never change its exit code.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
 you lean on a price argument.

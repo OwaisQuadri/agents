@@ -13,7 +13,6 @@
 //! needed (unlike the Claude Code CLI path `install.sh` already handles separately).
 
 use crate::config::ModelEntry;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -73,15 +72,7 @@ pub fn walk_chain(
     input: &str,
 ) -> Outcome {
     let mut attempts = Vec::new();
-    let mut exhausted_providers = BTreeSet::new();
     for entry in chain {
-        let provider = entry
-            .model
-            .split_once('/')
-            .map_or(entry.model.as_str(), |(provider, _)| provider);
-        if exhausted_providers.contains(provider) {
-            continue;
-        }
         let attempt = run_one(dispatch_bin, entry, system_prompt_file, input);
         let failed = attempt.exit_code != Some(0);
         if !failed {
@@ -93,7 +84,6 @@ pub fn walk_chain(
         if !is_quota_error(&attempt.stderr) {
             return Outcome::HardFailure { attempt };
         }
-        exhausted_providers.insert(provider.to_owned());
         attempts.push(attempt);
     }
     Outcome::TierExhausted { attempts }
@@ -294,23 +284,12 @@ exit 0
     }
 
     #[test]
-    fn quota_failure_skips_later_models_from_the_same_provider() {
-        let dir = temp_dir("provider-quota");
-        let calls = dir.join("calls");
-        let script = fake_dispatch_bin(
-            &dir,
-            &format!(
-                "#!/bin/sh\necho \"$3\" >> '{}'\ncase \"$3\" in\n  anthropic/*) echo \"quota exceeded\" 1>&2; exit 1;;\n  *) echo \"ran:$3\";;\nesac\n",
-                calls.display()
-            ),
-        );
+    fn quota_failure_still_tries_later_models_from_the_same_provider() {
+        let dir = temp_dir("same-provider-fallback");
+        let script = fake_dispatch_bin(&dir, "#!/bin/sh\necho \"quota exceeded\" 1>&2\nexit 1\n");
         let chain = vec![
             ModelEntry {
                 model: "anthropic/new".into(),
-                thinking: "low".into(),
-            },
-            ModelEntry {
-                model: "openai-codex/current".into(),
                 thinking: "low".into(),
             },
             ModelEntry {
@@ -320,11 +299,10 @@ exit 0
         ];
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
-        assert!(matches!(outcome, Outcome::Success { .. }));
-        assert_eq!(
-            std::fs::read_to_string(calls).unwrap(),
-            "anthropic/new\nopenai-codex/current\n"
-        );
+        match outcome {
+            Outcome::TierExhausted { attempts } => assert_eq!(attempts.len(), 2),
+            _ => panic!("expected TierExhausted"),
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
