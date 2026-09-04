@@ -11,7 +11,7 @@ mod dispatch;
 mod registry;
 
 use config::TiersFile;
-use registry::{unknown_models, unreferenced_newer, Registry};
+use registry::{Registry, unknown_models, unreferenced_newer};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -27,7 +27,7 @@ struct Args {
     input: Option<String>,
     dispatch_bin: String,
     is_verify_registry: bool,
-    registry_file: PathBuf,
+    registry_file: Option<PathBuf>,
 }
 
 fn default_registry_file() -> Result<PathBuf, String> {
@@ -80,7 +80,11 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         input,
         dispatch_bin,
         is_verify_registry,
-        registry_file: registry_file.unwrap_or(default_registry_file()?),
+        registry_file: if is_verify_registry {
+            Some(registry_file.map_or_else(default_registry_file, Ok)?)
+        } else {
+            registry_file
+        },
     })
 }
 
@@ -92,7 +96,11 @@ fn verify_registry(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let registry = match Registry::load(&args.registry_file) {
+    let registry_file = args
+        .registry_file
+        .as_ref()
+        .expect("registry verification always resolves a registry path");
+    let registry = match Registry::load(registry_file) {
         Ok(registry) => registry,
         Err(message) => {
             eprintln!("tier-dispatch: {message}");
@@ -230,6 +238,7 @@ mod tests {
         let args = parse_args(&raw).unwrap();
         assert_eq!(args.tier.as_deref(), Some("T3"));
         assert_eq!(args.dispatch_bin, "pi");
+        assert!(args.registry_file.is_none());
     }
 
     #[test]
@@ -254,7 +263,10 @@ mod tests {
         ]
         .map(String::from);
         let args = parse_args(&raw).unwrap();
-        assert!(args.registry_file.ends_with(".pi/agent/models-store.json"));
+        assert!(
+            args.registry_file
+                .is_some_and(|path| path.ends_with(".pi/agent/models-store.json"))
+        );
     }
 
     #[test]

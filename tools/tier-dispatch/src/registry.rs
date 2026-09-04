@@ -90,11 +90,15 @@ pub fn unreferenced_newer(tiers: &TiersFile, registry: &Registry) -> Vec<String>
         .filter(|(provider, model)| {
             let candidate = (*provider, *model);
             !tiered.contains(&candidate)
-                && tiered.iter().any(|(tiered_provider, tiered_model)| {
-                    provider == tiered_provider
-                        && model_family(model) == model_family(tiered_model)
-                        && version(model) > version(tiered_model)
-                })
+                && tiered
+                    .iter()
+                    .filter(|(tiered_provider, tiered_model)| {
+                        provider == tiered_provider
+                            && model_family(model) == model_family(tiered_model)
+                    })
+                    .map(|(_, tiered_model)| version(tiered_model))
+                    .max()
+                    .is_some_and(|latest| version(model) > latest)
         })
         .map(|(provider, model)| format!("{provider}/{model}"))
         .collect()
@@ -118,11 +122,15 @@ fn model_family(model: &str) -> &str {
 }
 
 fn version(model: &str) -> Vec<u64> {
-    model
+    let mut parts = model
         .split(|character: char| !character.is_ascii_digit())
         .filter(|part| !part.is_empty())
         .filter_map(|part| part.parse().ok())
-        .collect()
+        .collect::<Vec<_>>();
+    if parts.last().is_some_and(|part| *part >= 10_000_000) {
+        parts.pop();
+    }
+    parts
 }
 
 #[cfg(test)]
@@ -228,6 +236,16 @@ mod tests {
             unreferenced_newer(&tiers, &registry),
             vec!["anthropic/claude-fable-5-1"]
         );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unreferenced_newer_ignores_older_versions_and_dated_snapshots() {
+        let directory = test_dir("not-newer");
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
+        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.4"},{"id":"gpt-5.5"}]}}"#)).unwrap();
+        assert!(unreferenced_newer(&tiers, &registry).is_empty());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

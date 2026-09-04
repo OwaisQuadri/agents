@@ -38,10 +38,12 @@ impl TiersFile {
     /// unavailable rather than silently substituting a different tier's model, per the
     /// plan's own decision.
     pub fn chain(&self, tier_name: &str) -> Result<Vec<ModelEntry>, String> {
-        let tier = self
-            .tiers
-            .get(tier_name)
-            .ok_or_else(|| format!("unknown tier {tier_name:?}; known tiers: {:?}", self.tier_names()))?;
+        let tier = self.tiers.get(tier_name).ok_or_else(|| {
+            format!(
+                "unknown tier {tier_name:?}; known tiers: {:?}",
+                self.tier_names()
+            )
+        })?;
         let mut chain = Vec::with_capacity(1 + tier.fallbacks.len());
         chain.push(tier.pi.clone());
         chain.extend(tier.fallbacks.iter().cloned());
@@ -95,23 +97,34 @@ mod tests {
 
     #[test]
     fn chain_with_no_fallbacks_is_just_the_primary() {
-        let dir = std::env::temp_dir().join(format!("tier-dispatch-test-{}", std::process::id() + 1));
+        let dir =
+            std::env::temp_dir().join(format!("tier-dispatch-test-{}", std::process::id() + 1));
         std::fs::create_dir_all(&dir).unwrap();
         let path = write_fixture(&dir);
         let tiers = TiersFile::load(&path).unwrap();
         let chain = tiers.chain("T5").unwrap();
-        assert_eq!(chain, vec![ModelEntry { model: "anthropic/claude-fable-5".into(), thinking: "medium".into() }]);
+        assert_eq!(
+            chain,
+            vec![ModelEntry {
+                model: "anthropic/claude-fable-5".into(),
+                thinking: "medium".into()
+            }]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn unknown_tier_is_an_error_naming_the_known_tiers() {
-        let dir = std::env::temp_dir().join(format!("tier-dispatch-test-{}", std::process::id() + 2));
+        let dir =
+            std::env::temp_dir().join(format!("tier-dispatch-test-{}", std::process::id() + 2));
         std::fs::create_dir_all(&dir).unwrap();
         let path = write_fixture(&dir);
         let tiers = TiersFile::load(&path).unwrap();
         let error = tiers.chain("T99").unwrap_err();
-        assert!(error.contains("T99"), "error should name the bad tier: {error}");
+        assert!(
+            error.contains("T99"),
+            "error should name the bad tier: {error}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
