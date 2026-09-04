@@ -59,7 +59,15 @@ impl TiersFile {
             }
         }
         for (name, tier) in &tiers.tiers {
+            let mut models = BTreeSet::new();
             for entry in std::iter::once(&tier.pi).chain(tier.fallbacks.iter()) {
+                if !models.insert(&entry.model) {
+                    return Err(format!(
+                        "{}: tier {name} repeats model {}",
+                        path.display(),
+                        entry.model
+                    ));
+                }
                 if !matches!(
                     entry.thinking.as_str(),
                     "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
@@ -279,6 +287,23 @@ mod tests {
         std::fs::write(
             &path,
             r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"fallbacks":[]}},"orchestrator":"T9","agents":{"reviewer":"T8"}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_a_repeated_model_in_one_tier() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-repeated-model-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"fallbacks":[{"model":"openai-codex/gpt-5.6-luna","thinking":"low"}]}},"orchestrator":"T1"}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());

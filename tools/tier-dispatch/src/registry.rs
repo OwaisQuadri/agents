@@ -63,13 +63,15 @@ impl Registry {
             .is_some_and(|models| models.contains(model))
     }
 
-    pub(crate) fn empty_tier_providers(&self, tiers: &TiersFile) -> Vec<String> {
+    pub(crate) fn unavailable_tier_providers(&self, tiers: &TiersFile) -> Vec<String> {
         tiers
             .tiers
             .values()
             .flat_map(|tier| std::iter::once(&tier.pi).chain(tier.fallbacks.iter()))
             .filter_map(|entry| entry.model.split_once('/').map(|(provider, _)| provider))
-            .filter(|provider| self.empty_providers.contains(*provider))
+            .filter(|provider| {
+                !self.models.contains_key(*provider) || self.empty_providers.contains(*provider)
+            })
             .map(str::to_owned)
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -456,13 +458,34 @@ mod tests {
     #[test]
     fn metadata_only_catalog_is_empty_for_a_tier_provider() {
         let directory = test_dir("metadata-only-provider");
-        let tiers = TiersFile::load(&write_tiers(&directory, "anthropic/claude-fable-5")).unwrap();
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
         let registry = Registry::load(&write_registry(
             &directory,
             r#"{"anthropic":{"checkedAt":1},"openai-codex":{"models":[{"id":"gpt-5.6-sol"}]}}"#,
         ))
         .unwrap();
-        assert_eq!(registry.empty_tier_providers(&tiers), vec!["anthropic"]);
+        assert_eq!(
+            registry.unavailable_tier_providers(&tiers),
+            vec!["anthropic"]
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn absent_catalog_is_unavailable_for_a_tier_provider() {
+        let directory = test_dir("absent-provider");
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
+        let registry = Registry::load(&write_registry(
+            &directory,
+            r#"{"openai-codex":{"models":[{"id":"gpt-5.6-sol"}]}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            registry.unavailable_tier_providers(&tiers),
+            vec!["anthropic"]
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -493,7 +516,8 @@ mod tests {
     #[test]
     fn unreferenced_newer_lists_the_new_family_member_only() {
         let directory = test_dir("newer");
-        let tiers = TiersFile::load(&write_tiers(&directory, "anthropic/claude-fable-5")).unwrap();
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
         let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-fable-5-1"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"}]}}"#)).unwrap();
         assert_eq!(
             unreferenced_newer(&tiers, &registry),

@@ -142,25 +142,30 @@ fn verify_registry(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let empty_tier_providers = registry.empty_tier_providers(&tiers);
+    let unavailable_tier_providers = registry.unavailable_tier_providers(&tiers);
     let registry_findings = unknown_models(&tiers, &registry);
-    for finding in &registry_findings {
-        let provider = finding.model.split_once('/').map(|(provider, _)| provider);
-        if !provider
-            .is_some_and(|provider| empty_tier_providers.iter().any(|item| item == provider))
-        {
-            eprintln!(
-                "tier-dispatch: {} {} {} is absent from the registry",
-                finding.tier, finding.slot, finding.model
-            );
-        }
-    }
-    if !empty_tier_providers.is_empty() {
+    let actionable_findings = registry_findings
+        .iter()
+        .filter(|finding| {
+            let provider = finding.model.split_once('/').map(|(provider, _)| provider);
+            !provider.is_some_and(|provider| {
+                unavailable_tier_providers
+                    .iter()
+                    .any(|item| item == provider)
+            })
+        })
+        .collect::<Vec<_>>();
+    for finding in &actionable_findings {
         eprintln!(
-            "tier-dispatch: registry has empty model catalogs for tier providers: {}",
-            empty_tier_providers.join(", ")
+            "tier-dispatch: {} {} {} is absent from the registry",
+            finding.tier, finding.slot, finding.model
         );
-        return ExitCode::from(2);
+    }
+    if !unavailable_tier_providers.is_empty() {
+        eprintln!(
+            "tier-dispatch: registry has unavailable model catalogs for tier providers: {}",
+            unavailable_tier_providers.join(", ")
+        );
     }
     let models_file = args
         .models_file
@@ -196,10 +201,12 @@ fn verify_registry(args: &Args) -> ExitCode {
     for model in unreferenced_newer(&tiers, &registry) {
         eprintln!("tier-dispatch: advisory: newer unreferenced model {model}");
     }
-    if registry_findings.is_empty() {
-        ExitCode::SUCCESS
-    } else {
+    if !actionable_findings.is_empty() {
         ExitCode::FAILURE
+    } else if !unavailable_tier_providers.is_empty() {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
