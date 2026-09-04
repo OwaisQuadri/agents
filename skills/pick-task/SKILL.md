@@ -14,76 +14,45 @@ metadata:
 
 # pick-task
 
-JOB: land on ONE task to work on right now, through interrogation rather than a queue
-IN:  nothing required — an optional hint ("something for the statusline", "whatever's
-     blocking the release"), a caller (engineer) asking for a task, or autonomous approval
-     with a standing driver and exclusions
-OUT: one chosen task — either an existing backlog id (with its short/long) or a fresh
-     one-off description — handed back to the caller, plus the reasoning for the pick
+JOB: Select one task for immediate work through questions instead of a queue.
+IN: The user can give a hint, a caller request, or autonomous approval with a driver and exclusions.
+OUT: Return one existing task identifier with details, or one small new description, and the reason for the choice.
 
 ## autonomous-caller mode
 
-Only an approved standing driver may use this mode. The caller passes autonomous approval,
-the exact driver, and exclusions. Reuse that driver.
+Only an approved standing driver can use this mode. The caller supplies autonomous approval, the exact driver, and the exclusions. Reuse that driver.
 
-Always add `manual-only` to the exclusions. Select one existing runnable backend item. Never invent or file an item. Return the pick without another human confirmation.
+Add `manual-only` to the exclusions. Select one existing runnable backend item. Never invent or file an item. Return the pick without human confirmation.
 
-Treat the exact driver `priority tickets` as complete. For a GitHub Issues backend, use
-`skills/task-graph/scripts/next-issue.sh` for that driver. Do not replace its ranking with
-an issue-list guess. Verify the returned issue's labels before selection. If it has `manual-only`, return no runnable autonomous item. For another backend, use its existing runnable-item ranking and reject the same normalized marker.
+Treat the exact driver `priority tickets` as complete. Use `skills/task-graph/scripts/next-issue.sh` when GitHub Issues is the backend. Do not replace its ranking with an issue-list guess. Check the labels on the returned issue. Return no item when the issue has `manual-only`.
+
+For another backend, use its existing runnable-item ranking. Reject an item that has the same normalized marker.
 
 ## why interrogation, not a queue read
 
-Tasks here are allowed to be big — velocity matters more than atomicity. That means the
-right pick is rarely "top of the list": it depends on what's actually pressing right now,
-which only you know. Read the backlog for context, never as the answer.
+Tasks can be large because velocity matters more than atomicity. The right pick depends on the current need. The backlog gives context, not the answer.
 
 ## steps
 
-1. **Ask what's driving this.** Outside autonomous-caller mode, ask one or two direct
-   questions: what's prompting a task right now (a bug just hit, a release is coming,
-   idle time to spend, a specific itch)?
-   Don't accept a vague answer — press once more if the first answer is "whatever's
-   next" or similarly non-committal. Done when you can state, in one sentence, what
-   outcome the user actually wants from this session.
+1. **Ask about the current need.** Skip this step in autonomous-caller mode. Ask one direct question about the desired outcome. Ask one more question when the first answer is vague. Done when you can state the desired outcome in one sentence.
 
-2. **Check for a connected task system.** In order: `gh issue list` and `gh project
-   list` (GitHub), then any configured Linear MCP(Model Context Protocol) tools. If
-   either exists and holds live items, that's the system of record — read it instead of
-   (or alongside) `roadmap.json`. If none exists, root `roadmap.json` is the backlog.
-   Done when you know which backend holds the real list. When the backend is GitHub
-   Issues with `task-graph`'s conventions in place (native project Status/Priority
-   fields, native `blockedBy`), `skills/task-graph/scripts/next-issue.sh` ranks
-   the backlog the same way `next-ticket.sh` ranks roadmap.json — reach for it instead
-   of eyeballing the issue list by hand.
+2. **Find the connected task system.** Check `gh issue list` and `gh project list` first. Then check the configured Linear MCP(Model Context Protocol) tools. Use either system when it contains live items. Otherwise, use the root `roadmap.json` file. Done when you identify the backend that holds the real list.
 
-3. **Surface 2-4 candidates**, drawn from that backend and filtered by what step 1
-   surfaced — never the raw unfiltered list. For each: one line on why it fits (or
-   doesn't) what the user said they want. Include a "none of these — something new"
-   option always.
+   Use `skills/task-graph/scripts/next-issue.sh` when GitHub Issues follows the `task-graph` conventions. These conventions use native Status, Priority, and `blockedBy` fields. Do not rank that issue list by hand.
 
-4. **Grill on the pick.** Ask directly: does one of these match, should it be scoped
-   bigger or smaller, or does none of them fit? Steer, don't just present — if the
-   user's stated driver (step 1) doesn't match anything in the backend, say so and offer
-   to hand off to `/ideate` rather than forcing a fit.
+3. **Surface two to four candidates.** Draw them from the selected backend. Filter them against the outcome from step 1. Give one line that states why each candidate fits. Always include a "none of these" option for new work.
 
-5. **Land.** One task, named plainly: its id (if it's a backend item) or a fresh
-   one-off description (if net-new and small enough not to need `/ideate`'s fuller
-   brainstorm). State why this one, in the user's own stated terms from step 1.
+4. **Grill the user about the pick.** Ask whether one candidate fits or needs a different scope. Say when no candidate matches the stated need. Offer `/ideate` instead of forcing a poor fit.
 
-6. **Hand off.** Return the chosen task to the caller. If pick-task was invoked
-   standalone (not by engineer), just report the pick — don't auto-start engineer
-   unless asked.
+5. **Land on one task.** Give its identifier when it is a backend item. Give a short description when it is small new work. State why it matches the outcome from step 1.
+
+6. **Return the task.** Return the chosen task to the caller. For standalone use, report the pick without starting engineer. Start engineer only when the user asks.
 
 ## backend notes
 
-- GitHub Projects is the default recommendation when a project needs to pick a backend
-  and none exists yet; Linear when the team already runs on it. Don't decide this
-  silently — name the recommendation and let the user confirm.
-- Writing a NEW item into any backend (GitHub, Linear, or `roadmap.json`) always passes
-  through `/ideate`'s filing gate — pick-task selects, it never files.
+- Recommend GitHub Projects when a project has no task backend. Recommend Linear when the team already uses it. State the recommendation and ask the user to confirm.
+- Send every new backend item through the filing gate in `/ideate`. Pick-task selects work and never files it.
 
 ## evals
 
-`evals/run.sh` grades every non-holdout case in `evals/cases.jsonl` against this file or
-a candidate, using `evals/rubric.md`; `--holdout` runs the held-out slice.
+`evals/run.sh` grades non-holdout cases in `evals/cases.jsonl` against this file or a candidate. It uses `evals/rubric.md`. The `--holdout` option runs the held-out slice.
