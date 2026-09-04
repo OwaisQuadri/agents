@@ -70,7 +70,9 @@ from any worktree on this machine, nothing repo-scoped about that path. Only
 `votes/votes.jsonl` (still gitignored, per-artifact) gets copied in before the kickoff
 prompt fires — the same reason it always needed copying: `git worktree` only shares
 committed history, and `hooks/post-checkout` explicitly copies only untracked
-NON-ignored files. The kickoff prompt also carries the exact `cutoff_iso` instant
+NON-ignored files. After settlement, the trigger merges new vote lines back into the
+main checkout under the same file lock used by `submit_vote.py`. The kickoff prompt
+also carries the exact `cutoff_iso` instant
 `tools/gepa-due` used for this artifact, so the dispatched session (running in a fresh
 worktree that cannot see the gitignored state file that cutoff came from) never has to
 — and never could — re-derive it itself.
@@ -86,18 +88,19 @@ The kickoff differs by WHY the artifact is due:
   judging per SKILL.md's judge protocol, not the escalated session grading its own
   read — against that many of the artifact's most recent real transcript hits,
   submitting real votes via `submit_vote.py`. Reflect only runs after that, with real
-  judge signal to work from. If it's still "no mutation" (likely, off 5 fresh votes),
-  the record is ONE short paragraph, not a re-derived taxonomy.
+  judge signal to work from. If Reflect proposes no mutation, it leaves no tracked
+  artifact; the trigger's machine-local state records the completed review.
 - **Real vote signal already exists** (vote_count is nonzero): the session runs a
-  normal Reflect pass and decides — a real tuning pass, or a proportionate note. Only
-  genuinely new evidence earns a long writeup; "nothing new" still gets one paragraph.
+  normal Reflect pass and decides. A pass that proposes no mutation leaves no tracked
+  artifact.
 
 Either way, it never ships a mutation without going through the GEPA loop's own
-Decide gate — this is a nudge, not an unattended prompt-editor. Whatever it
-concludes, it's told to push its branch and open a PR (never merge — that stays a
-human Decide call) before finishing. The trigger checks afterward that the branch was
-actually pushed and a PR actually opened, WARNing loudly if either didn't happen —
-only a real PR number lets a future fire's open-PR dedup check above find and skip it.
+Decide gate — this is a nudge, not an unattended prompt-editor. A pass that only
+Reflects creates no tracked note, commit, push, or PR; the machine-local reviewed state
+is its only record. A tested candidate creates tracked frontier evidence, so its branch
+and PR preserve that evidence whether Decide accepts or rejects it. An accepted
+candidate also includes the mutation. The trigger refuses to record reviewed state
+when the session leaves new uncommitted work or a tested result lacks a pushed PR.
 
 ## state (stops re-firing on evidence already reviewed)
 
@@ -209,6 +212,10 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   rotation exists to solve. Changed to unconditional: any fire that actually
   dispatches a session on an artifact rotates that artifact's evidence afterward,
   full stop. The TUNING.md-commit check stayed as a WARN-only signal, not a gate.
+- 2026-09-04. The `engineer` Reflect pass proposed no mutation but opened PR #300
+  only to commit its review note. Closed that PR and made machine-local reviewed state
+  the sole record for passes that stop after Reflect. A tested candidate still opens a
+  PR to preserve its tracked frontier evidence, whether Decide accepts or rejects it.
 - 2026-08-30, self-reported logging removed entirely. `logs/usage.jsonl` — hand-written
   by whichever session used an artifact, per its own `## logging` section — turned out
   to be exactly as reliable as the fabrication bug above suggests: many artifacts with

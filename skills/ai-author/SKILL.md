@@ -310,9 +310,11 @@ Run per artifact, on demand or once logs/votes accumulate:
 There is no Record step. `evals/frontier.jsonl`'s score-vector archive is the only
 durable record a Decide leaves behind — what was tested and whether it won, not the
 narrative reasoning; there is no `TUNING.md` to write that to. When `gepa-due`
-dispatches this loop, the dispatched session continues straight from Decide to pushing
-its branch and opening a PR without merging: the human sign-off gate is reviewing and
-merging that PR, not any pause earlier in the loop.
+dispatches this loop, a Reflect pass that proposes no mutation writes no tracked note,
+makes no commit, and opens no PR; `gepa-due` records that review only in its
+machine-local `reviewed.jsonl` state. A tested candidate preserves its tracked frontier
+evidence through a PR even when Decide rejects it. An accepted candidate also includes
+the mutation in that PR.
 
 ## applying frontier data (once an artifact has it)
 
