@@ -14,6 +14,11 @@ pub struct Registry {
     models: BTreeMap<String, BTreeSet<String>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ModelOverrides {
+    models: BTreeMap<String, BTreeSet<String>>,
+}
+
 impl Registry {
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path)
@@ -47,6 +52,33 @@ impl Registry {
     }
 }
 
+impl ModelOverrides {
+    pub fn load(path: &Path) -> Result<Self, String> {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let root: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|error| format!("{}: {error}", path.display()))?;
+        let providers = root
+            .get("providers")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| format!("{}: providers must be an object", path.display()))?;
+        let models = providers
+            .iter()
+            .filter_map(|(provider, value)| {
+                let overrides = value.get("modelOverrides")?.as_object()?;
+                Some((provider.clone(), overrides.keys().cloned().collect()))
+            })
+            .collect();
+        Ok(Self { models })
+    }
+
+    fn contains(&self, provider: &str, model: &str) -> bool {
+        self.models
+            .get(provider)
+            .is_some_and(|models| models.contains(model))
+    }
+}
+
 pub fn unknown_models(tiers: &TiersFile, registry: &Registry) -> Vec<Finding> {
     let mut findings = Vec::new();
     for (tier_name, tier) in &tiers.tiers {
@@ -66,6 +98,31 @@ pub fn unknown_models(tiers: &TiersFile, registry: &Registry) -> Vec<Finding> {
                 continue;
             };
             if !registry.contains(provider, model) {
+                findings.push(Finding {
+                    tier: tier_name.clone(),
+                    slot,
+                    model: entry.model.clone(),
+                });
+            }
+        }
+    }
+    findings
+}
+
+pub fn missing_model_overrides(tiers: &TiersFile, overrides: &ModelOverrides) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for (tier_name, tier) in &tiers.tiers {
+        let entries = std::iter::once((&tier.pi, "pi".to_string())).chain(
+            tier.fallbacks
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (entry, format!("fallbacks[{index}]"))),
+        );
+        for (entry, slot) in entries {
+            let Some((provider, model)) = entry.model.split_once('/') else {
+                continue;
+            };
+            if !overrides.contains(provider, model) {
                 findings.push(Finding {
                     tier: tier_name.clone(),
                     slot,
@@ -126,12 +183,12 @@ fn is_newer_model<'a>(candidate: &str, tiered: impl Iterator<Item = &'a str>) ->
         .zip(candidate_version.first())
         .is_some_and(|(latest, candidate)| candidate > latest);
     is_new_major
-        || comparable
-            .iter()
-            .filter(|(variant, _)| variant == &candidate_variant)
-            .map(|(_, version)| version)
-            .max()
-            .is_some_and(|latest| &candidate_version > latest)
+        || candidate_variant != "mini"
+            && comparable
+                .iter()
+                .map(|(_, version)| version)
+                .max()
+                .is_some_and(|latest| &candidate_version > latest)
 }
 
 fn model_family(model: &str) -> String {
@@ -217,6 +274,12 @@ mod tests {
         path
     }
 
+    fn write_overrides(directory: &Path, body: &str) -> std::path::PathBuf {
+        let path = directory.join("models.json");
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
     #[test]
     fn all_tier_models_present_yields_no_findings() {
         let directory = test_dir("all-present");
@@ -252,6 +315,27 @@ mod tests {
         assert_eq!(
             unknown_models(&tiers, &registry)[0].model,
             "openai/gpt-5.6-sol"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn missing_override_is_reported_with_tier_and_slot() {
+        let directory = test_dir("missing-override");
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
+        let overrides = ModelOverrides::load(&write_overrides(
+            &directory,
+            r#"{"providers":{"anthropic":{"modelOverrides":{"claude-fable-5":{}}},"openai-codex":{"modelOverrides":{"gpt-5.6-sol":{}}}}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            missing_model_overrides(&tiers, &overrides),
+            vec![Finding {
+                tier: "T4".into(),
+                slot: "fallbacks[1]".into(),
+                model: "anthropic/claude-haiku-4-5".into(),
+            }]
         );
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -299,6 +383,19 @@ mod tests {
             TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
         let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.6-sol-2026-03-01"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.7-mini"}]}}"#)).unwrap();
         assert!(unreferenced_newer(&tiers, &registry).is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unreferenced_newer_includes_a_new_minor_variant() {
+        let directory = test_dir("new-minor-variant");
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
+        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.7-nova"}]}}"#)).unwrap();
+        assert_eq!(
+            unreferenced_newer(&tiers, &registry),
+            vec!["openai-codex/gpt-5.7-nova"]
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 

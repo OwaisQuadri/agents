@@ -11,13 +11,15 @@ mod dispatch;
 mod registry;
 
 use config::TiersFile;
-use registry::{Registry, unknown_models, unreferenced_newer};
+use registry::{
+    ModelOverrides, Registry, missing_model_overrides, unknown_models, unreferenced_newer,
+};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
   tier-dispatch --tiers-file <path> --tier <T1..T5> --system-prompt-file <path> --input <text> [--dispatch-bin <bin>]
-  tier-dispatch --verify-registry --tiers-file <path> [--registry-file <path>]
+  tier-dispatch --verify-registry --tiers-file <path> [--registry-file <path>] [--models-file <path>]
 output:
   stdout: dispatched artifact on success
   stderr: model_ran: <model id> on dispatch success; diagnostics otherwise
@@ -33,6 +35,7 @@ struct Args {
     dispatch_bin: String,
     is_verify_registry: bool,
     registry_file: Option<PathBuf>,
+    models_file: Option<PathBuf>,
 }
 
 fn default_registry_file() -> Result<PathBuf, String> {
@@ -45,9 +48,10 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
     let mut tier = None;
     let mut system_prompt_file = None;
     let mut input = None;
-    let mut dispatch_bin = "pi".to_string();
+    let mut dispatch_bin = None;
     let mut is_verify_registry = false;
     let mut registry_file = None;
+    let mut models_file = None;
 
     let mut index = 0;
     while index < raw.len() {
@@ -63,23 +67,29 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
             "--tier" => tier = Some(next()?),
             "--system-prompt-file" => system_prompt_file = Some(PathBuf::from(next()?)),
             "--input" => input = Some(next()?),
-            "--dispatch-bin" => dispatch_bin = next()?,
+            "--dispatch-bin" => dispatch_bin = Some(next()?),
             "--verify-registry" => is_verify_registry = true,
             "--registry-file" => registry_file = Some(PathBuf::from(next()?)),
+            "--models-file" => models_file = Some(PathBuf::from(next()?)),
             other => return Err(format!("unknown flag {other}\n{USAGE}")),
         }
         index += 1;
     }
 
     let tiers_file = tiers_file.ok_or(format!("--tiers-file is required\n{USAGE}"))?;
-    if is_verify_registry && (tier.is_some() || system_prompt_file.is_some() || input.is_some()) {
+    if is_verify_registry
+        && (tier.is_some()
+            || system_prompt_file.is_some()
+            || input.is_some()
+            || dispatch_bin.is_some())
+    {
         return Err(format!(
             "dispatch flags cannot be combined with --verify-registry\n{USAGE}"
         ));
     }
-    if !is_verify_registry && registry_file.is_some() {
+    if !is_verify_registry && (registry_file.is_some() || models_file.is_some()) {
         return Err(format!(
-            "--registry-file requires --verify-registry\n{USAGE}"
+            "--registry-file and --models-file require --verify-registry\n{USAGE}"
         ));
     }
     if !is_verify_registry && (tier.is_none() || system_prompt_file.is_none() || input.is_none()) {
@@ -88,18 +98,25 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         ));
     }
 
+    let registry_file = if is_verify_registry {
+        Some(registry_file.map_or_else(default_registry_file, Ok)?)
+    } else {
+        registry_file
+    };
+    let models_file = if is_verify_registry {
+        Some(models_file.unwrap_or_else(|| tiers_file.with_file_name("models.json")))
+    } else {
+        models_file
+    };
     Ok(Args {
         tiers_file,
         tier,
         system_prompt_file,
         input,
-        dispatch_bin,
+        dispatch_bin: dispatch_bin.unwrap_or_else(|| "pi".to_owned()),
         is_verify_registry,
-        registry_file: if is_verify_registry {
-            Some(registry_file.map_or_else(default_registry_file, Ok)?)
-        } else {
-            registry_file
-        },
+        registry_file,
+        models_file,
     })
 }
 
@@ -122,17 +139,38 @@ fn verify_registry(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let findings = unknown_models(&tiers, &registry);
-    for finding in &findings {
+    let models_file = args
+        .models_file
+        .as_ref()
+        .expect("registry verification always resolves a models file");
+    let overrides = match ModelOverrides::load(models_file) {
+        Ok(overrides) => overrides,
+        Err(message) => {
+            eprintln!("tier-dispatch: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let registry_findings = unknown_models(&tiers, &registry);
+    let override_findings = missing_model_overrides(&tiers, &overrides);
+    for finding in &registry_findings {
         eprintln!(
             "tier-dispatch: {} {} {} is absent from the registry",
             finding.tier, finding.slot, finding.model
         );
     }
+    for finding in &override_findings {
+        eprintln!(
+            "tier-dispatch: {} {} {} has no entry in {}",
+            finding.tier,
+            finding.slot,
+            finding.model,
+            models_file.display()
+        );
+    }
     for model in unreferenced_newer(&tiers, &registry) {
         eprintln!("tier-dispatch: advisory: newer unreferenced model {model}");
     }
-    if findings.is_empty() {
+    if registry_findings.is_empty() && override_findings.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -282,6 +320,7 @@ mod tests {
             args.registry_file
                 .is_some_and(|path| path.ends_with(".pi/agent/models-store.json"))
         );
+        assert_eq!(args.models_file, Some(PathBuf::from("config/models.json")));
     }
 
     #[test]
@@ -295,6 +334,16 @@ mod tests {
         ]
         .map(String::from);
         assert!(parse_args(&verify_with_dispatch).is_err());
+
+        let verify_with_dispatch_bin = [
+            "--verify-registry",
+            "--tiers-file",
+            "config/model-tiers.json",
+            "--dispatch-bin",
+            "fake-pi",
+        ]
+        .map(String::from);
+        assert!(parse_args(&verify_with_dispatch_bin).is_err());
 
         let dispatch_with_registry = [
             "--tiers-file",

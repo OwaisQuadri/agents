@@ -8,16 +8,20 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModelEntry {
     pub model: String,
     pub thinking: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tier {
     pub pi: ModelEntry,
     #[serde(default)]
     pub fallbacks: Vec<ModelEntry>,
+    #[serde(default, rename = "climbOnExhaustion")]
+    _climb_on_exhaustion: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -92,6 +96,23 @@ mod tests {
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0].model, "openai-codex/gpt-5.6-luna");
         assert_eq!(chain[1].model, "anthropic/claude-haiku-4-5");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_an_unknown_tier_field() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-unknown-field-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"falbacks":[]}}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 

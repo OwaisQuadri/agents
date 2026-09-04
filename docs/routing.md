@@ -9,20 +9,18 @@ models. To swap a model, edit that file and run install.sh. You can also use `/t
 Each model in a tier's chain carries its OWN `thinking` level. That includes the primary
 and each fallback.
 
-`tools/tier-dispatch` is another reader of this file, alongside install.sh and the pi-side
-extensions below — it resolves a tier name to its own ordered chain (primary, then
-fallbacks, in file order) for the ai-author eval harness's execution arm, walking that
-same chain on a quota error and reporting the whole tier unavailable rather than crossing
-into a different tier's models. Its `--verify-registry` mode also reconciles every tier
-entry with Pi's local registry without dispatching a model or writing a file. It never
-derives a model id any other way, so this file stays the one place a model id actually
-lives, per the rule above.
+`tools/tier-dispatch` also reads this file. It resolves a tier to its ordered model chain for the ai-author evaluation harness. The primary model comes before its listed fallbacks. A quota error moves the dispatch to the next model in that chain. Exhaustion makes the complete tier unavailable.
+
+The `--verify-registry` mode checks each tier entry against Pi's local registry and `config/models.json`. It does not dispatch a model or write a file. The tool never derives a model identifier from another source.
 
 ## reconcile tiers
 
-Run `tier-dispatch --verify-registry --tiers-file config/model-tiers.json` before a tier
-change and after a registry refresh. Exit 0 means every tier entry resolves. Exit 1 names
-each tier entry absent from the registry. Exit 2 means that an input is invalid or unavailable. The command may print newer unreferenced family members as advisories on
+Run the following command before a tier change and after a registry refresh:
+
+```sh
+cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
+  --verify-registry --tiers-file config/model-tiers.json
+``` Exit 0 means every tier entry resolves in the registry and `config/models.json`. Exit 1 names each missing entry. Exit 2 means that an input is invalid or unavailable. The command may print newer unreferenced family members as advisories on
 standard error; advisories never change its exit code.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
