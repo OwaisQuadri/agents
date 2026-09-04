@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 const MAX_LEASES: usize = 3;
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(20);
 const LOCK_MAX_RETRIES: usize = 250;
-const WATCH_FIELDS: &str = "number,url,isDraft,mergeStateStatus,reviewDecision,statusCheckRollup,updatedAt,body,closingIssuesReferences";
+const WATCH_FIELDS: &str = "number,url,isDraft,headRefOid,mergeStateStatus,reviewDecision,statusCheckRollup,body,closingIssuesReferences";
 const PR_MARKER: &str = "<!-- autonomous-engineer";
 
 type Result<T> = std::result::Result<T, String>;
@@ -47,6 +47,8 @@ struct Registry {
     leases: Vec<Lease>,
     #[serde(default)]
     repositories: Vec<RepositoryState>,
+    #[serde(default, rename = "globalStopMode")]
+    global_stop_mode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -131,32 +133,39 @@ fn acquire_command(arguments: &[String]) -> Result<String> {
     let acquire = parse_acquire(arguments)?;
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
-        cleanup_stale(registry);
-        registry.leases.retain(|lease| lease.run != acquire.run);
-        let is_globally_full = registry.leases.len() >= MAX_LEASES;
-        let is_task_already_running = acquire.kind == "task"
-            && registry
-                .leases
-                .iter()
-                .any(|lease| lease.kind == "task" && lease.repo == acquire.repo);
-        let status = if is_globally_full || is_task_already_running {
-            "denied"
-        } else {
-            registry.leases.push(Lease {
-                run: acquire.run,
-                repo: acquire.repo,
-                kind: acquire.kind,
-                task: acquire.task,
-                stage: None,
-                pr: acquire.pr,
-                pid: acquire.pid,
-                heartbeat: now_seconds()?,
-                prior_status: acquire.prior_status,
-            });
-            "acquired"
-        };
+        let status = acquire_lease(registry, acquire)?;
         render_lease_output(status, registry)
     })
+}
+
+fn acquire_lease(registry: &mut Registry, acquire: Acquire) -> Result<&'static str> {
+    cleanup_stale(registry);
+    registry.leases.retain(|lease| lease.run != acquire.run);
+    let is_globally_full = registry.leases.len() >= MAX_LEASES;
+    let is_task_already_running = acquire.kind == "task"
+        && registry
+            .leases
+            .iter()
+            .any(|lease| lease.kind == "task" && lease.repo == acquire.repo);
+    let is_pr_care_already_running = acquire.kind == "pr-care"
+        && registry.leases.iter().any(|lease| {
+            lease.kind == "pr-care" && lease.repo == acquire.repo && lease.pr == acquire.pr
+        });
+    if is_globally_full || is_task_already_running || is_pr_care_already_running {
+        return Ok("denied");
+    }
+    registry.leases.push(Lease {
+        run: acquire.run,
+        repo: acquire.repo,
+        kind: acquire.kind,
+        task: acquire.task,
+        stage: None,
+        pr: acquire.pr,
+        pid: acquire.pid,
+        heartbeat: now_seconds()?,
+        prior_status: acquire.prior_status,
+    });
+    Ok("acquired")
 }
 
 fn heartbeat_command(arguments: &[String]) -> Result<String> {
@@ -210,44 +219,60 @@ fn configure_command(arguments: &[String]) -> Result<String> {
     let configure = parse_configure(arguments)?;
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
-        cleanup_stale(registry);
-        if let Some(existing) = registry
-            .repositories
-            .iter_mut()
-            .find(|state| state.repo == configure.repo)
-        {
-            existing.driver = configure.driver;
-            existing.exclusions = configure.exclusions;
-        } else {
-            registry.repositories.push(RepositoryState {
-                repo: configure.repo,
-                driver: configure.driver,
-                exclusions: configure.exclusions,
-                stop_mode: "none".to_owned(),
-                watcher_pid: None,
-            });
-        }
+        configure_repository(registry, configure);
         render_lease_output("configured", registry)
     })
+}
+
+fn configure_repository(registry: &mut Registry, configure: Configure) {
+    cleanup_stale(registry);
+    if let Some(existing) = registry
+        .repositories
+        .iter_mut()
+        .find(|state| state.repo == configure.repo)
+    {
+        existing.driver = configure.driver;
+        existing.exclusions = configure.exclusions;
+    } else {
+        registry.repositories.push(RepositoryState {
+            repo: configure.repo,
+            driver: configure.driver,
+            exclusions: configure.exclusions,
+            stop_mode: registry
+                .global_stop_mode
+                .clone()
+                .unwrap_or_else(|| "none".to_owned()),
+            watcher_pid: None,
+        });
+    }
 }
 
 fn set_stop_command(arguments: &[String]) -> Result<String> {
     let request = parse_set_stop(arguments)?;
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
-        cleanup_stale(registry);
-        let mut changed = 0;
-        for state in &mut registry.repositories {
-            if request.repo.as_ref().is_none_or(|repo| repo == &state.repo) {
-                state.stop_mode.clone_from(&request.mode);
-                changed += 1;
-            }
-        }
-        if changed == 0 {
-            return Err("no configured repository matched --repo".to_owned());
-        }
+        apply_stop(registry, &request)?;
         render_lease_output("stop-updated", registry)
     })
+}
+
+fn apply_stop(registry: &mut Registry, request: &SetStop) -> Result<()> {
+    cleanup_stale(registry);
+    if request.repo.is_none() {
+        registry.global_stop_mode = Some(request.mode.clone());
+        for state in &mut registry.repositories {
+            state.stop_mode.clone_from(&request.mode);
+        }
+        return Ok(());
+    }
+    let repo = request.repo.as_ref().expect("repository filter exists");
+    let state = registry
+        .repositories
+        .iter_mut()
+        .find(|state| &state.repo == repo)
+        .ok_or_else(|| "no configured repository matched --repo".to_owned())?;
+    state.stop_mode.clone_from(&request.mode);
+    Ok(())
 }
 
 fn register_watcher_command(arguments: &[String]) -> Result<String> {
@@ -309,13 +334,17 @@ fn parse_acquire(arguments: &[String]) -> Result<Acquire> {
             "--pid",
         ],
     )?;
+    let pr = optional_number(arguments, "--pr")?;
+    if kind == "pr-care" && pr.is_none() {
+        return Err("--pr is required for pr-care".to_owned());
+    }
     Ok(Acquire {
         run,
         repo,
         kind,
         task: optional_option(arguments, "--task")?,
         prior_status: optional_option(arguments, "--prior-status")?,
-        pr: optional_number(arguments, "--pr")?,
+        pr,
         pid: required_pid(arguments)?,
     })
 }
@@ -532,9 +561,12 @@ fn stale_lock_owner(path: &Path) -> Result<bool> {
 
 fn retire_stale_lock(path: &Path) -> Result<()> {
     let retired = path.with_file_name(format!("lock.stale-{}", now_seconds()?));
-    fs::rename(path, &retired).map_err(|error| format!("cannot retire stale lock: {error}"))?;
-    fs::remove_dir_all(&retired)
-        .map_err(|error| format!("cannot remove retired stale lock: {error}"))
+    match fs::rename(path, &retired) {
+        Ok(()) => fs::remove_dir_all(&retired)
+            .map_err(|error| format!("cannot remove retired stale lock: {error}")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("cannot retire stale lock: {error}")),
+    }
 }
 
 fn read_registry(directory: &Path) -> Result<Registry> {
@@ -594,7 +626,7 @@ fn watch_prs_command(arguments: &[String]) -> Result<String> {
         return Err("--interval-seconds needs a positive number".to_owned());
     }
     reject_unknown_options(arguments, &["--repo", "--interval-seconds"])?;
-    let mut previous = None;
+    let mut previous: Option<Vec<PrSnapshot>> = None;
     loop {
         let snapshot = match fetch_pr_snapshot(&repo) {
             Ok(snapshot) => snapshot,
@@ -604,7 +636,10 @@ fn watch_prs_command(arguments: &[String]) -> Result<String> {
                 continue;
             }
         };
-        if previous.as_ref() != Some(&snapshot) {
+        if previous
+            .as_ref()
+            .is_none_or(|prior| !snapshots_match(prior, &snapshot))
+        {
             if previous.is_some() || !snapshot.is_empty() {
                 println!(
                     "{}",
@@ -626,13 +661,13 @@ struct PrSnapshot {
     #[serde(default)]
     is_draft: bool,
     #[serde(default)]
+    head_ref_oid: String,
+    #[serde(default)]
     merge_state_status: String,
     #[serde(default)]
     review_decision: Option<String>,
     #[serde(default)]
     status_check_rollup: serde_json::Value,
-    #[serde(default)]
-    updated_at: String,
     #[serde(default, skip_serializing)]
     body: String,
     #[serde(default)]
@@ -646,6 +681,21 @@ struct IssueReference {
     number: u64,
     #[serde(default)]
     url: String,
+}
+
+fn snapshots_match(previous: &[PrSnapshot], current: &[PrSnapshot]) -> bool {
+    previous.len() == current.len()
+        && previous.iter().zip(current).all(|(left, right)| {
+            left.number == right.number
+                && left.url == right.url
+                && left.is_draft == right.is_draft
+                && left.head_ref_oid == right.head_ref_oid
+                && left.merge_state_status == right.merge_state_status
+                && left.review_decision == right.review_decision
+                && left.status_check_rollup == right.status_check_rollup
+                && left.closing_issues_references == right.closing_issues_references
+                && left.tracked_task_url == right.tracked_task_url
+        })
 }
 
 fn fetch_pr_snapshot(repo: &str) -> Result<Vec<PrSnapshot>> {
@@ -870,36 +920,13 @@ mod tests {
             kind: kind.to_owned(),
             task: None,
             prior_status: None,
-            pr: None,
+            pr: (kind == "pr-care").then_some(7),
             pid: std::process::id(),
         };
-        let status = with_registry(directory, |registry| {
-            cleanup_stale(registry);
-            registry.leases.retain(|lease| lease.run != request.run);
-            if registry.leases.len() >= MAX_LEASES
-                || request.kind == "task"
-                    && registry
-                        .leases
-                        .iter()
-                        .any(|lease| lease.kind == "task" && lease.repo == request.repo)
-            {
-                return Ok("denied".to_owned());
-            }
-            registry.leases.push(Lease {
-                run: request.run,
-                repo: request.repo,
-                kind: request.kind,
-                task: None,
-                stage: None,
-                pr: None,
-                pid: request.pid,
-                heartbeat: now_seconds()?,
-                prior_status: None,
-            });
-            Ok("acquired".to_owned())
+        with_registry(directory, |registry| {
+            acquire_lease(registry, request).map(str::to_owned)
         })
-        .expect("admission");
-        status
+        .expect("admission")
     }
 
     #[test]
@@ -936,6 +963,10 @@ mod tests {
         assert_eq!(acquire(&directory, "task-a", "/repo", "task"), "acquired");
         assert_eq!(acquire(&directory, "task-b", "/repo", "task"), "denied");
         assert_eq!(acquire(&directory, "care", "/repo", "pr-care"), "acquired");
+        assert_eq!(
+            acquire(&directory, "care-again", "/repo", "pr-care"),
+            "denied"
+        );
     }
 
     #[test]
@@ -992,6 +1023,7 @@ mod tests {
                 },
             ],
             repositories: Vec::new(),
+            global_stop_mode: None,
         };
         cleanup_stale(&mut registry);
         assert_eq!(registry.leases.len(), 2);
@@ -1010,6 +1042,17 @@ mod tests {
             "/repo".to_owned(),
             "--kind".to_owned(),
             "task".to_owned(),
+        ])
+        .is_err());
+        assert!(parse_acquire(&[
+            "--run".to_owned(),
+            "care".to_owned(),
+            "--repo".to_owned(),
+            "/repo".to_owned(),
+            "--kind".to_owned(),
+            "pr-care".to_owned(),
+            "--pid".to_owned(),
+            std::process::id().to_string(),
         ])
         .is_err());
 
@@ -1038,6 +1081,28 @@ mod tests {
     }
 
     #[test]
+    fn global_stop_applies_without_repositories_and_to_later_configuration() {
+        let mut registry = Registry::default();
+        apply_stop(
+            &mut registry,
+            &SetStop {
+                repo: None,
+                mode: "all".to_owned(),
+            },
+        )
+        .expect("global stop");
+        configure_repository(
+            &mut registry,
+            Configure {
+                repo: "/repo".to_owned(),
+                driver: "priority tickets".to_owned(),
+                exclusions: Vec::new(),
+            },
+        );
+        assert_eq!(registry.repositories[0].stop_mode, "all");
+    }
+
+    #[test]
     fn parses_and_orders_watcher_snapshots() {
         let snapshots = parse_pr_snapshot(
             br#"[{"number":2,"isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":null,"statusCheckRollup":[],"updatedAt":"2026-09-01T00:00:00Z","body":"<!-- autonomous-engineer repairs=0 -->\nTracks https://tracker.example/LIN-1"},{"number":3,"isDraft":false,"mergeStateStatus":"CLEAN","reviewDecision":null,"statusCheckRollup":[],"updatedAt":"2026-09-01T00:00:00Z","body":"ordinary pull request"},{"number":1,"isDraft":true,"mergeStateStatus":"BLOCKED","reviewDecision":"REVIEW_REQUIRED","statusCheckRollup":[],"updatedAt":"2026-09-02T00:00:00Z","body":"<!-- autonomous-engineer repairs=1 -->"}]"#,
@@ -1062,6 +1127,24 @@ mod tests {
         assert!(payload["prompt"]
             .as_str()
             .is_some_and(|prompt| prompt.contains("/repo") && !prompt.contains("repairs=0")));
+    }
+
+    #[test]
+    fn watcher_ignores_body_only_changes() {
+        let before = parse_pr_snapshot(
+            br#"[{"number":1,"isDraft":true,"mergeStateStatus":"CLEAN","reviewDecision":null,"statusCheckRollup":[],"body":"<!-- autonomous-engineer repairs=0 -->"}]"#,
+        )
+        .expect("before snapshot");
+        let after = parse_pr_snapshot(
+            br#"[{"number":1,"isDraft":true,"mergeStateStatus":"CLEAN","reviewDecision":null,"statusCheckRollup":[],"body":"<!-- autonomous-engineer repairs=1 -->"}]"#,
+        )
+        .expect("after snapshot");
+        assert!(snapshots_match(&before, &after));
+        let new_head = parse_pr_snapshot(
+            br#"[{"number":1,"isDraft":true,"headRefOid":"new","mergeStateStatus":"CLEAN","reviewDecision":null,"statusCheckRollup":[],"body":"<!-- autonomous-engineer repairs=1 -->"}]"#,
+        )
+        .expect("new head snapshot");
+        assert!(!snapshots_match(&after, &new_head));
     }
 
     #[test]

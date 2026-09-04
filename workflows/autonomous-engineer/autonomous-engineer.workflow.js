@@ -127,7 +127,7 @@ Run these checks before you return:
 5. Run cd ${repo} && gh pr list --state open --limit 1000 --json number,url,isDraft,headRefName,headRefOid,mergeStateStatus,body,files,closingIssuesReferences.
 6. For GitHub, a Pull Request is connected only when closingIssuesReferences names issue ${task.id}. For other backends, require both the exact task URL and the autonomous-engineer marker. Run cd ${repo} && gh pr view <number> --json url,state,isDraft,headRefName,headRefOid,mergeStateStatus,body,files for each connected candidate.
 7. For action before-implementation, compare planned_files with every other open Pull Request. Return overlap when planned_files is empty or any exact path intersects.
-8. For actions after-draft and before-repair, require the connected marked draft to remain open and non-conflicting. Return resume-draft when it does.
+8. For actions after-draft and before-repair, require the connected marked draft to remain open and non-conflicting. For before-repair, run a nonempty verification_command to remove the failed verification worktree. Return resume-draft when these checks pass.
 9. For action start, record the prior status and set the selected item active through its backend's existing write path. GitHub Projects uses skills/task-graph/scripts/gh-issue-field.sh ${task.id} Status in-progress; roadmap.json uses in progress; Linear uses its configured active state.
 10. For action verified-ready, confirm that the connected Pull Request is OPEN, isDraft, marked, and non-conflicting. Run verification_command and require exit zero. Then run cd ${repo} && gh pr ready <number>. Set is_remote_draft to the confirmed pre-transition state and is_verified=true. Set GitHub Projects or roadmap.json to resolved; set Linear to its configured review state, or leave it active when none exists. Return control=clear.
 11. For action discard, ignore task blockers, close only the connected marked unverified draft, delete its remote branch, verify closure, and restore ${task.prior_status} through the same backend. Return control=discarded after restoration.
@@ -142,7 +142,7 @@ async function safety(action, plannedFiles = [], verificationProof = '') {
     agentType: 'general-purpose',
     model: models.T3,
     schema: SAFETY_SCHEMA,
-  }, action === 'discard')
+  }, action === 'discard' || action === 'verified-ready')
   if (output && output.checks) state.checks.push(...output.checks)
   if (output && output.blockers) state.blockers.push(...output.blockers)
   if (output && output.pr) state.pr = output.pr
@@ -277,17 +277,20 @@ phase('Implement')
 const implementation = await tracked(
   `Implement only selected task ${taskReference} in an isolated worktree for ${repo}. Follow the full contracts in skills/engineer/SKILL.md and skills/create-pr/SKILL.md. Do not select work. Do not merge. ${implementationSafety.control === 'resume-draft' ? 'Resume the command-backed unverified draft Pull Request instead of treating its connection as completion.' : 'Create a new draft Pull Request.'} Commit, push, and open or update only a DRAFT Pull Request. Its body must include exactly <!-- autonomous-engineer repairs=${state.repairs} --> and ${closingReference}. Return only the schema.\n\nPlan: ${JSON.stringify(plan)}`,
   { label: 'implement', phase: 'Implement', agentType: 'general-purpose', model: models.T3, schema: IMPLEMENT_SCHEMA, isolation: 'worktree' })
-if (!implementation || implementation.control !== 'draft-opened') return result('failed', state, 'implementation-failed')
+if (!implementation || implementation.control !== 'draft-opened') return stopBeforeDraft('failed', 'implementation-failed')
 state.pr = implementation.pr || state.pr
 state.branch = implementation.branch || state.branch
 state.commit = implementation.commit || state.commit
-if (!state.pr || !state.branch || !state.commit) return result('failed', state, 'implementation-reference-missing')
+if (!state.pr || !state.branch || !state.commit) return stopBeforeDraft('failed', 'implementation-reference-missing')
 state.changedPaths = [...new Set([...state.changedPaths, ...implementation.changed_paths])]
 
 const draftSafety = await safety('after-draft', plan.planned_files)
 if (draftSafety.control === 'discarded') return result('blocked', state, 'discarded')
 if (draftSafety.control !== 'clear' && draftSafety.control !== 'resume-draft') {
   return result('failed', state, draftSafety.control)
+}
+if (!draftSafety.pr || !draftSafety.branch || !draftSafety.commit) {
+  return result('failed', state, 'remote-draft-reference-missing')
 }
 
 if (stopMode === 'after-draft') return result('blocked', state, 'stopped-after-draft')
@@ -315,7 +318,7 @@ const VERIFY_SCHEMA = {
 function verificationCheckout() {
   const key = String(state.commit).replaceAll(/[^a-zA-Z0-9._-]/g, '_')
   const directory = `${repo}/.context/autonomous-engineer-${task.id}/verify-${key}`
-  const command = `cd ${shellQuote(repo)} && git fetch origin ${shellQuote(state.branch)} && git cat-file -e ${shellQuote(`${state.commit}^{commit}`)} && { test -e ${shellQuote(`${directory}/.git`)} || git worktree add --detach ${shellQuote(directory)} ${shellQuote(state.commit)}; } && test "$(git -C ${shellQuote(directory)} rev-parse HEAD)" = ${shellQuote(state.commit)} && cd ${shellQuote(directory)}`
+  const command = `cd ${shellQuote(repo)} && git fetch origin ${shellQuote(state.branch)} && git cat-file -e ${shellQuote(`${state.commit}^{commit}`)} && test "$(git rev-parse ${shellQuote(`origin/${state.branch}^{commit}`)})" = "$(git rev-parse ${shellQuote(`${state.commit}^{commit}`)})" && { test -e ${shellQuote(`${directory}/.git`)} || git worktree add --detach ${shellQuote(directory)} ${shellQuote(state.commit)}; } && test "$(git -C ${shellQuote(directory)} rev-parse HEAD)" = "$(git rev-parse ${shellQuote(`${state.commit}^{commit}`)})" && cd ${shellQuote(directory)}`
   return { directory, command }
 }
 
@@ -331,7 +334,7 @@ async function verifyDraft() {
   const verifierType = plan.verification_kind === 'anchor' ? 'anchor-verifier' : plan.verification_kind === 'spec' ? 'spec-tester' : 'maestro-tester'
   const [verification, review] = await parallel([
     () => tracked(verifyPrompt, { label: `verify-${state.repairs}`, phase: 'Verify', agentType: verifierType, model: models.T3, schema: VERIFY_SCHEMA }),
-    () => tracked(`repo_path: ${repo}\nfetch origin and resolve its default branch from refs/remotes/origin/HEAD; review diff_range: <resolved-default>...origin/${state.branch || 'HEAD'}\nfocus: selected task ${taskReference}`, { label: `review-${state.repairs}`, phase: 'Verify', agentType: 'code-reviewer', model: state.repairs > 0 ? models.T4ReviewAfterRepair : models.T4, schema: REVIEW_SCHEMA }),
+    () => tracked(`repo_path: ${repo}\nfetch origin branch ${state.branch}; require origin/${state.branch} to resolve to exact commit ${state.commit}; resolve the default branch from refs/remotes/origin/HEAD; review diff_range: <resolved-default>...${state.commit}\nfocus: selected task ${taskReference}`, { label: `review-${state.repairs}`, phase: 'Verify', agentType: 'code-reviewer', model: state.repairs > 0 ? models.T4ReviewAfterRepair : models.T4, schema: REVIEW_SCHEMA }),
   ])
   state.checks.push(verification && verification.evidence ? verification.evidence : 'verification-stopped')
   if (review && review.findings) state.checks.push(...review.findings)
@@ -347,8 +350,11 @@ let verification = await verifyDraft()
 if (stopMode === 'after-verification') return result('blocked', state, 'stopped-after-verification')
 
 while (!verification.is_pass && state.repairs < maxRepairs) {
+  if (state.expected + 6 > maxAgents) return result('repair-incomplete', state, 'agent-cap-before-repair')
   phase('Safety')
-  const repairSafety = await safety('before-repair', plan.planned_files)
+  const failedCheckout = verificationCheckout()
+  const removeFailedCheckout = `cd ${shellQuote(repo)} && { test ! -e ${shellQuote(`${failedCheckout.directory}/.git`)} || git worktree remove --force ${shellQuote(failedCheckout.directory)}; }`
+  const repairSafety = await safety('before-repair', plan.planned_files, removeFailedCheckout)
   if (repairSafety.control === 'discarded') return result('blocked', state, 'discarded')
   if (repairSafety.control !== 'clear' && repairSafety.control !== 'resume-draft') {
     return result('repair-incomplete', state, repairSafety.control)
@@ -363,6 +369,15 @@ while (!verification.is_pass && state.repairs < maxRepairs) {
   state.branch = repair.branch || state.branch
   state.commit = repair.commit || state.commit
   state.changedPaths = [...new Set([...state.changedPaths, ...repair.changed_paths])]
+  phase('Safety')
+  const repairedDraftSafety = await safety('after-draft', plan.planned_files)
+  if (repairedDraftSafety.control === 'discarded') return result('blocked', state, 'discarded')
+  if (repairedDraftSafety.control !== 'clear' && repairedDraftSafety.control !== 'resume-draft') {
+    return result('repair-incomplete', state, repairedDraftSafety.control)
+  }
+  if (!repairedDraftSafety.pr || !repairedDraftSafety.branch || !repairedDraftSafety.commit) {
+    return result('repair-incomplete', state, 'remote-draft-reference-missing')
+  }
   phase('Verify')
   verification = await verifyDraft()
 }
@@ -371,7 +386,8 @@ if (!verification.is_pass) return result('repair-incomplete', state, 'repair-cap
 
 phase('Safety')
 const finalCheckout = verificationCheckout()
-const readySafety = await safety('verified-ready', plan.planned_files, `${finalCheckout.command} && ${plan.verify_command}`)
+const finalVerificationCommand = `${finalCheckout.command} && ${plan.verify_command} && cd ${shellQuote(repo)} && git worktree remove --force ${shellQuote(finalCheckout.directory)}`
+const readySafety = await safety('verified-ready', plan.planned_files, finalVerificationCommand)
 if (readySafety.control !== 'clear' || !readySafety.is_remote_draft || !readySafety.is_verified) {
   return result('failed', state, readySafety.control)
 }

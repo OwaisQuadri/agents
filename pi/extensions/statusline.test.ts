@@ -683,6 +683,30 @@ test("quota_admission rejects plans when both providers are ahead of pace", asyn
 	assert.equal(admission.isAdmitted, false);
 });
 
+test("quota_admission fails closed when reset timestamps are missing", async () => {
+	const restoreFetch = installMockFetch(async (input) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse({ five_hour: { utilization: 100, resets_at: null }, seven_day: null })
+			: jsonResponse({
+					rate_limit: {
+						primary_window: { used_percent: 100, limit_window_seconds: 18_000 },
+					},
+				}),
+	);
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	for (const provider of ["anthropic", "openai-codex"] as const) {
+		assert.equal(admission.providers[provider].isFresh, true);
+		assert.equal(admission.providers[provider].pacePercent, null);
+		assert.equal(admission.providers[provider].reset, null);
+		assert.equal(admission.providers[provider].isEligible, false);
+	}
+	assert.equal(admission.isAdmitted, false);
+});
+
 test("quota_admission keeps a missing provider ineligible when the other admits", async () => {
 	const restoreFetch = installMockFetch(async (input) =>
 		requestUrl(input).includes("api/oauth/usage")

@@ -226,15 +226,17 @@ function quotaAdmissionFor(usage: ProviderUsage | null, nowSeconds: number): Pro
 		return { isFresh: false, usedPercent: null, pacePercent: null, reset: null, isEligible: false };
 	}
 
-	const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
+	const resetAt = selected.window.resetAtEpochSeconds;
+	const isResetKnown = Number.isFinite(resetAt) && resetAt > nowSeconds;
+	const diff = isResetKnown ? resetAt - nowSeconds : 0;
 	const usedPercent = Math.floor(selected.window.usedPercent);
-	const pacedPercent = Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff));
+	const pacedPercent = isResetKnown ? Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)) : null;
 	return {
 		isFresh: true,
 		usedPercent,
 		pacePercent: pacedPercent,
-		reset: selected.label === "5h" ? formatCalendarReset(selected.window.resetAtEpochSeconds || nowSeconds) : `in ${formatReset(diff)}`,
-		isEligible: usedPercent <= pacedPercent,
+		reset: isResetKnown ? (selected.label === "5h" ? formatCalendarReset(resetAt) : `in ${formatReset(diff)}`) : null,
+		isEligible: pacedPercent !== null && usedPercent <= pacedPercent,
 	};
 }
 

@@ -42,8 +42,12 @@ checks=(
   "closingIssuesReferences"
   "workflow("
   "stopBeforeDraft"
+  "return stopBeforeDraft('failed', 'implementation-failed')"
   "verificationCheckout"
+  "origin/\${state.branch}^{commit}"
+  "const repairedDraftSafety"
   "git worktree add --detach"
+  "git worktree remove --force"
   "resume-draft"
   "<!-- autonomous-engineer repairs=\${state.repairs} -->"
   "Closes #\${task.id}"
@@ -56,6 +60,7 @@ checks=(
   "models.T4ReviewAfterRepair"
   "model: models.T5"
   "while (!verification.is_pass && state.repairs < maxRepairs)"
+  "agent-cap-before-repair"
   "return result('verified-ready'"
 )
 
