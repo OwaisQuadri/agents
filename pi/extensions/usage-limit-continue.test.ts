@@ -246,6 +246,7 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 		const immediate = await scheduleResume(pastSessionFile, nowMs - 1, nowMs);
 		assert.ok(immediate && immediate.resetAtMs > nowMs);
 		assert.equal(await scheduleResume(pastSessionFile, nowMs - 1, nowMs), null);
+		assert.equal(await scheduleResume(pastSessionFile, nowMs - 1, nowMs + 2000), null);
 		const first = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS, Date.now());
 		assert.notEqual(first, null);
 
@@ -255,11 +256,17 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 
 		const second = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS + 1000, Date.now());
 		assert.equal(second, null);
-		if (immediate.pid > 0) {
-			process.kill(immediate.pid);
-		}
-		if (first?.pid && first.pid > 0) {
-			process.kill(first.pid);
+		for (const pid of [immediate.pid, first?.pid]) {
+			if (!pid || pid <= 0) {
+				continue;
+			}
+			try {
+				process.kill(pid);
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+					throw error;
+				}
+			}
 		}
 	} finally {
 		process.env.HOME = originalHome;
@@ -563,6 +570,7 @@ test("handleMessageEnd: recreated contexts preserve live limits across a tier cl
 			await handleMessageEnd({ role: "toolResult" }, eventContext() as never, pi as never);
 			if (index === 0) {
 				await handleMessageEnd({ role: "assistant", stopReason: "aborted" }, eventContext() as never, pi as never);
+				await handleMessageEnd({ role: "assistant", stopReason: "toolUse" }, eventContext() as never, pi as never);
 			}
 			if (index === 1) {
 				await handleMessageEnd({ role: "assistant", stopReason: "error" }, eventContext() as never, pi as never);

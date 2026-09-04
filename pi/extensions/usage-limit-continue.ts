@@ -43,6 +43,7 @@ type PendingJob = {
 	resetAtMs: number;
 	scheduledAtMs: number;
 	pid: number;
+	immediate?: boolean;
 };
 
 type PendingStore = Record<string, PendingJob>;
@@ -372,7 +373,8 @@ function formatWait(waitMs: number): string {
 export async function scheduleResume(sessionFile: string, resetAtMs: number, nowMs: number): Promise<PendingJob | null> {
 	const store = await loadPendingStore();
 	const existing = store[sessionFile];
-	if (existing && existing.resetAtMs >= nowMs) {
+	const immediate = resetAtMs <= nowMs;
+	if (existing && (existing.resetAtMs >= nowMs || (immediate && existing.immediate))) {
 		return null;
 	}
 
@@ -389,7 +391,13 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
 	});
 	child.unref();
 
-	const job: PendingJob = { sessionFile, resetAtMs: effectiveResetAtMs, scheduledAtMs: nowMs, pid: child.pid ?? -1 };
+	const job: PendingJob = {
+		sessionFile,
+		resetAtMs: effectiveResetAtMs,
+		scheduledAtMs: nowMs,
+		pid: child.pid ?? -1,
+		immediate,
+	};
 	store[sessionFile] = job;
 	await savePendingStore(store);
 	return job;
@@ -507,8 +515,13 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	const errorText = extractErrorText(message);
 	const state = fallbackState(ctx);
 	if (!errorText) {
-		if (message.stopReason !== "error" && message.stopReason !== "aborted") {
-			state.attempted.clear();
+		if (["stop", "length", "toolUse"].includes(message.stopReason ?? "")) {
+			const active = ctx.model as ModelLike | undefined;
+			if (active?.id) {
+				const model = `${active.provider}/${active.id}`;
+				state.attempted.delete(model);
+				delete state.abandoned[model];
+			}
 		}
 		return;
 	}
@@ -537,7 +550,12 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		}
 	}
 	if (active?.id) {
-		state.attempted.add(`${active.provider}/${active.id}`);
+		const model = `${active.provider}/${active.id}`;
+		if (plan.resetAtMs === null || plan.resetAtMs > nowMs) {
+			state.attempted.add(model);
+		} else {
+			state.attempted.delete(model);
+		}
 	}
 	if (active?.id && plan.resetAtMs !== null && plan.resetAtMs > nowMs) {
 		abandoned[`${active.provider}/${active.id}`] = { resetAtMs: plan.resetAtMs, thinking: pi.getThinkingLevel() };
@@ -574,7 +592,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	}
 	const job = await scheduleResume(sessionFile, resumeAtMs, nowMs);
 	if (job === null) {
-		logDiagnostic(`resume already pending for ${sessionFile}, not rescheduling`);
+		logDiagnostic(`resume already scheduled for ${sessionFile}, not rescheduling`);
 		return;
 	}
 	const climbedBack = returning ? await switchTo(pi, ctx, returning) : false;
