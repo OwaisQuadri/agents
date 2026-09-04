@@ -775,9 +775,10 @@ fn read_frontier(path: &Path) -> Result<Vec<FrontierEntry>, String> {
             ]
             .iter()
             .all(|field| object.contains_key(*field));
-            let is_legacy_mechanical = ["candidate", "runner", "slice", "cases", "mean", "date"]
+            let is_legacy_mechanical = ["candidate", "slice", "cases", "mean", "date"]
                 .iter()
-                .all(|field| object.contains_key(*field));
+                .all(|field| object.contains_key(*field))
+                && (object.contains_key("runner") || object.contains_key("tier"));
             if !is_current && !is_legacy_mechanical {
                 return Err(format!(
                     "{} line {} has an unknown or incomplete frontier schema",
@@ -1270,14 +1271,15 @@ print output-without-attribution
         let path = temp.path.join("frontier.jsonl");
         fs::write(
             &path,
-            "{\"candidate\":\"current\",\"runner\":\"mechanical\",\"slice\":\"nonholdout\",\"cases\":17,\"mean\":5.0,\"date\":\"2026-09-03\"}\n",
+            "{\"candidate\":\"current\",\"runner\":\"mechanical\",\"slice\":\"nonholdout\",\"cases\":17,\"mean\":5.0,\"date\":\"2026-09-03\"}\n{\"candidate\":\"current\",\"tier\":\"T3\",\"slice\":\"holdout\",\"cases\":1,\"mean\":5.0,\"date\":\"2026-09-03\"}\n",
         )
         .unwrap();
         let entries = read_frontier(&path).unwrap();
-        assert_eq!(entries.len(), 1);
+        assert_eq!(entries.len(), 2);
         assert!(entries[0].candidate_id.is_empty());
         assert!(entries[0].tier.is_empty());
         assert_eq!(entries[0].legacy["candidate"], "current");
+        assert_eq!(entries[1].tier, "T3");
 
         fs::write(&path, "{\"candidate_id\":\"truncated\"}\n").unwrap();
         let error = read_frontier(&path).unwrap_err();
