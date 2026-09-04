@@ -113,7 +113,9 @@ Copy skills/ai-author/templates/eval-harness.md into `<skill>/evals/`:
   failures explicitly (false pass, wrong autonomous action, hallucinated paths) — a
   catastrophic case can never be traded against a better mean.
 - `run.sh` — convention: `./run.sh [candidate]` grades every non-holdout case, one JSON
-  line per case to stdout, summary to stderr; `--holdout` runs the held-out slice.
+  line per case to stdout, summary to stderr; `--holdout` runs the held-out slice. A
+  Pi-backed runner disables extension discovery and loads `pi-anthropic-auth` as the bare
+  minimum extension.
 - Holdout gating: a candidate replaces the incumbent only when no new catastrophic,
   higher mean, AND the win holds on the holdout slice. Ties go to the incumbent; two
   passing candidates tie → the one adding fewer conditions ships.

@@ -196,9 +196,11 @@ written as a `>-` block scalar. Check before shipping:
 node -e "const y=require('yaml'),fs=require('fs');y.parse(fs.readFileSync(process.argv[1],'utf8').split('---')[1])" <artifact>.md
 ```
 
-No harness = not done. `templates/eval-harness.md` carries the harness files. A draft
-goes live only when every non-holdout case passes and the holdout slice holds (rule in
-the template).
+No harness = not done. `templates/eval-harness.md` carries the harness files. Every
+Pi-backed harness disables extension discovery and loads `pi-anthropic-auth` as its bare
+minimum extension. It loads another extension only when a case requires that capability.
+A draft goes live only when every non-holdout case passes and the holdout slice holds
+(rule in the template).
 
 ## judge protocol (blind by construction)
 

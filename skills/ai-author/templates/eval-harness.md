@@ -63,7 +63,9 @@ default; the restricted tier is still judged by whichever tier is one above it i
 tier order, never by itself, purely because it happens to be the only tier in that run's
 own sweep.
 
-**A graded dispatch keeps its tools but never sees the live repo.** `tools/tier-dispatch`
+**A graded dispatch keeps its tools but never sees the live repo.** Every Pi process
+disables extension discovery and loads `pi-anthropic-auth` as the bare minimum extension.
+A harness adds another extension only when a case requires it. `tools/tier-dispatch`
 runs every dispatch — artifact and judge alike — with tools ON, inside a fresh throwaway
 sandbox directory that is discarded after the attempt. Tools stay on because the harness
 measures what a tier can actually DO; a dispatch stripped of tools is a different, easier

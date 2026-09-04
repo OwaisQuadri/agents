@@ -163,8 +163,9 @@ A graph costs more than a chat; the coordination gets cheaper, the work does not
 ## evals
 
 Copy skills/ai-author/templates/eval-harness.md into
-evals/. Cases are graph specs: an input situation plus the spec this skill should
-produce, graded on topology properties:
+evals/. A Pi-backed runner disables extension discovery and loads `pi-anthropic-auth` as
+the bare minimum extension. Cases are graph specs: an input situation plus the spec this
+skill should produce, graded on topology properties:
 
 - no fake edges: every ordered pair in the spec actually passes data
 - verifier context-isolation: no verifier shares context with the worker it judges

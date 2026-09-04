@@ -41,6 +41,14 @@ tiers_file="${TIERS_FILE:-../../../config/model-tiers.json}"
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+auth_extension="${PI_ANTHROPIC_AUTH_EXTENSION:-$HOME/.pi/agent/extensions/pi-anthropic-auth}"
+[[ -e "$auth_extension" ]] || {
+  echo "pi-anthropic-auth not found at $auth_extension" >&2
+  exit 1
+}
+export PI_ANTHROPIC_AUTH_EXTENSION="$auth_extension"
+printf '%s\n' '#!/bin/zsh' 'exec pi --no-extensions -e "$PI_ANTHROPIC_AUTH_EXTENSION" "$@"' > "$T/pi-minimal"
+chmod +x "$T/pi-minimal"
 mkdir -p "$T/fake-artifact/votes"
 printf '%s\n' '{"ts":"x","artifact":"fake","grade":"9","vote":"SENTINEL-PRIOR-VOTE"}' \
   > "$T/fake-artifact/votes/votes.jsonl"
@@ -63,7 +71,7 @@ command -v "$tier_dispatch_bin" >/dev/null 2>&1 || [[ -x "$tier_dispatch_bin" ]]
   exit 1
 }
 
-python3 - "$skill" "$holdout_only" "$accepted" "$repeats" "$cases_file" "$tier_dispatch_bin" "$tiers_file" "$single_tier" <<'PY'
+python3 - "$skill" "$holdout_only" "$accepted" "$repeats" "$cases_file" "$tier_dispatch_bin" "$tiers_file" "$single_tier" "$T/pi-minimal" <<'PY'
 import hashlib
 import json
 import os
@@ -73,7 +81,7 @@ import sys
 import tempfile
 
 (skill_path, holdout_only, accepted, repeats, cases_file,
- tier_dispatch_bin, tiers_file, single_tier) = sys.argv[1:9]
+ tier_dispatch_bin, tiers_file, single_tier, dispatch_bin) = sys.argv[1:10]
 holdout_only = holdout_only == "1"
 accepted = accepted == "true"
 repeats = int(repeats)
@@ -152,7 +160,8 @@ def run_tier_dispatch(tier, system_prompt_path, input_text):
     usage error rather than anything about this one dispatch."""
     result = subprocess.run(
         [tier_dispatch_bin, "--tiers-file", tiers_file, "--tier", tier,
-         "--system-prompt-file", system_prompt_path, "--input", input_text],
+         "--system-prompt-file", system_prompt_path, "--input", input_text,
+         "--dispatch-bin", dispatch_bin],
         capture_output=True, text=True,
     )
     if result.returncode == 0:

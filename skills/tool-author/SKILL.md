@@ -284,8 +284,9 @@ What ships instead, every time:
 
 `evals/run.sh` grades the dry PLAN this skill produces — destination picked, file
 layout, test command, wiring step — against `evals/cases.jsonl` using `evals/rubric.md`;
-never writes a real file. Run it after editing this skill; `--holdout` runs the held-out
-slice.
+never writes a real file. A Pi-backed replacement runner disables extension discovery and
+loads `pi-anthropic-auth` as the bare minimum extension. Run it after editing this skill;
+`--holdout` runs the held-out slice.
 
 ## Done when
 
