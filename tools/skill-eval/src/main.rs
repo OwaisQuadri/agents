@@ -325,11 +325,11 @@ fn run_preflight(eval_dir: &Path, candidate: &Path) -> Result<(), String> {
     }
 }
 
-fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<bool, String> {
+fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<Option<String>, String> {
     let path = eval_dir.join("output-check.sh");
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
     };
     if metadata.permissions().mode() & 0o111 == 0 {
@@ -338,7 +338,8 @@ fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<bool, String> {
     let mut child = Command::new(&path)
         .current_dir(eval_dir)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("cannot run {}: {error}", path.display()))?;
     child
@@ -347,10 +348,22 @@ fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<bool, String> {
         .ok_or_else(|| format!("cannot open stdin for {}", path.display()))?
         .write_all(artifact.as_bytes())
         .map_err(|error| format!("cannot write to {}: {error}", path.display()))?;
-    child
-        .wait()
-        .map(|status| status.success())
-        .map_err(|error| format!("cannot wait for {}: {error}", path.display()))
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("cannot wait for {}: {error}", path.display()))?;
+    if output.status.success() {
+        return Ok(None);
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let details = format!("{} {}", stdout.trim(), stderr.trim())
+        .trim()
+        .to_string();
+    Ok(Some(if details.is_empty() {
+        format!("{} failed with {}", path.display(), output.status)
+    } else {
+        details
+    }))
 }
 
 fn write_wrapper(temp: &TempDir, extension: &Path) -> Result<PathBuf, String> {
@@ -535,6 +548,7 @@ fn run_slice(
         )?;
         let input = case_input(&case.input)?;
         let mut repeat_scores = Vec::with_capacity(context.settings.repeats);
+        let mut output_check_failures = 0;
         for _ in 0..context.settings.repeats {
             let actual = dispatch(
                 context.settings,
@@ -554,7 +568,11 @@ fn run_slice(
             if let Some(model) = actual.model_ran {
                 result.models.insert(model);
             }
-            let is_output_valid = run_output_check(context.eval_dir, &actual.stdout)?;
+            let output_check_failure = run_output_check(context.eval_dir, &actual.stdout)?;
+            if let Some(details) = &output_check_failure {
+                output_check_failures += 1;
+                eprintln!("output check failed for {} on {tier}: {details}", case.id);
+            }
             let prompt = judge_prompt(context.rubric, case, &actual.stdout)?;
             let judged = dispatch(
                 context.settings,
@@ -571,7 +589,7 @@ fn run_slice(
             } else {
                 None
             };
-            if !is_output_valid {
+            if output_check_failure.is_some() {
                 score = score.map(|value| value.min(4));
             }
             if score.is_none() {
@@ -587,7 +605,8 @@ fn run_slice(
                 "id": case.id,
                 "tier": tier,
                 "repeat_scores": repeat_scores,
-                "median": case_median
+                "median": case_median,
+                "output_check_failures": output_check_failures
             })
         );
         result.scores.push(case_median);
@@ -697,11 +716,10 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
                 break;
             }
             let Some(remove) = indices.iter().copied().find(|candidate| {
-                indices.iter().copied().any(|other| {
-                    other != *candidate
-                        && !entries[*candidate].is_accepted
-                        && dominates(&entries[other], &entries[*candidate])
-                })
+                !entries[*candidate].is_accepted
+                    && indices.iter().copied().any(|other| {
+                        other != *candidate && dominates(&entries[other], &entries[*candidate])
+                    })
             }) else {
                 break;
             };
@@ -741,7 +759,33 @@ fn read_frontier(path: &Path) -> Result<Vec<FrontierEntry>, String> {
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(index, line)| {
-            serde_json::from_str(line)
+            let value: Value = serde_json::from_str(line)
+                .map_err(|error| format!("{} line {}: {error}", path.display(), index + 1))?;
+            let object = value.as_object().ok_or_else(|| {
+                format!("{} line {} must be an object", path.display(), index + 1)
+            })?;
+            let is_current = [
+                "candidate_id",
+                "tested_against",
+                "scores_nonholdout",
+                "scores_holdout",
+                "mean_nonholdout",
+                "accepted",
+                "ts",
+            ]
+            .iter()
+            .all(|field| object.contains_key(*field));
+            let is_legacy_mechanical = ["candidate", "runner", "slice", "cases", "mean", "date"]
+                .iter()
+                .all(|field| object.contains_key(*field));
+            if !is_current && !is_legacy_mechanical {
+                return Err(format!(
+                    "{} line {} has an unknown or incomplete frontier schema",
+                    path.display(),
+                    index + 1
+                ));
+            }
+            serde_json::from_value(value)
                 .map_err(|error| format!("{} line {}: {error}", path.display(), index + 1))
         })
         .collect()
@@ -1226,7 +1270,7 @@ print output-without-attribution
         let path = temp.path.join("frontier.jsonl");
         fs::write(
             &path,
-            "{\"candidate\":\"current\",\"runner\":\"mechanical\",\"slice\":\"nonholdout\",\"cases\":17,\"mean\":5.0}\n",
+            "{\"candidate\":\"current\",\"runner\":\"mechanical\",\"slice\":\"nonholdout\",\"cases\":17,\"mean\":5.0,\"date\":\"2026-09-03\"}\n",
         )
         .unwrap();
         let entries = read_frontier(&path).unwrap();
@@ -1234,6 +1278,10 @@ print output-without-attribution
         assert!(entries[0].candidate_id.is_empty());
         assert!(entries[0].tier.is_empty());
         assert_eq!(entries[0].legacy["candidate"], "current");
+
+        fs::write(&path, "{\"candidate_id\":\"truncated\"}\n").unwrap();
+        let error = read_frontier(&path).unwrap_err();
+        assert!(error.contains("unknown or incomplete frontier schema"));
     }
 
     fn entry(id: usize, tier: &str, score: f64) -> FrontierEntry {

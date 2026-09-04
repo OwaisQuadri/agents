@@ -95,8 +95,9 @@ at a working tree anyone cares about.
 
 An artifact can add an executable `evals/preflight.sh` for a deterministic check before
 model dispatch. It can add `evals/output-check.sh` for a deterministic check of each
-actual output. The shared runner caps a failed output check at 4. These checks add evidence
-and never replace tier execution.
+actual output. The shared runner caps a failed output check at 4. Both files must be
+executable, or the runner stops with an error. These checks add evidence and never replace
+tier execution.
 
 After grading BOTH slices in the plain (no-flag) form (candidate or incumbent, accepted
 or rejected), append one line PER TIER TESTED to `evals/frontier.jsonl` and write the
