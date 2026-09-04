@@ -28,7 +28,7 @@ struct Case {
     id: String,
     input: Value,
     expect: String,
-    #[serde(default, rename = "holdout")]
+    #[serde(rename = "holdout")]
     is_holdout: bool,
     #[serde(default)]
     files: Vec<PathBuf>,
@@ -863,6 +863,18 @@ fn run(settings: Settings) -> Result<(), String> {
     let rubric = fs::read_to_string(&rubric_path)
         .map_err(|error| format!("cannot read {}: {error}", rubric_path.display()))?;
     let cases = load_cases(&settings.cases_file)?;
+    if !cases.iter().any(|case| !case.is_holdout) {
+        return Err(format!(
+            "{} has no non-holdout cases",
+            settings.cases_file.display()
+        ));
+    }
+    if !cases.iter().any(|case| case.is_holdout) {
+        return Err(format!(
+            "{} has no holdout cases",
+            settings.cases_file.display()
+        ));
+    }
     let full_tiers = load_tiers(&settings.tiers_file)?;
     let tiers = match &settings.args.tier {
         Some(tier) if full_tiers.contains(tier) => vec![tier.clone()],
@@ -1129,7 +1141,7 @@ fi
         fs::write(artifact.join("context.txt"), "file sentinel").unwrap();
         fs::write(
             &settings.cases_file,
-            "{\"id\":\"n1\",\"input\":\"x\",\"expect\":\"y\",\"files\":[\"context.txt\"]}\n",
+            "{\"id\":\"n1\",\"input\":\"x\",\"expect\":\"y\",\"holdout\":false,\"files\":[\"context.txt\"]}\n{\"id\":\"h1\",\"input\":\"h\",\"expect\":\"y\",\"holdout\":true}\n",
         )
         .unwrap();
         settings.args.tier = Some("T1".to_string());
@@ -1243,6 +1255,28 @@ print output-without-attribution
             eval_dir.join("../SKILL.md")
         );
         assert!(!temp.path.join("calls").exists());
+    }
+
+    #[test]
+    fn cases_require_explicit_nonholdout_and_holdout_slices() {
+        let (_temp, settings, eval_dir) = fixture("case-slices", FAKE);
+        fs::write(
+            &settings.cases_file,
+            "{\"id\":\"n1\",\"input\":\"x\",\"expect\":\"y\"}\n",
+        )
+        .unwrap();
+        let error = run(settings).unwrap_err();
+        assert!(error.contains("missing field `holdout`"));
+
+        let (_temp, settings, _eval_dir) = fixture("missing-holdout", FAKE);
+        fs::write(
+            &settings.cases_file,
+            "{\"id\":\"n1\",\"input\":\"x\",\"expect\":\"y\",\"holdout\":false}\n",
+        )
+        .unwrap();
+        let error = run(settings).unwrap_err();
+        assert!(error.contains("has no holdout cases"));
+        assert!(!eval_dir.join("frontier.jsonl").exists());
     }
 
     #[test]
