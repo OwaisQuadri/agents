@@ -32,11 +32,17 @@ impl Registry {
         let mut models = BTreeMap::new();
         let mut empty_providers = BTreeSet::new();
         for (provider, value) in providers {
-            if let Some(provider_models) = provider_models(provider, value)? {
-                if provider_models.is_empty() {
+            match provider_models(provider, value)? {
+                Some(provider_models) => {
+                    if provider_models.is_empty() {
+                        empty_providers.insert(provider.clone());
+                    }
+                    models.insert(provider.clone(), provider_models);
+                }
+                None if value.is_object() => {
                     empty_providers.insert(provider.clone());
                 }
-                models.insert(provider.clone(), provider_models);
+                None => {}
             }
         }
         if models.values().all(BTreeSet::is_empty) {
@@ -444,6 +450,19 @@ mod tests {
         let directory = test_dir("empty-registry");
         let path = write_registry(&directory, r#"{"anthropic":{"models":[]}}"#);
         assert!(Registry::load(&path).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn metadata_only_catalog_is_empty_for_a_tier_provider() {
+        let directory = test_dir("metadata-only-provider");
+        let tiers = TiersFile::load(&write_tiers(&directory, "anthropic/claude-fable-5")).unwrap();
+        let registry = Registry::load(&write_registry(
+            &directory,
+            r#"{"anthropic":{"checkedAt":1},"openai-codex":{"models":[{"id":"gpt-5.6-sol"}]}}"#,
+        ))
+        .unwrap();
+        assert_eq!(registry.empty_tier_providers(&tiers), vec!["anthropic"]);
         std::fs::remove_dir_all(directory).unwrap();
     }
 

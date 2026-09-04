@@ -25,12 +25,15 @@ pub struct Tier {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TiersFile {
     pub tiers: BTreeMap<String, Tier>,
     #[serde(default)]
     pub orchestrator: Option<String>,
     #[serde(default)]
     pub agents: BTreeMap<String, String>,
+    #[serde(default, rename = "untiered")]
+    _untiered: BTreeMap<String, String>,
 }
 
 impl TiersFile {
@@ -176,6 +179,23 @@ mod tests {
         std::fs::write(
             &path,
             r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"falbacks":[]}}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_an_unknown_top_level_field() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-top-level-field-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"}}},"orchestratorr":"T1"}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());
