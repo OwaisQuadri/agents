@@ -303,7 +303,7 @@ fn candidate_path(args: &Args) -> PathBuf {
         .unwrap_or_else(|| args.eval_dir.join("../SKILL.md"))
 }
 
-fn run_preflight(eval_dir: &Path, candidate: &Path) -> Result<(), String> {
+fn run_preflight(eval_dir: &Path, candidate: &Path, cases_file: &Path) -> Result<(), String> {
     let path = eval_dir.join("preflight.sh");
     let metadata = match fs::metadata(&path) {
         Ok(metadata) => metadata,
@@ -316,6 +316,7 @@ fn run_preflight(eval_dir: &Path, candidate: &Path) -> Result<(), String> {
     let status = Command::new(&path)
         .arg(candidate)
         .current_dir(eval_dir)
+        .env("CASES_FILE", cases_file)
         .status()
         .map_err(|error| format!("cannot run {}: {error}", path.display()))?;
     if status.success() {
@@ -841,13 +842,15 @@ fn update_frontier(
     Ok(())
 }
 
-fn run(settings: Settings) -> Result<(), String> {
+fn run(mut settings: Settings) -> Result<(), String> {
     let eval_dir = fs::canonicalize(&settings.args.eval_dir).map_err(|error| {
         format!(
             "cannot resolve {}: {error}",
             settings.args.eval_dir.display()
         )
     })?;
+    settings.cases_file = fs::canonicalize(&settings.cases_file)
+        .map_err(|error| format!("cannot resolve {}: {error}", settings.cases_file.display()))?;
     let candidate_path = candidate_path(&settings.args);
     let candidate_path = if candidate_path.is_absolute() {
         candidate_path
@@ -856,7 +859,6 @@ fn run(settings: Settings) -> Result<(), String> {
             .map_err(|error| format!("cannot read current directory: {error}"))?
             .join(candidate_path)
     };
-    run_preflight(&eval_dir, &candidate_path)?;
     let candidate = fs::read_to_string(&candidate_path)
         .map_err(|error| format!("cannot read {}: {error}", candidate_path.display()))?;
     let rubric_path = eval_dir.join("rubric.md");
@@ -875,6 +877,7 @@ fn run(settings: Settings) -> Result<(), String> {
             settings.cases_file.display()
         ));
     }
+    run_preflight(&eval_dir, &candidate_path, &settings.cases_file)?;
     let full_tiers = load_tiers(&settings.tiers_file)?;
     let tiers = match &settings.args.tier {
         Some(tier) if full_tiers.contains(tier) => vec![tier.clone()],
@@ -1242,17 +1245,23 @@ print output-without-attribution
         write_executable(
             &preflight,
             &format!(
-                "#!/bin/zsh\nprint -r -- \"$1\" >> {}/preflight-log\nexit 7\n",
+                "#!/bin/zsh\nprint -r -- \"$1\" >> {}/preflight-log\nprint -r -- \"$CASES_FILE\" >> {}/preflight-log\nexit 7\n",
+                temp.path.display(),
                 temp.path.display()
             ),
         );
         let error = run(settings).unwrap_err();
         assert!(error.contains("preflight failed"));
         let preflight_log = fs::read_to_string(temp.path.join("preflight-log")).unwrap();
-        assert_eq!(preflight_log.lines().count(), 1);
+        assert_eq!(preflight_log.lines().count(), 2);
+        let mut lines = preflight_log.lines();
         assert_eq!(
-            Path::new(preflight_log.trim()),
+            Path::new(lines.next().unwrap()),
             eval_dir.join("../SKILL.md")
+        );
+        assert_eq!(
+            Path::new(lines.next().unwrap()),
+            fs::canonicalize(eval_dir.join("cases.jsonl")).unwrap()
         );
         assert!(!temp.path.join("calls").exists());
     }
@@ -1316,6 +1325,14 @@ print output-without-attribution
         assert_eq!(entries[1].tier, "T3");
 
         fs::write(&path, "{\"candidate_id\":\"truncated\"}\n").unwrap();
+        let error = read_frontier(&path).unwrap_err();
+        assert!(error.contains("unknown or incomplete frontier schema"));
+
+        fs::write(
+            &path,
+            "{\"candidate\":\"current\",\"slice\":\"holdout\",\"cases\":1,\"mean\":5.0,\"date\":\"2026-09-03\"}\n",
+        )
+        .unwrap();
         let error = read_frontier(&path).unwrap_err();
         assert!(error.contains("unknown or incomplete frontier schema"));
     }
