@@ -143,12 +143,20 @@ fn verify_registry(args: &Args) -> ExitCode {
         .models_file
         .as_ref()
         .expect("registry verification always resolves a models file");
-    let override_findings = match ModelOverrides::load(models_file) {
-        Ok(overrides) => unknown_model_overrides(&overrides, &registry),
-        Err(message) => {
-            eprintln!("tier-dispatch: advisory: model overrides unavailable: {message}");
-            Vec::new()
+    let override_findings = if models_file.is_file() {
+        match ModelOverrides::load(models_file) {
+            Ok(overrides) => unknown_model_overrides(&overrides, &registry),
+            Err(message) => {
+                eprintln!("tier-dispatch: {message}");
+                return ExitCode::from(2);
+            }
         }
+    } else {
+        eprintln!(
+            "tier-dispatch: advisory: model overrides unavailable: {}",
+            models_file.display()
+        );
+        Vec::new()
     };
     let registry_findings = unknown_models(&tiers, &registry);
     for finding in &registry_findings {

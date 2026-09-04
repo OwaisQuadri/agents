@@ -4,7 +4,7 @@
 //! decides which one actually runs — that's `dispatch.rs`'s job.
 
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -46,6 +46,23 @@ impl TiersFile {
                     "{}: tier {name} has invalid climbOnExhaustion {target}",
                     path.display()
                 ));
+            }
+        }
+        for start in tiers.tiers.keys() {
+            let mut seen = BTreeSet::new();
+            let mut current = start;
+            while let Some(target) = tiers
+                .tiers
+                .get(current)
+                .and_then(|tier| tier.climb_on_exhaustion.as_ref())
+            {
+                if !seen.insert(current) {
+                    return Err(format!(
+                        "{}: climbOnExhaustion cycle includes {current}",
+                        path.display()
+                    ));
+                }
+                current = target;
             }
         }
         Ok(tiers)
@@ -142,6 +159,23 @@ mod tests {
         std::fs::write(
             &path,
             r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"climbOnExhaustion":"T9"}}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_a_climb_cycle() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-climb-cycle-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"climbOnExhaustion":"T2"},"T2":{"pi":{"model":"anthropic/claude-haiku-4-5","thinking":"low"},"climbOnExhaustion":"T1"}}}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());

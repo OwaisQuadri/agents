@@ -28,15 +28,15 @@ impl Registry {
         let providers = root
             .as_object()
             .ok_or_else(|| format!("{}: registry root must be an object", path.display()))?;
-        let models: BTreeMap<String, BTreeSet<String>> = providers
-            .iter()
-            .filter_map(|(provider, value)| {
-                provider_models(value).map(|models| (provider.clone(), models))
-            })
-            .collect();
-        if models.is_empty() {
+        let mut models = BTreeMap::new();
+        for (provider, value) in providers {
+            if let Some(provider_models) = provider_models(provider, value)? {
+                models.insert(provider.clone(), provider_models);
+            }
+        }
+        if models.values().all(BTreeSet::is_empty) {
             return Err(format!(
-                "{}: registry has no provider model lists",
+                "{}: registry has no provider models",
                 path.display()
             ));
         }
@@ -151,14 +151,25 @@ pub fn unreferenced_newer(tiers: &TiersFile, registry: &Registry) -> Vec<String>
         .collect()
 }
 
-fn provider_models(value: &serde_json::Value) -> Option<BTreeSet<String>> {
-    let models = value.as_object()?.get("models")?.as_array()?;
-    Some(
-        models
-            .iter()
-            .filter_map(|model| model.get("id")?.as_str().map(str::to_string))
-            .collect(),
-    )
+fn provider_models(
+    provider: &str,
+    value: &serde_json::Value,
+) -> Result<Option<BTreeSet<String>>, String> {
+    let Some(models) = value.as_object().and_then(|object| object.get("models")) else {
+        return Ok(None);
+    };
+    let models = models
+        .as_array()
+        .ok_or_else(|| format!("registry provider {provider} models must be an array"))?;
+    let mut ids = BTreeSet::new();
+    for model in models {
+        let id = model
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("registry provider {provider} has a model without an id"))?;
+        ids.insert(id.to_owned());
+    }
+    Ok(Some(ids))
 }
 
 fn is_newer_model<'a>(candidate: &str, tiered: impl Iterator<Item = &'a str>) -> bool {
@@ -366,7 +377,15 @@ mod tests {
     #[test]
     fn registry_without_provider_models_is_an_error() {
         let directory = test_dir("empty-registry");
-        let path = write_registry(&directory, r#"{"checkedAt":1}"#);
+        let path = write_registry(&directory, r#"{"anthropic":{"models":[]}}"#);
+        assert!(Registry::load(&path).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn registry_model_without_an_id_is_an_error() {
+        let directory = test_dir("invalid-registry-model");
+        let path = write_registry(&directory, r#"{"anthropic":{"models":["claude-opus-5"]}}"#);
         assert!(Registry::load(&path).is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
