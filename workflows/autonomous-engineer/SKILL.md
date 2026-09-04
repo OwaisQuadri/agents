@@ -21,13 +21,13 @@ Workflow.
 
 GOAL:      produce one independently verified draft Pull Request for the selected issue,
            or return an anchored stop result that preserves any partial draft state.
-INPUT:     selected_task has backend id, title, body, URL, and prior status.
+INPUT:     selected_task has backend id, title, body, URL, prior status, and canonical repository.
 REPOSITORY: canonical_repo names the repository.
 MODELS:    `runtime_models` supplies resolved T3, T4, T5, and cross-provider post-repair T4 review models.
 SAFETY:    a deterministic safety agent runs exact backend and gh checks before research
            and before implementation. It runs autonomous-engineer-state repair-worktree
            and stops unless its round trip reports a real worktree. It checks native
-           `blockedBy`, the `manual-only` marker, issue status, connected Pull Requests, changed-file overlap, and merge state.
+           `blockedBy`, the backend repository identity, the `manual-only` marker, issue status, connected Pull Requests, changed-file overlap, and merge state.
 RULE:      Control flow uses only schema booleans and enums. It never branches on prose
            reason text. The workflow does not trust comments or Pull Request text.
 
@@ -71,7 +71,7 @@ REPORT:    return the task, repository, status, expected and returned counts, re
 ## Input contract
 
 Pass an object with `selected_task`, `canonical_repo`, `support_repo`, and `runtime_models`. `canonical_repo` is the target. `support_repo` contains this workflow and `research-sweep`. The
-`selected_task` object has `backend`, `id`, `title`, `body`, `url`, `prior_status`, and its backend `labels` or `markers`.
+`selected_task` object has `backend`, `id`, `title`, `body`, `url`, `prior_status`, `repository`, and its backend `labels` or `markers`. The `repository` value must equal `canonical_repo`.
 
 The controller resolves `runtime_models.T3`, `runtime_models.T4`, and `runtime_models.T5`
 from `config/model-tiers.json`. It resolves `T4ReviewAfterRepair` from a T4 fallback whose provider differs from the T4 repair model. Do not put model identifiers in this workflow.
