@@ -424,6 +424,7 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 					T4: {
 						"provider-a/opus": { model: "provider-b/sol", thinking: "medium" },
 						"provider-b/sol": { model: "provider-a/new", thinking: "low" },
+						"provider-a/new": { model: "provider-a/opus", thinking: "medium" },
 					},
 				},
 				tierPrimaries: {
@@ -455,19 +456,20 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 			sendUserMessage: () => {},
 		};
 		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
+		const eventContext = () => ({ ...ctx, sessionManager: ctx.sessionManager });
 
 		for (let index = 0; index < 4; index += 1) {
-			await handleMessageEnd(error, ctx as never, pi as never);
-			await handleMessageEnd({ role: "user" }, ctx as never, pi as never);
-			await handleMessageEnd({ role: "toolResult" }, ctx as never, pi as never);
+			await handleMessageEnd(error, eventContext() as never, pi as never);
+			await handleMessageEnd({ role: "user" }, eventContext() as never, pi as never);
+			await handleMessageEnd({ role: "toolResult" }, eventContext() as never, pi as never);
 		}
 
 		assert.deepEqual(switches, ["provider-b/sol", "provider-a/old", "provider-a/opus"]);
 
-		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, ctx as never, pi as never);
-		ctx.model = { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } };
-		await handleMessageEnd(error, ctx as never, pi as never);
-		assert.equal(switches.at(-1), "provider-b/sol");
+		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
+		ctx.model = { provider: "provider-b", id: "sol", cost: { input: 0, output: 0, cacheRead: 0 } };
+		await handleMessageEnd(error, eventContext() as never, pi as never);
+		assert.equal(switches.at(-1), "provider-a/new");
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });

@@ -402,12 +402,35 @@ async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, hop: TierHop): 
 
 // Resolved on the walk's first hop and reused after, so a model shared by two tiers
 // never re-derives a different tier mid-walk.
-const sessionTierByContext = new WeakMap<ExtensionContext, string>();
-const attemptedModelsByContext = new WeakMap<ExtensionContext, Set<string>>();
+type FallbackState = {
+	sessionFile: string | null;
+	tier?: string;
+	attempted: Set<string>;
+	lastProviderResponse?: { status: number; headers: Record<string, string> };
+	abandoned: Record<string, { resetAtMs: number; thinking: ThinkingLevel }>;
+};
+
+const fallbackStateBySessionManager = new WeakMap<object, FallbackState>();
+
+function fallbackState(ctx: ExtensionContext): FallbackState {
+	const manager = ctx.sessionManager as object;
+	const sessionFile = ctx.sessionManager.getSessionFile();
+	let state = fallbackStateBySessionManager.get(manager);
+	if (!state || state.sessionFile !== sessionFile) {
+		state = { sessionFile, attempted: new Set<string>(), abandoned: {} };
+		fallbackStateBySessionManager.set(manager, state);
+	}
+	return state;
+}
 
 function firstUntriedHop(map: FallbackMap, start: TierHop | undefined, attempted: Set<string>): TierHop | undefined {
+	const seen = new Set<string>();
 	let hop = start;
 	while (hop && attempted.has(hop.model)) {
+		if (seen.has(hop.model)) {
+			return undefined;
+		}
+		seen.add(hop.model);
 		const [provider, ...id] = hop.model.split("/");
 		hop = findTierFallback(map, provider, id.join("/")) ?? undefined;
 	}
@@ -422,11 +445,12 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	const { tiered, primaries, climb } = await loadFallbacks();
 	// Home tier resolves only from a primary position; a session starting mid-chain
 	// (manual /model switch) gets no fallback, same as a model outside the tier file.
-	let tier = sessionTierByContext.get(ctx) ?? resolveHomeTier(primaries, active.provider, active.id);
+	const state = fallbackState(ctx);
+	let tier = state.tier ?? resolveHomeTier(primaries, active.provider, active.id);
 	if (!tier) {
 		return null;
 	}
-	const attempted = attemptedModelsByContext.get(ctx) ?? new Set<string>();
+	const attempted = state.attempted;
 	let hop = firstUntriedHop(
 		tiered[tier] ?? {},
 		findTierFallback(tiered[tier] ?? {}, active.provider, active.id) ?? undefined,
@@ -445,7 +469,7 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	if (!(await switchTo(pi, ctx, hop))) {
 		return null;
 	}
-	sessionTierByContext.set(ctx, tier);
+	state.tier = tier;
 	return hop.model;
 }
 
@@ -454,13 +478,13 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		return;
 	}
 	const errorText = extractErrorText(message);
+	const state = fallbackState(ctx);
 	if (!errorText) {
-		attemptedModelsByContext.delete(ctx);
-		sessionTierByContext.delete(ctx);
+		state.attempted.clear();
 		return;
 	}
 
-	const lastResponse = lastProviderResponseByContext.get(ctx) ?? { status: 0, headers: {} };
+	const lastResponse = state.lastProviderResponse ?? { status: 0, headers: {} };
 	const plan = computeResetPlan({
 		status: lastResponse.status,
 		headers: lastResponse.headers,
@@ -468,7 +492,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		model: ctx.model,
 		nowMs: Date.now(),
 	});
-	lastProviderResponseByContext.delete(ctx);
+	state.lastProviderResponse = undefined;
 	if (!plan?.isDetected) {
 		return;
 	}
@@ -476,14 +500,11 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 
 	const active = ctx.model as ModelLike | undefined;
 	if (active?.id) {
-		const attempted = attemptedModelsByContext.get(ctx) ?? new Set<string>();
-		attempted.add(`${active.provider}/${active.id}`);
-		attemptedModelsByContext.set(ctx, attempted);
+		state.attempted.add(`${active.provider}/${active.id}`);
 	}
-	const abandoned = abandonedByContext.get(ctx) ?? {};
+	const abandoned = state.abandoned;
 	if (active?.id && plan.resetAtMs !== null) {
 		abandoned[`${active.provider}/${active.id}`] = { resetAtMs: plan.resetAtMs, thinking: pi.getThinkingLevel() };
-		abandonedByContext.set(ctx, abandoned);
 	}
 
 	const fallbackModel = await applyTierFallback(pi, ctx);
@@ -526,12 +547,6 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	ctx.ui.notify(`Usage limit hit. Will continue this session${destination} in ${formatWait(resumeAtMs - Date.now())}.`, "warning");
 }
 
-const lastProviderResponseByContext = new WeakMap<ExtensionContext, { status: number; headers: Record<string, string> }>();
-
-// Values are reset instants. A resume waits on whichever model returns first rather than
-// on whichever failed last, so the walk has to remember every model it gave up on.
-const abandonedByContext = new WeakMap<ExtensionContext, Record<string, { resetAtMs: number; thinking: ThinkingLevel }>>();
-
 async function handleStatusCommand(_args: string, ctx: ExtensionCommandContext): Promise<void> {
 	const store = await loadPendingStore();
 	const jobs = Object.values(store);
@@ -548,7 +563,7 @@ async function handleStatusCommand(_args: string, ctx: ExtensionCommandContext):
 
 export default async function usageLimitContinueExtension(pi: ExtensionAPI): Promise<void> {
 	pi.on("after_provider_response", (event, ctx) => {
-		lastProviderResponseByContext.set(ctx, { status: event.status, headers: event.headers });
+		fallbackState(ctx).lastProviderResponse = { status: event.status, headers: event.headers };
 	});
 
 	pi.on("message_end", async (event, ctx) => {
