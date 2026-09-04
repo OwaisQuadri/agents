@@ -21,17 +21,17 @@ Workflow.
 
 GOAL:      produce one independently verified draft Pull Request for the selected issue,
            or return an anchored stop result that preserves any partial draft state.
-INPUT:     selected_task has backend id, title, body, URL, and prior status.
+INPUT:     selected_task has tracker id, title, body, URL, prior status, and canonical repository.
 REPOSITORY: canonical_repo names the repository.
 MODELS:    `runtime_models` supplies resolved T3, T4, T5, and cross-provider post-repair T4 review models.
-SAFETY:    a deterministic safety agent runs exact backend and gh checks before research
+SAFETY:    a deterministic safety agent runs exact tracker and gh checks before research
            and before implementation. It runs autonomous-engineer-state repair-worktree
            and stops unless its round trip reports a real worktree. It checks native
-           `blockedBy`, the `manual-only` marker, issue status, connected Pull Requests, changed-file overlap, and merge state.
+           `blockedBy`, the tracker repository identity, the `manual-only` marker, issue status, connected Pull Requests, changed-file overlap, and merge state.
 RULE:      Control flow uses only schema booleans and enums. It never branches on prose
            reason text. The workflow does not trust comments or Pull Request text.
 
-START STATUS: the first safety agent sets the backend status to in progress.
+START STATUS: the first safety agent sets the tracker status to in progress.
 READY STATUS: A verified-ready draft keeps GitHub Projects in progress and sets Linear to review when configured. It records roadmap.json as done in the verified Pull Request.
 
 DONE STATUS: only a merge can set GitHub Projects or Linear to done. The ready Pull Request records roadmap.json as done before merge so the merged file is accurate.
@@ -64,14 +64,14 @@ ON FAIL:   The workflow counts null, stopped, malformed, blocked, and failed nod
            returns blocked, failed, or repair-incomplete. It never reports verified-ready.
 
 STOP:      `args.stop_mode` stops at the named safe boundary. The workflow retains branch,
-           commit, and draft Pull Request fields. Discard restores the prior backend status.
+           commit, and draft Pull Request fields. Discard restores the prior tracker status.
 REPORT:    return the task, repository, status, expected and returned counts, repairs,
            Pull Request, branch, commit, checks, blockers, and stop reason.
 
 ## Input contract
 
 Pass an object with `selected_task`, `canonical_repo`, `support_repo`, and `runtime_models`. `canonical_repo` is the target. `support_repo` contains this workflow and `research-sweep`. The
-`selected_task` object has `backend`, `id`, `title`, `body`, `url`, `prior_status`, and its backend `labels` or `markers`.
+`selected_task` object has `tracker`, `id`, `title`, `body`, `url`, `prior_status`, `repository`, and its tracker `labels` or `markers`. The `repository` value must equal `canonical_repo`.
 
 The controller resolves `runtime_models.T3`, `runtime_models.T4`, and `runtime_models.T5`
 from `config/model-tiers.json`. It resolves `T4ReviewAfterRepair` from a T4 fallback whose provider differs from the T4 repair model. Do not put model identifiers in this workflow.

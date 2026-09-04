@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-const MAX_LEASES: usize = 3;
 const LOCK_RETRY_DELAY: Duration = Duration::from_millis(20);
 const LOCK_MAX_RETRIES: usize = 250;
 const WATCH_FIELDS: &str = "number,url,isDraft,headRefOid,mergeStateStatus,reviewDecision,statusCheckRollup,body,closingIssuesReferences";
@@ -39,6 +39,8 @@ struct RepositoryState {
     stop_mode: String,
     #[serde(rename = "watcherPid")]
     watcher_pid: Option<u32>,
+    #[serde(default, rename = "wakeKey")]
+    wake_key: Option<String>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -70,6 +72,7 @@ struct Acquire {
 
 struct Heartbeat {
     run: String,
+    repo: String,
     stage: Option<String>,
     task: Option<String>,
     prior_status: Option<String>,
@@ -119,6 +122,8 @@ fn run(args: impl Iterator<Item = String>) -> Result<String> {
         "set-stop" => set_stop_command(&arguments[1..]),
         "register-watcher" => register_watcher_command(&arguments[1..]),
         "unregister-watcher" => unregister_watcher_command(&arguments[1..]),
+        "stop-watcher" => stop_watcher_command(&arguments[1..]),
+        "wake-key" => wake_key_command(&arguments[1..]),
         "watch-prs" => watch_prs_command(&arguments[1..]),
         "repair-worktree" => repair_worktree_command(&arguments[1..]),
         other => Err(format!("unknown command {other}; {}", usage())),
@@ -126,7 +131,7 @@ fn run(args: impl Iterator<Item = String>) -> Result<String> {
 }
 
 fn usage() -> String {
-    "usage: autonomous-engineer-state <acquire|heartbeat|list|release|configure|set-stop|register-watcher|unregister-watcher|watch-prs|repair-worktree> ...".to_owned()
+    "usage: autonomous-engineer-state <acquire|heartbeat|list|release|configure|set-stop|register-watcher|unregister-watcher|stop-watcher|wake-key|watch-prs|repair-worktree> ...".to_owned()
 }
 
 fn acquire_command(arguments: &[String]) -> Result<String> {
@@ -140,8 +145,9 @@ fn acquire_command(arguments: &[String]) -> Result<String> {
 
 fn acquire_lease(registry: &mut Registry, acquire: Acquire) -> Result<&'static str> {
     cleanup_stale(registry);
-    registry.leases.retain(|lease| lease.run != acquire.run);
-    let is_globally_full = registry.leases.len() >= MAX_LEASES;
+    registry
+        .leases
+        .retain(|lease| lease.run != acquire.run || lease.repo != acquire.repo);
     let is_task_already_running = acquire.kind == "task"
         && registry
             .leases
@@ -151,7 +157,7 @@ fn acquire_lease(registry: &mut Registry, acquire: Acquire) -> Result<&'static s
         && registry.leases.iter().any(|lease| {
             lease.kind == "pr-care" && lease.repo == acquire.repo && lease.pr == acquire.pr
         });
-    if is_globally_full || is_task_already_running || is_pr_care_already_running {
+    if is_task_already_running || is_pr_care_already_running {
         return Ok("denied");
     }
     registry.leases.push(Lease {
@@ -172,27 +178,32 @@ fn heartbeat_command(arguments: &[String]) -> Result<String> {
     let heartbeat = parse_heartbeat(arguments)?;
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
-        cleanup_stale(registry);
-        let lease = registry
-            .leases
-            .iter_mut()
-            .find(|lease| lease.run == heartbeat.run)
-            .ok_or_else(|| format!("no live run named {}", heartbeat.run))?;
-        if let Some(stage) = heartbeat.stage {
-            lease.stage = Some(stage);
-        }
-        if let Some(task) = heartbeat.task {
-            lease.task = Some(task);
-        }
-        if let Some(prior_status) = heartbeat.prior_status {
-            lease.prior_status = Some(prior_status);
-        }
-        if let Some(pr) = heartbeat.pr {
-            lease.pr = Some(pr);
-        }
-        lease.heartbeat = now_seconds()?;
+        update_lease(registry, heartbeat)?;
         render_lease_output("updated", registry)
     })
+}
+
+fn update_lease(registry: &mut Registry, heartbeat: Heartbeat) -> Result<()> {
+    cleanup_stale(registry);
+    let lease = registry
+        .leases
+        .iter_mut()
+        .find(|lease| lease.run == heartbeat.run && lease.repo == heartbeat.repo)
+        .ok_or_else(|| format!("no live run named {} for that repository", heartbeat.run))?;
+    if let Some(stage) = heartbeat.stage {
+        lease.stage = Some(stage);
+    }
+    if let Some(task) = heartbeat.task {
+        lease.task = Some(task);
+    }
+    if let Some(prior_status) = heartbeat.prior_status {
+        lease.prior_status = Some(prior_status);
+    }
+    if let Some(pr) = heartbeat.pr {
+        lease.pr = Some(pr);
+    }
+    lease.heartbeat = now_seconds()?;
+    Ok(())
 }
 
 fn list_command(arguments: &[String]) -> Result<String> {
@@ -206,13 +217,29 @@ fn list_command(arguments: &[String]) -> Result<String> {
 
 fn release_command(arguments: &[String]) -> Result<String> {
     let run = required_option(arguments, "--run")?;
-    reject_unknown_options(arguments, &["--run"])?;
+    let repo = required_repo_option(arguments)?;
+    reject_unknown_options(arguments, &["--run", "--repo"])?;
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
-        cleanup_stale(registry);
-        registry.leases.retain(|lease| lease.run != run);
+        release_lease(registry, &run, &repo)?;
         render_lease_output("released", registry)
     })
+}
+
+fn release_lease(registry: &mut Registry, run: &str, repo: &str) -> Result<()> {
+    cleanup_stale(registry);
+    let matching = registry
+        .leases
+        .iter()
+        .filter(|lease| lease.run == run && lease.repo == repo)
+        .count();
+    if matching == 0 {
+        return Err(format!("no live run named {run} for that repository"));
+    }
+    registry
+        .leases
+        .retain(|lease| lease.run != run || lease.repo != repo);
+    Ok(())
 }
 
 fn configure_command(arguments: &[String]) -> Result<String> {
@@ -243,6 +270,7 @@ fn configure_repository(registry: &mut Registry, configure: Configure) {
                 .clone()
                 .unwrap_or_else(|| "none".to_owned()),
             watcher_pid: None,
+            wake_key: None,
         });
     }
 }
@@ -277,6 +305,12 @@ fn apply_stop(registry: &mut Registry, request: &SetStop) -> Result<()> {
 
 fn register_watcher_command(arguments: &[String]) -> Result<String> {
     let watcher = parse_register_watcher(arguments)?;
+    if !is_expected_watcher(watcher.pid, &watcher.repo)? {
+        return Err(format!(
+            "process {} is not the watcher for repository {}",
+            watcher.pid, watcher.repo
+        ));
+    }
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
         cleanup_stale(registry);
@@ -285,13 +319,23 @@ fn register_watcher_command(arguments: &[String]) -> Result<String> {
             .iter_mut()
             .find(|state| state.repo == watcher.repo)
             .ok_or_else(|| format!("repository {} is not configured", watcher.repo))?;
-        state.watcher_pid = Some(watcher.pid);
-        render_lease_output("watcher-registered", registry)
+        let status = match state.watcher_pid {
+            Some(pid) if pid != watcher.pid => {
+                stop_expected_watcher(watcher.pid, &watcher.repo)?;
+                "watcher-denied"
+            }
+            _ => {
+                state.watcher_pid = Some(watcher.pid);
+                state.wake_key = Some(repository_key(&watcher.repo));
+                "watcher-registered"
+            }
+        };
+        render_lease_output(status, registry)
     })
 }
 
 fn unregister_watcher_command(arguments: &[String]) -> Result<String> {
-    let repo = required_option(arguments, "--repo")?;
+    let repo = required_repo_option(arguments)?;
     reject_unknown_options(arguments, &["--repo"])?;
     let directory = state_directory()?;
     with_registry(&directory, |registry| {
@@ -302,8 +346,95 @@ fn unregister_watcher_command(arguments: &[String]) -> Result<String> {
             .find(|state| state.repo == repo)
             .ok_or_else(|| format!("repository {repo} is not configured"))?;
         state.watcher_pid = None;
+        state.wake_key = None;
         render_lease_output("watcher-unregistered", registry)
     })
+}
+
+fn stop_watcher_command(arguments: &[String]) -> Result<String> {
+    let repo = required_repo_option(arguments)?;
+    reject_unknown_options(arguments, &["--repo"])?;
+    let directory = state_directory()?;
+    with_registry(&directory, |registry| {
+        cleanup_stale(registry);
+        let state = registry
+            .repositories
+            .iter_mut()
+            .find(|state| state.repo == repo)
+            .ok_or_else(|| format!("repository {repo} is not configured"))?;
+        let Some(pid) = state.watcher_pid else {
+            return render_lease_output("watcher-absent", registry);
+        };
+        stop_expected_watcher(pid, &repo)?;
+        state.watcher_pid = None;
+        state.wake_key = None;
+        render_lease_output("watcher-stopped", registry)
+    })
+}
+
+fn stop_expected_watcher(pid: u32, repo: &str) -> Result<()> {
+    if !is_expected_watcher(pid, repo)? {
+        return Err(format!(
+            "process {pid} is not the watcher for repository {repo}"
+        ));
+    }
+    let stopped = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if stopped != 0 {
+        return Err(format!(
+            "cannot stop watcher {pid}: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn is_expected_watcher(pid: u32, repo: &str) -> Result<bool> {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return Ok(false);
+    }
+    let process_name = inspect_process_field(pid, "comm=")?;
+    let command = inspect_process_field(pid, "command=")?;
+    Ok(is_expected_watcher_command(&process_name, &command, repo))
+}
+
+fn inspect_process_field(pid: u32, field: &str) -> Result<String> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", field])
+        .output()
+        .map_err(|error| format!("cannot inspect process {pid}: {error}"))?;
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn is_expected_watcher_command(process_name: &str, command: &str, repo: &str) -> bool {
+    let Some((_, arguments)) = command.trim().split_once(" watch-prs ") else {
+        return false;
+    };
+    let is_executable =
+        Path::new(process_name).file_name() == Some(OsStr::new("autonomous-engineer-state"));
+    let process_repo = arguments
+        .split_once("--repo ")
+        .and_then(|(_, value)| value.split(" --").next())
+        .map(str::trim)
+        .and_then(|value| normalize_repo_argument(value.to_owned()).ok());
+    is_executable && process_repo.as_deref() == Some(repo)
+}
+
+fn wake_key_command(arguments: &[String]) -> Result<String> {
+    let repo = required_repo_option(arguments)?;
+    reject_unknown_options(arguments, &["--repo"])?;
+    Ok(repository_key(&repo))
+}
+
+fn repository_key(repo: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in repo.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn render_lease_output(status: &str, registry: &Registry) -> Result<String> {
@@ -317,7 +448,7 @@ fn render_lease_output(status: &str, registry: &Registry) -> Result<String> {
 
 fn parse_acquire(arguments: &[String]) -> Result<Acquire> {
     let run = required_option(arguments, "--run")?;
-    let repo = required_option(arguments, "--repo")?;
+    let repo = required_repo_option(arguments)?;
     let kind = required_option(arguments, "--kind")?;
     if !matches!(kind.as_str(), "task" | "pr-care") {
         return Err(format!("--kind must be task or pr-care, got {kind}"));
@@ -350,7 +481,7 @@ fn parse_acquire(arguments: &[String]) -> Result<Acquire> {
 }
 
 fn parse_configure(arguments: &[String]) -> Result<Configure> {
-    let repo = required_option(arguments, "--repo")?;
+    let repo = required_repo_option(arguments)?;
     let driver = required_option(arguments, "--driver")?;
     let exclusions = optional_option(arguments, "--exclusions-json")?
         .map_or_else(
@@ -369,6 +500,15 @@ fn parse_configure(arguments: &[String]) -> Result<Configure> {
 fn parse_set_stop(arguments: &[String]) -> Result<SetStop> {
     let repo = required_option(arguments, "--repo")?;
     let mode = required_option(arguments, "--mode")?;
+    if repo.eq_ignore_ascii_case("all") && repo != "all" {
+        return Err("the global repository sentinel is lowercase all".to_owned());
+    }
+    let is_global = repo == "all" && mode == "all";
+    let repo = if is_global {
+        repo
+    } else {
+        normalize_repo_argument(repo)?
+    };
     if !matches!(
         mode.as_str(),
         "none" | "after-current" | "discard-current" | "all"
@@ -379,13 +519,13 @@ fn parse_set_stop(arguments: &[String]) -> Result<SetStop> {
     }
     reject_unknown_options(arguments, &["--repo", "--mode"])?;
     Ok(SetStop {
-        repo: (repo != "all").then_some(repo),
+        repo: (!is_global).then_some(repo),
         mode,
     })
 }
 
 fn parse_register_watcher(arguments: &[String]) -> Result<RegisterWatcher> {
-    let repo = required_option(arguments, "--repo")?;
+    let repo = required_repo_option(arguments)?;
     let pid = required_option(arguments, "--pid")?
         .parse::<u32>()
         .map_err(|_| "--pid needs a process identifier".to_owned())?;
@@ -398,12 +538,21 @@ fn parse_register_watcher(arguments: &[String]) -> Result<RegisterWatcher> {
 
 fn parse_heartbeat(arguments: &[String]) -> Result<Heartbeat> {
     let run = required_option(arguments, "--run")?;
+    let repo = required_repo_option(arguments)?;
     reject_unknown_options(
         arguments,
-        &["--run", "--stage", "--task", "--prior-status", "--pr"],
+        &[
+            "--run",
+            "--repo",
+            "--stage",
+            "--task",
+            "--prior-status",
+            "--pr",
+        ],
     )?;
     Ok(Heartbeat {
         run,
+        repo,
         stage: optional_option(arguments, "--stage")?,
         task: optional_option(arguments, "--task")?,
         prior_status: optional_option(arguments, "--prior-status")?,
@@ -413,6 +562,49 @@ fn parse_heartbeat(arguments: &[String]) -> Result<Heartbeat> {
 
 fn required_option(arguments: &[String], option: &str) -> Result<String> {
     optional_option(arguments, option)?.ok_or_else(|| format!("{option} requires a value"))
+}
+
+fn required_repo_option(arguments: &[String]) -> Result<String> {
+    required_option(arguments, "--repo").and_then(normalize_repo_argument)
+}
+
+fn normalize_repo_argument(repo: String) -> Result<String> {
+    if !Path::new(&repo).is_absolute() {
+        return Err("--repo must be an absolute repository path".to_owned());
+    }
+    if repo.contains(" --") {
+        return Err("--repo cannot contain a space followed by two hyphens".to_owned());
+    }
+    Ok(normalize_repo(repo))
+}
+
+fn normalize_repo(repo: String) -> String {
+    let path = PathBuf::from(repo);
+    let mut unresolved = Vec::<OsString>::new();
+    let mut ancestor = if path.is_absolute() {
+        path
+    } else {
+        env::current_dir().map_or(path.clone(), |directory| directory.join(path))
+    };
+    loop {
+        if let Ok(mut resolved) = fs::canonicalize(&ancestor) {
+            for component in unresolved.iter().rev() {
+                resolved.push(component);
+            }
+            return resolved.to_string_lossy().into_owned();
+        }
+        let Some(component) = ancestor.file_name().map(OsStr::to_owned) else {
+            return ancestor.to_string_lossy().into_owned();
+        };
+        unresolved.push(component);
+        if !ancestor.pop() {
+            return ancestor.to_string_lossy().into_owned();
+        }
+    }
+}
+
+fn normalize_stored_repo(repo: &str) -> String {
+    normalize_repo(repo.to_owned())
 }
 
 fn optional_option(arguments: &[String], option: &str) -> Result<Option<String>> {
@@ -571,11 +763,81 @@ fn retire_stale_lock(path: &Path) -> Result<()> {
 
 fn read_registry(directory: &Path) -> Result<Registry> {
     let path = directory.join("leases.json");
-    match fs::read_to_string(&path) {
+    let mut registry = match fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents)
-            .map_err(|error| format!("cannot parse {}: {error}", path.display())),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Registry::default()),
-        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+            .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Registry::default(),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    normalize_registry(&mut registry)?;
+    Ok(registry)
+}
+
+fn normalize_registry(registry: &mut Registry) -> Result<()> {
+    for lease in &mut registry.leases {
+        lease.repo = normalize_stored_repo(&lease.repo);
+    }
+    let mut lease_keys = Vec::new();
+    registry.leases.retain(|lease| {
+        let key = (lease.repo.clone(), lease.kind.clone(), lease.pr);
+        if lease_keys.contains(&key) {
+            false
+        } else {
+            lease_keys.push(key);
+            true
+        }
+    });
+
+    let mut repositories: Vec<RepositoryState> = Vec::new();
+    for mut state in std::mem::take(&mut registry.repositories) {
+        state.repo = normalize_stored_repo(&state.repo);
+        if let Some(existing) = repositories.iter_mut().find(|item| item.repo == state.repo) {
+            merge_repository_state(existing, state)?;
+        } else {
+            repositories.push(state);
+        }
+    }
+    for state in &mut repositories {
+        let expected = repository_key(&state.repo);
+        if state.wake_key.as_deref() != Some(&expected) {
+            state.wake_key = None;
+        }
+    }
+    registry.repositories = repositories;
+    Ok(())
+}
+
+fn merge_repository_state(existing: &mut RepositoryState, incoming: RepositoryState) -> Result<()> {
+    let existing_live = existing
+        .watcher_pid
+        .filter(|pid| !is_process_definitely_dead(*pid));
+    let incoming_live = incoming
+        .watcher_pid
+        .filter(|pid| !is_process_definitely_dead(*pid));
+    if existing_live.is_some() && incoming_live.is_some() && existing_live != incoming_live {
+        return Err(format!(
+            "repository {} has conflicting live watcher processes",
+            existing.repo
+        ));
+    }
+    if existing_live.is_none() {
+        existing.watcher_pid = incoming_live;
+        existing.wake_key = incoming.wake_key;
+    }
+    existing.driver = incoming.driver;
+    existing.exclusions = incoming.exclusions;
+    if stop_mode_rank(&incoming.stop_mode) > stop_mode_rank(&existing.stop_mode) {
+        existing.stop_mode = incoming.stop_mode;
+    }
+    Ok(())
+}
+
+fn stop_mode_rank(mode: &str) -> u8 {
+    match mode {
+        "all" => 3,
+        "discard-current" => 2,
+        "after-current" => 1,
+        _ => 0,
     }
 }
 
@@ -597,6 +859,7 @@ fn cleanup_stale(registry: &mut Registry) {
     for state in &mut registry.repositories {
         if state.watcher_pid.is_some_and(is_process_definitely_dead) {
             state.watcher_pid = None;
+            state.wake_key = None;
         }
     }
 }
@@ -618,7 +881,7 @@ fn now_seconds() -> Result<u64> {
 }
 
 fn watch_prs_command(arguments: &[String]) -> Result<String> {
-    let repo = required_option(arguments, "--repo")?;
+    let repo = required_repo_option(arguments)?;
     let interval = required_option(arguments, "--interval-seconds")?
         .parse::<u64>()
         .map_err(|_| "--interval-seconds needs a positive number".to_owned())?;
@@ -731,7 +994,10 @@ fn render_wake(repo: &str, previous: &[PrSnapshot], current: &[PrSnapshot]) -> R
         "Read the autonomous Pull Request state change for {repo}. Acquire a pr-care lease, inspect each changed Pull Request, run /autopilot for open work, update merged task status, release the lease, and keep unrelated task cycles running. Previous: {previous}. Current: {current}"
     );
     let payload = serde_json::json!({ "prompt": prompt });
-    Ok(format!("AGENT_LOOP_WAKE_autonomous_prs {payload}"))
+    Ok(format!(
+        "AGENT_LOOP_WAKE_autonomous_prs_{} {payload}",
+        repository_key(repo)
+    ))
 }
 
 fn parse_pr_snapshot(bytes: &[u8]) -> Result<Vec<PrSnapshot>> {
@@ -751,7 +1017,7 @@ fn parse_pr_snapshot(bytes: &[u8]) -> Result<Vec<PrSnapshot>> {
 }
 
 fn repair_worktree_command(arguments: &[String]) -> Result<String> {
-    let repo = PathBuf::from(required_option(arguments, "--repo")?);
+    let repo = PathBuf::from(required_repo_option(arguments)?);
     reject_unknown_options(arguments, &["--repo"])?;
     repair_worktree(&repo)?;
     Ok("{\"status\":\"ready\"}".to_owned())
@@ -930,7 +1196,7 @@ mod tests {
     }
 
     #[test]
-    fn atomically_admits_only_three_runs() {
+    fn atomically_admits_tasks_for_independent_repositories() {
         let directory = fixture_directory("atomic");
         let mut workers = Vec::new();
         for index in 0..8 {
@@ -954,7 +1220,16 @@ mod tests {
                     .map(str::to_owned)
             })
             .count();
-        assert_eq!(acquired, MAX_LEASES);
+        assert_eq!(acquired, 8);
+    }
+
+    #[test]
+    fn same_run_name_in_different_repositories_keeps_both_leases() {
+        let directory = fixture_directory("same-run-different-repositories");
+        assert_eq!(acquire(&directory, "run", "/one", "task"), "acquired");
+        assert_eq!(acquire(&directory, "run", "/two", "task"), "acquired");
+        let registry = read_registry(&directory).expect("registry");
+        assert_eq!(registry.leases.len(), 2);
     }
 
     #[test]
@@ -970,29 +1245,48 @@ mod tests {
     }
 
     #[test]
-    fn heartbeat_and_release_change_only_the_named_run() {
+    fn heartbeat_and_release_change_only_the_named_repository_and_run() {
         let directory = fixture_directory("heartbeat");
-        assert_eq!(acquire(&directory, "one", "/one", "task"), "acquired");
-        assert_eq!(acquire(&directory, "two", "/two", "task"), "acquired");
+        assert_eq!(acquire(&directory, "same", "/one", "task"), "acquired");
+        assert_eq!(acquire(&directory, "same", "/two", "task"), "acquired");
         with_registry(&directory, |registry| {
-            let lease = registry
-                .leases
-                .iter_mut()
-                .find(|lease| lease.run == "one")
-                .expect("one");
-            lease.stage = Some("test".to_owned());
-            lease.pr = Some(42);
-            Ok(())
+            update_lease(
+                registry,
+                Heartbeat {
+                    run: "same".to_owned(),
+                    repo: "/one".to_owned(),
+                    stage: Some("test".to_owned()),
+                    task: None,
+                    prior_status: None,
+                    pr: Some(42),
+                },
+            )
         })
         .expect("heartbeat");
+        let registry = read_registry(&directory).expect("registry after heartbeat");
+        assert_eq!(registry.leases.len(), 2);
+        assert_eq!(registry.leases[0].stage.as_deref(), Some("test"));
+        assert_eq!(registry.leases[1].stage, None);
         with_registry(&directory, |registry| {
-            registry.leases.retain(|lease| lease.run != "one");
-            Ok(())
+            release_lease(registry, "same", "/one")
         })
         .expect("release");
+        let registry = read_registry(&directory).expect("registry after release");
+        assert_eq!(registry.leases.len(), 1);
+        assert_eq!(registry.leases[0].repo, "/two");
+    }
+
+    #[test]
+    fn repository_is_required_for_lease_updates() {
+        assert!(parse_heartbeat(&["--run".to_owned(), "same".to_owned()]).is_err());
+        let directory = fixture_directory("missing-release");
+        assert_eq!(acquire(&directory, "same", "/one", "task"), "acquired");
+        with_registry(&directory, |registry| {
+            release_lease(registry, "missing", "/one")
+        })
+        .expect_err("missing release");
         let registry = read_registry(&directory).expect("registry");
         assert_eq!(registry.leases.len(), 1);
-        assert_eq!(registry.leases[0].run, "two");
     }
 
     #[test]
@@ -1035,11 +1329,15 @@ mod tests {
 
     #[test]
     fn parses_repository_configuration_and_machine_stop() {
+        let directory = fixture_directory("parse-repository");
+        let repository = directory.display().to_string();
+        let canonical = normalize_repo(repository.clone());
+        assert!(parse_heartbeat(&["--run".to_owned(), "run".to_owned(),]).is_err());
         assert!(parse_acquire(&[
             "--run".to_owned(),
             "run".to_owned(),
             "--repo".to_owned(),
-            "/repo".to_owned(),
+            repository.clone(),
             "--kind".to_owned(),
             "task".to_owned(),
         ])
@@ -1048,7 +1346,7 @@ mod tests {
             "--run".to_owned(),
             "care".to_owned(),
             "--repo".to_owned(),
-            "/repo".to_owned(),
+            repository.clone(),
             "--kind".to_owned(),
             "pr-care".to_owned(),
             "--pid".to_owned(),
@@ -1058,14 +1356,14 @@ mod tests {
 
         let configure = parse_configure(&[
             "--repo".to_owned(),
-            "/repo".to_owned(),
+            repository,
             "--driver".to_owned(),
             "priority tickets".to_owned(),
             "--exclusions-json".to_owned(),
             "[\"blocked\"]".to_owned(),
         ])
         .expect("configuration");
-        assert_eq!(configure.repo, "/repo");
+        assert_eq!(configure.repo, canonical);
         assert_eq!(configure.driver, "priority tickets");
         assert_eq!(configure.exclusions, ["blocked"]);
 
@@ -1078,6 +1376,22 @@ mod tests {
         .expect("stop");
         assert!(stop.repo.is_none());
         assert_eq!(stop.mode, "all");
+
+        assert!(parse_set_stop(&[
+            "--repo".to_owned(),
+            "all".to_owned(),
+            "--mode".to_owned(),
+            "after-current".to_owned(),
+        ])
+        .is_err());
+        assert!(parse_set_stop(&[
+            "--repo".to_owned(),
+            "All".to_owned(),
+            "--mode".to_owned(),
+            "all".to_owned(),
+        ])
+        .is_err());
+        assert!(normalize_repo_argument("/tmp/repo --unsafe".to_owned()).is_err());
     }
 
     #[test]
@@ -1120,13 +1434,21 @@ mod tests {
             Some("https://tracker.example/LIN-1")
         );
         let wake = render_wake("/repo", &[], &snapshots).expect("wake");
-        let payload = wake
-            .strip_prefix("AGENT_LOOP_WAKE_autonomous_prs ")
-            .expect("sentinel");
+        let prefix = format!(
+            "AGENT_LOOP_WAKE_autonomous_prs_{} ",
+            repository_key("/repo")
+        );
+        let payload = wake.strip_prefix(&prefix).expect("sentinel");
         let payload: serde_json::Value = serde_json::from_str(payload).expect("payload");
         assert!(payload["prompt"]
             .as_str()
             .is_some_and(|prompt| prompt.contains("/repo") && !prompt.contains("repairs=0")));
+    }
+
+    #[test]
+    fn repositories_have_distinct_stable_wake_keys() {
+        assert_eq!(repository_key("/repo-one"), repository_key("/repo-one"));
+        assert_ne!(repository_key("/repo-one"), repository_key("/repo-two"));
     }
 
     #[test]
@@ -1145,6 +1467,82 @@ mod tests {
         )
         .expect("new head snapshot");
         assert!(!snapshots_match(&after, &new_head));
+    }
+
+    #[test]
+    fn watcher_identity_rejects_an_unrelated_process() {
+        assert!(!is_expected_watcher(std::process::id(), "/repo").expect("process check"));
+    }
+
+    #[test]
+    fn watcher_identity_matches_the_exact_repository_argument() {
+        let directory = fixture_directory("watcher-exact-repository");
+        let repo = normalize_repo(directory.display().to_string());
+        let command = format!(
+            "/tmp/autonomous-engineer-state watch-prs --interval-seconds 300 --repo {repo}"
+        );
+        assert!(is_expected_watcher_command(
+            "/tmp/autonomous-engineer-state",
+            &command,
+            &repo
+        ));
+        assert!(!is_expected_watcher_command(
+            "/tmp/autonomous-engineer-state",
+            &command,
+            directory.parent().expect("parent").to_str().expect("path")
+        ));
+        assert!(!is_expected_watcher_command(
+            "/bin/zsh",
+            &format!("/bin/zsh -lc {command}"),
+            &repo
+        ));
+    }
+
+    #[test]
+    fn repository_normalization_stabilizes_existing_and_removed_paths() {
+        let directory = fixture_directory("repo-normalization");
+        let original = directory.display().to_string();
+        let plain = normalize_repo(original.clone());
+        let trailing = normalize_repo(format!("{original}/"));
+        assert_eq!(plain, trailing);
+        fs::remove_dir_all(directory).expect("remove repository");
+        assert_eq!(normalize_repo(original), plain);
+    }
+
+    #[test]
+    fn stored_repository_spellings_migrate_to_one_identity() {
+        let directory = fixture_directory("stored-repo-migration");
+        let repo = normalize_repo(directory.display().to_string());
+        let raw = format!("{repo}/");
+        let lease = |run: &str, path: &str| Lease {
+            run: run.to_owned(),
+            repo: path.to_owned(),
+            kind: "task".to_owned(),
+            task: None,
+            stage: None,
+            pr: None,
+            pid: std::process::id(),
+            heartbeat: 0,
+            prior_status: None,
+        };
+        let repository = |path: &str| RepositoryState {
+            repo: path.to_owned(),
+            driver: "priority".to_owned(),
+            exclusions: Vec::new(),
+            stop_mode: "none".to_owned(),
+            watcher_pid: None,
+            wake_key: None,
+        };
+        let mut registry = Registry {
+            leases: vec![lease("old", &raw), lease("new", &repo)],
+            repositories: vec![repository(&raw), repository(&repo)],
+            global_stop_mode: None,
+        };
+        normalize_registry(&mut registry).expect("migration");
+        assert_eq!(registry.leases.len(), 1);
+        assert_eq!(registry.leases[0].repo, repo);
+        assert_eq!(registry.repositories.len(), 1);
+        assert_eq!(registry.repositories[0].repo, repo);
     }
 
     #[test]
