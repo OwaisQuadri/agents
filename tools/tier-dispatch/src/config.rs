@@ -18,7 +18,6 @@ pub struct ModelEntry {
 #[serde(deny_unknown_fields)]
 pub struct Tier {
     pub pi: ModelEntry,
-    #[serde(default)]
     pub fallbacks: Vec<ModelEntry>,
     #[serde(default, rename = "climbOnExhaustion")]
     pub climb_on_exhaustion: Option<String>,
@@ -28,8 +27,7 @@ pub struct Tier {
 #[serde(deny_unknown_fields)]
 pub struct TiersFile {
     pub tiers: BTreeMap<String, Tier>,
-    #[serde(default)]
-    pub orchestrator: Option<String>,
+    pub orchestrator: String,
     #[serde(default)]
     pub agents: BTreeMap<String, String>,
     #[serde(default, rename = "untiered")]
@@ -45,12 +43,11 @@ impl TiersFile {
         if tiers.tiers.is_empty() {
             return Err(format!("{}: tiers must not be empty", path.display()));
         }
-        if let Some(orchestrator) = &tiers.orchestrator
-            && !tiers.tiers.contains_key(orchestrator)
-        {
+        if !tiers.tiers.contains_key(&tiers.orchestrator) {
             return Err(format!(
-                "{}: orchestrator names unknown tier {orchestrator}",
-                path.display()
+                "{}: orchestrator names unknown tier {}",
+                path.display(),
+                tiers.orchestrator
             ));
         }
         for (agent, tier) in &tiers.agents {
@@ -148,7 +145,8 @@ mod tests {
                   "pi": { "model": "anthropic/claude-fable-5", "thinking": "medium" },
                   "fallbacks": []
                 }
-              }
+              },
+              "orchestrator": "T1"
             }"#,
         )
         .unwrap();
@@ -203,6 +201,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_missing_orchestrator() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-missing-orchestrator-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"fallbacks":[]}}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_missing_fallbacks() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-missing-fallbacks-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"}}},"orchestrator":"T1"}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn rejects_an_unknown_climb_target() {
         let dir = std::env::temp_dir().join(format!(
             "tier-dispatch-test-unknown-climb-{}",
@@ -212,7 +244,7 @@ mod tests {
         let path = dir.join("model-tiers.json");
         std::fs::write(
             &path,
-            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"climbOnExhaustion":"T9"}}}"#,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"fallbacks":[],"climbOnExhaustion":"T9"}},"orchestrator":"T1"}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());
@@ -229,7 +261,7 @@ mod tests {
         let path = dir.join("model-tiers.json");
         std::fs::write(
             &path,
-            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"climbOnExhaustion":"T2"},"T2":{"pi":{"model":"anthropic/claude-haiku-4-5","thinking":"low"},"climbOnExhaustion":"T1"}}}"#,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"fallbacks":[],"climbOnExhaustion":"T2"},"T2":{"pi":{"model":"anthropic/claude-haiku-4-5","thinking":"low"},"fallbacks":[],"climbOnExhaustion":"T1"}},"orchestrator":"T1"}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());
@@ -246,7 +278,7 @@ mod tests {
         let path = dir.join("model-tiers.json");
         std::fs::write(
             &path,
-            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"}}},"orchestrator":"T9","agents":{"reviewer":"T8"}}"#,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"fallbacks":[]}},"orchestrator":"T9","agents":{"reviewer":"T8"}}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());
@@ -263,7 +295,7 @@ mod tests {
         let path = dir.join("model-tiers.json");
         std::fs::write(
             &path,
-            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"maximum"}}}}"#,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"maximum"},"fallbacks":[]}},"orchestrator":"T1"}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());

@@ -314,7 +314,7 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                r#"{{"tiers":{{"T4":{{"pi":{{"model":"anthropic/claude-fable-5","thinking":"medium"}},"fallbacks":[{{"model":"openai-codex/gpt-5.6-sol","thinking":"low"}},{{"model":"{model}","thinking":"low"}}]}}}}}}"#
+                r#"{{"tiers":{{"T4":{{"pi":{{"model":"anthropic/claude-fable-5","thinking":"medium"}},"fallbacks":[{{"model":"openai-codex/gpt-5.6-sol","thinking":"low"}},{{"model":"{model}","thinking":"low"}}]}}}},"orchestrator":"T4"}}"#
             ),
         )
         .unwrap();
@@ -531,7 +531,7 @@ mod tests {
         let path = directory.join("variant-tiers.json");
         std::fs::write(
             &path,
-            r#"{"tiers":{"T3":{"pi":{"model":"openai-codex/gpt-5.6-sol","thinking":"medium"},"fallbacks":[{"model":"openai-codex/gpt-5.3-codex-spark","thinking":"medium"}]}}}"#,
+            r#"{"tiers":{"T3":{"pi":{"model":"openai-codex/gpt-5.6-sol","thinking":"medium"},"fallbacks":[{"model":"openai-codex/gpt-5.3-codex-spark","thinking":"medium"}]}},"orchestrator":"T3"}"#,
         )
         .unwrap();
         let tiers = TiersFile::load(&path).unwrap();

@@ -143,6 +143,18 @@ fn verify_registry(args: &Args) -> ExitCode {
         }
     };
     let empty_tier_providers = registry.empty_tier_providers(&tiers);
+    let registry_findings = unknown_models(&tiers, &registry);
+    for finding in &registry_findings {
+        let provider = finding.model.split_once('/').map(|(provider, _)| provider);
+        if !provider
+            .is_some_and(|provider| empty_tier_providers.iter().any(|item| item == provider))
+        {
+            eprintln!(
+                "tier-dispatch: {} {} {} is absent from the registry",
+                finding.tier, finding.slot, finding.model
+            );
+        }
+    }
     if !empty_tier_providers.is_empty() {
         eprintln!(
             "tier-dispatch: registry has empty model catalogs for tier providers: {}",
@@ -175,13 +187,6 @@ fn verify_registry(args: &Args) -> ExitCode {
         );
         Vec::new()
     };
-    let registry_findings = unknown_models(&tiers, &registry);
-    for finding in &registry_findings {
-        eprintln!(
-            "tier-dispatch: {} {} {} is absent from the registry",
-            finding.tier, finding.slot, finding.model
-        );
-    }
     for model in &override_findings {
         eprintln!(
             "tier-dispatch: advisory: model override {model} from {} is absent from the registry",

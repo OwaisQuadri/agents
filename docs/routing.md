@@ -21,8 +21,9 @@ looks for `models.json` beside the supplied tiers file. Use `--models-file` when
 needs another file. The tool reports a missing default overrides file as a standard-error
 advisory. It rejects a missing explicit file or a malformed file.
 
-This mode does not dispatch a model or write a file. The tool never derives a model
-identifier from another source.
+This mode validates routing references, thinking values, and required fallback lists. It
+does not dispatch a model or write a file. The tool never derives a model identifier from
+another source.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
 you lean on a price argument.
@@ -38,8 +39,9 @@ cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
 
 Exit 0 means every tier entry resolves in the registry. Exit 1 names each missing tier
 entry. Exit 2 means that a supplied input is invalid, a tier provider catalog is empty, or
-the tiers file or registry is unavailable. The command reports missing default overrides and newer unreferenced family
-members as advisories on standard error. Advisories never change its exit code.
+the tiers file or registry is unavailable. The command reports missing default overrides
+and newer unreferenced family members as advisories on standard error. Advisories never
+change its exit code.
 
 ## tiers
 
