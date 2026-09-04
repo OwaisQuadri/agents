@@ -12,7 +12,7 @@ mod registry;
 
 use config::TiersFile;
 use registry::{
-    ModelOverrides, Registry, missing_model_overrides, unknown_models, unreferenced_newer,
+    ModelOverrides, Registry, unknown_model_overrides, unknown_models, unreferenced_newer,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -151,19 +151,16 @@ fn verify_registry(args: &Args) -> ExitCode {
         }
     };
     let registry_findings = unknown_models(&tiers, &registry);
-    let override_findings = missing_model_overrides(&tiers, &overrides);
+    let override_findings = unknown_model_overrides(&overrides, &registry);
     for finding in &registry_findings {
         eprintln!(
             "tier-dispatch: {} {} {} is absent from the registry",
             finding.tier, finding.slot, finding.model
         );
     }
-    for finding in &override_findings {
+    for model in &override_findings {
         eprintln!(
-            "tier-dispatch: {} {} {} has no entry in {}",
-            finding.tier,
-            finding.slot,
-            finding.model,
+            "tier-dispatch: {model} from {} is absent from the registry",
             models_file.display()
         );
     }

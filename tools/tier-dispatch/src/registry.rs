@@ -72,10 +72,12 @@ impl ModelOverrides {
         Ok(Self { models })
     }
 
-    fn contains(&self, provider: &str, model: &str) -> bool {
-        self.models
-            .get(provider)
-            .is_some_and(|models| models.contains(model))
+    fn model_ids(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.models.iter().flat_map(|(provider, models)| {
+            models
+                .iter()
+                .map(move |model| (provider.as_str(), model.as_str()))
+        })
     }
 }
 
@@ -109,29 +111,12 @@ pub fn unknown_models(tiers: &TiersFile, registry: &Registry) -> Vec<Finding> {
     findings
 }
 
-pub fn missing_model_overrides(tiers: &TiersFile, overrides: &ModelOverrides) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    for (tier_name, tier) in &tiers.tiers {
-        let entries = std::iter::once((&tier.pi, "pi".to_string())).chain(
-            tier.fallbacks
-                .iter()
-                .enumerate()
-                .map(|(index, entry)| (entry, format!("fallbacks[{index}]"))),
-        );
-        for (entry, slot) in entries {
-            let Some((provider, model)) = entry.model.split_once('/') else {
-                continue;
-            };
-            if !overrides.contains(provider, model) {
-                findings.push(Finding {
-                    tier: tier_name.clone(),
-                    slot,
-                    model: entry.model.clone(),
-                });
-            }
-        }
-    }
-    findings
+pub fn unknown_model_overrides(overrides: &ModelOverrides, registry: &Registry) -> Vec<String> {
+    overrides
+        .model_ids()
+        .filter(|(provider, model)| !registry.contains(provider, model))
+        .map(|(provider, model)| format!("{provider}/{model}"))
+        .collect()
 }
 
 pub fn unreferenced_newer(tiers: &TiersFile, registry: &Registry) -> Vec<String> {
@@ -182,13 +167,13 @@ fn is_newer_model<'a>(candidate: &str, tiered: impl Iterator<Item = &'a str>) ->
         .max()
         .zip(candidate_version.first())
         .is_some_and(|(latest, candidate)| candidate > latest);
-    is_new_major
-        || candidate_variant != "mini"
-            && comparable
+    candidate_variant != "mini"
+        && (is_new_major
+            || comparable
                 .iter()
                 .map(|(_, version)| version)
                 .max()
-                .is_some_and(|latest| &candidate_version > latest)
+                .is_some_and(|latest| &candidate_version > latest))
 }
 
 fn model_family(model: &str) -> String {
@@ -320,22 +305,21 @@ mod tests {
     }
 
     #[test]
-    fn missing_override_is_reported_with_tier_and_slot() {
-        let directory = test_dir("missing-override");
-        let tiers =
-            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
+    fn unknown_override_is_reported() {
+        let directory = test_dir("unknown-override");
+        let registry = Registry::load(&write_registry(
+            &directory,
+            r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]}}"#,
+        ))
+        .unwrap();
         let overrides = ModelOverrides::load(&write_overrides(
             &directory,
-            r#"{"providers":{"anthropic":{"modelOverrides":{"claude-fable-5":{}}},"openai-codex":{"modelOverrides":{"gpt-5.6-sol":{}}}}}"#,
+            r#"{"providers":{"anthropic":{"modelOverrides":{"claude-fable-5":{},"claude-does-not-exist":{}}}}}"#,
         ))
         .unwrap();
         assert_eq!(
-            missing_model_overrides(&tiers, &overrides),
-            vec![Finding {
-                tier: "T4".into(),
-                slot: "fallbacks[1]".into(),
-                model: "anthropic/claude-haiku-4-5".into(),
-            }]
+            unknown_model_overrides(&overrides, &registry),
+            vec!["anthropic/claude-does-not-exist"]
         );
         std::fs::remove_dir_all(directory).unwrap();
     }
@@ -381,7 +365,7 @@ mod tests {
         let directory = test_dir("not-newer");
         let tiers =
             TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
-        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.6-sol-2026-03-01"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.7-mini"}]}}"#)).unwrap();
+        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.6-sol-2026-03-01"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.7-mini"},{"id":"gpt-6-mini"}]}}"#)).unwrap();
         assert!(unreferenced_newer(&tiers, &registry).is_empty());
         std::fs::remove_dir_all(directory).unwrap();
     }

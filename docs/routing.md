@@ -11,7 +11,7 @@ and each fallback.
 
 `tools/tier-dispatch` also reads this file. It resolves a tier to its ordered model chain for the ai-author evaluation harness. The primary model comes before its listed fallbacks. A quota error moves the dispatch to the next model in that chain. Exhaustion makes the complete tier unavailable.
 
-The `--verify-registry` mode checks each tier entry against Pi's local registry and `config/models.json`. It does not dispatch a model or write a file. The tool never derives a model identifier from another source.
+The `--verify-registry` mode checks each tier entry against Pi's local registry. It also checks each override in `config/models.json`. The default models file sits beside the supplied tiers file. It does not dispatch a model or write a file. The tool never derives a model identifier from another source.
 
 ## reconcile tiers
 
@@ -20,7 +20,9 @@ Run the following command before a tier change and after a registry refresh:
 ```sh
 cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
   --verify-registry --tiers-file config/model-tiers.json
-``` Exit 0 means every tier entry resolves in the registry and `config/models.json`. Exit 1 names each missing entry. Exit 2 means that an input is invalid or unavailable. The command may print newer unreferenced family members as advisories on
+```
+
+Exit 0 means every tier entry resolves in the registry. It also means that every configured model override resolves. Exit 1 names each missing entry. Exit 2 means that an input is invalid or unavailable. The command may print newer unreferenced family members as advisories on
 standard error; advisories never change its exit code.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
