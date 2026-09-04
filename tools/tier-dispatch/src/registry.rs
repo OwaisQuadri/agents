@@ -63,10 +63,6 @@ impl Registry {
             .is_some_and(|models| models.contains(model))
     }
 
-    pub(crate) fn provider_catalog_is_empty(&self, provider: &str) -> bool {
-        self.empty_providers.contains(provider)
-    }
-
     pub(crate) fn unavailable_tier_providers(&self, tiers: &TiersFile) -> Vec<String> {
         tiers
             .tiers

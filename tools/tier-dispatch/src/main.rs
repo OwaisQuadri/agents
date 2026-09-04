@@ -24,7 +24,7 @@ output:
   stdout: dispatched artifact on success
   stderr: model_ran: <model id> on dispatch success; diagnostics otherwise
 exit:
-  0 success; 1 dispatch or registry failure; 2 invalid or unavailable input; 3 tier quota exhausted
+  0 success; 1 dispatch or registry failure; 2 invalid input or unavailable provider catalog; 3 tier quota exhausted
 ";
 
 struct Args {
@@ -156,13 +156,10 @@ fn verify_registry(args: &Args) -> ExitCode {
         })
         .collect::<Vec<_>>();
     for finding in &registry_findings {
-        let provider = finding.model.split_once('/').map(|(provider, _)| provider);
-        if !provider.is_some_and(|provider| registry.provider_catalog_is_empty(provider)) {
-            eprintln!(
-                "tier-dispatch: {} {} {} is absent from the registry",
-                finding.tier, finding.slot, finding.model
-            );
-        }
+        eprintln!(
+            "tier-dispatch: {} {} {} does not resolve in the registry",
+            finding.tier, finding.slot, finding.model
+        );
     }
     if !unavailable_tier_providers.is_empty() {
         eprintln!(
@@ -197,7 +194,7 @@ fn verify_registry(args: &Args) -> ExitCode {
     };
     for model in &override_findings {
         eprintln!(
-            "tier-dispatch: advisory: model override {model} from {} is absent from the registry",
+            "tier-dispatch: advisory: model override {model} from {} does not resolve in the registry",
             models_file.display()
         );
     }
