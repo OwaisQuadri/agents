@@ -20,6 +20,7 @@ done
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+cases=${CASES_FILE:-$here/cases.jsonl}
 while IFS= read -r line; do
   [[ -n $line ]] || continue
   id=$(print -r -- "$line" | jq -r '.id')
@@ -53,4 +54,4 @@ while IFS= read -r line; do
     print -u2 "classifier mismatch for $id"
     exit 1
   }
-done < "$here/cases.jsonl"
+done < "$cases"

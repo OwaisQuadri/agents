@@ -8,7 +8,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, Output};
+use std::process::{Command, ExitCode, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -79,19 +79,32 @@ struct TierResult {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct FrontierEntry {
+    #[serde(default)]
     candidate_id: String,
+    #[serde(default)]
     tested_against: String,
+    #[serde(default)]
     tier: String,
+    #[serde(default)]
     judge_tier: String,
+    #[serde(default)]
     model_ran: Vec<String>,
+    #[serde(default)]
     scores_nonholdout: Vec<Option<f64>>,
+    #[serde(default)]
     scores_holdout: Vec<Option<f64>>,
+    #[serde(default)]
     repeat_scores_nonholdout: BTreeMap<String, Vec<Option<u8>>>,
+    #[serde(default)]
     repeat_scores_holdout: BTreeMap<String, Vec<Option<u8>>>,
+    #[serde(default)]
     mean_nonholdout: Option<f64>,
-    #[serde(rename = "accepted")]
+    #[serde(default, rename = "accepted")]
     is_accepted: bool,
+    #[serde(default)]
     ts: String,
+    #[serde(flatten)]
+    legacy: Map<String, Value>,
 }
 
 struct TempDir {
@@ -135,6 +148,7 @@ struct EvalContext<'a> {
     temp: &'a TempDir,
     candidate: &'a str,
     rubric: &'a str,
+    eval_dir: &'a Path,
     artifact_dir: &'a Path,
 }
 
@@ -297,7 +311,7 @@ fn run_preflight(eval_dir: &Path, candidate: &Path) -> Result<(), String> {
         Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
     };
     if metadata.permissions().mode() & 0o111 == 0 {
-        return Ok(());
+        return Err(format!("{} is not executable", path.display()));
     }
     let status = Command::new(&path)
         .arg(candidate)
@@ -309,6 +323,34 @@ fn run_preflight(eval_dir: &Path, candidate: &Path) -> Result<(), String> {
     } else {
         Err(format!("preflight failed with {status}"))
     }
+}
+
+fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<bool, String> {
+    let path = eval_dir.join("output-check.sh");
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", path.display())),
+    };
+    if metadata.permissions().mode() & 0o111 == 0 {
+        return Err(format!("{} is not executable", path.display()));
+    }
+    let mut child = Command::new(&path)
+        .current_dir(eval_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("cannot run {}: {error}", path.display()))?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("cannot open stdin for {}", path.display()))?
+        .write_all(artifact.as_bytes())
+        .map_err(|error| format!("cannot write to {}: {error}", path.display()))?;
+    child
+        .wait()
+        .map(|status| status.success())
+        .map_err(|error| format!("cannot wait for {}: {error}", path.display()))
 }
 
 fn write_wrapper(temp: &TempDir, extension: &Path) -> Result<PathBuf, String> {
@@ -512,6 +554,7 @@ fn run_slice(
             if let Some(model) = actual.model_ran {
                 result.models.insert(model);
             }
+            let is_output_valid = run_output_check(context.eval_dir, &actual.stdout)?;
             let prompt = judge_prompt(context.rubric, case, &actual.stdout)?;
             let judged = dispatch(
                 context.settings,
@@ -523,11 +566,14 @@ fn run_slice(
             if judged.kind == DispatchKind::Exhausted {
                 return Ok(None);
             }
-            let score = if judged.kind == DispatchKind::Success {
+            let mut score = if judged.kind == DispatchKind::Success {
                 parse_score(&judged.stdout)
             } else {
                 None
             };
+            if !is_output_valid {
+                score = score.map(|value| value.min(4));
+            }
             if score.is_none() {
                 ungraded += 1;
             }
@@ -558,8 +604,9 @@ fn run_slice(
         }
     } else {
         let mean = graded.iter().sum::<f64>() / graded.len() as f64;
+        let verdict = if mean >= 5.0 { "PASS" } else { "FAIL" };
         eprintln!(
-            "tier {tier}: mean {mean:.2} over {} graded cases, {ungraded} ungraded repeats ({slice_name} slice)",
+            "tier {tier}: mean {mean:.2} over {} graded cases, {ungraded} ungraded repeats, {verdict} (>= 5 threshold) ({slice_name} slice)",
             graded.len()
         );
     }
@@ -580,8 +627,8 @@ fn prompt_version(artifact_dir: &Path) -> String {
             "--format=%h",
             "--",
             ".",
-            ":(exclude)**/evals/**",
-            ":(exclude)**/votes/**",
+            ":(exclude,glob)**/evals/**",
+            ":(exclude,glob)**/votes/**",
         ])
         .output()
         .ok()
@@ -651,7 +698,9 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
             }
             let Some(remove) = indices.iter().copied().find(|candidate| {
                 indices.iter().copied().any(|other| {
-                    other != *candidate && dominates(&entries[other], &entries[*candidate])
+                    other != *candidate
+                        && !entries[*candidate].is_accepted
+                        && dominates(&entries[other], &entries[*candidate])
                 })
             }) else {
                 break;
@@ -780,7 +829,7 @@ fn run(settings: Settings) -> Result<(), String> {
         }
         None => full_tiers.clone(),
     };
-    let temp = TempDir::create(&eval_dir, "skill-eval")?;
+    let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
     let wrapper = write_wrapper(&temp, &settings.auth_extension)?;
     let artifact_dir = eval_dir
         .parent()
@@ -793,6 +842,7 @@ fn run(settings: Settings) -> Result<(), String> {
         temp: &temp,
         candidate: &candidate,
         rubric: &rubric,
+        eval_dir: &eval_dir,
         artifact_dir,
     };
     let mut results = BTreeMap::new();
@@ -860,6 +910,7 @@ fn run(settings: Settings) -> Result<(), String> {
                 repeat_scores_holdout: result.holdout.repeats,
                 is_accepted: settings.is_accepted,
                 ts: ts.clone(),
+                legacy: Map::new(),
             }
         })
         .collect();
@@ -1149,6 +1200,42 @@ print output-without-attribution
         assert!(!temp.path.join("calls").exists());
     }
 
+    #[test]
+    fn non_executable_checks_are_errors() {
+        let (_temp, settings, eval_dir) = fixture("non-executable", FAKE);
+        fs::write(eval_dir.join("preflight.sh"), "exit 0\n").unwrap();
+        let error = run(settings).unwrap_err();
+        assert!(error.contains("preflight.sh is not executable"));
+    }
+
+    #[test]
+    fn output_check_caps_a_judged_repeat_at_four() {
+        let (_temp, mut settings, eval_dir) = fixture("output-check", FAKE);
+        write_executable(&eval_dir.join("output-check.sh"), "#!/bin/zsh\nexit 1\n");
+        settings.args.tier = Some("T1".to_string());
+        settings.repeats = 1;
+        run(settings).unwrap();
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert_eq!(entries[0].repeat_scores_nonholdout["n1"], vec![Some(4)]);
+        assert_eq!(entries[0].repeat_scores_holdout["h1"], vec![Some(4)]);
+    }
+
+    #[test]
+    fn legacy_frontier_entries_remain_readable() {
+        let temp = test_temp("legacy-frontier");
+        let path = temp.path.join("frontier.jsonl");
+        fs::write(
+            &path,
+            "{\"candidate\":\"current\",\"runner\":\"mechanical\",\"slice\":\"nonholdout\",\"cases\":17,\"mean\":5.0}\n",
+        )
+        .unwrap();
+        let entries = read_frontier(&path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].candidate_id.is_empty());
+        assert!(entries[0].tier.is_empty());
+        assert_eq!(entries[0].legacy["candidate"], "current");
+    }
+
     fn entry(id: usize, tier: &str, score: f64) -> FrontierEntry {
         FrontierEntry {
             candidate_id: format!("id{id}"),
@@ -1163,6 +1250,7 @@ print output-without-attribution
             mean_nonholdout: Some(score),
             is_accepted: false,
             ts: id.to_string(),
+            legacy: Map::new(),
         }
     }
 
@@ -1203,5 +1291,16 @@ print output-without-attribution
             .collect();
         prune(&mut tradeoffs);
         assert_eq!(tradeoffs.len(), 21);
+
+        let mut accepted = entry(200, "T4", 0.0);
+        accepted.is_accepted = true;
+        let mut accepted_entries = vec![accepted];
+        accepted_entries.extend((201..222).map(|id| entry(id, "T4", 10.0)));
+        prune(&mut accepted_entries);
+        assert!(
+            accepted_entries
+                .iter()
+                .any(|item| item.candidate_id == "id200")
+        );
     }
 }

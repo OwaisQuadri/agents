@@ -93,6 +93,11 @@ pre-seed them and grade the aftermath the way `agents/spec-tester/evals/run.sh` 
 does (scratch fixture dir, checksums before and after) — never point a graded dispatch
 at a working tree anyone cares about.
 
+An artifact can add an executable `evals/preflight.sh` for a deterministic check before
+model dispatch. It can add `evals/output-check.sh` for a deterministic check of each
+actual output. The shared runner caps a failed output check at 4. These checks add evidence
+and never replace tier execution.
+
 After grading BOTH slices in the plain (no-flag) form (candidate or incumbent, accepted
 or rejected), append one line PER TIER TESTED to `evals/frontier.jsonl` and write the
 full candidate text to `evals/frontier/<candidate_id>.md` — see "frontier.jsonl" below.
