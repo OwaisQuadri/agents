@@ -42,8 +42,7 @@
       "pi": { "model": "anthropic/claude-fable-5-1", "thinking": "medium" },
       "fallbacks": [
         { "model": "openai-codex/gpt-5.6-sol", "thinking": "high" },
-        { "model": "anthropic/claude-fable-5", "thinking": "medium" },
-        { "model": "anthropic/claude-opus-5", "thinking": "high" }
+        { "model": "anthropic/claude-fable-5", "thinking": "medium" }
       ],
       "climbOnExhaustion": "T4"
     }

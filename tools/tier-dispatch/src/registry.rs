@@ -173,13 +173,19 @@ fn is_newer_model<'a>(candidate: &str, tiered: impl Iterator<Item = &'a str>) ->
         .max()
         .zip(candidate_version.first())
         .is_some_and(|(latest, candidate)| candidate > latest);
-    candidate_variant != "mini"
+    !is_economy_variant(&candidate_variant)
         && (is_new_major
             || comparable
                 .iter()
                 .map(|(_, version)| version)
                 .max()
                 .is_some_and(|latest| &candidate_version > latest))
+}
+
+fn is_economy_variant(variant: &str) -> bool {
+    variant
+        .split('-')
+        .any(|part| matches!(part, "mini" | "nano"))
 }
 
 fn model_family(model: &str) -> String {
@@ -388,7 +394,7 @@ mod tests {
         let directory = test_dir("not-newer");
         let tiers =
             TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
-        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.6-sol-2026-03-01"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.7-mini"},{"id":"gpt-6-mini"}]}}"#)).unwrap();
+        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.6-sol-2026-03-01"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.7-mini"},{"id":"gpt-6-mini"},{"id":"gpt-6-mini-high"},{"id":"gpt-6-nano"}]}}"#)).unwrap();
         assert!(unreferenced_newer(&tiers, &registry).is_empty());
         std::fs::remove_dir_all(directory).unwrap();
     }

@@ -21,6 +21,9 @@ models file sits beside the supplied tiers file. Use `--models-file` to select a
 file. This mode does not dispatch a model or write a file. The tool never derives a
 model identifier from another source.
 
+Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
+you lean on a price argument.
+
 ## reconcile tiers
 
 Run the following command before a tier change and after a registry refresh:
@@ -34,9 +37,6 @@ Exit 0 means every tier entry resolves in the registry. It also means that each 
 model override resolves. Exit 1 names each missing entry. Exit 2 means that an input is
 invalid or unavailable. The command can print newer unreferenced family members as
 advisories on standard error. Advisories never change its exit code.
-
-Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
-you lean on a price argument.
 
 ## tiers
 
