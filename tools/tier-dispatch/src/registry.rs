@@ -90,15 +90,12 @@ pub fn unreferenced_newer(tiers: &TiersFile, registry: &Registry) -> Vec<String>
         .filter(|(provider, model)| {
             let candidate = (*provider, *model);
             !tiered.contains(&candidate)
-                && tiered
-                    .iter()
-                    .filter(|(tiered_provider, tiered_model)| {
-                        provider == tiered_provider
-                            && model_family(model) == model_family(tiered_model)
-                    })
-                    .map(|(_, tiered_model)| version(tiered_model))
-                    .max()
-                    .is_some_and(|latest| version(model) > latest)
+                && is_newer_model(
+                    model,
+                    tiered.iter().filter_map(|(tiered_provider, tiered_model)| {
+                        (provider == tiered_provider).then_some(*tiered_model)
+                    }),
+                )
         })
         .map(|(provider, model)| format!("{provider}/{model}"))
         .collect()
@@ -114,23 +111,79 @@ fn provider_models(value: &serde_json::Value) -> Option<BTreeSet<String>> {
     )
 }
 
-fn model_family(model: &str) -> &str {
-    model
-        .char_indices()
-        .find_map(|(index, character)| character.is_ascii_digit().then_some(&model[..index]))
+fn is_newer_model<'a>(candidate: &str, tiered: impl Iterator<Item = &'a str>) -> bool {
+    let candidate_family = model_family(candidate);
+    let candidate_variant = model_variant(candidate);
+    let candidate_version = version(candidate);
+    let comparable = tiered
+        .filter(|model| model_family(model) == candidate_family)
+        .map(|model| (model_variant(model), version(model)))
+        .collect::<Vec<_>>();
+    let is_new_major = comparable
+        .iter()
+        .filter_map(|(_, version)| version.first())
+        .max()
+        .zip(candidate_version.first())
+        .is_some_and(|(latest, candidate)| candidate > latest);
+    is_new_major
+        || comparable
+            .iter()
+            .filter(|(variant, _)| variant == &candidate_variant)
+            .map(|(_, version)| version)
+            .max()
+            .is_some_and(|latest| &candidate_version > latest)
+}
+
+fn model_family(model: &str) -> String {
+    without_snapshot_date(model)
+        .split(|character: char| character.is_ascii_digit())
+        .next()
         .unwrap_or(model)
+        .trim_matches(|character: char| !character.is_ascii_alphabetic())
+        .to_owned()
+}
+
+fn model_variant(model: &str) -> String {
+    without_snapshot_date(model)
+        .rsplit(|character: char| character.is_ascii_digit())
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|character: char| !character.is_ascii_alphabetic())
+        .to_owned()
 }
 
 fn version(model: &str) -> Vec<u64> {
-    let mut parts = model
+    without_snapshot_date(model)
         .split(|character: char| !character.is_ascii_digit())
         .filter(|part| !part.is_empty())
         .filter_map(|part| part.parse().ok())
-        .collect::<Vec<_>>();
-    if parts.last().is_some_and(|part| *part >= 10_000_000) {
-        parts.pop();
+        .collect()
+}
+
+fn without_snapshot_date(model: &str) -> &str {
+    let Some((prefix, last)) = model.rsplit_once('-') else {
+        return model;
+    };
+    if last.len() == 8 && last.bytes().all(|byte| byte.is_ascii_digit()) {
+        return prefix;
     }
-    parts
+    let Some((prefix, month)) = prefix.rsplit_once('-') else {
+        return model;
+    };
+    let Some((prefix, year)) = prefix.rsplit_once('-') else {
+        return model;
+    };
+    if year.len() == 4
+        && month.len() == 2
+        && last.len() == 2
+        && [year, month, last]
+            .iter()
+            .all(|part| part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        prefix
+    } else {
+        model
+    }
 }
 
 #[cfg(test)]
@@ -244,8 +297,21 @@ mod tests {
         let directory = test_dir("not-newer");
         let tiers =
             TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
-        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.4"},{"id":"gpt-5.5"}]}}"#)).unwrap();
+        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"},{"id":"claude-haiku-4-5-20251001"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.6-sol-2026-03-01"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.7-mini"}]}}"#)).unwrap();
         assert!(unreferenced_newer(&tiers, &registry).is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unreferenced_newer_includes_a_new_major_with_a_new_variant() {
+        let directory = test_dir("new-major");
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-haiku-4-5")).unwrap();
+        let registry = Registry::load(&write_registry(&directory, r#"{"anthropic":{"models":[{"id":"claude-fable-5"},{"id":"claude-haiku-4-5"}]},"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-6-astra"}]}}"#)).unwrap();
+        assert_eq!(
+            unreferenced_newer(&tiers, &registry),
+            vec!["openai-codex/gpt-6-astra"]
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 

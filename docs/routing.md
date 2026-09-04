@@ -22,8 +22,7 @@ lives, per the rule above.
 
 Run `tier-dispatch --verify-registry --tiers-file config/model-tiers.json` before a tier
 change and after a registry refresh. Exit 0 means every tier entry resolves. Exit 1 names
-each tier entry absent from the registry. Exit 2 means a tier or registry file could not be
-read or parsed. The command may print newer unreferenced family members as advisories on
+each tier entry absent from the registry. Exit 2 means that an input is invalid or unavailable. The command may print newer unreferenced family members as advisories on
 standard error; advisories never change its exit code.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before

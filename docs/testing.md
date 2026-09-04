@@ -59,7 +59,7 @@ Eval harnesses call out to a model to grade cases. Use `pi -p` first; fall back 
 default provider is out of usage. Don't reach for `claude -p` as the primary path —
 it's the one most likely to be rate-limited or out of usage mid-session.
 
-## manifest / policy checks (no writes)
+## manifest / policy checks
 
 ```sh
 tools/tool-sync/target/release/tool-sync \

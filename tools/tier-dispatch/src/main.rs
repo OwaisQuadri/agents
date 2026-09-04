@@ -18,6 +18,11 @@ use std::process::ExitCode;
 const USAGE: &str = "usage:
   tier-dispatch --tiers-file <path> --tier <T1..T5> --system-prompt-file <path> --input <text> [--dispatch-bin <bin>]
   tier-dispatch --verify-registry --tiers-file <path> [--registry-file <path>]
+output:
+  stdout: dispatched artifact on success
+  stderr: model_ran: <model id> on dispatch success; diagnostics otherwise
+exit:
+  0 success; 1 dispatch or registry failure; 2 invalid or unavailable input; 3 tier quota exhausted
 ";
 
 struct Args {
@@ -67,6 +72,16 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
     }
 
     let tiers_file = tiers_file.ok_or(format!("--tiers-file is required\n{USAGE}"))?;
+    if is_verify_registry && (tier.is_some() || system_prompt_file.is_some() || input.is_some()) {
+        return Err(format!(
+            "dispatch flags cannot be combined with --verify-registry\n{USAGE}"
+        ));
+    }
+    if !is_verify_registry && registry_file.is_some() {
+        return Err(format!(
+            "--registry-file requires --verify-registry\n{USAGE}"
+        ));
+    }
     if !is_verify_registry && (tier.is_none() || system_prompt_file.is_none() || input.is_none()) {
         return Err(format!(
             "--tier, --system-prompt-file, and --input are required\n{USAGE}"
@@ -267,6 +282,34 @@ mod tests {
             args.registry_file
                 .is_some_and(|path| path.ends_with(".pi/agent/models-store.json"))
         );
+    }
+
+    #[test]
+    fn rejects_flags_from_the_other_mode() {
+        let verify_with_dispatch = [
+            "--verify-registry",
+            "--tiers-file",
+            "config/model-tiers.json",
+            "--tier",
+            "T3",
+        ]
+        .map(String::from);
+        assert!(parse_args(&verify_with_dispatch).is_err());
+
+        let dispatch_with_registry = [
+            "--tiers-file",
+            "config/model-tiers.json",
+            "--tier",
+            "T3",
+            "--system-prompt-file",
+            "skill.md",
+            "--input",
+            "hello",
+            "--registry-file",
+            "models-store.json",
+        ]
+        .map(String::from);
+        assert!(parse_args(&dispatch_with_registry).is_err());
     }
 
     #[test]
