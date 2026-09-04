@@ -255,7 +255,9 @@ Run per artifact, on demand or once logs/votes accumulate:
    Small, named, one concern each. Every mutation states whether it is PROSE, a CHECKER, or
    a PI EXTENSION, against question one above. A mutation a checker could enforce ships as the checker,
    because the failure it answers already survived the prose telling an agent not to do it. A narrowing mutation names the logged false positive
-   it answers; none logged → don't narrow.
+   it answers; none logged → don't narrow. Cross-tier scores can propose adding, lowering,
+   raising, or removing `metadata.minimum-tier`. The declared floor is a hypothesis under
+   test. It never filters the harness tiers.
 
    **Pick the mutation parent from the Pareto frontier, not always the incumbent.** Compute
    the frontier from `evals/frontier.jsonl`, TIER BY TIER — `evals/run.sh` now writes one
@@ -274,16 +276,17 @@ Run per artifact, on demand or once logs/votes accumulate:
    from there instead of the incumbent. This changes only which text step 2 starts from —
    it never changes what step 4 ships; the incumbent is still the only thing that can become
    the live artifact, gated by the unchanged rule below.
-3. **Test**: run `evals/run.sh` — incumbent vs candidate on the same cases. Every available
-   tier is tested, every run (exhaustive, per the owner's override of an earlier
-   walk-up-from-cheapest design) via `tools/tier-dispatch`'s execution arm — this is real
-   cost on every Test step, including every GEPA candidate, not only on a periodic audit; a
-   tier whose own fallback chain is fully exhausted on quota is skipped for that run, not
-   guessed.
-4. **Decide**: accept ONLY on a harness win, evaluated ACROSS EVERY TIER THAT RAN THIS TIME —
-   no new catastrophic failure at any tier, a higher mean score at every tier tested with at
-   least one strict improvement somewhere, and the win holds on the holdout slice at every
-   tier tested. A candidate that wins at some tiers and regresses at others is not a harness
+3. **Test**: run `evals/run.sh` for the incumbent and candidate on the same cases. The
+   harness attempts every configured tier on every run through `tools/tier-dispatch`.
+   This exhaustive test runs for every GEPA candidate. The harness ignores
+   `metadata.minimum-tier`. It walks same-tier fallbacks when quota limits or availability
+   stop a model. If no model can run, it records a `null` frontier line to keep the gap
+   visible. The run stays incomplete until every configured tier and repeat has a numeric
+   score.
+4. **Decide**: accept ONLY on a harness win across every configured tier. Any `null` repeat
+   makes the run incomplete and blocks acceptance. Require no new catastrophic
+   failure at any tier. Require a higher mean score at every tier and at least one strict
+   improvement. The win must hold on each tier's holdout slice. A candidate that wins at some tiers and regresses at others is not a harness
    win; it's exactly the frontier case step 2 already handles (it may still be worth keeping
    as a non-incumbent frontier member for a future Propose to mutate from, without shipping
    as the incumbent). Ties go to the incumbent; two candidates tying each other → the one
@@ -326,19 +329,19 @@ steps above with frontier data folded in at the points it actually matters:
    mutates from the incumbent exactly as before. Nothing to choose here either — it's
    automatic once enough real candidates exist at that tier.
 3. Test (step 3): run `evals/run.sh <candidate>` with NO `--holdout` flag. This grades
-   both slices, at every available tier (exhaustive — not a walk-up-and-stop sweep), and
-   appends one frontier line PER TIER TESTED plus candidate text automatically, whether the
-   candidate wins or loses — `--holdout` alone skips this and should only be used for a
-   quick recheck, never for a run feeding a real Decide.
+   both slices and attempts every configured tier. It ignores `metadata.minimum-tier`.
+   The run appends one frontier line per tier plus the candidate text, whether the
+   candidate wins or loses. Use `--holdout` only for a quick recheck, never for a real
+   Decide.
 4. Decide (step 4): apply the unchanged, now tier-scoped holdout-gating rule (see step 4
    above — a win at every tier tested, not just one). If it accepts, run the mark-accepted
    `jq` one-liner (above) against that run's `candidate_id` — it flips every tier line for
    that `candidate_id` together, since acceptance is a property of the candidate's text, not
    of any single tier. This is the loop's last step (no Record).
 
-Pruning `evals/frontier.jsonl` past 20 entries per artifact PER TIER (drop-oldest-dominated
-WITHIN that tier, per the template) is rare enough at current volume to stay a manual "do
-it next time you're in there" instruction — not yet worth its own script.
+The shared runner keeps the 20 newest unaccepted frontier entries per artifact and tier.
+It keeps the newly appended line and all accepted entries. It drops the oldest prior
+incomplete entry first, then a dominated entry, then the oldest remaining unaccepted entry.
 
 Fence: the mutation-proposer never writes `evals/` cases, the rubric, or `votes/`. The
 exam stays out of the student's hands — and dispatching someone else to type it does not

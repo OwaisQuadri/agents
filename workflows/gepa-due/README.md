@@ -146,6 +146,7 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
 
 ## history
 
+- On 2026-09-04, `skills/create-pr` generated five fresh votes at 7/10, 4/10, 5/10, 7/10, and 7/10. Three judges found that agents treated a diff stat as a full diff, so candidate `8df798e2` made that distinction explicit. The candidate failed every runnable tier and its holdout slice. T4 and T5 stayed ungraded because the T5 judge could not run on the installed client, so Decide kept the incumbent. A review kept those null rows as incomplete-coverage evidence. The shared harness now ignores minimum tiers, retries unavailable models, and blocks acceptance when any configured tier remains ungraded.
 - 2026-08-28/29, founding version. Built in the same session that added Pareto-frontier
   candidate selection to `skills/ai-author/SKILL.md`'s GEPA loop — this closes the loop
   on "how do you actually apply the accumulating data": daily cheap-check, escalate only

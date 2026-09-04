@@ -1,11 +1,3 @@
-//! `tools/tier-dispatch` dispatches an artifact at a model tier or reconciles tiers
-//! with Pi's local registry. Dispatch runs one tier's fallback chain on quota errors.
-//!
-//! Exit 0 means a dispatch ran or reconciliation found no unknown models. Exit 1 means
-//! a dispatch failed or reconciliation found an unknown model. Exit 2 means a required
-//! file or argument is unavailable or malformed. Exit 3 means every dispatch model in
-//! the tier was quota exhausted.
-
 mod config;
 mod dispatch;
 mod registry;
@@ -24,7 +16,7 @@ output:
   stdout: dispatched artifact on success
   stderr: model_ran: <model id> on dispatch success; diagnostics otherwise
 exit:
-  0 success; 1 dispatch or registry failure; 2 invalid input or unavailable provider catalog; 3 tier quota exhausted
+  0 success; 1 dispatch or registry failure; 2 invalid input or unavailable provider catalog; 3 tier unavailable
 ";
 
 struct Args {
@@ -281,7 +273,7 @@ fn main() -> ExitCode {
         }
         dispatch::Outcome::TierExhausted { attempts } => {
             eprintln!(
-                "tier-dispatch: tier {tier} exhausted — every model in its chain failed with a quota error, skipping this tier for this run"
+                "tier-dispatch: tier {tier} unavailable — every model in its chain failed with a retryable quota or availability error"
             );
             for attempt in &attempts {
                 eprintln!(
@@ -295,7 +287,7 @@ fn main() -> ExitCode {
         }
         dispatch::Outcome::HardFailure { attempt } => {
             eprintln!(
-                "tier-dispatch: {} failed with a non-quota error, stopping (not trying the rest of tier {tier}'s chain)",
+                "tier-dispatch: {} failed with an unrelated error, stopping (not trying the rest of tier {tier}'s chain)",
                 attempt.model
             );
             eprintln!("  {}", attempt.stderr.trim());

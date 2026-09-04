@@ -532,7 +532,7 @@ fn run_slice(
     judge_tier: &str,
     cases: &[&Case],
     slice_name: &str,
-) -> Result<Option<SliceResult>, String> {
+) -> Result<SliceResult, String> {
     let empty_prompt = write_prompt(context.temp, "judge.md", "")?;
     let mut result = SliceResult {
         scores: Vec::new(),
@@ -558,10 +558,7 @@ fn run_slice(
                 &prompt_path,
                 &input,
             )?;
-            if actual.kind == DispatchKind::Exhausted {
-                return Ok(None);
-            }
-            if actual.kind == DispatchKind::Failed {
+            if actual.kind != DispatchKind::Success {
                 repeat_scores.push(None);
                 ungraded += 1;
                 continue;
@@ -582,9 +579,6 @@ fn run_slice(
                 &empty_prompt,
                 &prompt,
             )?;
-            if judged.kind == DispatchKind::Exhausted {
-                return Ok(None);
-            }
             let mut score = if judged.kind == DispatchKind::Success {
                 parse_score(&judged.stdout)
             } else {
@@ -630,7 +624,7 @@ fn run_slice(
             graded.len()
         );
     }
-    Ok(Some(result))
+    Ok(result)
 }
 
 fn candidate_id(text: &str) -> String {
@@ -685,6 +679,18 @@ fn score_vector(entry: &FrontierEntry) -> Vec<Option<f64>> {
         .collect()
 }
 
+fn has_incomplete_scores(entry: &FrontierEntry) -> bool {
+    let scores = score_vector(entry);
+    scores.is_empty()
+        || scores.iter().any(Option::is_none)
+        || entry
+            .repeat_scores_nonholdout
+            .values()
+            .chain(entry.repeat_scores_holdout.values())
+            .flatten()
+            .any(Option::is_none)
+}
+
 fn dominates(left: &FrontierEntry, right: &FrontierEntry) -> bool {
     let left_scores = score_vector(left);
     let right_scores = score_vector(right);
@@ -713,15 +719,44 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
                 .enumerate()
                 .filter_map(|(index, entry)| (entry.tier == tier).then_some(index))
                 .collect();
-            if indices.len() <= 20 {
+            let unaccepted = indices
+                .iter()
+                .filter(|index| !entries[**index].is_accepted)
+                .count();
+            if unaccepted <= 20 {
                 break;
             }
-            let Some(remove) = indices.iter().copied().find(|candidate| {
-                !entries[*candidate].is_accepted
-                    && indices.iter().copied().any(|other| {
-                        other != *candidate && dominates(&entries[other], &entries[*candidate])
+            let newest = indices
+                .iter()
+                .rev()
+                .copied()
+                .find(|index| !entries[*index].is_accepted)
+                .expect("tier has too many unaccepted entries");
+            let remove = indices
+                .iter()
+                .copied()
+                .find(|candidate| {
+                    *candidate != newest
+                        && !entries[*candidate].is_accepted
+                        && has_incomplete_scores(&entries[*candidate])
+                })
+                .or_else(|| {
+                    indices.iter().copied().find(|candidate| {
+                        *candidate != newest
+                            && !entries[*candidate].is_accepted
+                            && indices.iter().copied().any(|other| {
+                                other != *candidate
+                                    && dominates(&entries[other], &entries[*candidate])
+                            })
                     })
-            }) else {
+                })
+                .or_else(|| {
+                    indices
+                        .iter()
+                        .copied()
+                        .find(|candidate| *candidate != newest && !entries[*candidate].is_accepted)
+                });
+            let Some(remove) = remove else {
                 break;
             };
             entries.remove(remove);
@@ -923,22 +958,11 @@ fn run(mut settings: Settings) -> Result<(), String> {
             .expect("validated tier");
         let judge_tier = full_tiers.get(index + 1).unwrap_or(&tier).clone();
         if settings.args.is_holdout_only {
-            if run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?.is_none() {
-                eprintln!("tier {tier} exhausted; skipped");
-            }
+            run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
             continue;
         }
-        let Some(nonholdout_result) =
-            run_slice(&context, &tier, &judge_tier, &nonholdout, "nonholdout")?
-        else {
-            eprintln!("tier {tier} exhausted; skipped for this run");
-            continue;
-        };
-        let Some(holdout_result) = run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?
-        else {
-            eprintln!("tier {tier} exhausted; skipped for this run");
-            continue;
-        };
+        let nonholdout_result = run_slice(&context, &tier, &judge_tier, &nonholdout, "nonholdout")?;
+        let holdout_result = run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
         results.insert(
             tier,
             TierResult {
@@ -947,12 +971,22 @@ fn run(mut settings: Settings) -> Result<(), String> {
             },
         );
     }
-    if settings.args.is_holdout_only {
+    if settings.args.is_holdout_only || settings.args.tier.is_some() {
         return Ok(());
     }
     let id = candidate_id(&candidate);
     let tested_against = prompt_version(artifact_dir);
     let ts = timestamp();
+    let run_is_complete = results.values().all(|result| {
+        result
+            .nonholdout
+            .repeats
+            .values()
+            .chain(result.holdout.repeats.values())
+            .flatten()
+            .all(Option::is_some)
+    });
+    let is_accepted = settings.is_accepted && run_is_complete;
     let entries = results
         .into_iter()
         .map(|(tier, result)| {
@@ -978,7 +1012,7 @@ fn run(mut settings: Settings) -> Result<(), String> {
                 scores_holdout: result.holdout.scores,
                 repeat_scores_nonholdout: result.nonholdout.repeats,
                 repeat_scores_holdout: result.holdout.repeats,
-                is_accepted: settings.is_accepted,
+                is_accepted,
                 ts: ts.clone(),
                 legacy: Map::new(),
             }
@@ -986,6 +1020,11 @@ fn run(mut settings: Settings) -> Result<(), String> {
         .collect();
     update_frontier(&eval_dir, &candidate, entries)?;
     eprintln!("candidate_id: {id}");
+    if settings.is_accepted && !run_is_complete {
+        return Err(
+            "candidate was not accepted because at least one repeat is ungraded".to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -1021,7 +1060,11 @@ mod tests {
         let artifact = temp.path.join("artifact");
         let eval_dir = artifact.join("evals");
         fs::create_dir_all(&eval_dir).unwrap();
-        fs::write(artifact.join("SKILL.md"), "candidate text").unwrap();
+        fs::write(
+            artifact.join("SKILL.md"),
+            "---\nmetadata:\n  minimum-tier: T3\n---\ncandidate text",
+        )
+        .unwrap();
         fs::write(eval_dir.join("rubric.md"), "Score 0-10").unwrap();
         fs::write(
             eval_dir.join("cases.jsonl"),
@@ -1081,8 +1124,9 @@ fi
 "#;
 
     #[test]
-    fn runs_every_tier_slice_and_three_repeats_with_higher_judges() {
-        let (temp, settings, eval_dir) = fixture("exhaustive", FAKE);
+    fn minimum_tier_does_not_limit_the_exhaustive_sweep() {
+        let (temp, mut settings, eval_dir) = fixture("exhaustive", FAKE);
+        settings.is_accepted = true;
         run(settings).unwrap();
         let calls = fs::read_to_string(temp.path.join("calls")).unwrap();
         assert_eq!(
@@ -1117,6 +1161,7 @@ fi
         assert_eq!(entries[2].judge_tier, "T3");
         assert_eq!(entries[1].repeat_scores_nonholdout["n1"], vec![Some(8); 3]);
         assert_eq!(entries[1].model_ran, vec!["actual-T2"]);
+        assert!(entries.iter().all(|entry| entry.is_accepted));
         let wrapper_path = calls.lines().next().unwrap().split('\t').nth(3).unwrap();
         let wrapper_error = fs::read_to_string(wrapper_path).unwrap_err();
         assert_eq!(wrapper_error.kind(), io::ErrorKind::NotFound);
@@ -1126,7 +1171,7 @@ fi
     }
 
     #[test]
-    fn narrow_modes_keep_full_judge_order_and_do_not_write_holdout_frontier() {
+    fn narrow_modes_keep_full_judge_order_and_do_not_write_frontier() {
         let (temp, mut settings, eval_dir) = fixture("narrow", FAKE);
         settings.args.tier = Some("T1".to_string());
         settings.args.is_holdout_only = true;
@@ -1143,6 +1188,12 @@ fi
                 .count(),
             3
         );
+        assert!(!eval_dir.join("frontier.jsonl").exists());
+        assert!(!eval_dir.join("frontier").exists());
+
+        let (_temp, mut settings, eval_dir) = fixture("narrow-full", FAKE);
+        settings.args.tier = Some("T1".to_string());
+        run(settings).unwrap();
         assert!(!eval_dir.join("frontier.jsonl").exists());
         assert!(!eval_dir.join("frontier").exists());
     }
@@ -1177,19 +1228,24 @@ fi
             .unwrap();
         assert!(!Path::new(prompt_path).exists());
         let prompts = fs::read_to_string(temp.path.join("calls.prompts")).unwrap();
+        assert!(prompts.contains("minimum-tier: T3"));
         assert!(prompts.contains("candidate text"));
         assert!(prompts.contains("--- context.txt ---\nfile sentinel"));
     }
 
     #[test]
-    fn exhaustion_skips_frontier_and_exit_two_aborts() {
+    fn exhaustion_records_an_ungraded_tier_and_exit_two_aborts() {
         let exhausted = r#"#!/bin/zsh
 exit 3
 "#;
-        let (_temp, mut settings, eval_dir) = fixture("exhausted", exhausted);
-        settings.args.tier = Some("T2".to_string());
+        let (_temp, settings, eval_dir) = fixture("exhausted", exhausted);
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T2":{}}}"#).unwrap();
         run(settings).unwrap();
-        assert!(!eval_dir.join("frontier.jsonl").exists());
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tier, "T2");
+        assert_eq!(entries[0].repeat_scores_nonholdout["n1"], vec![None; 3]);
+        assert_eq!(entries[0].repeat_scores_holdout["h1"], vec![None; 3]);
 
         let fatal = r#"#!/bin/zsh
 print -u2 bad-config
@@ -1200,6 +1256,88 @@ exit 2
         let error = run(settings).unwrap_err();
         assert!(error.contains("config or usage error"));
         assert!(!eval_dir.join("frontier.jsonl").exists());
+    }
+
+    #[test]
+    fn an_unavailable_tier_does_not_remove_any_configured_tier() {
+        let fake = r#"#!/bin/zsh
+set -eu
+while (( $# )); do
+  case "$1" in
+    --tier) tier=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$tier" == "T2" ]]; then
+  exit 3
+elif [[ "$input" == 'Grade the actual output'* ]]; then
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+else
+  print actual
+  print -u2 "model_ran: actual-$tier"
+fi
+"#;
+        let (_temp, mut settings, eval_dir) = fixture("unavailable-tier", fake);
+        settings.repeats = 1;
+        run(settings).unwrap();
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.tier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["T1", "T2", "T3"]
+        );
+        assert_eq!(entries[0].repeat_scores_nonholdout["n1"], vec![None]);
+        assert_eq!(entries[0].model_ran, vec!["actual-T1"]);
+        assert_eq!(entries[1].repeat_scores_nonholdout["n1"], vec![None]);
+        assert!(entries[1].model_ran.is_empty());
+        assert_eq!(entries[2].repeat_scores_nonholdout["n1"], vec![Some(8)]);
+    }
+
+    #[test]
+    fn late_judge_exhaustion_keeps_prior_scores_and_actual_model() {
+        let fake = r#"#!/bin/zsh
+set -eu
+while (( $# )); do
+  case "$1" in
+    --tier) tier=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  count_file=${0:h}/judge-count
+  count=0
+  [[ -f "$count_file" ]] && count=$(<"$count_file")
+  (( count += 1 ))
+  print "$count" > "$count_file"
+  if (( count > 1 )); then
+    exit 3
+  fi
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+else
+  print actual
+  print -u2 "model_ran: actual-$tier"
+fi
+"#;
+        let (_temp, mut settings, eval_dir) = fixture("late-judge-exhaustion", fake);
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{},"T2":{}}}"#).unwrap();
+        settings.repeats = 3;
+        settings.is_accepted = true;
+        let error = run(settings).unwrap_err();
+        assert!(error.contains("at least one repeat is ungraded"));
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        let tier_one = entries.iter().find(|entry| entry.tier == "T1").unwrap();
+        assert_eq!(
+            tier_one.repeat_scores_nonholdout["n1"],
+            vec![Some(8), None, None]
+        );
+        assert_eq!(tier_one.model_ran, vec!["actual-T1"]);
+        assert!(entries.iter().all(|entry| !entry.is_accepted));
     }
 
     #[test]
@@ -1224,7 +1362,7 @@ else
 fi
 "#;
         let (_temp, mut settings, eval_dir) = fixture("nulls", fake);
-        settings.args.tier = Some("T1".to_string());
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{}}}"#).unwrap();
         settings.repeats = 1;
         run(settings).unwrap();
         let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
@@ -1240,7 +1378,7 @@ set -eu
 print output-without-attribution
 "#;
         let (_temp, mut settings, eval_dir) = fixture("attribution", fake);
-        settings.args.tier = Some("T1".to_string());
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{}}}"#).unwrap();
         settings.repeats = 1;
         run(settings).unwrap();
         let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
@@ -1319,7 +1457,7 @@ print output-without-attribution
     fn output_check_caps_a_judged_repeat_at_four() {
         let (_temp, mut settings, eval_dir) = fixture("output-check", FAKE);
         write_executable(&eval_dir.join("output-check.sh"), "#!/bin/zsh\nexit 1\n");
-        settings.args.tier = Some("T1".to_string());
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{}}}"#).unwrap();
         settings.repeats = 1;
         run(settings).unwrap();
         let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
@@ -1410,7 +1548,42 @@ print output-without-attribution
             })
             .collect();
         prune(&mut tradeoffs);
-        assert_eq!(tradeoffs.len(), 21);
+        assert_eq!(tradeoffs.len(), 20);
+        assert!(tradeoffs.iter().any(|item| item.candidate_id == "id20"));
+
+        let mut incomplete: Vec<FrontierEntry> = (0..25)
+            .map(|id| {
+                let mut item = entry(id, "T4", 0.0);
+                item.scores_nonholdout = vec![None];
+                item.mean_nonholdout = None;
+                item
+            })
+            .collect();
+        prune(&mut incomplete);
+        assert_eq!(incomplete.len(), 20);
+
+        let mut mixed: Vec<FrontierEntry> = (0..20)
+            .map(|id| entry(id, "T4", if id == 0 { 0.0 } else { 1.0 }))
+            .collect();
+        let mut newest_incomplete = entry(20, "T4", 0.0);
+        newest_incomplete.scores_nonholdout = vec![None];
+        newest_incomplete.mean_nonholdout = None;
+        mixed.push(newest_incomplete);
+        prune(&mut mixed);
+        assert!(!mixed.iter().any(|item| item.candidate_id == "id0"));
+        assert!(mixed.iter().any(|item| item.candidate_id == "id20"));
+
+        let mut empty: Vec<FrontierEntry> = (0..25)
+            .map(|id| {
+                let mut item = entry(id, "", 0.0);
+                item.scores_nonholdout.clear();
+                item.scores_holdout.clear();
+                item.mean_nonholdout = None;
+                item
+            })
+            .collect();
+        prune(&mut empty);
+        assert_eq!(empty.len(), 20);
 
         let mut accepted = entry(200, "T4", 0.0);
         accepted.is_accepted = true;
@@ -1422,5 +1595,23 @@ print output-without-attribution
                 .iter()
                 .any(|item| item.candidate_id == "id200")
         );
+        assert_eq!(
+            accepted_entries
+                .iter()
+                .filter(|item| !item.is_accepted)
+                .count(),
+            20
+        );
+
+        let mut accepted_outside_cap: Vec<FrontierEntry> = (0..15)
+            .map(|id| {
+                let mut item = entry(id, "T5", 1.0);
+                item.is_accepted = true;
+                item
+            })
+            .collect();
+        accepted_outside_cap.extend((100..110).map(|id| entry(id, "T5", 1.0)));
+        prune(&mut accepted_outside_cap);
+        assert_eq!(accepted_outside_cap.len(), 25);
     }
 }

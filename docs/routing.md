@@ -11,9 +11,9 @@ and each fallback.
 
 `tools/tier-dispatch` also reads this file. It resolves a tier to its ordered model
 chain for the ai-author evaluation harness. The primary model comes before its listed
-fallbacks. A quota error moves the dispatch to the next model in that chain. Model
-limits can differ within one provider, so the dispatch tests every configured fallback.
-Exhaustion makes the complete tier unavailable.
+fallbacks. A quota or model-availability error moves the dispatch to the next model in
+that chain. Model limits and client support can differ, so the dispatch tests every
+configured fallback. Exhaustion makes the complete tier unavailable.
 
 The `--verify-registry` mode checks each configured tier entry against the model records in
 Pi's local registry. It also reports stale overrides for available providers. The tool

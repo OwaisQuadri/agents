@@ -53,7 +53,7 @@ hooks/test.sh
 # a skill or workflow's eval harness (per-artifact contract, see skill-author/SKILL.md)
 ./skills/<name>/evals/run.sh              # all tiers, both slices, frontier writes
 ./skills/<name>/evals/run.sh --holdout    # all tiers, held-out slice, no frontier writes
-./skills/<name>/evals/run.sh --tier T3    # one requested tier, both slices
+./skills/<name>/evals/run.sh --tier T3    # one requested tier, both slices, no frontier writes
 ```
 
 Every skill and workflow runner delegates to `tools/skill-eval`. The runner uses
