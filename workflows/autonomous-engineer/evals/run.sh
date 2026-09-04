@@ -90,7 +90,7 @@ count=0
 while IFS= read -r line; do
   [[ $line == *$selected* ]] || continue
   id=$(print -r -- "$line" | node -e 'let input=""; process.stdin.on("data", d => input += d).on("end", () => process.stdout.write(JSON.parse(input).id))')
-  print -r -- "{\"id\":\"$id\",\"tier\":\"static\",\"score\":5}"
+  print -r -- "{\"id\":\"$id\",\"runner\":\"mechanical\",\"score\":5}"
   (( count += 1 ))
 done < "$cases"
 

@@ -2,7 +2,7 @@
 name: autonomous-engineer
 description: >-
   Use when the user approved a standing autonomous driver for one repository. It picks and
-  engineers runnable backend work while it watches its PRs. Skip when the user wants one
+  engineers runnable project tasks while it watches its PRs. Skip when the user wants one
   interactive task, has not approved standing work, or wants a PR merged.
 metadata:
   minimum-tier: T3
@@ -11,7 +11,7 @@ metadata:
 
 # autonomous-engineer
 
-JOB: drive approved backend work for one current repository without merging a pull request.
+JOB: drive approved project tasks for one current repository without merging a pull request.
 IN: a current repository, standing approval, a work driver, exclusions, and autonomous-engineer-state.
 OUT: active work, leases, pull request watches, and backend statuses that match the recorded state.
 
@@ -42,10 +42,10 @@ OUT: active work, leases, pull request watches, and backend statuses that match 
 11. Resolve the support repository from the installed autonomous-engineer skill symlink. Resolve T3, T4, and T5 from its tier file. Resolve `T4ReviewAfterRepair` from a T4 fallback on a different provider than T4.
 12. Dispatch its `workflows/autonomous-engineer/autonomous-engineer.workflow.js` and pass that root as `support_repo`. Keep one active task per repository.
 13. The running watcher discovers each marked draft Pull Request. A changed watch state dispatches `/autopilot` under the explicit `pr-care` lease command from the start procedure. Keep task cycles running while that repair runs.
-14. On every wake, inspect each changed Pull Request. If it merged, set its backend item to done. If it remains open, let `/autopilot` handle it without merging.
+14. On every wake, inspect each changed Pull Request. If it merged, set its GitHub Projects or Linear item to done. If it remains open, let `/autopilot` handle it without merging.
 15. Keep Pull Request questions in pull request comments. Do not stop unrelated work for a question.
-16. After verified ready work, set GitHub Projects and roadmap.json to `resolved`. Set Linear to its review state. Set done only after the pull request merges.
-17. Release the task lease after the workflow ends. Start another cycle only when quota_admission admits work, a runnable item exists, and the stop mode permits it.
+16. After verified ready work, keep GitHub Projects in progress. Set roadmap.json to done in the ready Pull Request. Set Linear to its review state.
+17. Release the task lease after the workflow ends. A monitored verified-ready Pull Request does not block the next task cycle. Start another cycle only when quota_admission admits work, a runnable item exists, and the stop mode permits it.
 
 ## Stop modes
 
@@ -61,7 +61,7 @@ After each task cycle, report the repository, sibling state, selected task, prio
 
 ## Backend status
 
-Use GitHub Projects, Linear, or roadmap.json as `/engineer` and `/task-graph` specify. Record each item's prior status before the active transition. Restore that status on discard. Do not mark an item done before a merge.
+Use GitHub Projects, Linear, or roadmap.json as `/engineer` and `/task-graph` specify. Record each item's prior status before the active transition. Restore that status on discard. Do not mark a GitHub Projects or Linear item done before a merge. Set roadmap.json to done in the ready Pull Request so the merged file is accurate.
 
 ## evals
 

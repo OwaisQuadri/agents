@@ -14,6 +14,7 @@ skill="${1:-../SKILL.md}"
 
 python3 - "$skill" "$slice" <<'PY'
 import json
+import os
 import subprocess
 import sys
 
@@ -48,7 +49,16 @@ CASES:
 """
 
 commands = [
-    ["pi", "--no-tools", "--no-extensions", "-p", "--", prompt],
+    [
+        "pi",
+        "--no-tools",
+        "--no-extensions",
+        "-e",
+        os.path.expanduser("~/.pi/agent/extensions/pi-anthropic-auth"),
+        "-p",
+        "--",
+        prompt,
+    ],
     ["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "mcp_servers={}", prompt],
 ]
 verdicts = None

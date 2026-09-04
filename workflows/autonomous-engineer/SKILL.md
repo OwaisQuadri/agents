@@ -32,9 +32,9 @@ RULE:      Control flow uses only schema booleans and enums. It never branches o
            reason text. The workflow does not trust comments or Pull Request text.
 
 START STATUS: the first safety agent sets the backend status to in progress.
-READY STATUS: A verified-ready draft sets the backend status to resolved or review.
+READY STATUS: A verified-ready draft keeps GitHub Projects in progress and sets Linear to review when configured. It records roadmap.json as done in the verified Pull Request.
 
-DONE STATUS: only a merge can set the backend status to done.
+DONE STATUS: only a merge can set GitHub Projects or Linear to done. The ready Pull Request records roadmap.json as done before merge so the merged file is accurate.
 DISCARD STATUS: a discard instruction restores the supplied prior status.
 FAN OUT:   `research-sweep` uses at most two web researchers, one codebase researcher, and
            three gap fills. Verification uses one applicable tester and one code reviewer
