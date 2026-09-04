@@ -406,6 +406,67 @@ test("handleMessageEnd: an interactive session switches models but leaves the re
 	}
 });
 
+test("handleMessageEnd: a climb skips models already tried in the exhausted tier", async () => {
+	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
+	const originalHome = process.env.HOME;
+	process.env.HOME = stateHome;
+	try {
+		const settingsDir = join(stateHome, ".pi", "agent");
+		await mkdir(settingsDir, { recursive: true });
+		await writeFile(
+			join(settingsDir, "settings.json"),
+			JSON.stringify({
+				modelTierFallbacks: {
+					T5: {
+						"provider-a/new": { model: "provider-b/sol", thinking: "high" },
+						"provider-b/sol": { model: "provider-a/old", thinking: "medium" },
+					},
+					T4: {
+						"provider-a/opus": { model: "provider-b/sol", thinking: "medium" },
+						"provider-b/sol": { model: "provider-a/new", thinking: "low" },
+					},
+				},
+				tierPrimaries: {
+					T5: { model: "provider-a/new", thinking: "medium" },
+					T4: { model: "provider-a/opus", thinking: "medium" },
+				},
+				tierClimb: { T5: "T4" },
+			}),
+		);
+
+		const switches: string[] = [];
+		const ctx = {
+			mode: "tui",
+			model: { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } },
+			modelRegistry: {
+				find: (provider: string, id: string) => ({ provider, id, cost: { input: 0, output: 0, cacheRead: 0 } }),
+			},
+			ui: { notify: () => {} },
+			sessionManager: { getSessionFile: () => null },
+		};
+		const pi = {
+			setModel: async (model: { provider: string; id: string }) => {
+				ctx.model = { ...model, cost: { input: 0, output: 0, cacheRead: 0 } };
+				switches.push(`${model.provider}/${model.id}`);
+				return true;
+			},
+			setThinkingLevel: () => {},
+			getThinkingLevel: () => "medium",
+			sendUserMessage: () => {},
+		};
+		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
+
+		for (let index = 0; index < 4; index += 1) {
+			await handleMessageEnd(error, ctx as never, pi as never);
+		}
+
+		assert.deepEqual(switches, ["provider-b/sol", "provider-a/old", "provider-a/opus"]);
+	} finally {
+		process.env.HOME = originalHome;
+		await rm(stateHome, { recursive: true, force: true });
+	}
+});
+
 test("handleMessageEnd: a tier whose own chain runs out climbs to climbOnExhaustion's primary, T1-rises-to-T2 style", async () => {
 	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
 	const originalHome = process.env.HOME;

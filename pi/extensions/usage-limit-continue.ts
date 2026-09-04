@@ -403,6 +403,16 @@ async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, hop: TierHop): 
 // Resolved on the walk's first hop and reused after, so a model shared by two tiers
 // never re-derives a different tier mid-walk.
 const sessionTierByContext = new WeakMap<ExtensionContext, string>();
+const attemptedModelsByContext = new WeakMap<ExtensionContext, Set<string>>();
+
+function firstUntriedHop(map: FallbackMap, start: TierHop | undefined, attempted: Set<string>): TierHop | undefined {
+	let hop = start;
+	while (hop && attempted.has(hop.model)) {
+		const [provider, ...id] = hop.model.split("/");
+		hop = findTierFallback(map, provider, id.join("/")) ?? undefined;
+	}
+	return hop;
+}
 
 async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promise<string | null> {
 	const active = ctx.model as ModelLike | undefined;
@@ -416,14 +426,16 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	if (!tier) {
 		return null;
 	}
-	let hop = findTierFallback(tiered[tier] ?? {}, active.provider, active.id);
-	// Chain exhausted: climbOnExhaustion continues from the named tier's own primary
-	// (T1 rises to T2, T5 drops to T4) instead of relying on chains happening to overlap.
+	const attempted = attemptedModelsByContext.get(ctx) ?? new Set<string>();
+	let hop = firstUntriedHop(
+		tiered[tier] ?? {},
+		findTierFallback(tiered[tier] ?? {}, active.provider, active.id) ?? undefined,
+		attempted,
+	);
 	if (!hop && climb[tier]) {
 		const nextTier = climb[tier];
-		const nextPrimary = primaries[nextTier];
-		if (nextPrimary) {
-			hop = nextPrimary;
+		hop = firstUntriedHop(tiered[nextTier] ?? {}, primaries[nextTier], attempted);
+		if (hop) {
 			tier = nextTier;
 		}
 	}
@@ -440,6 +452,8 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 export async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
 	const errorText = extractErrorText(message);
 	if (!errorText) {
+		attemptedModelsByContext.delete(ctx);
+		sessionTierByContext.delete(ctx);
 		return;
 	}
 
@@ -458,6 +472,11 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	logDiagnostic(`detected on ${ctx.model?.provider}/${ctx.model?.id} (mode=${ctx.mode}): ${plan.matchedText.slice(0, 200)}`);
 
 	const active = ctx.model as ModelLike | undefined;
+	if (active?.id) {
+		const attempted = attemptedModelsByContext.get(ctx) ?? new Set<string>();
+		attempted.add(`${active.provider}/${active.id}`);
+		attemptedModelsByContext.set(ctx, attempted);
+	}
 	const abandoned = abandonedByContext.get(ctx) ?? {};
 	if (active?.id && plan.resetAtMs !== null) {
 		abandoned[`${active.provider}/${active.id}`] = { resetAtMs: plan.resetAtMs, thinking: pi.getThinkingLevel() };
