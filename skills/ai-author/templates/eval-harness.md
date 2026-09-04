@@ -36,8 +36,19 @@ action, hallucinated names). A catastrophic case can't be traded against a bette
 
 ## run.sh
 
-Convention: `./run.sh [candidate-file]` — grades BOTH slices (non-holdout, then holdout)
-against the current artifact (or the candidate, if given) with rubric.md, emitting one
+Use this wrapper:
+
+```zsh
+#!/bin/zsh
+set -euo pipefail
+here=${0:A:h}
+repo=$(git -C "$here" rev-parse --show-toplevel)
+exec "$repo/tools/skill-eval/run.sh" --eval-dir "$here" "$@"
+```
+
+Convention: `./run.sh [candidate-file]` delegates to `tools/skill-eval/run.sh`. It grades
+BOTH slices (non-holdout, then holdout) against the current artifact or candidate with
+rubric.md. The runner emits one
 JSON line per (case, tier) to stdout
 (`{"id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`) and a mean-per-tier,
 per-slice summary to stderr. Grading both slices in one pass matches what the Holdout
@@ -45,8 +56,9 @@ gating rule below already needs together ("the win holds on the holdout slice").
 `--holdout` is a lighter, frontier-write-free mode for a quick recheck of the holdout
 slice alone — use the plain (no-flag) form for anything feeding a real Decide.
 
-**Execution arm, not a prose judge.** `run.sh` does not send the artifact's own text to a
-judge and ask whether an agent following it WOULD pass — that grades wording, and every
+**Execution arm, not a prose judge.** Keep the per-artifact `run.sh` as a thin wrapper
+around `tools/skill-eval/run.sh`. The shared runner does not send the artifact's own text
+to a judge and ask whether an agent following it WOULD pass — that grades wording, and every
 tier scores identically since no tier ever actually runs anything. It dispatches a REAL
 run of the artifact via `tools/tier-dispatch` (tier's own primary model, walking that
 tier's own `fallbacks[]` list in `config/model-tiers.json` on a quota error), then grades
