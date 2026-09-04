@@ -142,6 +142,14 @@ fn verify_registry(args: &Args) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    let empty_tier_providers = registry.empty_tier_providers(&tiers);
+    if !empty_tier_providers.is_empty() {
+        eprintln!(
+            "tier-dispatch: registry has empty model catalogs for tier providers: {}",
+            empty_tier_providers.join(", ")
+        );
+        return ExitCode::from(2);
+    }
     let models_file = args
         .models_file
         .as_ref()

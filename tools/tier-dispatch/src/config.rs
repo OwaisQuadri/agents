@@ -27,6 +27,10 @@ pub struct Tier {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TiersFile {
     pub tiers: BTreeMap<String, Tier>,
+    #[serde(default)]
+    pub orchestrator: Option<String>,
+    #[serde(default)]
+    pub agents: BTreeMap<String, String>,
 }
 
 impl TiersFile {
@@ -37,6 +41,36 @@ impl TiersFile {
             serde_json::from_str(&raw).map_err(|error| format!("{}: {error}", path.display()))?;
         if tiers.tiers.is_empty() {
             return Err(format!("{}: tiers must not be empty", path.display()));
+        }
+        if let Some(orchestrator) = &tiers.orchestrator
+            && !tiers.tiers.contains_key(orchestrator)
+        {
+            return Err(format!(
+                "{}: orchestrator names unknown tier {orchestrator}",
+                path.display()
+            ));
+        }
+        for (agent, tier) in &tiers.agents {
+            if !tiers.tiers.contains_key(tier) {
+                return Err(format!(
+                    "{}: agent {agent} names unknown tier {tier}",
+                    path.display()
+                ));
+            }
+        }
+        for (name, tier) in &tiers.tiers {
+            for entry in std::iter::once(&tier.pi).chain(tier.fallbacks.iter()) {
+                if !matches!(
+                    entry.thinking.as_str(),
+                    "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                ) {
+                    return Err(format!(
+                        "{}: tier {name} has invalid thinking level {}",
+                        path.display(),
+                        entry.thinking
+                    ));
+                }
+            }
         }
         for (name, tier) in &tiers.tiers {
             if let Some(target) = &tier.climb_on_exhaustion
@@ -176,6 +210,40 @@ mod tests {
         std::fs::write(
             &path,
             r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"climbOnExhaustion":"T2"},"T2":{"pi":{"model":"anthropic/claude-haiku-4-5","thinking":"low"},"climbOnExhaustion":"T1"}}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_unknown_orchestrator_and_agent_tiers() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-tier-references-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"}}},"orchestrator":"T9","agents":{"reviewer":"T8"}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_an_unknown_thinking_level() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-thinking-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"maximum"}}}}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());

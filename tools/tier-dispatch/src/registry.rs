@@ -12,6 +12,7 @@ pub struct Finding {
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
     models: BTreeMap<String, BTreeSet<String>>,
+    empty_providers: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -29,8 +30,12 @@ impl Registry {
             .as_object()
             .ok_or_else(|| format!("{}: registry root must be an object", path.display()))?;
         let mut models = BTreeMap::new();
+        let mut empty_providers = BTreeSet::new();
         for (provider, value) in providers {
             if let Some(provider_models) = provider_models(provider, value)? {
+                if provider_models.is_empty() {
+                    empty_providers.insert(provider.clone());
+                }
                 models.insert(provider.clone(), provider_models);
             }
         }
@@ -40,13 +45,29 @@ impl Registry {
                 path.display()
             ));
         }
-        Ok(Self { models })
+        Ok(Self {
+            models,
+            empty_providers,
+        })
     }
 
     fn contains(&self, provider: &str, model: &str) -> bool {
         self.models
             .get(provider)
             .is_some_and(|models| models.contains(model))
+    }
+
+    pub(crate) fn empty_tier_providers(&self, tiers: &TiersFile) -> Vec<String> {
+        tiers
+            .tiers
+            .values()
+            .flat_map(|tier| std::iter::once(&tier.pi).chain(tier.fallbacks.iter()))
+            .filter_map(|entry| entry.model.split_once('/').map(|(provider, _)| provider))
+            .filter(|provider| self.empty_providers.contains(*provider))
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     fn model_ids(&self) -> impl Iterator<Item = (&str, &str)> {
@@ -82,6 +103,14 @@ impl ModelOverrides {
                     path.display()
                 )
             })?;
+            for (model, value) in overrides {
+                if !value.is_object() {
+                    return Err(format!(
+                        "{}: model override {provider}/{model} must be an object",
+                        path.display()
+                    ));
+                }
+            }
             models.insert(provider.clone(), overrides.keys().cloned().collect());
         }
         Ok(Self { models })
