@@ -28,12 +28,18 @@ impl Registry {
         let providers = root
             .as_object()
             .ok_or_else(|| format!("{}: registry root must be an object", path.display()))?;
-        let models = providers
+        let models: BTreeMap<String, BTreeSet<String>> = providers
             .iter()
             .filter_map(|(provider, value)| {
                 provider_models(value).map(|models| (provider.clone(), models))
             })
             .collect();
+        if models.is_empty() {
+            return Err(format!(
+                "{}: registry has no provider model lists",
+                path.display()
+            ));
+        }
         Ok(Self { models })
     }
 
@@ -354,6 +360,14 @@ mod tests {
         let directory = test_dir("unknown-provider");
         let registry = Registry::load(&write_registry(&directory, r#"{"checkedAt":1,"etag":"x","someprovider":{"models":[{"id":"new-model-1"}]},"anthropic":{"models":[{"id":"claude-fable-5"}]}}"#)).unwrap();
         assert!(registry.contains("anthropic", "claude-fable-5"));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn registry_without_provider_models_is_an_error() {
+        let directory = test_dir("empty-registry");
+        let path = write_registry(&directory, r#"{"checkedAt":1}"#);
+        assert!(Registry::load(&path).is_err());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

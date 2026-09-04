@@ -17,9 +17,12 @@ Exhaustion makes the complete tier unavailable.
 
 The `--verify-registry` mode checks each configured tier entry against the model records in
 Pi's local registry. It also reports stale overrides for available providers. The tool
-searches the current directory and its parents for `config/models.json`. Use
-`--models-file` when the check needs another file. This mode does not dispatch a model or
-write a file. The tool never derives a model identifier from another source.
+looks for `models.json` beside the supplied tiers file. Use `--models-file` when the check
+needs another file. The tool reports an unavailable overrides file as a standard-error
+advisory without blocking the tier verification result.
+
+This mode does not dispatch a model or write a file. The tool never derives a model
+identifier from another source.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
 you lean on a price argument.
@@ -34,9 +37,9 @@ cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
 ```
 
 Exit 0 means every tier entry resolves in the registry. Exit 1 names each missing tier
-entry. Exit 2 means that an input is invalid or unavailable. The command reports stale
-model overrides and newer unreferenced family members as advisories on standard error.
-Advisories never change its exit code.
+entry. Exit 2 means that the tiers file or registry is invalid or unavailable. The command
+reports override problems and newer unreferenced family members as advisories on standard
+error. Advisories never change its exit code.
 
 ## tiers
 

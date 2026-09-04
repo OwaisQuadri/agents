@@ -21,7 +21,7 @@ pub struct Tier {
     #[serde(default)]
     pub fallbacks: Vec<ModelEntry>,
     #[serde(default, rename = "climbOnExhaustion")]
-    _climb_on_exhaustion: Option<String>,
+    pub climb_on_exhaustion: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,7 +33,22 @@ impl TiersFile {
     pub fn load(path: &Path) -> Result<Self, String> {
         let raw = std::fs::read_to_string(path)
             .map_err(|error| format!("{}: {error}", path.display()))?;
-        serde_json::from_str(&raw).map_err(|error| format!("{}: {error}", path.display()))
+        let tiers: Self =
+            serde_json::from_str(&raw).map_err(|error| format!("{}: {error}", path.display()))?;
+        if tiers.tiers.is_empty() {
+            return Err(format!("{}: tiers must not be empty", path.display()));
+        }
+        for (name, tier) in &tiers.tiers {
+            if let Some(target) = &tier.climb_on_exhaustion
+                && (target == name || !tiers.tiers.contains_key(target))
+            {
+                return Err(format!(
+                    "{}: tier {name} has invalid climbOnExhaustion {target}",
+                    path.display()
+                ));
+            }
+        }
+        Ok(tiers)
     }
 
     /// The ordered candidate chain for one tier: its own primary model first, then its
@@ -110,6 +125,23 @@ mod tests {
         std::fs::write(
             &path,
             r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"falbacks":[]}}}"#,
+        )
+        .unwrap();
+        assert!(TiersFile::load(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_an_unknown_climb_target() {
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-test-unknown-climb-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T1":{"pi":{"model":"openai-codex/gpt-5.6-luna","thinking":"low"},"climbOnExhaustion":"T9"}}}"#,
         )
         .unwrap();
         assert!(TiersFile::load(&path).is_err());

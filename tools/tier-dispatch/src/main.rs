@@ -43,18 +43,6 @@ fn default_registry_file() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".pi/agent/models-store.json"))
 }
 
-fn default_models_file() -> PathBuf {
-    if let Ok(current) = std::env::current_dir() {
-        for directory in current.ancestors() {
-            let candidate = directory.join("config/models.json");
-            if candidate.is_file() {
-                return candidate;
-            }
-        }
-    }
-    PathBuf::from("config/models.json")
-}
-
 fn parse_args(raw: &[String]) -> Result<Args, String> {
     let mut tiers_file = None;
     let mut tier = None;
@@ -116,7 +104,7 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         registry_file
     };
     let models_file = if is_verify_registry {
-        Some(models_file.unwrap_or_else(default_models_file))
+        Some(models_file.unwrap_or_else(|| tiers_file.with_file_name("models.json")))
     } else {
         models_file
     };
@@ -155,15 +143,14 @@ fn verify_registry(args: &Args) -> ExitCode {
         .models_file
         .as_ref()
         .expect("registry verification always resolves a models file");
-    let overrides = match ModelOverrides::load(models_file) {
-        Ok(overrides) => overrides,
+    let override_findings = match ModelOverrides::load(models_file) {
+        Ok(overrides) => unknown_model_overrides(&overrides, &registry),
         Err(message) => {
-            eprintln!("tier-dispatch: {message}");
-            return ExitCode::from(2);
+            eprintln!("tier-dispatch: advisory: model overrides unavailable: {message}");
+            Vec::new()
         }
     };
     let registry_findings = unknown_models(&tiers, &registry);
-    let override_findings = unknown_model_overrides(&overrides, &registry);
     for finding in &registry_findings {
         eprintln!(
             "tier-dispatch: {} {} {} is absent from the registry",
@@ -329,10 +316,7 @@ mod tests {
             args.registry_file
                 .is_some_and(|path| path.ends_with(".pi/agent/models-store.json"))
         );
-        assert!(
-            args.models_file
-                .is_some_and(|path| path.ends_with("config/models.json"))
-        );
+        assert_eq!(args.models_file, Some(PathBuf::from("config/models.json")));
     }
 
     #[test]
