@@ -281,9 +281,13 @@ export function resolveHomeTier(primaries: Record<string, TierHop>, provider: st
  */
 export function earliestAvailable(
 	resets: Record<string, { resetAtMs: number; thinking: ThinkingLevel }>,
+	nowMs = Number.NEGATIVE_INFINITY,
 ): (TierHop & { resetAtMs: number }) | null {
 	let soonest: (TierHop & { resetAtMs: number }) | null = null;
 	for (const [model, entry] of Object.entries(resets)) {
+		if (entry.resetAtMs <= nowMs) {
+			continue;
+		}
 		if (!soonest || entry.resetAtMs < soonest.resetAtMs) {
 			soonest = { model, resetAtMs: entry.resetAtMs, thinking: entry.thinking };
 		}
@@ -349,7 +353,7 @@ async function savePendingStore(store: PendingStore): Promise<void> {
 }
 
 function formatWait(waitMs: number): string {
-	const totalMinutes = Math.round(waitMs / 60000);
+	const totalMinutes = Math.max(Math.round(waitMs / 60000), 0);
 	const hours = Math.floor(totalMinutes / 60);
 	const minutes = totalMinutes % 60;
 	if (hours === 0) {
@@ -365,6 +369,9 @@ function formatWait(waitMs: number): string {
  * @returns The scheduled job, or null if a job for this session is already pending.
  */
 export async function scheduleResume(sessionFile: string, resetAtMs: number, nowMs: number): Promise<PendingJob | null> {
+	if (resetAtMs <= nowMs) {
+		return null;
+	}
 	const store = await loadPendingStore();
 	const existing = store[sessionFile];
 	if (existing && existing.resetAtMs >= nowMs) {
@@ -446,7 +453,20 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	// Home tier resolves only from a primary position; a session starting mid-chain
 	// (manual /model switch) gets no fallback, same as a model outside the tier file.
 	const state = fallbackState(ctx);
+	const qualifiedActive = `${active.provider}/${active.id}`;
 	let tier = state.tier ?? resolveHomeTier(primaries, active.provider, active.id);
+	if (tier) {
+		const map = tiered[tier] ?? {};
+		const belongsToTier =
+			primaries[tier]?.model === qualifiedActive ||
+			qualifiedActive in map ||
+			Object.values(map).some((candidate) => candidate.model === qualifiedActive);
+		if (!belongsToTier) {
+			tier = resolveHomeTier(primaries, active.provider, active.id);
+			state.tier = tier ?? undefined;
+			state.attempted.clear();
+		}
+	}
 	if (!tier) {
 		return null;
 	}
@@ -480,17 +500,20 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	const errorText = extractErrorText(message);
 	const state = fallbackState(ctx);
 	if (!errorText) {
-		state.attempted.clear();
+		if (message.stopReason !== "error" && message.stopReason !== "aborted") {
+			state.attempted.clear();
+		}
 		return;
 	}
 
+	const nowMs = Date.now();
 	const lastResponse = state.lastProviderResponse ?? { status: 0, headers: {} };
 	const plan = computeResetPlan({
 		status: lastResponse.status,
 		headers: lastResponse.headers,
 		text: errorText,
 		model: ctx.model,
-		nowMs: Date.now(),
+		nowMs,
 	});
 	state.lastProviderResponse = undefined;
 	if (!plan?.isDetected) {
@@ -503,7 +526,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		state.attempted.add(`${active.provider}/${active.id}`);
 	}
 	const abandoned = state.abandoned;
-	if (active?.id && plan.resetAtMs !== null) {
+	if (active?.id && plan.resetAtMs !== null && plan.resetAtMs > nowMs) {
 		abandoned[`${active.provider}/${active.id}`] = { resetAtMs: plan.resetAtMs, thinking: pi.getThinkingLevel() };
 	}
 
@@ -523,8 +546,8 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		`no tier fallback for ${active?.provider}/${active?.id ?? "unknown"}; falling back to a scheduled resume`,
 	);
 
-	const returning = earliestAvailable(abandoned);
-	const resumeAtMs = returning?.resetAtMs ?? plan.resetAtMs;
+	const returning = earliestAvailable(abandoned, nowMs);
+	const resumeAtMs = returning?.resetAtMs ?? (plan.resetAtMs !== null && plan.resetAtMs > nowMs ? plan.resetAtMs : null);
 	if (resumeAtMs === null) {
 		ctx.ui.notify("Usage limit hit, but the reset time could not be parsed. Not scheduling an automatic continue.", "warning");
 		return;
@@ -536,7 +559,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 		ctx.ui.notify("Usage limit hit, but this session has no file to resume (--no-session). Not scheduling an automatic continue.", "warning");
 		return;
 	}
-	const job = await scheduleResume(sessionFile, resumeAtMs, Date.now());
+	const job = await scheduleResume(sessionFile, resumeAtMs, nowMs);
 	if (job === null) {
 		logDiagnostic(`resume already pending for ${sessionFile}, not rescheduling`);
 		return;

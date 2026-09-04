@@ -219,6 +219,19 @@ test("earliestAvailable: nothing abandoned yields null, so the old single-reset 
 	});
 });
 
+test("earliestAvailable: expired reset times do not schedule a resume in the past", () => {
+	assert.deepEqual(
+		earliestAvailable(
+			{
+				"anthropic/claude-fable-5": { resetAtMs: NOW - 1, thinking: "medium" },
+				"anthropic/claude-opus-5": { resetAtMs: NOW + 1, thinking: "high" },
+			},
+			NOW,
+		),
+		{ model: "anthropic/claude-opus-5", resetAtMs: NOW + 1, thinking: "high" },
+	);
+});
+
 test("scheduleResume: writes a pending-job record and refuses a duplicate schedule for the same session", async () => {
 	// A resetAt an hour out so the detached `sleep && pi --session ...` job this spawns
 	// never fires while this test (or its tmp dir cleanup) is running.
@@ -228,6 +241,8 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 	process.env.HOME = stateHome;
 	try {
 		const sessionFile = join(stateHome, "session.jsonl");
+		const nowMs = Date.now();
+		assert.equal(await scheduleResume(sessionFile, nowMs - 1, nowMs), null);
 		const first = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS, Date.now());
 		assert.notEqual(first, null);
 
@@ -462,6 +477,12 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 			await handleMessageEnd(error, eventContext() as never, pi as never);
 			await handleMessageEnd({ role: "user" }, eventContext() as never, pi as never);
 			await handleMessageEnd({ role: "toolResult" }, eventContext() as never, pi as never);
+			if (index === 0) {
+				await handleMessageEnd({ role: "assistant", stopReason: "aborted" }, eventContext() as never, pi as never);
+			}
+			if (index === 1) {
+				await handleMessageEnd({ role: "assistant", stopReason: "error" }, eventContext() as never, pi as never);
+			}
 		}
 
 		assert.deepEqual(switches, ["provider-b/sol", "provider-a/old", "provider-a/opus"]);
@@ -470,6 +491,12 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 		ctx.model = { provider: "provider-b", id: "sol", cost: { input: 0, output: 0, cacheRead: 0 } };
 		await handleMessageEnd(error, eventContext() as never, pi as never);
 		assert.equal(switches.at(-1), "provider-a/new");
+
+		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
+		ctx.model = { provider: "provider-c", id: "manual", cost: { input: 0, output: 0, cacheRead: 0 } };
+		const switchCount = switches.length;
+		await handleMessageEnd(error, eventContext() as never, pi as never);
+		assert.equal(switches.length, switchCount);
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
