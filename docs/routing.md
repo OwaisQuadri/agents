@@ -38,8 +38,9 @@ cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
 ```
 
 Exit 0 means every tier entry resolves in the registry. Exit 1 names each missing tier
-entry. A missing entry in an available provider takes priority over catalog faults. Exit 2
-means that a supplied input is invalid or a tier provider catalog is unavailable. It also
+entry. A missing entry in an available provider takes priority over catalog and override
+input faults. Exit 2 means that a supplied input is invalid or a tier provider catalog is
+unavailable. It also
 covers an unavailable tiers file or registry.
 
 The command reports missing default overrides and newer unreferenced family members as

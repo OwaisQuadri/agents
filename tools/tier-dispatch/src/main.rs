@@ -155,11 +155,14 @@ fn verify_registry(args: &Args) -> ExitCode {
             })
         })
         .collect::<Vec<_>>();
-    for finding in &actionable_findings {
-        eprintln!(
-            "tier-dispatch: {} {} {} is absent from the registry",
-            finding.tier, finding.slot, finding.model
-        );
+    for finding in &registry_findings {
+        let provider = finding.model.split_once('/').map(|(provider, _)| provider);
+        if !provider.is_some_and(|provider| registry.provider_catalog_is_empty(provider)) {
+            eprintln!(
+                "tier-dispatch: {} {} {} is absent from the registry",
+                finding.tier, finding.slot, finding.model
+            );
+        }
     }
     if !unavailable_tier_providers.is_empty() {
         eprintln!(
@@ -171,12 +174,12 @@ fn verify_registry(args: &Args) -> ExitCode {
         .models_file
         .as_ref()
         .expect("registry verification always resolves a models file");
-    let override_findings = if models_file.is_file() {
+    let (override_findings, override_input_error) = if models_file.is_file() {
         match ModelOverrides::load(models_file) {
-            Ok(overrides) => unknown_model_overrides(&overrides, &registry),
+            Ok(overrides) => (unknown_model_overrides(&overrides, &registry), false),
             Err(message) => {
                 eprintln!("tier-dispatch: {message}");
-                return ExitCode::from(2);
+                (Vec::new(), true)
             }
         }
     } else if args.models_file_explicit {
@@ -184,13 +187,13 @@ fn verify_registry(args: &Args) -> ExitCode {
             "tier-dispatch: supplied model overrides file is unavailable: {}",
             models_file.display()
         );
-        return ExitCode::from(2);
+        (Vec::new(), true)
     } else {
         eprintln!(
             "tier-dispatch: advisory: model overrides unavailable: {}",
             models_file.display()
         );
-        Vec::new()
+        (Vec::new(), false)
     };
     for model in &override_findings {
         eprintln!(
@@ -203,7 +206,7 @@ fn verify_registry(args: &Args) -> ExitCode {
     }
     if !actionable_findings.is_empty() {
         ExitCode::FAILURE
-    } else if !unavailable_tier_providers.is_empty() {
+    } else if override_input_error || !unavailable_tier_providers.is_empty() {
         ExitCode::from(2)
     } else {
         ExitCode::SUCCESS
