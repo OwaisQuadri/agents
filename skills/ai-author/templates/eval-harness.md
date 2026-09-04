@@ -14,6 +14,8 @@ One case per line:
 
 - ≥5 cases before a draft goes live; grow them from real transcript failures (found via
   `gepa-due`'s own scan at tuning time) and votes.
+- Give every case a unique `id` and an explicit Boolean `holdout` value. The runner rejects
+  a missing slice, a missing field, and a duplicate identifier before any dispatch.
 - Mark ~20% (minimum 1) `"holdout": true` — never shown to the mutation-proposer.
 - `source` is provenance: `seed` (authored), `log` (from a real use), `vote` (from a
   judge complaint).
@@ -96,8 +98,9 @@ at a working tree anyone cares about.
 An artifact can add an executable `evals/preflight.sh` for a deterministic check before
 model dispatch. It can add `evals/output-check.sh` for a deterministic check of each
 actual output. The shared runner caps a failed output check at 4. Both files must be
-executable, or the runner stops with an error. These checks add evidence and never replace
-tier execution.
+executable, or the runner stops with an error. The runner gives `preflight.sh` the selected
+candidate as its first argument. It exports the absolute `CASES_FILE` path. These checks add
+evidence and never replace tier execution.
 
 After grading BOTH slices in the plain (no-flag) form (candidate or incumbent, accepted
 or rejected), append one line PER TIER TESTED to `evals/frontier.jsonl` and write the

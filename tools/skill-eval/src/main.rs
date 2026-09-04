@@ -865,6 +865,16 @@ fn run(mut settings: Settings) -> Result<(), String> {
     let rubric = fs::read_to_string(&rubric_path)
         .map_err(|error| format!("cannot read {}: {error}", rubric_path.display()))?;
     let cases = load_cases(&settings.cases_file)?;
+    let mut case_ids = BTreeSet::new();
+    for case in &cases {
+        if !case_ids.insert(&case.id) {
+            return Err(format!(
+                "{} has duplicate case id {}",
+                settings.cases_file.display(),
+                case.id
+            ));
+        }
+    }
     if !cases.iter().any(|case| !case.is_holdout) {
         return Err(format!(
             "{} has no non-holdout cases",
@@ -1268,7 +1278,7 @@ print output-without-attribution
 
     #[test]
     fn cases_require_explicit_nonholdout_and_holdout_slices() {
-        let (_temp, settings, eval_dir) = fixture("case-slices", FAKE);
+        let (_temp, settings, _eval_dir) = fixture("case-slices", FAKE);
         fs::write(
             &settings.cases_file,
             "{\"id\":\"n1\",\"input\":\"x\",\"expect\":\"y\"}\n",
@@ -1277,7 +1287,7 @@ print output-without-attribution
         let error = run(settings).unwrap_err();
         assert!(error.contains("missing field `holdout`"));
 
-        let (_temp, settings, _eval_dir) = fixture("missing-holdout", FAKE);
+        let (_temp, settings, eval_dir) = fixture("missing-holdout", FAKE);
         fs::write(
             &settings.cases_file,
             "{\"id\":\"n1\",\"input\":\"x\",\"expect\":\"y\",\"holdout\":false}\n",
@@ -1286,6 +1296,15 @@ print output-without-attribution
         let error = run(settings).unwrap_err();
         assert!(error.contains("has no holdout cases"));
         assert!(!eval_dir.join("frontier.jsonl").exists());
+
+        let (_temp, settings, _eval_dir) = fixture("duplicate-id", FAKE);
+        fs::write(
+            &settings.cases_file,
+            "{\"id\":\"same\",\"input\":\"x\",\"expect\":\"y\",\"holdout\":false}\n{\"id\":\"same\",\"input\":\"h\",\"expect\":\"y\",\"holdout\":true}\n",
+        )
+        .unwrap();
+        let error = run(settings).unwrap_err();
+        assert!(error.contains("duplicate case id same"));
     }
 
     #[test]
