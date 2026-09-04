@@ -68,13 +68,22 @@ impl ModelOverrides {
             .get("providers")
             .and_then(serde_json::Value::as_object)
             .ok_or_else(|| format!("{}: providers must be an object", path.display()))?;
-        let models = providers
-            .iter()
-            .filter_map(|(provider, value)| {
-                let overrides = value.get("modelOverrides")?.as_object()?;
-                Some((provider.clone(), overrides.keys().cloned().collect()))
-            })
-            .collect();
+        let mut models = BTreeMap::new();
+        for (provider, value) in providers {
+            let provider_config = value.as_object().ok_or_else(|| {
+                format!("{}: provider {provider} must be an object", path.display())
+            })?;
+            let Some(overrides) = provider_config.get("modelOverrides") else {
+                continue;
+            };
+            let overrides = overrides.as_object().ok_or_else(|| {
+                format!(
+                    "{}: provider modelOverrides must be an object",
+                    path.display()
+                )
+            })?;
+            models.insert(provider.clone(), overrides.keys().cloned().collect());
+        }
         Ok(Self { models })
     }
 
@@ -121,7 +130,11 @@ pub fn unknown_model_overrides(overrides: &ModelOverrides, registry: &Registry) 
     overrides
         .model_ids()
         .filter(|(provider, model)| {
-            registry.models.contains_key(*provider) && !registry.contains(provider, model)
+            registry
+                .models
+                .get(*provider)
+                .is_some_and(|models| !models.is_empty())
+                && !registry.contains(provider, model)
         })
         .map(|(provider, model)| format!("{provider}/{model}"))
         .collect()
@@ -180,19 +193,14 @@ fn is_newer_model<'a>(candidate: &str, tiered: impl Iterator<Item = &'a str>) ->
         .filter(|model| model_family(model) == candidate_family)
         .map(|model| (model_variant(model), version(model)))
         .collect::<Vec<_>>();
-    let is_new_major = comparable
+    let same_variant = comparable
         .iter()
-        .filter_map(|(_, version)| version.first())
-        .max()
-        .zip(candidate_version.first())
-        .is_some_and(|(latest, candidate)| candidate > latest);
+        .filter(|(variant, _)| variant == &candidate_variant)
+        .map(|(_, version)| version)
+        .max();
+    let latest = same_variant.or_else(|| comparable.iter().map(|(_, version)| version).max());
     !is_economy_variant(&candidate_variant)
-        && (is_new_major
-            || comparable
-                .iter()
-                .map(|(_, version)| version)
-                .max()
-                .is_some_and(|latest| &candidate_version > latest))
+        && latest.is_some_and(|latest| &candidate_version > latest)
 }
 
 fn is_economy_variant(variant: &str) -> bool {
@@ -350,11 +358,39 @@ mod tests {
     }
 
     #[test]
+    fn malformed_provider_overrides_are_an_error() {
+        let directory = test_dir("malformed-provider-overrides");
+        let path = write_overrides(
+            &directory,
+            r#"{"providers":{"anthropic":{"modelOverrides":["claude-opus-5"]}}}"#,
+        );
+        assert!(ModelOverrides::load(&path).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn overrides_for_an_unavailable_provider_are_skipped() {
         let directory = test_dir("unavailable-provider-override");
         let registry = Registry::load(&write_registry(
             &directory,
             r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]}}"#,
+        ))
+        .unwrap();
+        let overrides = ModelOverrides::load(&write_overrides(
+            &directory,
+            r#"{"providers":{"openrouter":{"modelOverrides":{"vendor/model":{}}}}}"#,
+        ))
+        .unwrap();
+        assert!(unknown_model_overrides(&overrides, &registry).is_empty());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn overrides_for_a_provider_with_no_models_are_skipped() {
+        let directory = test_dir("empty-provider-override");
+        let registry = Registry::load(&write_registry(
+            &directory,
+            r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]},"openrouter":{"models":[]}}"#,
         ))
         .unwrap();
         let overrides = ModelOverrides::load(&write_overrides(
@@ -437,6 +473,28 @@ mod tests {
         assert_eq!(
             unreferenced_newer(&tiers, &registry),
             vec!["openai-codex/gpt-5.7-nova"]
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unreferenced_newer_compares_an_existing_variant_separately() {
+        let directory = test_dir("new-existing-variant");
+        let path = directory.join("variant-tiers.json");
+        std::fs::write(
+            &path,
+            r#"{"tiers":{"T3":{"pi":{"model":"openai-codex/gpt-5.6-sol","thinking":"medium"},"fallbacks":[{"model":"openai-codex/gpt-5.3-codex-spark","thinking":"medium"}]}}}"#,
+        )
+        .unwrap();
+        let tiers = TiersFile::load(&path).unwrap();
+        let registry = Registry::load(&write_registry(
+            &directory,
+            r#"{"openai-codex":{"models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.3-codex-spark"},{"id":"gpt-5.5-codex-spark"}]}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            unreferenced_newer(&tiers, &registry),
+            vec!["openai-codex/gpt-5.5-codex-spark"]
         );
         std::fs::remove_dir_all(directory).unwrap();
     }

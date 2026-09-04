@@ -18,8 +18,8 @@ Exhaustion makes the complete tier unavailable.
 The `--verify-registry` mode checks each configured tier entry against the model records in
 Pi's local registry. It also reports stale overrides for available providers. The tool
 looks for `models.json` beside the supplied tiers file. Use `--models-file` when the check
-needs another file. The tool reports a missing overrides file as a standard-error
-advisory. It rejects a malformed overrides file.
+needs another file. The tool reports a missing default overrides file as a standard-error
+advisory. It rejects a missing explicit file or a malformed file.
 
 This mode does not dispatch a model or write a file. The tool never derives a model
 identifier from another source.
@@ -38,8 +38,8 @@ cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
 
 Exit 0 means every tier entry resolves in the registry. Exit 1 names each missing tier
 entry. Exit 2 means that a supplied input is invalid, or that the tiers file or registry is
-unavailable. The command reports missing overrides and newer unreferenced family members
-as advisories on standard error. Advisories never change its exit code.
+unavailable. The command reports missing default overrides and newer unreferenced family
+members as advisories on standard error. Advisories never change its exit code.
 
 ## tiers
 

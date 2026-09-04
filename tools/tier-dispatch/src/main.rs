@@ -36,6 +36,7 @@ struct Args {
     is_verify_registry: bool,
     registry_file: Option<PathBuf>,
     models_file: Option<PathBuf>,
+    models_file_explicit: bool,
 }
 
 fn default_registry_file() -> Result<PathBuf, String> {
@@ -103,6 +104,7 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
     } else {
         registry_file
     };
+    let models_file_explicit = models_file.is_some();
     let models_file = if is_verify_registry {
         Some(models_file.unwrap_or_else(|| tiers_file.with_file_name("models.json")))
     } else {
@@ -117,6 +119,7 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         is_verify_registry,
         registry_file,
         models_file,
+        models_file_explicit,
     })
 }
 
@@ -151,6 +154,12 @@ fn verify_registry(args: &Args) -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+    } else if args.models_file_explicit {
+        eprintln!(
+            "tier-dispatch: supplied model overrides file is unavailable: {}",
+            models_file.display()
+        );
+        return ExitCode::from(2);
     } else {
         eprintln!(
             "tier-dispatch: advisory: model overrides unavailable: {}",
