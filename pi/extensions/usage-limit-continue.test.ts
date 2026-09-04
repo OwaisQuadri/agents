@@ -219,19 +219,6 @@ test("earliestAvailable: nothing abandoned yields null, so the old single-reset 
 	});
 });
 
-test("earliestAvailable: expired reset times do not schedule a resume in the past", () => {
-	assert.deepEqual(
-		earliestAvailable(
-			{
-				"anthropic/claude-fable-5": { resetAtMs: NOW - 1, thinking: "medium" },
-				"anthropic/claude-opus-5": { resetAtMs: NOW + 1, thinking: "high" },
-			},
-			NOW,
-		),
-		{ model: "anthropic/claude-opus-5", resetAtMs: NOW + 1, thinking: "high" },
-	);
-});
-
 test("scheduleResume: writes a pending-job record and refuses a duplicate schedule for the same session", async () => {
 	// A resetAt an hour out so the detached `sleep && pi --session ...` job this spawns
 	// never fires while this test (or its tmp dir cleanup) is running.
@@ -241,12 +228,6 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 	process.env.HOME = stateHome;
 	try {
 		const sessionFile = join(stateHome, "session.jsonl");
-		const pastSessionFile = join(stateHome, "past-session.jsonl");
-		const nowMs = Date.now();
-		const immediate = await scheduleResume(pastSessionFile, nowMs - 1, nowMs);
-		assert.ok(immediate && immediate.resetAtMs > nowMs);
-		assert.equal(await scheduleResume(pastSessionFile, nowMs - 1, nowMs), null);
-		assert.equal(await scheduleResume(pastSessionFile, nowMs - 1, nowMs + 2000), null);
 		const first = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS, Date.now());
 		assert.notEqual(first, null);
 
@@ -256,18 +237,6 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 
 		const second = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS + 1000, Date.now());
 		assert.equal(second, null);
-		for (const pid of [immediate.pid, first?.pid]) {
-			if (!pid || pid <= 0) {
-				continue;
-			}
-			try {
-				process.kill(pid);
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
-					throw error;
-				}
-			}
-		}
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
@@ -431,172 +400,6 @@ test("handleMessageEnd: an interactive session switches models but leaves the re
 		await handleMessageEnd(message as any, ctx as any, pi as any);
 
 		assert.equal(sentMessages.length, 0, "a tui session decides for itself whether to continue");
-	} finally {
-		process.env.HOME = originalHome;
-		await rm(stateHome, { recursive: true, force: true });
-	}
-});
-
-test("handleMessageEnd: a manual switch to another tier primary rehomes unless the fallback selected it", async () => {
-	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
-	const originalHome = process.env.HOME;
-	process.env.HOME = stateHome;
-	try {
-		const settingsDir = join(stateHome, ".pi", "agent");
-		await mkdir(settingsDir, { recursive: true });
-		await writeFile(
-			join(settingsDir, "settings.json"),
-			JSON.stringify({
-				modelTierFallbacks: {
-					T1: {
-						"provider-a/start": { model: "provider-b/middle", thinking: "low" },
-						"provider-b/middle": { model: "provider-c/shared", thinking: "low" },
-					},
-					T2: {},
-					T4: { "provider-c/shared": { model: "provider-d/right", thinking: "medium" } },
-				},
-				tierPrimaries: {
-					T1: { model: "provider-a/start", thinking: "low" },
-					T2: { model: "provider-e/lower", thinking: "low" },
-					T4: { model: "provider-c/shared", thinking: "medium" },
-				},
-				tierClimb: { T1: "T2" },
-			}),
-		);
-
-		const switches: string[] = [];
-		const state = { model: "provider-a/start" };
-		const sessionManager = { getSessionFile: () => undefined };
-		const context = () => {
-			const [provider, ...id] = state.model.split("/");
-			return {
-				mode: "tui",
-				model: { provider, id: id.join("/"), cost: { input: 0, output: 0, cacheRead: 0 } },
-				modelRegistry: {
-					find: (nextProvider: string, nextId: string) => ({
-						provider: nextProvider,
-						id: nextId,
-						cost: { input: 0, output: 0, cacheRead: 0 },
-					}),
-				},
-				ui: { notify: () => {} },
-				sessionManager,
-			};
-		};
-		const pi = {
-			setModel: async (model: { provider: string; id: string }) => {
-				state.model = `${model.provider}/${model.id}`;
-				switches.push(state.model);
-				return true;
-			},
-			setThinkingLevel: () => {},
-			getThinkingLevel: () => "low",
-			sendUserMessage: () => {},
-		};
-		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
-
-		await handleMessageEnd(error, context() as never, pi as never);
-		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, context() as never, pi as never);
-		state.model = "provider-c/shared";
-		await handleMessageEnd(error, context() as never, pi as never);
-		assert.deepEqual(switches, ["provider-b/middle", "provider-d/right"]);
-
-		state.model = "provider-a/start";
-		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, context() as never, pi as never);
-		await handleMessageEnd(error, context() as never, pi as never);
-		await handleMessageEnd(error, context() as never, pi as never);
-		await handleMessageEnd(error, context() as never, pi as never);
-		assert.equal(switches.at(-1), "provider-e/lower");
-	} finally {
-		process.env.HOME = originalHome;
-		await rm(stateHome, { recursive: true, force: true });
-	}
-});
-
-test("handleMessageEnd: recreated contexts preserve live limits across a tier climb", async () => {
-	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
-	const originalHome = process.env.HOME;
-	process.env.HOME = stateHome;
-	try {
-		const settingsDir = join(stateHome, ".pi", "agent");
-		await mkdir(settingsDir, { recursive: true });
-		await writeFile(
-			join(settingsDir, "settings.json"),
-			JSON.stringify({
-				modelTierFallbacks: {
-					T5: {
-						"provider-a/new": { model: "provider-b/sol", thinking: "high" },
-						"provider-b/sol": { model: "provider-a/old", thinking: "medium" },
-					},
-					T4: {
-						"provider-a/opus": { model: "provider-b/sol", thinking: "medium" },
-						"provider-b/sol": { model: "provider-a/opus", thinking: "medium" },
-					},
-				},
-				tierPrimaries: {
-					T5: { model: "provider-a/new", thinking: "medium" },
-					T4: { model: "provider-a/opus", thinking: "medium" },
-				},
-				tierClimb: { T5: "T4" },
-			}),
-		);
-
-		const switches: string[] = [];
-		const ctx = {
-			mode: "tui",
-			model: { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } },
-			modelRegistry: {
-				find: (provider: string, id: string) => ({ provider, id, cost: { input: 0, output: 0, cacheRead: 0 } }),
-			},
-			ui: { notify: () => {} },
-			sessionManager: { getSessionFile: () => null },
-		};
-		const pi = {
-			setModel: async (model: { provider: string; id: string }) => {
-				ctx.model = { ...model, cost: { input: 0, output: 0, cacheRead: 0 } };
-				switches.push(`${model.provider}/${model.id}`);
-				return true;
-			},
-			setThinkingLevel: () => {},
-			getThinkingLevel: () => "medium",
-			sendUserMessage: () => {},
-		};
-		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached; resets in 1s" };
-		const eventContext = () => ({ ...ctx, sessionManager: ctx.sessionManager });
-
-		for (let index = 0; index < 4; index += 1) {
-			await handleMessageEnd(error, eventContext() as never, pi as never);
-			await handleMessageEnd({ role: "user" }, eventContext() as never, pi as never);
-			await handleMessageEnd({ role: "toolResult" }, eventContext() as never, pi as never);
-			if (index === 0) {
-				await handleMessageEnd({ role: "assistant", stopReason: "aborted" }, eventContext() as never, pi as never);
-				await handleMessageEnd({ role: "assistant", stopReason: "toolUse" }, eventContext() as never, pi as never);
-			}
-			if (index === 1) {
-				await handleMessageEnd({ role: "assistant", stopReason: "error" }, eventContext() as never, pi as never);
-			}
-		}
-
-		assert.deepEqual(switches, ["provider-b/sol", "provider-a/old", "provider-a/opus"]);
-
-		ctx.model = { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } };
-		await handleMessageEnd(error, eventContext() as never, pi as never);
-		assert.equal(switches.length, 3);
-
-		await new Promise((resolve) => setTimeout(resolve, 1100));
-		await handleMessageEnd(error, eventContext() as never, pi as never);
-		assert.equal(switches.at(-1), "provider-b/sol");
-
-		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
-		ctx.model = { provider: "provider-b", id: "sol", cost: { input: 0, output: 0, cacheRead: 0 } };
-		await handleMessageEnd(error, eventContext() as never, pi as never);
-		assert.equal(switches.at(-1), "provider-a/old");
-
-		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
-		ctx.model = { provider: "provider-c", id: "manual", cost: { input: 0, output: 0, cacheRead: 0 } };
-		const switchCount = switches.length;
-		await handleMessageEnd(error, eventContext() as never, pi as never);
-		assert.equal(switches.length, switchCount);
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
