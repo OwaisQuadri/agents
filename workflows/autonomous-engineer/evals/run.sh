@@ -42,6 +42,8 @@ checks=(
   "closingIssuesReferences"
   "workflow("
   "stopBeforeDraft"
+  "verificationCheckout"
+  "git worktree add --detach"
   "resume-draft"
   "<!-- autonomous-engineer repairs=\${state.repairs} -->"
   "Closes #\${task.id}"

@@ -72,6 +72,10 @@ if (taskMarkers.includes('manual-only')) {
 const taskReference = task.backend === 'github' ? `#${task.id}` : `${task.id} (${task.url})`
 const closingReference = task.backend === 'github' ? `Closes #${task.id}` : `Tracks ${task.url}`
 
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`
+}
+
 async function tracked(prompt, options, isCleanup = false) {
   const cap = isCleanup ? maxAgents : maxAgents - 1
   if (state.expected >= cap) return { control: 'agent-cap' }
@@ -277,6 +281,7 @@ if (!implementation || implementation.control !== 'draft-opened') return result(
 state.pr = implementation.pr || state.pr
 state.branch = implementation.branch || state.branch
 state.commit = implementation.commit || state.commit
+if (!state.pr || !state.branch || !state.commit) return result('failed', state, 'implementation-reference-missing')
 state.changedPaths = [...new Set([...state.changedPaths, ...implementation.changed_paths])]
 
 const draftSafety = await safety('after-draft', plan.planned_files)
@@ -307,12 +312,22 @@ const VERIFY_SCHEMA = {
   required: ['verdict', 'is_pass', 'evidence'],
 }
 
+function verificationCheckout() {
+  const key = String(state.commit).replaceAll(/[^a-zA-Z0-9._-]/g, '_')
+  const directory = `${repo}/.context/autonomous-engineer-${task.id}/verify-${key}`
+  const command = `cd ${shellQuote(repo)} && git fetch origin ${shellQuote(state.branch)} && git cat-file -e ${shellQuote(`${state.commit}^{commit}`)} && { test -e ${shellQuote(`${directory}/.git`)} || git worktree add --detach ${shellQuote(directory)} ${shellQuote(state.commit)}; } && test "$(git -C ${shellQuote(directory)} rev-parse HEAD)" = ${shellQuote(state.commit)} && cd ${shellQuote(directory)}`
+  return { directory, command }
+}
+
 async function verifyDraft() {
+  const checkout = verificationCheckout()
+  const verifyCommand = `${checkout.command} && ${plan.verify_command}`
+  const workProductPaths = state.changedPaths.map(path => `${checkout.directory}/${path}`)
   const verifyPrompt = plan.verification_kind === 'anchor'
-    ? `work_product_paths: ${JSON.stringify(state.changedPaths)}\nverify_command: ${plan.verify_command}\nrubric: ${JSON.stringify(plan.rubric)}`
+    ? `work_product_paths: ${JSON.stringify(workProductPaths)}\nverify_command: ${verifyCommand}\nrubric: ${JSON.stringify(plan.rubric)}`
     : plan.verification_kind === 'spec'
-      ? `mode: confirm\ndrive_matrix: ${plan.drive_matrix}\ncases: ${plan.test_cases}\nscratch_dir: .context/autonomous-engineer-${task.id}/scratch`
-      : `app_id: infer only from ${repo}\nflow_objective: ${task.title}\nflows_dir: .maestro`
+      ? `mode: confirm\ndrive_matrix: setup_command=${checkout.command}; working_directory=${checkout.directory}; ${plan.drive_matrix}\ncases: ${plan.test_cases}\nscratch_dir: ${checkout.directory}/.context/scratch`
+      : `app_id: infer only from ${checkout.directory}\nflow_objective: ${task.title}\nflows_dir: ${checkout.directory}/.maestro`
   const verifierType = plan.verification_kind === 'anchor' ? 'anchor-verifier' : plan.verification_kind === 'spec' ? 'spec-tester' : 'maestro-tester'
   const [verification, review] = await parallel([
     () => tracked(verifyPrompt, { label: `verify-${state.repairs}`, phase: 'Verify', agentType: verifierType, model: models.T3, schema: VERIFY_SCHEMA }),
@@ -355,7 +370,8 @@ while (!verification.is_pass && state.repairs < maxRepairs) {
 if (!verification.is_pass) return result('repair-incomplete', state, 'repair-cap')
 
 phase('Safety')
-const readySafety = await safety('verified-ready', plan.planned_files, plan.verify_command)
+const finalCheckout = verificationCheckout()
+const readySafety = await safety('verified-ready', plan.planned_files, `${finalCheckout.command} && ${plan.verify_command}`)
 if (readySafety.control !== 'clear' || !readySafety.is_remote_draft || !readySafety.is_verified) {
   return result('failed', state, readySafety.control)
 }
