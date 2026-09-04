@@ -35,7 +35,7 @@ Layout shift · Font stack · Aspect ratio · Skeleton · Tabular nums · Variab
 Easing · Ease-out · Ease-in · Ease-in-out† · Duration · Stagger · Spring† · Choreography†
 
 ## Slow · sluggish · laggy · unresponsive-feeling
-Duration · Optimistic update · Skeleton · Skeleton shimmer · Spinner · Debounce · GPU compositing†
+Doherty threshold · Duration · Optimistic update · Skeleton · Skeleton shimmer · Spinner · Debounce · GPU compositing†
 
 ## Hard to read · dense · tiring · wall of text
 Line length · Leading · Type scale · Contrast ratio · x-height · Scannability†
@@ -43,8 +43,17 @@ Line length · Leading · Type scale · Contrast ratio · x-height · Scannabili
 ## Lost · hard to find · confusing · where am I
 Navigation · Hierarchy · Mental model · Wayfinding† · Signpost† · Breadcrumb · Search as escape hatch† · Labelling†
 
-## Hard to hit · doesn't feel clickable · dead-feeling controls
-Touch target · Affordance · Hover state · Active state · Cursor · Disabled state
+## Hard to hit · target is tiny · action is too far away · too much pointer travel · dead-feeling controls
+Fitts’s law · Minimise target distance · Touch target · Affordance · Hover state · Active state · Cursor · Disabled state
+
+## Too many choices · decision takes too long · menu is overwhelming · can't choose
+Hick’s law · Progressive disclosure · Hierarchy
+
+## Too much to remember · keep forgetting the options · holding too much in my head
+Miller’s law · Progressive disclosure · Hierarchy
+
+## Works differently from every other app · not where I expect it · unfamiliar controls
+Jakob’s law · Mental model · Navigation · Affordance
 
 ## Broken-looking text · weird gaps · dangling word · cut off
 Kerning · Optical kerning · Widow · Orphan · Text overflow · Hyphenation · Ligature · Truncation strategy†
@@ -154,11 +163,38 @@ Navigation menu · Sidebar · Tabs · Breadcrumb · Command menu · Navigation
 ## Too many items · list never ends · can't fit them all on screen
 Pagination · Carousel · Overflow
 
-## Runs together · can't tell what belongs together · one big blob
-Card · Separator · Gap · Negative space · Grid
+## Runs together · can't tell what belongs together · one big blob · these should look related
+Law of proximity · Law of similarity · Law of uniform connectedness · Card · Separator · Gap · Negative space · Grid
+
+## Shape is ambiguous · picture looks too complex · can't see the simple pattern
+Law of Prägnanz · Hierarchy · Negative space
+
+## Nothing stands out · important item blends in · all options look the same
+Von Restorff effect · Hierarchy · Contrast ratio · Weight
+
+## People forget the middle · first and last items get remembered · list order affects recall
+Serial position effect · Hierarchy · Navigation
+
+## The ending ruined the experience · one bad moment defines the whole flow · make the finish memorable
+Peak-end rule · Error state · Success message† · Onboarding
 
 ## Is it stuck · how much longer · how many steps left
 Progress · Stepper · Spinner
+
+## Keep thinking about unfinished work · remember where I stopped · help me return to a task
+Zeigarnik effect · Progress · Stepper
+
+## Form rejects reasonable input · accept different formats · output changes every time
+Postel’s law · Inline error · Error message · Placeholder
+
+## Simplify it · complexity keeps moving around · user has to handle every edge case
+Tesler’s law · Occam’s razor · Progressive disclosure · Mental model
+
+## Task keeps growing · work fills every deadline · process takes all available time
+Parkinson’s law · Progressive disclosure · Stepper
+
+## Small part causes most results · focus on the highest-impact work · which few changes matter most
+Pareto principle · Funnel · Conversion · Retention
 
 ## Too flat · want it tactile · like a real object
 Skeuomorphism · Blending · Visual language
