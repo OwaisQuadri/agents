@@ -412,6 +412,7 @@ async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, hop: TierHop): 
 type FallbackState = {
 	sessionFile: string | undefined;
 	tier?: string;
+	routedModel?: string;
 	attempted: Set<string>;
 	lastProviderResponse?: { status: number; headers: Record<string, string> };
 	abandoned: Record<string, { resetAtMs: number; thinking: ThinkingLevel }>;
@@ -454,7 +455,13 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 	// (manual /model switch) gets no fallback, same as a model outside the tier file.
 	const state = fallbackState(ctx);
 	const qualifiedActive = `${active.provider}/${active.id}`;
-	let tier = state.tier ?? resolveHomeTier(primaries, active.provider, active.id);
+	const homeTier = resolveHomeTier(primaries, active.provider, active.id);
+	let tier = state.tier ?? homeTier;
+	if (tier && state.routedModel !== qualifiedActive && homeTier && homeTier !== tier) {
+		tier = homeTier;
+		state.tier = tier;
+		state.routedModel = undefined;
+	}
 	if (tier) {
 		const map = tiered[tier] ?? {};
 		const belongsToTier =
@@ -462,8 +469,9 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 			qualifiedActive in map ||
 			Object.values(map).some((candidate) => candidate.model === qualifiedActive);
 		if (!belongsToTier) {
-			tier = resolveHomeTier(primaries, active.provider, active.id);
+			tier = homeTier;
 			state.tier = tier ?? undefined;
+			state.routedModel = undefined;
 		}
 	}
 	if (!tier) {
@@ -489,6 +497,7 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 		return null;
 	}
 	state.tier = tier;
+	state.routedModel = hop.model;
 	return hop.model;
 }
 

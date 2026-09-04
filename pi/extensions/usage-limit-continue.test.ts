@@ -421,6 +421,82 @@ test("handleMessageEnd: an interactive session switches models but leaves the re
 	}
 });
 
+test("handleMessageEnd: a manual switch to another tier primary rehomes unless the fallback selected it", async () => {
+	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
+	const originalHome = process.env.HOME;
+	process.env.HOME = stateHome;
+	try {
+		const settingsDir = join(stateHome, ".pi", "agent");
+		await mkdir(settingsDir, { recursive: true });
+		await writeFile(
+			join(settingsDir, "settings.json"),
+			JSON.stringify({
+				modelTierFallbacks: {
+					T1: {
+						"provider-a/start": { model: "provider-b/middle", thinking: "low" },
+						"provider-b/middle": { model: "provider-c/shared", thinking: "low" },
+					},
+					T2: {},
+					T4: { "provider-c/shared": { model: "provider-d/right", thinking: "medium" } },
+				},
+				tierPrimaries: {
+					T1: { model: "provider-a/start", thinking: "low" },
+					T2: { model: "provider-e/lower", thinking: "low" },
+					T4: { model: "provider-c/shared", thinking: "medium" },
+				},
+				tierClimb: { T1: "T2" },
+			}),
+		);
+
+		const switches: string[] = [];
+		const state = { model: "provider-a/start" };
+		const sessionManager = { getSessionFile: () => undefined };
+		const context = () => {
+			const [provider, ...id] = state.model.split("/");
+			return {
+				mode: "tui",
+				model: { provider, id: id.join("/"), cost: { input: 0, output: 0, cacheRead: 0 } },
+				modelRegistry: {
+					find: (nextProvider: string, nextId: string) => ({
+						provider: nextProvider,
+						id: nextId,
+						cost: { input: 0, output: 0, cacheRead: 0 },
+					}),
+				},
+				ui: { notify: () => {} },
+				sessionManager,
+			};
+		};
+		const pi = {
+			setModel: async (model: { provider: string; id: string }) => {
+				state.model = `${model.provider}/${model.id}`;
+				switches.push(state.model);
+				return true;
+			},
+			setThinkingLevel: () => {},
+			getThinkingLevel: () => "low",
+			sendUserMessage: () => {},
+		};
+		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
+
+		await handleMessageEnd(error, context() as never, pi as never);
+		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, context() as never, pi as never);
+		state.model = "provider-c/shared";
+		await handleMessageEnd(error, context() as never, pi as never);
+		assert.deepEqual(switches, ["provider-b/middle", "provider-d/right"]);
+
+		state.model = "provider-a/start";
+		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, context() as never, pi as never);
+		await handleMessageEnd(error, context() as never, pi as never);
+		await handleMessageEnd(error, context() as never, pi as never);
+		await handleMessageEnd(error, context() as never, pi as never);
+		assert.equal(switches.at(-1), "provider-e/lower");
+	} finally {
+		process.env.HOME = originalHome;
+		await rm(stateHome, { recursive: true, force: true });
+	}
+});
+
 test("handleMessageEnd: a climb skips models already tried in the exhausted tier", async () => {
 	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
 	const originalHome = process.env.HOME;
