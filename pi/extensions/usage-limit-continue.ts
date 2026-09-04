@@ -276,6 +276,7 @@ export function resolveHomeTier(primaries: Record<string, TierHop>, provider: st
  * so a climb-back restores exactly how the session was running, not a tier's current default.
  * @param resets Abandoned models this session, keyed by `provider/id`, valued by reset epoch
  * ms and the thinking level active on that model at abandon time.
+ * @param nowMs Entries at or before this epoch are ignored.
  * @returns The soonest-returning model, its reset, and its thinking level, or null when
  * nothing was abandoned.
  */
@@ -369,16 +370,14 @@ function formatWait(waitMs: number): string {
  * @returns The scheduled job, or null if a job for this session is already pending.
  */
 export async function scheduleResume(sessionFile: string, resetAtMs: number, nowMs: number): Promise<PendingJob | null> {
-	if (resetAtMs <= nowMs) {
-		return null;
-	}
 	const store = await loadPendingStore();
 	const existing = store[sessionFile];
 	if (existing && existing.resetAtMs >= nowMs) {
 		return null;
 	}
 
-	const waitMs = Math.min(Math.max(resetAtMs - nowMs, 0), MAX_SCHEDULABLE_WAIT_MS);
+	const effectiveResetAtMs = Math.max(resetAtMs, nowMs + 1000);
+	const waitMs = Math.min(effectiveResetAtMs - nowMs, MAX_SCHEDULABLE_WAIT_MS);
 	const piPath = (await resolveExecutableOnPath("pi", process.env.PATH ?? "")) ?? "pi";
 	const waitSeconds = Math.ceil(waitMs / 1000);
 	const command = `sleep ${waitSeconds} && '${piPath}' --session '${sessionFile}' --print '${RESUME_PROMPT}' >> '${logFile()}' 2>&1`;
@@ -390,7 +389,7 @@ export async function scheduleResume(sessionFile: string, resetAtMs: number, now
 	});
 	child.unref();
 
-	const job: PendingJob = { sessionFile, resetAtMs, scheduledAtMs: nowMs, pid: child.pid ?? -1 };
+	const job: PendingJob = { sessionFile, resetAtMs: effectiveResetAtMs, scheduledAtMs: nowMs, pid: child.pid ?? -1 };
 	store[sessionFile] = job;
 	await savePendingStore(store);
 	return job;
@@ -530,10 +529,16 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	logDiagnostic(`detected on ${ctx.model?.provider}/${ctx.model?.id} (mode=${ctx.mode}): ${plan.matchedText.slice(0, 200)}`);
 
 	const active = ctx.model as ModelLike | undefined;
+	const abandoned = state.abandoned;
+	for (const [model, entry] of Object.entries(abandoned)) {
+		if (entry.resetAtMs <= nowMs) {
+			delete abandoned[model];
+			state.attempted.delete(model);
+		}
+	}
 	if (active?.id) {
 		state.attempted.add(`${active.provider}/${active.id}`);
 	}
-	const abandoned = state.abandoned;
 	if (active?.id && plan.resetAtMs !== null && plan.resetAtMs > nowMs) {
 		abandoned[`${active.provider}/${active.id}`] = { resetAtMs: plan.resetAtMs, thinking: pi.getThinkingLevel() };
 	}
@@ -555,7 +560,7 @@ export async function handleMessageEnd(message: AssistantMessageLike, ctx: Exten
 	);
 
 	const returning = earliestAvailable(abandoned, nowMs);
-	const resumeAtMs = returning?.resetAtMs ?? (plan.resetAtMs !== null && plan.resetAtMs > nowMs ? plan.resetAtMs : null);
+	const resumeAtMs = returning?.resetAtMs ?? plan.resetAtMs;
 	if (resumeAtMs === null) {
 		ctx.ui.notify("Usage limit hit, but the reset time could not be parsed. Not scheduling an automatic continue.", "warning");
 		return;

@@ -241,8 +241,11 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 	process.env.HOME = stateHome;
 	try {
 		const sessionFile = join(stateHome, "session.jsonl");
+		const pastSessionFile = join(stateHome, "past-session.jsonl");
 		const nowMs = Date.now();
-		assert.equal(await scheduleResume(sessionFile, nowMs - 1, nowMs), null);
+		const immediate = await scheduleResume(pastSessionFile, nowMs - 1, nowMs);
+		assert.ok(immediate && immediate.resetAtMs > nowMs);
+		assert.equal(await scheduleResume(pastSessionFile, nowMs - 1, nowMs), null);
 		const first = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS, Date.now());
 		assert.notEqual(first, null);
 
@@ -252,6 +255,12 @@ test("scheduleResume: writes a pending-job record and refuses a duplicate schedu
 
 		const second = await scheduleResume(sessionFile, Date.now() + FAR_FUTURE_MS + 1000, Date.now());
 		assert.equal(second, null);
+		if (immediate.pid > 0) {
+			process.kill(immediate.pid);
+		}
+		if (first?.pid && first.pid > 0) {
+			process.kill(first.pid);
+		}
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
@@ -497,7 +506,7 @@ test("handleMessageEnd: a manual switch to another tier primary rehomes unless t
 	}
 });
 
-test("handleMessageEnd: a climb skips models already tried in the exhausted tier", async () => {
+test("handleMessageEnd: recreated contexts preserve live limits across a tier climb", async () => {
 	const stateHome = await mkdtemp(join(tmpdir(), "usage-limit-continue-"));
 	const originalHome = process.env.HOME;
 	process.env.HOME = stateHome;
@@ -545,7 +554,7 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 			getThinkingLevel: () => "medium",
 			sendUserMessage: () => {},
 		};
-		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached" };
+		const error = { role: "assistant", stopReason: "error", errorMessage: "usage limit reached; resets in 1s" };
 		const eventContext = () => ({ ...ctx, sessionManager: ctx.sessionManager });
 
 		for (let index = 0; index < 4; index += 1) {
@@ -565,6 +574,10 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 		ctx.model = { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } };
 		await handleMessageEnd(error, eventContext() as never, pi as never);
 		assert.equal(switches.length, 3);
+
+		await new Promise((resolve) => setTimeout(resolve, 1100));
+		await handleMessageEnd(error, eventContext() as never, pi as never);
+		assert.equal(switches.at(-1), "provider-b/sol");
 
 		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
 		ctx.model = { provider: "provider-b", id: "sol", cost: { input: 0, output: 0, cacheRead: 0 } };
