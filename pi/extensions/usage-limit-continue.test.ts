@@ -438,8 +438,7 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 					},
 					T4: {
 						"provider-a/opus": { model: "provider-b/sol", thinking: "medium" },
-						"provider-b/sol": { model: "provider-a/new", thinking: "low" },
-						"provider-a/new": { model: "provider-a/opus", thinking: "medium" },
+						"provider-b/sol": { model: "provider-a/opus", thinking: "medium" },
 					},
 				},
 				tierPrimaries: {
@@ -487,10 +486,14 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 
 		assert.deepEqual(switches, ["provider-b/sol", "provider-a/old", "provider-a/opus"]);
 
+		ctx.model = { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } };
+		await handleMessageEnd(error, eventContext() as never, pi as never);
+		assert.equal(switches.length, 3);
+
 		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
 		ctx.model = { provider: "provider-b", id: "sol", cost: { input: 0, output: 0, cacheRead: 0 } };
 		await handleMessageEnd(error, eventContext() as never, pi as never);
-		assert.equal(switches.at(-1), "provider-a/new");
+		assert.equal(switches.at(-1), "provider-a/old");
 
 		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, eventContext() as never, pi as never);
 		ctx.model = { provider: "provider-c", id: "manual", cost: { input: 0, output: 0, cacheRead: 0 } };

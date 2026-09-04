@@ -410,7 +410,7 @@ async function switchTo(pi: ExtensionAPI, ctx: ExtensionContext, hop: TierHop): 
 // Resolved on the walk's first hop and reused after, so a model shared by two tiers
 // never re-derives a different tier mid-walk.
 type FallbackState = {
-	sessionFile: string | null;
+	sessionFile: string | undefined;
 	tier?: string;
 	attempted: Set<string>;
 	lastProviderResponse?: { status: number; headers: Record<string, string> };
@@ -464,7 +464,6 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 		if (!belongsToTier) {
 			tier = resolveHomeTier(primaries, active.provider, active.id);
 			state.tier = tier ?? undefined;
-			state.attempted.clear();
 		}
 	}
 	if (!tier) {
