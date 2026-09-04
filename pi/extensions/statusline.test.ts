@@ -161,6 +161,7 @@ function createFakeExtensionAPI(): {
 		on(event: string, handler: Handler) {
 			handlers.set(`on:${event}`, handler);
 		},
+		registerTool() {},
 	} as unknown as ExtensionAPI;
 
 	return {
@@ -562,4 +563,199 @@ test("TC-08 terminal resize updates the bar to half the new viewport width", asy
 	await invoke(api.handler("session_shutdown"), context.ctx);
 	restoreFetch();
 	restoreColumns();
+});
+
+type ToolResult = {
+	content: Array<{ type: string; text: string }>;
+	details: unknown;
+};
+
+type RegisteredTool = {
+	name: string;
+	execute: (
+		toolCallId: string,
+		params: Record<string, never>,
+		signal: AbortSignal | undefined,
+		onUpdate: undefined,
+		ctx: ExtensionContext,
+	) => Promise<ToolResult>;
+};
+
+function createQuotaAdmissionTool(): RegisteredTool {
+	let tool: RegisteredTool | undefined;
+	const pi = {
+		registerTool(value: RegisteredTool) {
+			tool = value;
+		},
+		on() {},
+	} as unknown as ExtensionAPI;
+
+	statusline(pi);
+	assert.ok(tool, "quota_admission must register at startup");
+	assert.equal(tool.name, "quota_admission");
+	return tool;
+}
+
+function anthropicUsage(usedPercent: number, resetOffsetSeconds: number) {
+	return {
+		five_hour: { utilization: usedPercent, resets_at: toIsoOffset(resetOffsetSeconds) },
+		seven_day: null,
+	};
+}
+
+function codexUsage(usedPercent: number, resetOffsetSeconds: number) {
+	return {
+		rate_limit: {
+			primary_window: {
+				used_percent: usedPercent,
+				limit_window_seconds: 18_000,
+				reset_after_seconds: resetOffsetSeconds,
+			},
+		},
+	};
+}
+
+async function executeQuotaAdmission(): Promise<ToolResult> {
+	const context = createMockContext();
+	context.setProviderAuth("anthropic", "sk-ant-oat-test-token");
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-test-id"));
+	return createQuotaAdmissionTool().execute("call", {}, undefined, undefined, context.ctx);
+}
+
+function quotaAdmissionDetails(result: ToolResult): {
+	isAdmitted: boolean;
+	providers: Record<Provider, { isFresh: boolean; usedPercent: number | null; pacePercent: number | null; reset: string | null; isEligible: boolean }>;
+} {
+	return result.details as {
+		isAdmitted: boolean;
+		providers: Record<Provider, { isFresh: boolean; usedPercent: number | null; pacePercent: number | null; reset: string | null; isEligible: boolean }>;
+	};
+}
+
+test("quota_admission admits an eligible plan", async () => {
+	let fetchCalls = 0;
+	const restoreFetch = installMockFetch(async (input) => {
+		fetchCalls += 1;
+		return requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse(anthropicUsage(50, 3_600))
+			: jsonResponse(codexUsage(95, 1_800));
+	});
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	assert.equal(fetchCalls, 2);
+	assert.equal(admission.providers.anthropic.isEligible, true);
+	assert.equal(admission.providers["openai-codex"].isEligible, false);
+	assert.equal(admission.isAdmitted, true);
+});
+
+test("quota_admission admits usage equal to pace", async () => {
+	const restoreFetch = installMockFetch(async (input) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse(anthropicUsage(95, 3_600))
+			: jsonResponse(codexUsage(90, 1_800)),
+	);
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	assert.equal(admission.providers["openai-codex"].usedPercent, admission.providers["openai-codex"].pacePercent);
+	assert.equal(admission.providers["openai-codex"].isEligible, true);
+	assert.equal(admission.isAdmitted, true);
+});
+
+test("quota_admission rejects plans when both providers are ahead of pace", async () => {
+	const restoreFetch = installMockFetch(async (input) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse(anthropicUsage(95, 3_600))
+			: jsonResponse(codexUsage(95, 1_800)),
+	);
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	assert.equal(admission.providers.anthropic.isEligible, false);
+	assert.equal(admission.providers["openai-codex"].isEligible, false);
+	assert.equal(admission.isAdmitted, false);
+});
+
+test("quota_admission fails closed when reset timestamps are missing", async () => {
+	const restoreFetch = installMockFetch(async (input) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse({ five_hour: { utilization: 100, resets_at: null }, seven_day: null })
+			: jsonResponse({
+					rate_limit: {
+						primary_window: { used_percent: 100, limit_window_seconds: 18_000 },
+					},
+				}),
+	);
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	for (const provider of ["anthropic", "openai-codex"] as const) {
+		assert.equal(admission.providers[provider].isFresh, true);
+		assert.equal(admission.providers[provider].pacePercent, null);
+		assert.equal(admission.providers[provider].reset, null);
+		assert.equal(admission.providers[provider].isEligible, false);
+	}
+	assert.equal(admission.isAdmitted, false);
+});
+
+test("quota_admission keeps a missing provider ineligible when the other admits", async () => {
+	const restoreFetch = installMockFetch(async (input) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse(anthropicUsage(50, 3_600))
+			: { ok: false, json: async () => ({}) },
+	);
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	assert.equal(admission.providers.anthropic.isFresh, true);
+	assert.equal(admission.providers["openai-codex"].isFresh, false);
+	assert.equal(admission.providers["openai-codex"].isEligible, false);
+	assert.equal(admission.isAdmitted, true);
+});
+
+test("quota_admission fails closed when both providers are missing", async () => {
+	const restoreFetch = installMockFetch(async () => ({ ok: false, json: async () => ({}) }));
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const admission = quotaAdmissionDetails(result as ToolResult);
+
+	for (const provider of ["anthropic", "openai-codex"] as const) {
+		assert.deepEqual(admission.providers[provider], {
+			isFresh: false,
+			usedPercent: null,
+			pacePercent: null,
+			reset: null,
+			isEligible: false,
+		});
+	}
+	assert.equal(admission.isAdmitted, false);
+});
+
+test("quota_admission redacts tokens, account identifiers, and raw responses", async () => {
+	const secret = "sensitive-token-account-raw-response";
+	const restoreFetch = installMockFetch(async (input) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse({ ...anthropicUsage(50, 3_600), secret })
+			: jsonResponse({ ...codexUsage(95, 1_800), secret }),
+	);
+
+	const result = await executeQuotaAdmission();
+	restoreFetch();
+	const serialized = JSON.stringify(result);
+
+	assert.doesNotMatch(serialized, /sensitive-token-account-raw-response/);
+	assert.doesNotMatch(serialized, /sk-ant-oat-test-token/);
+	assert.doesNotMatch(serialized, /account-test-id/);
 });

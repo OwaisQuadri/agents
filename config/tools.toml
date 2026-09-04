@@ -4,7 +4,7 @@ platforms = ["macos", "linux"]
 commands = ["rag"]
 mcp_server = "rag"
 pi_extension = "pi/extensions/rag.ts"
-source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "e3fa88d5de24332cf0cc44812b8ac7c7eab0fc0f" }
+source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "583d2344a9bf96cb1961991d931870aad62e1b58" }
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
 
 [[tools]]
@@ -35,7 +35,7 @@ name = "plannotator"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "apps/pi-extension"
-source = { url = "https://github.com/backnotprop/plannotator.git", revision = "9e3af49f84d9c45971cfad3123e5743d6559d299" }
+source = { url = "https://github.com/backnotprop/plannotator.git", revision = "d749c55c027ad033c76684b8445afd485fa9a4d3" }
 installer = { command = "/bin/sh", args = ["-c", "bun install --frozen-lockfile && bun run build:pi"], preview_args = ["-c", "bun --version"] }
 
 [[tools]]

@@ -14,6 +14,8 @@ One case per line:
 
 - ≥5 cases before a draft goes live; grow them from real transcript failures (found via
   `gepa-due`'s own scan at tuning time) and votes.
+- Give every case a unique `id` and an explicit Boolean `holdout` value. The runner rejects
+  a missing slice, a missing field, and a duplicate identifier before any dispatch.
 - Mark ~20% (minimum 1) `"holdout": true` — never shown to the mutation-proposer.
 - `source` is provenance: `seed` (authored), `log` (from a real use), `vote` (from a
   judge complaint).
@@ -36,8 +38,19 @@ action, hallucinated names). A catastrophic case can't be traded against a bette
 
 ## run.sh
 
-Convention: `./run.sh [candidate-file]` — grades BOTH slices (non-holdout, then holdout)
-against the current artifact (or the candidate, if given) with rubric.md, emitting one
+Use this wrapper:
+
+```zsh
+#!/bin/zsh
+set -euo pipefail
+here=${0:A:h}
+repo=$(git -C "$here" rev-parse --show-toplevel)
+exec "$repo/tools/skill-eval/run.sh" --eval-dir "$here" "$@"
+```
+
+Convention: `./run.sh [candidate-file]` delegates to `tools/skill-eval/run.sh`. It grades
+BOTH slices (non-holdout, then holdout) against the current artifact or candidate with
+rubric.md. The runner emits one
 JSON line per (case, tier) to stdout
 (`{"id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`) and a mean-per-tier,
 per-slice summary to stderr. Grading both slices in one pass matches what the Holdout
@@ -45,8 +58,9 @@ gating rule below already needs together ("the win holds on the holdout slice").
 `--holdout` is a lighter, frontier-write-free mode for a quick recheck of the holdout
 slice alone — use the plain (no-flag) form for anything feeding a real Decide.
 
-**Execution arm, not a prose judge.** `run.sh` does not send the artifact's own text to a
-judge and ask whether an agent following it WOULD pass — that grades wording, and every
+**Execution arm, not a prose judge.** Keep the per-artifact `run.sh` as a thin wrapper
+around `tools/skill-eval/run.sh`. The shared runner does not send the artifact's own text
+to a judge and ask whether an agent following it WOULD pass — that grades wording, and every
 tier scores identically since no tier ever actually runs anything. It dispatches a REAL
 run of the artifact via `tools/tier-dispatch` (tier's own primary model, walking that
 tier's own `fallbacks[]` list in `config/model-tiers.json` on a quota error), then grades
@@ -63,7 +77,9 @@ default; the restricted tier is still judged by whichever tier is one above it i
 tier order, never by itself, purely because it happens to be the only tier in that run's
 own sweep.
 
-**A graded dispatch keeps its tools but never sees the live repo.** `tools/tier-dispatch`
+**A graded dispatch keeps its tools but never sees the live repo.** Every Pi process
+disables extension discovery and loads `pi-anthropic-auth` as the bare minimum extension.
+A harness adds another extension only when a case requires it. `tools/tier-dispatch`
 runs every dispatch — artifact and judge alike — with tools ON, inside a fresh throwaway
 sandbox directory that is discarded after the attempt. Tools stay on because the harness
 measures what a tier can actually DO; a dispatch stripped of tools is a different, easier
@@ -78,6 +94,13 @@ fix. A harness whose cases need the dispatch to act on specific fixture files sh
 pre-seed them and grade the aftermath the way `agents/spec-tester/evals/run.sh` already
 does (scratch fixture dir, checksums before and after) — never point a graded dispatch
 at a working tree anyone cares about.
+
+An artifact can add an executable `evals/preflight.sh` for a deterministic check before
+model dispatch. It can add `evals/output-check.sh` for a deterministic check of each
+actual output. The shared runner caps a failed output check at 4. Both files must be
+executable, or the runner stops with an error. The runner gives `preflight.sh` the selected
+candidate as its first argument. It exports the absolute `CASES_FILE` path. These checks add
+evidence and never replace tier execution.
 
 After grading BOTH slices in the plain (no-flag) form (candidate or incumbent, accepted
 or rejected), append one line PER TIER TESTED to `evals/frontier.jsonl` and write the

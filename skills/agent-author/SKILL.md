@@ -177,7 +177,8 @@ Every authored agent ships `evals/` per skills/ai-author/templates/eval-harness.
   ran the tests; "should pass" scores zero. Self-report is the false-pass catastrophic
   case in every agent's rubric.
 - run.sh dispatches the agent fresh per case (its own context, never the grader's),
-  checks the output shape first, then the anchors.
+  checks the output shape first, then the anchors. A Pi-backed runner disables extension
+  discovery and loads `pi-anthropic-auth` as the bare minimum extension.
 
 No harness = not done.
 

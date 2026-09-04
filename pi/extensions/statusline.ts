@@ -11,6 +11,21 @@ type ProviderUsage = {
 	sevenDay: UsageWindow | null;
 };
 
+type Provider = "anthropic" | "openai-codex";
+
+type ProviderAdmission = {
+	isFresh: boolean;
+	usedPercent: number | null;
+	pacePercent: number | null;
+	reset: string | null;
+	isEligible: boolean;
+};
+
+type QuotaAdmission = {
+	isAdmitted: boolean;
+	providers: Record<Provider, ProviderAdmission>;
+};
+
 type AnthropicUsageResponse = {
 	five_hour: { utilization: number; resets_at: string | null } | null;
 	seven_day: { utilization: number; resets_at: string | null } | null;
@@ -36,6 +51,12 @@ const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const FIVE_HOUR_SECONDS = 5 * 3600;
 const SEVEN_DAY_SECONDS = 7 * 86400;
+const PROVIDERS: Provider[] = ["anthropic", "openai-codex"];
+const QUOTA_ADMISSION_PARAMETERS = {
+	type: "object",
+	additionalProperties: false,
+	properties: {},
+} as const;
 
 function isCtxActive(ctx: ExtensionContext): boolean {
 	try {
@@ -199,8 +220,62 @@ function formatCalendarReset(epochSeconds: number): string {
 	return `${day} at ${reset.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
 }
 
+function quotaAdmissionFor(usage: ProviderUsage | null, nowSeconds: number): ProviderAdmission {
+	const selected = usage ? selectWindow(usage) : null;
+	if (!selected) {
+		return { isFresh: false, usedPercent: null, pacePercent: null, reset: null, isEligible: false };
+	}
+
+	const resetAt = selected.window.resetAtEpochSeconds;
+	const isResetKnown = Number.isFinite(resetAt) && resetAt > nowSeconds;
+	const diff = isResetKnown ? resetAt - nowSeconds : 0;
+	const usedPercent = Math.floor(selected.window.usedPercent);
+	const pacedPercent = isResetKnown ? Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)) : null;
+	return {
+		isFresh: true,
+		usedPercent,
+		pacePercent: pacedPercent,
+		reset: isResetKnown ? (selected.label === "5h" ? formatCalendarReset(resetAt) : `in ${formatReset(diff)}`) : null,
+		isEligible: pacedPercent !== null && usedPercent <= pacedPercent,
+	};
+}
+
 export default function statusline(pi: ExtensionAPI) {
 	const usageByProvider = new Map<string, ProviderUsage>();
+
+	pi.registerTool({
+		name: "quota_admission",
+		label: "Quota Admission",
+		description: "Check whether fresh Anthropic or OpenAI Codex quota is on pace for new work.",
+		parameters: QUOTA_ADMISSION_PARAMETERS,
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const fetched = await Promise.all(
+				PROVIDERS.map(async (provider) => {
+					try {
+						const usage = provider === "anthropic" ? await fetchAnthropicUsage(ctx) : await fetchCodexUsage(ctx);
+						return [provider, usage] as const;
+					} catch {
+						return [provider, null] as const;
+					}
+				}),
+			);
+			const nowSeconds = Math.round(Date.now() / 1000);
+			const providers = Object.fromEntries(
+				fetched.map(([provider, usage]) => {
+					if (usage) usageByProvider.set(provider, usage);
+					return [provider, quotaAdmissionFor(usage, nowSeconds)];
+				}),
+			) as Record<Provider, ProviderAdmission>;
+			const result: QuotaAdmission = {
+				isAdmitted: PROVIDERS.some((provider) => providers[provider].isFresh && providers[provider].isEligible),
+				providers,
+			};
+			return {
+				content: [{ type: "text", text: JSON.stringify(result) }],
+				details: result,
+			};
+		},
+	});
 	const lastFetchAtByProvider = new Map<string, number>();
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let activeContext: ExtensionContext | null = null;

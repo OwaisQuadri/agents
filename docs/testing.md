@@ -39,6 +39,7 @@ REPO_TARGET="$PWD" ./install.sh --dry-run
 ```sh
 # Rust tools
 cargo test --manifest-path tools/tool-sync/Cargo.toml
+cargo test --manifest-path tools/skill-eval/Cargo.toml
 cargo build --release --manifest-path tools/tool-wizard/Cargo.toml   # any tools/<name>/Cargo.toml
 
 # Pi extensions (Node test runner)
@@ -50,14 +51,14 @@ node --test pi/extensions/telemetry.test.ts pi/extensions/telemetry.security.tes
 hooks/test.sh
 
 # a skill or workflow's eval harness (per-artifact contract, see skill-author/SKILL.md)
-./skills/<name>/evals/run.sh              # non-holdout cases
-./skills/<name>/evals/run.sh --holdout    # held-out case
+./skills/<name>/evals/run.sh              # all tiers, both slices, frontier writes
+./skills/<name>/evals/run.sh --holdout    # all tiers, held-out slice, no frontier writes
+./skills/<name>/evals/run.sh --tier T3    # one requested tier, both slices
 ```
 
-Eval harnesses call out to a model to grade cases. Use `pi -p` first; fall back to
-`codex exec --skip-git-repo-check --sandbox read-only -c mcp_servers={}` when `pi`'s
-default provider is out of usage. Don't reach for `claude -p` as the primary path —
-it's the one most likely to be rate-limited or out of usage mid-session.
+Every skill and workflow runner delegates to `tools/skill-eval`. The runner uses
+`tools/tier-dispatch` for real artifact runs and judge runs. It disables extension
+discovery and loads `pi-anthropic-auth` as the minimum extension.
 
 ## manifest / policy checks
 

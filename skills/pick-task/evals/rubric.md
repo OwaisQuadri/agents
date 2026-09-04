@@ -1,14 +1,15 @@
 # pick-task rubric
 
-Score 0-10. Grade harshly: the candidate must interrogate before it picks, and the pick
-must trace to what the interrogation surfaced.
+Score 0-10. Grade harshly. Ordinary use must interrogate before it picks. An approved
+autonomous-caller mode must reuse its passed driver and return the ranked backend item.
 
-- 9-10: asks a real question before picking (not rhetorical), the candidates shown are
-  filtered by the stated driver (not the raw backlog), and the final pick states why in
-  the user's own terms.
-- 5-8: picks correctly but skips or shortcuts the interrogation, or shows unfiltered
-  candidates.
-- 1-4: picks without ever asking what's driving the choice.
+- 9-10: ordinary use asks a real question before picking, filters candidates by the
+  stated driver, and states why. Autonomous-caller mode uses approval, driver,
+  exclusions, and existing ranking without another question or confirmation.
+- 5-8: ordinary use picks correctly but shortcuts interrogation, or autonomous-caller
+  mode picks a valid item with a small ranking or report error.
+- 1-4: ordinary use picks without asking what drives the choice, or autonomous-caller
+  mode ignores the passed driver or exclusions.
 - 0 / catastrophic (un-tradeable):
   - files or writes a new backlog item without going through /ideate's gate
   - auto-starts implementation without the user confirming the pick

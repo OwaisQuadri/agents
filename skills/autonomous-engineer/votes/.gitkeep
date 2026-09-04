@@ -1,0 +1,1 @@
+This placeholder keeps the authoring-contract path visible. Git ignores this directory. submit_vote.py writes votes.jsonl when the judge protocol dispatches it.
