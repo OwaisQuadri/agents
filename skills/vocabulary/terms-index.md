@@ -20,6 +20,9 @@ Border radius · Gap · Negative space · Flexbox · Auto layout · Layout shift
 ## Interaction — how elements respond to input
 Affordance · Hover state · Focus state · Active state · Disabled state · Cursor · Pointer events · Optimistic update · Debounce · Touch target · Copy to clipboard · Skip link
 
+## Usability principles — how perception, memory, movement, and complexity shape interfaces
+Hick’s law · Fitts’s law · Jakob’s law · Law of proximity · Miller’s law · Doherty threshold · Von Restorff effect · Minimise target distance · Serial position effect · Peak-end rule · Zeigarnik effect · Law of Prägnanz · Law of similarity · Law of uniform connectedness · Tesler’s law · Postel’s law · Parkinson’s law · Occam’s razor · Pareto principle
+
 ## Motion — how things move and transition
 Easing · Ease-out · Ease-in · Ease-in-out · Stagger · Duration · Transition property · Reduced motion · Skeleton shimmer · Spring · Choreography · Enter vs exit asymmetry · Shared axis transition · Motion as feedback · GPU compositing
 

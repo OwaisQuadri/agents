@@ -158,6 +158,47 @@
 **Skip link** — A visually hidden link that jumps to the main content. Appears on focus for keyboard users. Without it, every page requires tabbing through the full navigation first.
 
 
+## Usability principles
+
+**Hick’s law** — Decision time increases with the number and complexity of choices. Unlike Miller’s law, it concerns choosing among options, not holding items in memory.
+
+**Fitts’s law** — The time to reach a target depends on its distance and size. Large, nearby targets are faster to acquire than small, distant ones.
+
+**Jakob’s law** — Users bring expectations from the other products they use. Familiar conventions reduce learning, but the law does not require copying another interface.
+
+**Law of proximity** — Elements that are near each other appear related. Unlike similarity, proximity groups by distance rather than shared appearance.
+
+**Miller’s law** — Miller observed an immediate memory span of about seven chunks, not a fixed interface limit of seven items. Later research often finds a smaller working-memory capacity. Unlike Hick’s law, this concerns memory rather than choice time.
+
+**Doherty threshold** — The historical claim that productivity improves when a computer responds within 400 milliseconds. Treat the number as a guideline, not a universal limit, and show immediate feedback when work takes longer.
+
+**Von Restorff effect** — People are more likely to remember an item that differs from otherwise similar items. Also called the isolation effect; overusing distinction removes the effect.
+
+**Minimise target distance** — Place frequent or sequential controls near the user’s likely pointer or touch position. This is an application of Fitts’s law, not a separate predictive law.
+
+**Serial position effect** — People tend to recall the first and last items in a sequence better than the middle. Unlike the peak-end rule, it concerns position in a series rather than emotional intensity.
+
+**Peak-end rule** — People judge an experience mainly by its most intense point and its ending, not by the average of every moment. Unlike the serial position effect, the peak can occur anywhere.
+
+**Zeigarnik effect** — People can remember interrupted or unfinished tasks better than completed tasks. Use progress cues to support return, but do not manufacture obstruction.
+
+**Law of Prägnanz** — People tend to interpret ambiguous or complex images as the simplest stable form. Unlike Occam’s razor, it describes perception rather than how to choose between explanations.
+
+**Law of similarity** — Elements with shared visual traits appear related, even when separated. Unlike proximity, similarity groups by appearance rather than distance.
+
+**Law of uniform connectedness** — Elements joined by a visible connection appear more related than unconnected elements. A line or shared surface signals a stronger relationship than proximity or similarity alone.
+
+**Tesler’s law** — Every system contains some complexity that no design can remove. Designers can only move it between the user and the system. Unlike Occam’s razor, it warns that simplification cannot eliminate every necessary decision.
+
+**Postel’s law** — Accept reasonable variation in user input, but produce consistent and predictable output. Also called the robustness principle; permissive input does not mean accepting unsafe or ambiguous data.
+
+**Parkinson’s law** — Work expands to fill the time available for its completion. A shorter, visible time boundary can keep a task or process from growing without need.
+
+**Occam’s razor** — When competing explanations predict equally well, prefer the one with the fewest assumptions. It does not mean that the shortest interface is always the best one; Tesler’s law says some complexity remains.
+
+**Pareto principle** — A minority of causes often accounts for a majority of effects, commonly expressed as 80/20. The ratio is a prioritisation heuristic, not a fixed law or a substitute for evidence.
+
+
 ## Motion
 
 **Easing** — The rate at which an animation speeds up or slows down. Ease-out decelerates into place and feels natural. Ease-in starts slow and makes the interface feel like it's dragging.
