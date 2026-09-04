@@ -43,6 +43,18 @@ fn default_registry_file() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(".pi/agent/models-store.json"))
 }
 
+fn default_models_file() -> PathBuf {
+    if let Ok(current) = std::env::current_dir() {
+        for directory in current.ancestors() {
+            let candidate = directory.join("config/models.json");
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+    PathBuf::from("config/models.json")
+}
+
 fn parse_args(raw: &[String]) -> Result<Args, String> {
     let mut tiers_file = None;
     let mut tier = None;
@@ -104,7 +116,7 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         registry_file
     };
     let models_file = if is_verify_registry {
-        Some(models_file.unwrap_or_else(|| PathBuf::from("config/models.json")))
+        Some(models_file.unwrap_or_else(default_models_file))
     } else {
         models_file
     };
@@ -151,7 +163,7 @@ fn verify_registry(args: &Args) -> ExitCode {
         }
     };
     let registry_findings = unknown_models(&tiers, &registry);
-    let override_findings = unknown_model_overrides(&tiers, &overrides, &registry);
+    let override_findings = unknown_model_overrides(&overrides, &registry);
     for finding in &registry_findings {
         eprintln!(
             "tier-dispatch: {} {} {} is absent from the registry",
@@ -160,14 +172,14 @@ fn verify_registry(args: &Args) -> ExitCode {
     }
     for model in &override_findings {
         eprintln!(
-            "tier-dispatch: {model} from {} is absent from the registry",
+            "tier-dispatch: advisory: model override {model} from {} is absent from the registry",
             models_file.display()
         );
     }
     for model in unreferenced_newer(&tiers, &registry) {
         eprintln!("tier-dispatch: advisory: newer unreferenced model {model}");
     }
-    if registry_findings.is_empty() && override_findings.is_empty() {
+    if registry_findings.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -317,7 +329,10 @@ mod tests {
             args.registry_file
                 .is_some_and(|path| path.ends_with(".pi/agent/models-store.json"))
         );
-        assert_eq!(args.models_file, Some(PathBuf::from("config/models.json")));
+        assert!(
+            args.models_file
+                .is_some_and(|path| path.ends_with("config/models.json"))
+        );
     }
 
     #[test]
