@@ -9,15 +9,41 @@ models. To swap a model, edit that file and run install.sh. You can also use `/t
 Each model in a tier's chain carries its OWN `thinking` level. That includes the primary
 and each fallback.
 
-`tools/tier-dispatch` is another reader of this file, alongside install.sh and the pi-side
-extensions below — it resolves a tier name to its own ordered chain (primary, then
-fallbacks, in file order) for the ai-author eval harness's execution arm, walking that
-same chain on a quota error and reporting the whole tier unavailable rather than crossing
-into a different tier's models. It never derives a model id any other way, so this file
-stays the one place a model id actually lives, per the rule above.
+`tools/tier-dispatch` also reads this file. It resolves a tier to its ordered model
+chain for the ai-author evaluation harness. The primary model comes before its listed
+fallbacks. A quota error moves the dispatch to the next model in that chain. Model
+limits can differ within one provider, so the dispatch tests every configured fallback.
+Exhaustion makes the complete tier unavailable.
+
+The `--verify-registry` mode checks each configured tier entry against the model records in
+Pi's local registry. It also reports stale overrides for available providers. The tool
+looks for `models.json` beside the supplied tiers file. Use `--models-file` when the check
+needs another file. The tool reports a missing default overrides file as a standard-error
+advisory. It rejects a missing explicit file or a malformed file.
+
+This mode validates routing references, thinking values, and required fallback lists. It
+does not dispatch a model or write a file. The tool never derives a model identifier from
+another source.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
 you lean on a price argument.
+
+## reconcile tiers
+
+Run the following command before a tier change and after a registry refresh:
+
+```sh
+cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
+  --verify-registry --tiers-file config/model-tiers.json
+```
+
+Exit 0 means every tier entry resolves in the registry. Exit 1 names each missing tier
+entry in an available provider. Such an entry takes priority over catalog and override
+input faults. Exit 2 means that a supplied input is invalid or a tier provider catalog is
+unavailable. It also covers an unavailable tiers file or registry.
+
+The command reports missing default overrides and newer unreferenced family members as
+advisories on standard error. Advisories never change its exit code.
 
 ## tiers
 

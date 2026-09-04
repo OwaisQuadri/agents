@@ -95,12 +95,18 @@ static SANDBOX_COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// call, for one dispatched attempt to run in.
 fn make_sandbox() -> std::io::Result<PathBuf> {
     let n = SANDBOX_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("tier-dispatch-sandbox-{}-{n}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("tier-dispatch-sandbox-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
-fn run_one(dispatch_bin: &str, entry: &ModelEntry, system_prompt_file: &Path, input: &str) -> Attempt {
+fn run_one(
+    dispatch_bin: &str,
+    entry: &ModelEntry,
+    system_prompt_file: &Path,
+    input: &str,
+) -> Attempt {
     // The child runs with tools ON but its working directory set to a fresh throwaway
     // sandbox, discarded after the attempt. Tools stay on because the harness grades
     // what a tier can actually DO, and a dispatch stripped of tools is a different,
@@ -135,8 +141,7 @@ fn run_one(dispatch_bin: &str, entry: &ModelEntry, system_prompt_file: &Path, in
         .arg(input)
         .current_dir(&sandbox)
         .output();
-    let attempt =
-    match output {
+    let attempt = match output {
         Ok(output) => Attempt {
             model: entry.model.clone(),
             thinking: entry.thinking.clone(),
@@ -164,7 +169,9 @@ mod tests {
 
     #[test]
     fn recognizes_common_quota_phrasings() {
-        assert!(is_quota_error("Error: rate limit exceeded, try again later"));
+        assert!(is_quota_error(
+            "Error: rate limit exceeded, try again later"
+        ));
         assert!(is_quota_error("429 Too Many Requests"));
         assert!(is_quota_error("RESOURCE_EXHAUSTED: quota exceeded"));
         assert!(is_quota_error("Usage limit reached for this account"));
@@ -191,7 +198,10 @@ mod tests {
     }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("tier-dispatch-dispatch-test-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "tier-dispatch-dispatch-test-{tag}-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -206,18 +216,24 @@ mod tests {
     #[test]
     fn success_on_primary_never_touches_fallbacks() {
         let dir = temp_dir("success-primary");
-        let script = fake_dispatch_bin(
-            &dir,
-            "#!/bin/sh\necho \"ran:$3\"\nexit 0\n",
-        );
+        let script = fake_dispatch_bin(&dir, "#!/bin/sh\necho \"ran:$3\"\nexit 0\n");
         let chain = vec![
-            ModelEntry { model: "primary-model".into(), thinking: "low".into() },
-            ModelEntry { model: "fallback-model".into(), thinking: "low".into() },
+            ModelEntry {
+                model: "primary-model".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "fallback-model".into(),
+                thinking: "low".into(),
+            },
         ];
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::Success { model_ran, artifact } => {
+            Outcome::Success {
+                model_ran,
+                artifact,
+            } => {
                 assert_eq!(model_ran, "primary-model");
                 assert!(artifact.contains("ran:primary-model"));
             }
@@ -243,13 +259,22 @@ exit 0
 "#,
         );
         let chain = vec![
-            ModelEntry { model: "primary-model".into(), thinking: "low".into() },
-            ModelEntry { model: "fallback-model".into(), thinking: "low".into() },
+            ModelEntry {
+                model: "primary-model".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "fallback-model".into(),
+                thinking: "low".into(),
+            },
         ];
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::Success { model_ran, artifact } => {
+            Outcome::Success {
+                model_ran,
+                artifact,
+            } => {
                 assert_eq!(model_ran, "fallback-model");
                 assert!(artifact.contains("ran:fallback-model"));
             }
@@ -259,15 +284,41 @@ exit 0
     }
 
     #[test]
+    fn quota_failure_still_tries_later_models_from_the_same_provider() {
+        let dir = temp_dir("same-provider-fallback");
+        let script = fake_dispatch_bin(&dir, "#!/bin/sh\necho \"quota exceeded\" 1>&2\nexit 1\n");
+        let chain = vec![
+            ModelEntry {
+                model: "anthropic/new".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "anthropic/old".into(),
+                thinking: "low".into(),
+            },
+        ];
+        let prompt = write_system_prompt(&dir);
+        let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
+        match outcome {
+            Outcome::TierExhausted { attempts } => assert_eq!(attempts.len(), 2),
+            _ => panic!("expected TierExhausted"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn quota_failure_on_every_model_in_chain_reports_tier_exhausted() {
         let dir = temp_dir("quota-exhausted");
-        let script = fake_dispatch_bin(
-            &dir,
-            "#!/bin/sh\necho \"quota exceeded\" 1>&2\nexit 1\n",
-        );
+        let script = fake_dispatch_bin(&dir, "#!/bin/sh\necho \"quota exceeded\" 1>&2\nexit 1\n");
         let chain = vec![
-            ModelEntry { model: "primary-model".into(), thinking: "low".into() },
-            ModelEntry { model: "fallback-model".into(), thinking: "low".into() },
+            ModelEntry {
+                model: "primary-model".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "fallback-model".into(),
+                thinking: "low".into(),
+            },
         ];
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
@@ -283,11 +334,11 @@ exit 0
         let dir = temp_dir("sandbox");
         // The fake child reports its own cwd and drops a file there, imitating a
         // dispatched model that writes into whatever directory it lands in.
-        let script = fake_dispatch_bin(
-            &dir,
-            "#!/bin/sh\npwd\ntouch sandbox-marker.txt\nexit 0\n",
-        );
-        let chain = vec![ModelEntry { model: "primary-model".into(), thinking: "low".into() }];
+        let script = fake_dispatch_bin(&dir, "#!/bin/sh\npwd\ntouch sandbox-marker.txt\nexit 0\n");
+        let chain = vec![ModelEntry {
+            model: "primary-model".into(),
+            thinking: "low".into(),
+        }];
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         let child_cwd = match outcome {
@@ -298,7 +349,10 @@ exit 0
         assert_ne!(std::path::Path::new(&child_cwd), caller_cwd.as_path());
         assert!(child_cwd.contains("tier-dispatch-sandbox-"));
         assert!(!caller_cwd.join("sandbox-marker.txt").exists());
-        assert!(!std::path::Path::new(&child_cwd).exists(), "sandbox should be removed after the attempt");
+        assert!(
+            !std::path::Path::new(&child_cwd).exists(),
+            "sandbox should be removed after the attempt"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -310,8 +364,14 @@ exit 0
             "#!/bin/sh\necho \"panic: something genuinely broke\" 1>&2\nexit 1\n",
         );
         let chain = vec![
-            ModelEntry { model: "primary-model".into(), thinking: "low".into() },
-            ModelEntry { model: "fallback-model".into(), thinking: "low".into() },
+            ModelEntry {
+                model: "primary-model".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "fallback-model".into(),
+                thinking: "low".into(),
+            },
         ];
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");

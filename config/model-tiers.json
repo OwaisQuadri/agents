@@ -28,21 +28,21 @@
         { "model": "openai-codex/gpt-5.6-sol", "thinking": "low" },
         { "model": "anthropic/claude-opus-5", "thinking": "low" },
         { "model": "openai-codex/gpt-5.3-codex-spark", "thinking": "medium" },
-        { "model": "anthropic/claude-fable-5", "thinking": "minimal" }
+        { "model": "anthropic/claude-fable-5-1", "thinking": "minimal" }
       ]
     },
     "T4": {
       "pi": { "model": "anthropic/claude-opus-5", "thinking": "medium" },
       "fallbacks": [
         { "model": "openai-codex/gpt-5.6-sol", "thinking": "medium" },
-        { "model": "anthropic/claude-fable-5", "thinking": "low" }
+        { "model": "anthropic/claude-fable-5-1", "thinking": "low" }
       ]
     },
     "T5": {
-      "pi": { "model": "anthropic/claude-fable-5", "thinking": "medium" },
+      "pi": { "model": "anthropic/claude-fable-5-1", "thinking": "medium" },
       "fallbacks": [
-        { "model": "anthropic/claude-opus-5", "thinking": "high" },
-        { "model": "openai-codex/gpt-5.6-sol", "thinking": "high" }
+        { "model": "openai-codex/gpt-5.6-sol", "thinking": "high" },
+        { "model": "anthropic/claude-fable-5", "thinking": "medium" }
       ],
       "climbOnExhaustion": "T4"
     }
