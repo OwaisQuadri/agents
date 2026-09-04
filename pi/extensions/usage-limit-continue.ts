@@ -450,6 +450,9 @@ async function applyTierFallback(pi: ExtensionAPI, ctx: ExtensionContext): Promi
 }
 
 export async function handleMessageEnd(message: AssistantMessageLike, ctx: ExtensionContext, pi: ExtensionAPI): Promise<void> {
+	if (message.role !== "assistant") {
+		return;
+	}
 	const errorText = extractErrorText(message);
 	if (!errorText) {
 		attemptedModelsByContext.delete(ctx);

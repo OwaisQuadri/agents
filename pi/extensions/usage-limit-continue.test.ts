@@ -458,9 +458,16 @@ test("handleMessageEnd: a climb skips models already tried in the exhausted tier
 
 		for (let index = 0; index < 4; index += 1) {
 			await handleMessageEnd(error, ctx as never, pi as never);
+			await handleMessageEnd({ role: "user" }, ctx as never, pi as never);
+			await handleMessageEnd({ role: "toolResult" }, ctx as never, pi as never);
 		}
 
 		assert.deepEqual(switches, ["provider-b/sol", "provider-a/old", "provider-a/opus"]);
+
+		await handleMessageEnd({ role: "assistant", stopReason: "stop" }, ctx as never, pi as never);
+		ctx.model = { provider: "provider-a", id: "new", cost: { input: 0, output: 0, cacheRead: 0 } };
+		await handleMessageEnd(error, ctx as never, pi as never);
+		assert.equal(switches.at(-1), "provider-b/sol");
 	} finally {
 		process.env.HOME = originalHome;
 		await rm(stateHome, { recursive: true, force: true });
