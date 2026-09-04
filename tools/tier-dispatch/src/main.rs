@@ -104,7 +104,7 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         registry_file
     };
     let models_file = if is_verify_registry {
-        Some(models_file.unwrap_or_else(|| tiers_file.with_file_name("models.json")))
+        Some(models_file.unwrap_or_else(|| PathBuf::from("config/models.json")))
     } else {
         models_file
     };
@@ -151,7 +151,7 @@ fn verify_registry(args: &Args) -> ExitCode {
         }
     };
     let registry_findings = unknown_models(&tiers, &registry);
-    let override_findings = unknown_model_overrides(&overrides, &registry);
+    let override_findings = unknown_model_overrides(&tiers, &overrides, &registry);
     for finding in &registry_findings {
         eprintln!(
             "tier-dispatch: {} {} {} is absent from the registry",

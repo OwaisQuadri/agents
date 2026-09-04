@@ -43,10 +43,6 @@ impl Registry {
             .is_some_and(|models| models.contains(model))
     }
 
-    fn has_provider(&self, provider: &str) -> bool {
-        self.models.contains_key(provider)
-    }
-
     fn model_ids(&self) -> impl Iterator<Item = (&str, &str)> {
         self.models.iter().flat_map(|(provider, models)| {
             models
@@ -115,12 +111,22 @@ pub fn unknown_models(tiers: &TiersFile, registry: &Registry) -> Vec<Finding> {
     findings
 }
 
-pub fn unknown_model_overrides(overrides: &ModelOverrides, registry: &Registry) -> Vec<String> {
+pub fn unknown_model_overrides(
+    tiers: &TiersFile,
+    overrides: &ModelOverrides,
+    registry: &Registry,
+) -> Vec<String> {
+    let tiered = tiers
+        .tiers
+        .values()
+        .flat_map(|tier| std::iter::once(&tier.pi).chain(tier.fallbacks.iter()))
+        .filter_map(|entry| entry.model.split_once('/'))
+        .collect::<BTreeSet<_>>();
+
     overrides
         .model_ids()
-        .filter(|(provider, model)| {
-            registry.has_provider(provider) && !registry.contains(provider, model)
-        })
+        .filter(|entry| tiered.contains(entry))
+        .filter(|(provider, model)| !registry.contains(provider, model))
         .map(|(provider, model)| format!("{provider}/{model}"))
         .collect()
 }
@@ -317,8 +323,10 @@ mod tests {
     }
 
     #[test]
-    fn unknown_override_is_reported() {
+    fn unknown_tiered_override_is_reported() {
         let directory = test_dir("unknown-override");
+        let tiers =
+            TiersFile::load(&write_tiers(&directory, "anthropic/claude-does-not-exist")).unwrap();
         let registry = Registry::load(&write_registry(
             &directory,
             r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]}}"#,
@@ -330,26 +338,27 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(
-            unknown_model_overrides(&overrides, &registry),
+            unknown_model_overrides(&tiers, &overrides, &registry),
             vec!["anthropic/claude-does-not-exist"]
         );
         std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
-    fn overrides_for_an_unavailable_provider_are_skipped() {
-        let directory = test_dir("unavailable-provider-override");
+    fn overrides_not_used_by_tiers_are_skipped() {
+        let directory = test_dir("unused-provider-override");
+        let tiers = TiersFile::load(&write_tiers(&directory, "anthropic/claude-fable-5")).unwrap();
         let registry = Registry::load(&write_registry(
             &directory,
-            r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]}}"#,
+            r#"{"anthropic":{"models":[{"id":"claude-fable-5"}]},"openrouter":{"models":[]}}"#,
         ))
         .unwrap();
         let overrides = ModelOverrides::load(&write_overrides(
             &directory,
-            r#"{"providers":{"openrouter":{"modelOverrides":{"vendor/model":{}}}}}"#,
+            r#"{"providers":{"openrouter":{"modelOverrides":{"vendor/rotated-preview:free":{}}}}}"#,
         ))
         .unwrap();
-        assert!(unknown_model_overrides(&overrides, &registry).is_empty());
+        assert!(unknown_model_overrides(&tiers, &overrides, &registry).is_empty());
         std::fs::remove_dir_all(directory).unwrap();
     }
 

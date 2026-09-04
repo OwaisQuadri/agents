@@ -15,11 +15,11 @@ fallbacks. A quota error moves the dispatch to the next model in that chain. Mod
 limits can differ within one provider, so the dispatch tests every configured fallback.
 Exhaustion makes the complete tier unavailable.
 
-The `--verify-registry` mode checks each tier entry against Pi's local registry. It also
-checks overrides for providers that the local registry contains. The required default
-models file sits beside the supplied tiers file. Use `--models-file` to select another
-file. This mode does not dispatch a model or write a file. The tool never derives a
-model identifier from another source.
+The `--verify-registry` mode checks each configured tier entry against the model records in
+Pi's local registry. It also checks the model overrides that those tiers use. The tool
+reads `config/models.json`. Use `--models-file` when the check needs another file. This
+mode does not dispatch a model or write a file. The tool never derives a model identifier
+from another source.
 
 Prices live in the model registry (`~/.pi/agent/models-store.json`). Re-check prices before
 you lean on a price argument.
