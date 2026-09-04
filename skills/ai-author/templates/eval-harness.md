@@ -62,20 +62,21 @@ slice alone — use the plain (no-flag) form for anything feeding a real Decide.
 around `tools/skill-eval/run.sh`. The shared runner does not send the artifact's own text
 to a judge and ask whether an agent following it WOULD pass — that grades wording, and every
 tier scores identically since no tier ever actually runs anything. It dispatches a REAL
-run of the artifact via `tools/tier-dispatch` (tier's own primary model, walking that
-tier's own `fallbacks[]` list in `config/model-tiers.json` on a quota error), then grades
+run of the artifact via `tools/tier-dispatch`, starting with the tier's primary model.
+When quota limits or availability stop a model, the dispatcher walks that tier's own
+`fallbacks[]` list in `config/model-tiers.json`. The harness then grades
 the ARTIFACT that run produced. `tier-dispatch --tier <T1..T5>` is called once per
 repeat trial (`REPEATS`, default 3 — a single pass or fail is a sample of one) per case
 per tier; the judge for a tier's output runs one tier up (`config/model-tiers.json`'s own
 ordering), except the top tier, which grades itself since no tier exists above it.
 
-**Every available tier is tested, every run — exhaustive, not walk-up-and-stop.** A tier
-whose own fallback chain is fully exhausted on a quota error is skipped entirely for that
-run; no score is guessed for it and no frontier line is written for it. `--tier T3` restricts
-a run to exactly one tier — a cheap iteration escape hatch while authoring, never the
-default; the restricted tier is still judged by whichever tier is one above it in the FULL
-tier order, never by itself, purely because it happens to be the only tier in that run's
-own sweep.
+**The runner attempts every configured tier on every full run.** It ignores the artifact's
+`metadata.minimum-tier`. That floor is a hypothesis the scores can change, not an evaluation
+filter. When a model is unavailable, `tools/tier-dispatch` walks the rest of that tier's
+fallback chain. This includes quota limits and installed-client support errors. If the whole
+chain is unavailable, the frontier keeps that tier's line with `null` scores. The visible gap
+can never look like a tested win. `--tier T3` is a narrow authoring check and writes no
+frontier data. The selected tier still uses the next configured tier as its judge.
 
 **A graded dispatch keeps its tools but never sees the live repo.** Every Pi process
 disables extension discovery and loads `pi-anthropic-auth` as the bare minimum extension.
@@ -109,17 +110,17 @@ This runs every time, not only on acceptance: a rejected candidate's score vecto
 exactly what a later Pareto-frontier selection (GEPA loop step 2) needs, and today's
 harness threw it away the moment `run.sh` exited. `accepted` defaults to `false` unless
 the caller sets `ACCEPTED=true` in the environment, since `run.sh` cannot know the
-Decide-step verdict at grading time — nothing ships without an explicit Decide anyway.
+Decide-step verdict at grading time. An incomplete run still writes its frontier rows,
+leaves them unaccepted, and exits with an error.
 
 ## frontier.jsonl
 
 The per-candidate score archive GEPA loop step 2 (Propose) reads before choosing what to
 mutate from. ONE LINE PER (candidate, tier) PAIR ever tested for this artifact, including
-the incumbent itself the first time `run.sh` runs after this section is adopted. Every
-available tier is tested every run (exhaustive, not a walk-up-and-stop sweep — see
-`tools/tier-dispatch` and `evals/run.sh`'s own comments for the execution arm that makes
-this possible: a run.sh that only judges an artifact's PROSE, never runs it, produces the
-same score on every tier and a tier axis on this file would carry no information):
+the incumbent itself the first time `run.sh` uses this format. The runner
+attempts every configured tier and ignores `metadata.minimum-tier`. A runner that only judges
+an artifact's prose would produce the same score on every tier. This execution arm gives the
+tier axis real information:
 
 ```json
 {"candidate_id":"<short hash of the candidate's full text>","tested_against":"<prompt_version of the incumbent it competed with>","tier":"<T1..T5, the tier actually dispatched>","judge_tier":"<one tier above tier, or tier itself when tier is the top tier — no tier above the top exists>","model_ran":["<every distinct model id tools/tier-dispatch actually used this tier, after any same-tier fallback walk>"],"scores_nonholdout":[7,8,6],"scores_holdout":[7],"repeat_scores_nonholdout":{"<case id>":[7,8,7]},"repeat_scores_holdout":{"<case id>":[7]},"mean_nonholdout":7.00,"accepted":false,"ts":"<local iso with offset>"}
@@ -127,9 +128,9 @@ same score on every tier and a tier axis on this file would carry no information
 
 - `candidate_id`: a short hash (e.g. `sha1sum | cut -c1-8`) of the candidate's exact text —
   stable identity independent of whether it shipped.
-- `tier`: the tier `tools/tier-dispatch` actually dispatched this candidate at. A tier whose
-  own fallback chain was fully exhausted on a quota error is SKIPPED for the run — no line
-  is written for it, never a guessed score standing in for a tier that never ran.
+- `tier`: the configured tier `tools/tier-dispatch` attempted for this candidate. The
+  artifact's declared minimum tier never filters this list. If the whole model chain is
+  unavailable, its line keeps `null` scores instead of a guessed score or missing record.
 - `judge_tier`: which tier graded this tier's output. One tier up by convention, so no model
   grades itself; the top tier is a named, accepted exception — it grades itself, since no
   tier above it exists.
@@ -146,28 +147,25 @@ same score on every tier and a tier axis on this file would carry no information
   behind each median above, keyed by case id — kept for auditability; the median in
   `scores_nonholdout`/`scores_holdout` is derived from these, never the other way around.
   A repeat entry is `null`, never `0`, when that specific repeat's dispatch or judge call
-  hard-failed for a real, non-quota reason (`tools/tier-dispatch` exit 1, or the judge's
-  own JSON reply was unparseable) — folding an infrastructure failure into a numeric `0`
-  would be indistinguishable from the candidate genuinely failing the rubric, which a code
-  review of this mechanism's first version caught as a real defect. `null` entries are
-  excluded from the median and from `mean_nonholdout`, never averaged in as zero.
+  could not produce a grade because the model chain exhausted, the dispatcher failed, or
+  the judge returned invalid JSON. A numeric `0` would look like a real rubric failure.
+  `null` entries do not enter the median or `mean_nonholdout`. Any `null` repeat blocks
+  acceptance. It records an incomplete run without pretending that GEPA measured it.
 - A `cases.jsonl` case carrying a `files` list still gets those files' content appended to
   the text the dispatched run receives as its system prompt (skill text plus each listed
   file, in order) — the same behavior the harness had before the execution arm existed,
   now applied to what gets DISPATCHED rather than what gets judged as prose.
 - The candidate's full text (not a diff) lands in `evals/frontier/<candidate_id>.md`, so a
   later Propose step can load a non-incumbent frontier member and mutate from it directly.
-- **Pruning**: cap `evals/frontier.jsonl` at the 20 newest entries per artifact PER TIER —
-  a candidate now writes up to 5 lines (one per tier tested, fewer if a tier was skipped),
-  so the cap applies within each `tier` value separately, never across tiers pooled
-  together (a candidate could legitimately dominate at T3 and lose everywhere at T1; those
-  are two different comparisons, not one). When over cap within a tier, drop the oldest
-  *dominated* entry first — an entry whose score vector is beaten or tied everywhere by
-  some other entry's vector AT THE SAME TIER, with at least one strict loss. Never prune a
-  non-dominated (frontier) member for being old; dominance status is the only pruning signal.
-  Delete the matching `evals/frontier/<candidate_id>.md` only once no tier's line for that
-  candidate_id survives — the same candidate text is shared across its tier lines, so the
-  file stays as long as any one of them does.
+- **Pruning**: cap `evals/frontier.jsonl` at the 20 newest unaccepted entries per artifact
+  per tier. Accepted entries stay outside this cap. A candidate writes one line for every
+  configured tier, so the cap applies within each `tier` value separately. Keep the newly
+  appended line. When over cap, drop the oldest prior incomplete entry first. Then drop the
+  oldest prior *dominated* entry: an entry whose score vector another entry at the same tier
+  beats or ties everywhere, with at least one strict win. If needed, drop the oldest prior
+  unaccepted entry to enforce the cap. Delete the matching
+  `evals/frontier/<candidate_id>.md` only once no tier's line for that candidate survives.
+  The same candidate text is shared across its tier lines.
 - **Tracked in git, not gitignored.** Unlike `votes/votes.jsonl` (gitignored because it
   carries real judge critique tied to specific transcript excerpts — personal usage
   content), `frontier.jsonl` and `frontier/` only ever hold scores against this
@@ -181,15 +179,21 @@ same score on every tier and a tier axis on this file would carry no information
   instead of re-running `run.sh` (which would re-grade every case just to change one
   boolean):
   ```sh
+  jq -se --arg id "<candidate_id>" '
+    any(.[]; .candidate_id == $id) and
+    all(.[] | select(.candidate_id == $id);
+      (.scores_nonholdout | type == "array" and length > 0 and all(.[]; . != null)) and
+      (.scores_holdout | type == "array" and length > 0 and all(.[]; . != null)) and
+      (.repeat_scores_nonholdout | type == "object" and length > 0 and all(.[][]; . != null)) and
+      (.repeat_scores_holdout | type == "object" and length > 0 and all(.[][]; . != null))
+    )' evals/frontier.jsonl >/dev/null && \
   jq --arg id "<candidate_id>" -c 'if .candidate_id == $id then .accepted = true else . end' \
     evals/frontier.jsonl > /tmp/frontier.jsonl.$$ && mv /tmp/frontier.jsonl.$$ evals/frontier.jsonl
   ```
-  `jq` (no `-s`) reads one JSON value per line and emits one line per input line, so
-  every non-matching line passes through byte-identical, in order; only the matching
-  `candidate_id`'s line gets `accepted` flipped. Matching on `candidate_id` alone is
-  intentional even though a candidate now spans up to 5 lines, one per tier — acceptance
-  is a property of the candidate's TEXT, not of any one tier it was tested at, so every
-  tier line for an accepted candidate flips together, in one pass.
+  The first command refuses to continue if the candidate is missing, incomplete, or has an
+  ungraded repeat. The second command keeps every non-matching line in order and flips all lines
+  for the matching `candidate_id`. Matching on `candidate_id` alone is intentional.
+  Acceptance applies to the candidate text, so all tier lines flip together.
   If a
   specific artifact's eval cases start encoding something sensitive, gitignore that one
   artifact's frontier paths — never a repo-wide default change.
@@ -198,10 +202,11 @@ same score on every tier and a tier axis on this file would carry no information
 
 A candidate replaces the incumbent only when, on the same cases:
 
-1. no case is graded catastrophic that wasn't before — hard reject, regardless of mean
-2. mean score is higher — tie goes to the incumbent, no churn on noise
-3. the win holds on the holdout slice — otherwise it's overfitting, reject
-4. two candidates both pass 1–3 → the one adding fewer conditions ships (weakest wins)
+1. every configured tier and repeat has a numeric score; any `null` makes the run incomplete
+2. no new case has a catastrophic grade; reject before comparing means
+3. every tier has a higher mean; a tie keeps the incumbent
+4. every tier wins on its holdout slice
+5. when two candidates pass steps 1 through 4, the one with fewer conditions ships
 
 ## Usage evidence (no logging section to paste)
 

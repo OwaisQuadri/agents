@@ -1,26 +1,9 @@
-//! Dispatches one live run of a skill's or agent's own definition text at a specific
-//! model, and classifies a failed run as either "this model is out of quota, try the
-//! next one in the tier's own chain" or "something else broke, stop and say so" — the
-//! two are never conflated, per this repo's own rule (`invariants.md`, AGNT-INV-003)
-//! against reporting success, or in this case a same-tier substitution, for anything
-//! other than what actually ran.
-//!
-//! Verified against a real known input/output pair before this module was written:
-//! `pi -p --model anthropic/claude-haiku-4-5 --thinking off --no-session "reply with
-//! exactly the single word: PONG"` printed exactly `PONG` to stdout, exit 0, with
-//! unrelated setup noise on stderr only — confirming `pi -p --model <provider/id>`
-//! takes `config/model-tiers.json`'s own id format directly, no alias translation
-//! needed (unlike the Claude Code CLI path `install.sh` already handles separately).
-
 use crate::config::ModelEntry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Substrings that mark a failure as "this model is out of quota, not a real defect" —
-/// intentionally narrow. An unmatched failure is a hard stop, not swallowed into a
-/// same-tier retry that would misattribute which model actually produced a result.
-const QUOTA_MARKERS: &[&str] = &[
+const RETRYABLE_MODEL_ERROR_MARKERS: &[&str] = &[
     "rate limit",
     "rate_limit",
     "usage limit",
@@ -31,11 +14,14 @@ const QUOTA_MARKERS: &[&str] = &[
     "http 429",
     "status: 429",
     "too many requests",
+    "does not support this model",
 ];
 
-pub fn is_quota_error(stderr: &str) -> bool {
+fn is_retryable_model_error(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
-    QUOTA_MARKERS.iter().any(|marker| lower.contains(marker))
+    RETRYABLE_MODEL_ERROR_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 pub struct Attempt {
@@ -47,24 +33,11 @@ pub struct Attempt {
 }
 
 pub enum Outcome {
-    /// A model in the chain ran and produced output. `model_ran` is the exact model
-    /// that produced `artifact` — never the tier's nominal primary if a fallback fired.
     Success { model_ran: String, artifact: String },
-    /// Every model in the tier's own chain failed with a quota-classified error. The
-    /// tier is skipped for this run; no score is recorded, never a guessed 0.
     TierExhausted { attempts: Vec<Attempt> },
-    /// A non-quota failure on some model in the chain. Reported immediately, not
-    /// retried across the rest of the chain, so a real defect is never hidden behind a
-    /// same-tier substitution.
     HardFailure { attempt: Attempt },
 }
 
-/// Runs `dispatch_bin` (normally `pi`) once per model in `chain`, in order, stopping at
-/// the first success or the first non-quota failure. `system_prompt_file` is the
-/// skill's or agent's own definition text, appended as the dispatched run's system
-/// prompt — the same pattern `agents/spec-tester/evals/run.sh` already uses for a real
-/// agent, generalized here to also cover a skill (no separate "run a skill" mechanism
-/// exists; a skill IS the system prompt an agent follows).
 pub fn walk_chain(
     dispatch_bin: &str,
     chain: &[ModelEntry],
@@ -81,7 +54,7 @@ pub fn walk_chain(
                 artifact: attempt.stdout.clone(),
             };
         }
-        if !is_quota_error(&attempt.stderr) {
+        if !is_retryable_model_error(&attempt.stderr) {
             return Outcome::HardFailure { attempt };
         }
         attempts.push(attempt);
@@ -169,25 +142,25 @@ mod tests {
 
     #[test]
     fn recognizes_common_quota_phrasings() {
-        assert!(is_quota_error(
+        assert!(is_retryable_model_error(
             "Error: rate limit exceeded, try again later"
         ));
-        assert!(is_quota_error("429 Too Many Requests"));
-        assert!(is_quota_error("RESOURCE_EXHAUSTED: quota exceeded"));
-        assert!(is_quota_error("Usage limit reached for this account"));
+        assert!(is_retryable_model_error("429 Too Many Requests"));
+        assert!(is_retryable_model_error(
+            "RESOURCE_EXHAUSTED: quota exceeded"
+        ));
+        assert!(is_retryable_model_error(
+            "Usage limit reached for this account"
+        ));
     }
 
     #[test]
     fn does_not_classify_an_unrelated_failure_as_quota() {
-        assert!(!is_quota_error("panic: index out of bounds"));
-        assert!(!is_quota_error("connection refused"));
-        assert!(!is_quota_error(""));
+        assert!(!is_retryable_model_error("panic: index out of bounds"));
+        assert!(!is_retryable_model_error("connection refused"));
+        assert!(!is_retryable_model_error(""));
     }
 
-    /// Writes a fake `pi`-like script into a temp dir and returns (dir, script_path).
-    /// The script echoes which model it was called with, so a test can assert on
-    /// exactly which model in the chain actually ran — the same "never claim more than
-    /// what really executed" concern `dispatch.rs`'s own doc comment names.
     fn fake_dispatch_bin(dir: &Path, behavior: &str) -> std::path::PathBuf {
         let path = dir.join("fake-pi");
         std::fs::write(&path, behavior).unwrap();
@@ -279,6 +252,66 @@ exit 0
                 assert!(artifact.contains("ran:fallback-model"));
             }
             _ => panic!("expected Success on fallback, got a different outcome"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unsupported_model_failure_walks_to_fallback() {
+        let dir = temp_dir("unsupported-model-walk");
+        let script = fake_dispatch_bin(
+            &dir,
+            r#"#!/bin/sh
+model="$3"
+if [ "$model" = "primary-model" ]; then
+  echo "Claude Code does not support this model; version 2.1.251 or newer is required" 1>&2
+  exit 1
+fi
+echo "ran:$model"
+exit 0
+"#,
+        );
+        let chain = vec![
+            ModelEntry {
+                model: "primary-model".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "fallback-model".into(),
+                thinking: "low".into(),
+            },
+        ];
+        let prompt = write_system_prompt(&dir);
+        let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
+        match outcome {
+            Outcome::Success { model_ran, .. } => assert_eq!(model_ran, "fallback-model"),
+            _ => panic!("expected Success on fallback, got a different outcome"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unknown_model_is_a_hard_config_failure() {
+        let dir = temp_dir("unknown-model");
+        let script = fake_dispatch_bin(
+            &dir,
+            "#!/bin/sh\necho \"error: model not found: $3\" 1>&2\nexit 1\n",
+        );
+        let chain = vec![
+            ModelEntry {
+                model: "mistyped-model".into(),
+                thinking: "low".into(),
+            },
+            ModelEntry {
+                model: "fallback-model".into(),
+                thinking: "low".into(),
+            },
+        ];
+        let prompt = write_system_prompt(&dir);
+        let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
+        match outcome {
+            Outcome::HardFailure { attempt } => assert_eq!(attempt.model, "mistyped-model"),
+            _ => panic!("expected the invalid model configuration to stop the chain"),
         }
         std::fs::remove_dir_all(&dir).ok();
     }
