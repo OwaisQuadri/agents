@@ -27,7 +27,7 @@ const validStopModes = ['none', 'after-research', 'before-implementation', 'afte
 function result(status, state, stopReason) {
   return {
     status,
-    task: task ? { id: task.id, title: task.title, url: task.url, backend: task.backend, prior_status: task.prior_status } : null,
+    task: task ? { id: task.id, title: task.title, url: task.url, tracker: task.tracker, prior_status: task.prior_status } : null,
     repo,
     expected: state.expected,
     returned: state.returned,
@@ -53,7 +53,7 @@ const state = {
   changedPaths: [],
 }
 
-const isTaskIdentityMissing = !task || typeof task.url !== 'string' || task.url.length === 0 || typeof task.repository !== 'string'
+const isTaskIdentityMissing = !task || typeof task.tracker !== 'string' || typeof task.url !== 'string' || task.url.length === 0 || typeof task.repository !== 'string'
 if (isTaskIdentityMissing || !repo || !models || !models.T3 || !models.T4 || !models.T4ReviewAfterRepair || !models.T5 || !validStopModes.includes(stopMode)) {
   state.blockers.push('invalid-input')
   return result('blocked', state, 'invalid-input')
@@ -74,8 +74,8 @@ if (taskMarkers.includes('manual-only')) {
   return result('blocked', state, 'manual-only')
 }
 
-const taskReference = task.backend === 'github' ? `#${task.id}` : `${task.id} (${task.url})`
-const closingReference = task.backend === 'github' ? `Closes #${task.id}` : `Tracks ${task.url}`
+const taskReference = task.tracker === 'github' ? `#${task.id}` : `${task.id} (${task.url})`
+const closingReference = task.tracker === 'github' ? `Closes #${task.id}` : `Tracks ${task.url}`
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`
@@ -114,20 +114,20 @@ const SAFETY_SCHEMA = {
 }
 
 function repositorySafetyPrompt() {
-  return `You are the repository identity safety executor. Run the checks yourself. Do not trust controller prose or mutate backend status, git state, branches, issues, or Pull Requests.
+  return `You are the repository identity safety executor. Run the checks yourself. Do not trust controller prose or mutate tracker status, git state, branches, issues, or Pull Requests.
 
 canonical_repo: ${repo}
 task_repository: ${task.repository}
-backend: ${task.backend}
+tracker: ${task.tracker}
 issue_id: ${task.id}
 task_url: ${task.url}
 
 1. Run autonomous-engineer-state repair-worktree --repo ${repo}. Return control=worktree-invalid and is_real_worktree=false unless its round trip proves a real worktree.
 2. Require task_repository to equal canonical_repo.
 3. For GitHub, run cd ${repo} && gh repo view --json url --jq .url. Require task_url to equal that repository URL plus /issues/${task.id}.
-4. For Linear, fetch ${task.id} through the configured Linear integration. Require its backend repository metadata to equal ${repo}.
+4. For Linear, fetch ${task.id} through the configured Linear integration. Require its tracker repository metadata to equal ${repo}.
 5. For roadmap.json, read ${repo}/roadmap.json. Require the exact task id ${task.id} in that file.
-6. Return control=repository-boundary when applicable backend evidence is missing or different. Otherwise return control=clear.
+6. Return control=repository-boundary when applicable tracker evidence is missing or different. Otherwise return control=clear.
 
 Set is_status_written=false, is_remote_draft=false, is_verified=false, pr=null, branch=null, commit=null, repairs=0, and checks and blockers to arrays. Return only the required schema.`
 }
@@ -137,7 +137,7 @@ function safetyPrompt(action, plannedFiles = [], verificationProof = '') {
 
 canonical_repo: ${repo}
 task_repository: ${task.repository}
-backend: ${task.backend}
+tracker: ${task.tracker}
 issue_id: ${task.id}
 prior_status: ${task.prior_status}
 action: ${action}
@@ -147,16 +147,16 @@ verification_command: ${verificationProof}
 Run these checks before you return:
 1. autonomous-engineer-state repair-worktree --repo ${repo}
 2. Confirm that its round-trip output reports a real worktree. If it does not, return control=worktree-invalid and is_real_worktree=false.
-3. Run autonomous-engineer-state list. If this repository has stopMode discard-current or all, close only its marked unverified draft, restore prior_status through its backend, and return control=discarded.
+3. Run autonomous-engineer-state list. If this repository has stopMode discard-current or all, close only its marked unverified draft, restore prior_status through its tracker, and return control=discarded.
 4. Repository identity passed a separate no-mutation safety call. Do not repeat that check or return repository-boundary from this action.
-5. Run cd ${repo} && gh issue view ${task.id} --json number,state,blockedBy,labels,projectItems,url for a GitHub task. Return control=blocked when the issue has the manual-only label. For another backend, reject its normalized manual-only marker.
+5. Run cd ${repo} && gh issue view ${task.id} --json number,state,blockedBy,labels,projectItems,url for a GitHub task. Return control=blocked when the issue has the manual-only label. For another tracker, reject its normalized manual-only marker.
 6. Run cd ${repo} && gh pr list --state open --limit 1000 --json number,url,isDraft,headRefName,headRefOid,mergeStateStatus,body,files,closingIssuesReferences.
-7. For GitHub, a Pull Request is connected only when closingIssuesReferences names issue ${task.id}. For other backends, require both the exact task URL and the autonomous-engineer marker. Run cd ${repo} && gh pr view <number> --json url,state,isDraft,headRefName,headRefOid,mergeStateStatus,body,files for each connected candidate.
+7. For GitHub, a Pull Request is connected only when closingIssuesReferences names issue ${task.id}. For other trackers, require both the exact task URL and the autonomous-engineer marker. Run cd ${repo} && gh pr view <number> --json url,state,isDraft,headRefName,headRefOid,mergeStateStatus,body,files for each connected candidate.
 8. For action before-implementation, compare planned_files with every other open Pull Request. Return overlap when planned_files is empty or any exact path intersects.
 9. For actions after-draft and before-repair, require the connected marked draft to remain open and non-conflicting. For before-repair, run a nonempty verification_command to remove the failed verification worktree. Return resume-draft when these checks pass.
-10. For action start, record the prior status and set the selected item active through its backend's existing write path. GitHub Projects runs: cd ${shellQuote(repo)} && ${shellQuote(`${supportRepo}/skills/task-graph/scripts/gh-issue-field.sh`)} ${shellQuote(task.id)} Status in-progress. roadmap.json uses in progress; Linear uses its configured active state.
+10. For action start, record the prior status and set the selected item active through its tracker's existing write path. GitHub Projects runs: cd ${shellQuote(repo)} && ${shellQuote(`${supportRepo}/skills/task-graph/scripts/gh-issue-field.sh`)} ${shellQuote(task.id)} Status in-progress. roadmap.json uses in progress; Linear uses its configured active state.
 11. For action verified-ready, confirm that the connected Pull Request is OPEN, isDraft, marked, and non-conflicting. For roadmap.json, require the exact verified Pull Request head to record the selected item as done. Run verification_command and require exit zero. Then run cd ${repo} && gh pr ready <number>. Set is_remote_draft to the confirmed pre-transition state and is_verified=true. Keep GitHub Projects in progress. Set Linear to its configured review state, or leave it active when none exists. Return control=clear.
-12. For action discard, ignore task blockers, close only the connected marked unverified draft, delete its remote branch, verify closure, and restore ${task.prior_status} through the same backend. Return control=discarded after restoration.
+12. For action discard, ignore task blockers, close only the connected marked unverified draft, delete its remote branch, verify closure, and restore ${task.prior_status} through the same tracker. Return control=discarded after restoration.
 
 Return control=discarded only after command-backed draft cleanup and status restoration. Do not return control=repository-boundary from this action. Return control=blocked when the task is manual-only or native blockedBy has an unresolved blocker. Return the marker's integer N in repairs, or repairs=0 when no marker exists. Return control=resume-draft only for a connected OPEN draft with the marker <!-- autonomous-engineer repairs=N --> and is_verified=false. Return control=already-verified only from command-backed status, not a comment. Return control=overlap for changed-file overlap with another open Pull Request. Return control=merge-conflict for a non-mergeable connected draft. Return control=clear only when implementation may safely proceed. Return control=stopped only when a command cannot complete. Return only the required schema.`
 }
