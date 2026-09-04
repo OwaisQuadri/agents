@@ -43,12 +43,6 @@
 # dispatch, and skips it if that dispatch's PR is still open — no sense opening a
 # second worktree to review the same artifact while a prior review sits unmerged.
 #
-# Every session is instructed to push its branch and open a PR itself before
-# finishing (never merge — that stays a human Decide call) so the review actually
-# lands somewhere visible instead of sitting silent in a local worktree; this script
-# verifies that happened afterward and WARNs loudly if it didn't, and only an entry
-# with a real pr_number lets a future fire's open-PR dedup check above find it.
-#
 # Every fire whose session reaches a VERDICT (settles: idle/done/blocked) appends one
 # line to workflows/gepa-due/state/reviewed.jsonl — gated on REACHING a verdict, never
 # on what that verdict was (a real mutation, a no-mutation note, or nothing committed
@@ -204,6 +198,10 @@ handle_artifact() {
     return 1
   fi
   log "$tag worktree ready: branch=$branch workspace=$workspace_id path=$worktree_path"
+  local base_commit baseline_diff_hash baseline_untracked
+  base_commit="$(git -C "$worktree_path" rev-parse HEAD)" || return 1
+  baseline_diff_hash="$(git -C "$worktree_path" diff --binary HEAD | git hash-object --stdin)"
+  baseline_untracked="$(git -C "$worktree_path" ls-files --others --exclude-standard | LC_ALL=C sort)"
 
   # copy THIS artifact's real vote history into its own worktree — gitignored, never
   # inherited by a fresh worktree otherwise. Usage evidence needs no copying: real Pi
@@ -243,9 +241,9 @@ handle_artifact() {
 
   local kickoff
   if [ "$vote_count" -eq 0 ]; then
-    kickoff="tools/gepa-due found this artifact due on usage_count alone ($usage_count real transcript hits since $cutoff_iso, reason: $reason) with ZERO votes on file. There is no logs/usage.jsonl to read — usage evidence is real Pi session transcripts under ~/.pi/agent/sessions/ (machine-global, already visible from this worktree), a read tool_call whose path ends in this artifact's own definition file, with a timestamp strictly after $cutoff_iso. skills/ai-author/SKILL.md's Reflect step documents exactly how to scan and read these. With zero votes there is no judged critique to Reflect against — writing a long Reflect essay re-reading the same usage hits is NOT the right action here (every real gepa-due run so far that hit this exact zero-vote case concluded 'no mutation' with nothing but the incumbent's own contract restated). The right action: dispatch $JUDGE_SAMPLE_SIZE SEPARATE fresh-context sub-agents (the Agent tool, general-purpose type — NOT your own context, blindness is the whole point per SKILL.md's judge protocol section), one per the $JUDGE_SAMPLE_SIZE most recent real transcript hits you find (after $cutoff_iso) for this artifact. Each sub-agent gets ONLY the artifact's own source file and its one assigned transcript excerpt — never this prompt, never the other hits, never prior votes — and grades harshly per the judge protocol, submitting via 'python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>' with the vote's first line being 'prompt_version: <this artifact's current short commit hash>'. After all $JUDGE_SAMPLE_SIZE votes land, THEN run Reflect for real with actual judge signal. If it still concludes no mutation (likely, with only $JUDGE_SAMPLE_SIZE votes), commit ONE short paragraph somewhere durable per SKILL.md's current record-keeping guidance — how many votes you generated and their grades, and why no mutation — NOT a multi-section essay re-deriving the failure taxonomy from usage hits alone. Never ship a mutation without going through the loop's own Decide gate. Whatever you conclude, push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — that PR is how this trigger's evidence review actually lands instead of sitting in a local worktree only. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+    kickoff="tools/gepa-due found this artifact due on usage_count alone ($usage_count real transcript hits since $cutoff_iso, reason: $reason) with ZERO votes on file. There is no logs/usage.jsonl to read — usage evidence is real Pi session transcripts under ~/.pi/agent/sessions/ (machine-global, already visible from this worktree), a read tool_call whose path ends in this artifact's own definition file, with a timestamp strictly after $cutoff_iso. skills/ai-author/SKILL.md's Reflect step documents exactly how to scan and read these. With zero votes there is no judged critique to Reflect against — writing a long Reflect essay re-reading the same usage hits is NOT the right action here (every real gepa-due run so far that hit this exact zero-vote case concluded 'no mutation' with nothing but the incumbent's own contract restated). The right action: dispatch $JUDGE_SAMPLE_SIZE SEPARATE fresh-context sub-agents (the Agent tool, general-purpose type — NOT your own context, blindness is the whole point per SKILL.md's judge protocol section), one per the $JUDGE_SAMPLE_SIZE most recent real transcript hits you find (after $cutoff_iso) for this artifact. Each sub-agent gets ONLY the artifact's own source file and its one assigned transcript excerpt — never this prompt, never the other hits, never prior votes — and grades harshly per the judge protocol, submitting via 'python3 skills/ai-author/scripts/submit_vote.py --artifact <name> --grade <grade>' with the vote's first line being 'prompt_version: <this artifact's current short commit hash>'. After all $JUDGE_SAMPLE_SIZE votes land, THEN run Reflect for real with actual judge signal. If Reflect proposes no candidate, write no tracked note, make no commit, do not push, and do not open a PR; the trigger records the review in machine-local state after this session settles. If Reflect proposes a candidate, run Test and Decide. Whether Decide accepts or rejects it, commit the tracked frontier evidence, push the branch, and open a PR with 'gh pr create --base main'. A rejected candidate must leave the live definition unchanged and the PR must say it preserves test evidence only. An accepted candidate includes the live definition mutation. Never merge the PR. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
   else
-    kickoff="tools/gepa-due found this artifact due for a GEPA tuning look: $artifact (usage_count=$usage_count real transcript hits since $cutoff_iso, vote_count=$vote_count, reason: $reason). There is no logs/usage.jsonl to read — usage evidence is real Pi session transcripts under ~/.pi/agent/sessions/ (machine-global, already visible from this worktree), a read tool_call whose path ends in this artifact's own definition file, with a timestamp strictly after $cutoff_iso. Its real $artifact/votes/votes.jsonl has already been copied into THIS worktree at that exact path — read it directly. Read skills/ai-author/SKILL.md's GEPA loop (Reflect/Propose/Test/Decide) and its 'applying frontier data' section, then decide what to do — run a real tuning pass, or record a short 'no mutation, here is why' note (one paragraph if there is genuinely nothing new to report; longer only if the votes actually surface a new pattern worth naming in full) somewhere durable per SKILL.md's current record-keeping guidance. Never ship a mutation without going through the loop's own Decide gate; this prompt is a nudge, not an instruction to skip it. Whatever you conclude, push the branch AND open a PR with 'gh pr create --base main' before finishing (do not merge it — that's a human Decide call) — the PR is how this actually lands for review. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
+    kickoff="tools/gepa-due found this artifact due for a GEPA tuning look: $artifact (usage_count=$usage_count real transcript hits since $cutoff_iso, vote_count=$vote_count, reason: $reason). There is no logs/usage.jsonl to read — usage evidence is real Pi session transcripts under ~/.pi/agent/sessions/ (machine-global, already visible from this worktree), a read tool_call whose path ends in this artifact's own definition file, with a timestamp strictly after $cutoff_iso. Its real $artifact/votes/votes.jsonl has already been copied into THIS worktree at that exact path — read it directly. Read skills/ai-author/SKILL.md's GEPA loop (Reflect/Propose/Test/Decide) and its 'applying frontier data' section, then decide what to do — run a real tuning pass or stop after Reflect. If Reflect proposes no candidate, write no tracked note, make no commit, do not push, and do not open a PR; the trigger records the review in machine-local state after this session settles. If Reflect proposes a candidate, run Test and Decide. Whether Decide accepts or rejects it, commit the tracked frontier evidence, push the branch, and open a PR with 'gh pr create --base main'. A rejected candidate must leave the live definition unchanged and the PR must say it preserves test evidence only. An accepted candidate includes the live definition mutation. Never merge the PR. This is a scheduled gepa-due run for exactly this one artifact, started at $RUN_STAMP."
   fi
   "$HERDR" pane send-text "$agent_pane" "$kickoff"
 
@@ -270,22 +268,40 @@ handle_artifact() {
   fi
   log "$tag SUCCESS: session settled — branch=$branch workspace=$workspace_id"
 
-  # verify the session actually did what the kickoff asked (push + open a PR), and
-  # capture the PR number for the state entry below — a future fire's open-PR dedup
-  # check (step 0.5) can only skip a re-review if this number is real.
+  if [ -f "$worktree_path/$artifact/votes/votes.jsonl" ]; then
+    local votes_source="$worktree_path/$artifact/votes/votes.jsonl"
+    local votes_destination="$REPO/$artifact/votes/votes.jsonl"
+    mkdir -p "$(dirname "$votes_destination")"
+    touch "$votes_destination"
+    lockf -kw "$votes_destination" /bin/zsh -c 'while IFS= read -r vote; do grep -Fqx -- "$vote" "$2" || printf "%s\n" "$vote" >> "$2"; done < "$1"' zsh "$votes_source" "$votes_destination"
+    log "$tag merged updated votes/ back into the main checkout"
+  fi
+
+  local settled_diff_hash settled_untracked
+  settled_diff_hash="$(git -C "$worktree_path" diff --binary HEAD | git hash-object --stdin)"
+  settled_untracked="$(git -C "$worktree_path" ls-files --others --exclude-standard | LC_ALL=C sort)"
+  if [ "$settled_diff_hash" != "$baseline_diff_hash" ] || [ "$settled_untracked" != "$baseline_untracked" ]; then
+    log "$tag ERROR: session settled with uncommitted work; refusing to record a verdict"
+    return 1
+  fi
+
   local pr_number=""
-  if git -C "$worktree_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+  if git -C "$worktree_path" diff --quiet "$base_commit" HEAD; then
+    log "$tag confirmed: Reflect-only review; no push or PR required"
+  elif git -C "$worktree_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
     local repo_slug pr_json
     repo_slug="$(git -C "$worktree_path" remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')"
     pr_json="$(gh pr view "$branch" --repo "$repo_slug" --json url,number 2>/dev/null || true)"
     pr_number="$(printf '%s' "$pr_json" | jq -r '.number // empty' 2>/dev/null)"
     if [ -n "$pr_number" ]; then
-      log "$tag confirmed: branch pushed, PR #$pr_number open at $(printf '%s' "$pr_json" | jq -r '.url')"
+      log "$tag confirmed: GEPA result branch pushed, PR #$pr_number open at $(printf '%s' "$pr_json" | jq -r '.url')"
     else
-      log "$tag WARN: branch $branch was pushed but no open PR found for it — session may not have run 'gh pr create'"
+      log "$tag ERROR: GEPA result branch $branch was pushed but no open PR found for it"
+      return 1
     fi
   else
-    log "$tag WARN: branch $branch was never pushed (no upstream) — its commit(s) are stuck in the local worktree, nobody will see this without manual intervention"
+    log "$tag ERROR: GEPA result branch $branch was never pushed; its commit is stuck in the local worktree"
+    return 1
   fi
 
   # reviewed-through: gated on reaching a VERDICT (we're past the settle check above
