@@ -8,7 +8,7 @@ versioned in one repo with a symlink installer.
 ```sh
 cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 ./install.sh --dry-run   # print the plan
-./install.sh             # apply managed links, tools, and settings with verified backups
+./install.sh             # symlink for real; pre-write backups land outside the skills root
 ```
 
 A fresh checkout needs the one-time build before its first dry run. The dry run exits with the required build command when the binary is absent.
@@ -41,13 +41,13 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
-| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `git-delta.gitconfig`, the human Git display settings; managed agent settings |
+| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; managed settings, including the Plannotator plan-writing instructions |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
 | `rules/` | Claude Code rules that load only for matching file paths |
 | `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass; `transcript-directed-video-processor`, which segments a YouTube or local video's transcript into candidate moments and runs a configured vision model over selected frames |
 | `hooks/` | both git hooks and Claude Code hooks. `post-checkout` carries the live checkout's uncommitted work into worktrees and branches cut at main's tip, `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
-| `install.sh` | the top-level installer; it builds local Rust tools, runs the sync tools, and applies the managed Git settings |
+| `install.sh` | the top-level installer; it builds the local Rust tools, runs `tool-sync`, and runs `mcp-sync` when its live inputs exist |
 | `CLAUDE.md` | global guidance loaded every session; the single instructions source for both tools. `install.sh` links `~/.codex/AGENTS.md` to it, so Codex reads the same file |
 
 ### skills

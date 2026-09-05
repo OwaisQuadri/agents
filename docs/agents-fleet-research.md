@@ -83,7 +83,7 @@ All from this repo, 2026-07-31: `skills/agent-author/SKILL.md`, `skills/ai-autho
 - [ ] evolution only through the GEPA(Genetic-Pareto prompt evolution) loop: small named single-concern mutations, accept only on harness win, ties to incumbent; the mutation-proposer never writes eval cases, rubric, or votes — "the exam stays out of the student's hands." (ai-author)
 - [ ] agents/ is empty by design; every agent authored fresh — the old ~13-agent fleet's content must not be ported ("no embedded contract, no eval… do not port that content"). (reset-spec)
 - [ ] router / model-selector / prompt-engineer advisory pipeline: dismissed 2026-07-30, deleted 2026-07-31 — any lookalike must cite the dismissal, not get re-authored. (reset-spec, auto-memory)
-- [ ] structural rules: no hooks or paths into ~/swarm or ~/swarm-skills; no forced dispatch; install.sh makes verified backups; one skills root; rollback uses git history. (reset-spec)
+- [ ] structural rules: no hooks or paths into ~/swarm or ~/swarm-skills; no forced-dispatch regimes; install.sh symlinks-only; single canonical skills root; rollback is git history only. (reset-spec)
 - [ ] mouthpiece stays a SKILL — do not re-author end-user voice as an agent; evals stay unseeded unless explicitly told to seed. (reset-spec)
 - [ ] comms rules encoded in every contract: quoted content passes through unaltered; verbose between agents within the shape; each dispatch carries only what its step needs; expand every abbreviation at first use; simplest thing that ships, no speculative abstraction. (CLAUDE.md)
 

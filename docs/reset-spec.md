@@ -14,8 +14,8 @@ Anything not on this page is not in the new setup; the next audit diffs against 
 - lean CLAUDE.md: working style, the abbreviation regulation, agent-communication
   guidance, the /mouthpiece pointer for user-facing replies, never-rm-before-a-verified-move,
   time-estimation guidance. Hand-edited by owais at the phase 6 gate; those edits are canon.
-- install.sh: run()/plan() dry-run wrappers, verified pre-write backups, managed links,
-  tool builds, and bounded Git and agent-setting updates.
+- install.sh: symlinks only, run()/plan() --dry-run wrappers, pre-write backups landing
+  outside any live skills root, never touches settings.json.
 - one canonical skills root ~/.agents/skills of per-skill links into ~/Documents/agents;
   ~/.claude/skills and ~/.codex/skills are each ONE directory symlink into it.
 - tracked copies of settings.json and settings.local.json, hook registrations scrubbed;
