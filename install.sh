@@ -474,7 +474,7 @@ else
   if (( IS_GIT_DELTA_CHANGE )); then
     if [[ -L "$GIT_GLOBAL_CONFIG" && ! -e "$GIT_GLOBAL_CONFIG" ]]; then
       backup "$GIT_GLOBAL_CONFIG"
-    elif [[ -e "$GIT_GLOBAL_CONFIG" || -L "$GIT_GLOBAL_CONFIG" ]]; then
+    elif [[ -e "$GIT_GLOBAL_CONFIG" ]]; then
       GIT_CONFIG_BACKUP="$GIT_GLOBAL_CONFIG.pre-reset-$STAMP"
       [[ -e "$GIT_CONFIG_BACKUP" || -L "$GIT_CONFIG_BACKUP" ]] \
         && GIT_CONFIG_BACKUP="$GIT_CONFIG_BACKUP.$(date +%H%M%S)"
