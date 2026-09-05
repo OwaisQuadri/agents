@@ -112,9 +112,9 @@ type ShutdownEvent = {
 };
 
 const TELEMETRY_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const TELEMETRY_PACKAGE_VERSION = "0.84.2";
+const TELEMETRY_PACKAGE_VERSION = "0.84.4";
 const PinnedSubagentPackageName = "pi-subagents";
-const PinnedSubagentPackageVersion = "0.18.0";
+const PinnedSubagentPackageVersion = "0.19.0";
 
 const runRecordKeys = [
 	"recordType",

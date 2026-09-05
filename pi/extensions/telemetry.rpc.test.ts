@@ -147,7 +147,7 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 	const agentDirectory = writablePaths.PI_CODING_AGENT_DIR;
 
 	const packageName = "@earendil-works/pi-coding-agent";
-	const packageVersion = "0.84.2";
+	const seedPackageVersion = "0.0.0-fixture";
 	const telemetryExtensionPath = fileURLToPath(new URL("./telemetry.ts", import.meta.url));
 	const telemetryStorePath = join(agentDirectory, "telemetry.jsonl");
 	const seedRecords = [
@@ -156,7 +156,7 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 			runId: "run-2",
 			parentRunId: null,
 			packageName,
-			packageVersion,
+			packageVersion: seedPackageVersion,
 			agentName: "agent-a",
 			startedAt: "2026-08-17T02:25:00.000Z",
 			settledAt: "2026-08-17T02:25:20.000Z",
@@ -175,7 +175,7 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 			runId: "run-1",
 			parentRunId: null,
 			packageName,
-			packageVersion,
+			packageVersion: seedPackageVersion,
 			agentName: "agent-a",
 			startedAt: "2026-08-17T02:24:00.000Z",
 			settledAt: "2026-08-17T02:24:10.000Z",
@@ -489,17 +489,6 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 		await withTimeout(closePromise, RPC_PROCESS_TIMEOUT_MS, "child cleanup").catch(() => undefined);
 	});
 
-	const startupStatusEvent = await waitForEvent(
-		(event) => event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "telemetry",
-		"startup telemetry status",
-		RPC_REQUEST_TIMEOUT_MS,
-	);
-	assert.equal(startupStatusEvent.type, "extension_ui_request");
-	assert.equal(uiRequests.length, 1);
-	assert.equal(uiRequests[0]?.method, "setStatus");
-	assert.equal(uiRequests[0]?.statusKey, "telemetry");
-	assert.equal(uiRequests[0]?.statusText, undefined);
-
 	const getCommandsResponse = await send({ type: "get_commands" });
 	assert.equal(getCommandsResponse.type, "response");
 	assert.equal(getCommandsResponse.command, "get_commands");
@@ -513,14 +502,14 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 		assert.equal(command?.source, "extension");
 		assert.equal((command?.sourceInfo as JsonRecord | undefined)?.path, telemetryExtensionPath);
 	}
+	assert.deepEqual(uiRequests, []);
 
-	const statusCountBefore = uiRequests.length;
 	const statusResponse = await send({ type: "prompt", message: "/telemetry-status" });
 	assert.equal(statusResponse.type, "response");
 	assert.equal(statusResponse.command, "prompt");
 	assert.equal(statusResponse.success, true);
-	assert.equal(uiRequests.length, statusCountBefore + 1);
-	const statusEvent = uiRequests[statusCountBefore] as JsonRecord;
+	assert.equal(uiRequests.length, 1);
+	const statusEvent = uiRequests[0] as JsonRecord;
 	assert.equal(statusEvent.method, "notify");
 	assert.equal(statusEvent.message, "active: 0 failed: 0");
 
@@ -540,7 +529,7 @@ test("telemetry RPC mode drives status, filtered output, feedback, and clean shu
 	const runOutputCountBefore = uiRequests.length;
 	const runFilter = {
 		packageName,
-		packageVersion,
+		packageVersion: seedPackageVersion,
 		agentName: "agent-a",
 		status: "succeeded",
 		minimumDurationMs: 10000,
