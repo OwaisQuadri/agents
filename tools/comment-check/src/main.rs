@@ -24,17 +24,56 @@ use std::process::{Command, ExitCode};
 const MAX_COMMENT_LINES: usize = 3;
 
 const SLASH_EXTENSIONS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "swift", "c", "h", "cc", "cpp",
-    "hpp", "java", "kt", "kts", "cs", "zig", "scala", "m", "mm",
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "swift", "c", "h", "cc", "cpp", "hpp",
+    "java", "kt", "kts", "cs", "zig", "scala", "m", "mm",
 ];
 
-const HASH_EXTENSIONS: &[&str] =
-    &["py", "sh", "zsh", "bash", "rb", "pl", "toml", "yaml", "yml"];
+const HASH_EXTENSIONS: &[&str] = &["py", "sh", "zsh", "bash", "rb", "pl", "toml", "yaml", "yml"];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Lang {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LexicalMode {
     Slash { is_rust: bool },
     Hash { is_python: bool },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Grammar {
+    Rust,
+    TypeScript,
+    Tsx,
+    JavaScript,
+    Go,
+    C,
+    Cpp,
+    Java,
+    Kotlin,
+    CSharp,
+    Zig,
+    Scala,
+    ObjectiveC,
+    Python,
+    Bash,
+    Zsh,
+    Ruby,
+    Toml,
+    Yaml,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LanguageSpec {
+    grammar: Option<Grammar>,
+    lexical: LexicalMode,
+}
+
+struct CommentExtractor {
+    parser: tree_sitter::Parser,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ParseFailure {
+    LanguageVersion,
+    NoTree,
+    SyntaxError,
 }
 
 const VALUE_OPTIONS: &[&str] = &[
@@ -64,9 +103,10 @@ fn main() -> ExitCode {
         run_hook();
         return ExitCode::SUCCESS;
     }
+    let mut extractor = CommentExtractor::new();
     let mut is_failing = false;
     for path in &args {
-        for violation in check_path(Path::new(path)) {
+        for violation in check_path(Path::new(path), &mut extractor) {
             is_failing = true;
             println!("FAIL  {violation}");
         }
@@ -99,7 +139,8 @@ fn run_list_json(args: &[String]) -> ExitCode {
         eprintln!("failed to read stdin");
         return ExitCode::FAILURE;
     }
-    println!("{}", spans_to_json(&text, lang));
+    let mut extractor = CommentExtractor::new();
+    println!("{}", spans_to_json(&text, lang, &mut extractor));
     ExitCode::SUCCESS
 }
 
@@ -124,12 +165,13 @@ fn run_hook() {
         return;
     };
 
+    let mut extractor = CommentExtractor::new();
     let mut violations = Vec::new();
     for path in staged {
         if !is_source_path(&path) {
             continue;
         }
-        violations.extend(check_path(&repo_root.join(&path)));
+        violations.extend(check_path(&repo_root.join(&path), &mut extractor));
     }
     if violations.is_empty() {
         return;
@@ -159,42 +201,86 @@ fn is_source_path(path: &str) -> bool {
     lang_for_extension(path).is_some()
 }
 
-fn lang_for_extension(path: &str) -> Option<Lang> {
+fn lang_for_extension(path: &str) -> Option<LanguageSpec> {
     let (_, ext) = path.rsplit_once('.')?;
-    if SLASH_EXTENSIONS.contains(&ext) {
-        return Some(Lang::Slash { is_rust: ext == "rs" });
-    }
-    if HASH_EXTENSIONS.contains(&ext) {
-        return Some(Lang::Hash { is_python: ext == "py" });
-    }
-    None
+    let grammar = match ext {
+        "rs" => Some(Grammar::Rust),
+        "ts" => Some(Grammar::TypeScript),
+        "tsx" => Some(Grammar::Tsx),
+        "js" | "jsx" | "mjs" | "cjs" => Some(Grammar::JavaScript),
+        "go" => Some(Grammar::Go),
+        "swift" => None,
+        "c" => Some(Grammar::C),
+        "h" | "cc" | "cpp" | "hpp" => Some(Grammar::Cpp),
+        "java" => Some(Grammar::Java),
+        "kt" | "kts" => Some(Grammar::Kotlin),
+        "cs" => Some(Grammar::CSharp),
+        "zig" => Some(Grammar::Zig),
+        "scala" => Some(Grammar::Scala),
+        "m" => Some(Grammar::ObjectiveC),
+        "mm" => None,
+        "py" => Some(Grammar::Python),
+        "sh" | "bash" => Some(Grammar::Bash),
+        "zsh" => Some(Grammar::Zsh),
+        "rb" => Some(Grammar::Ruby),
+        "pl" => None,
+        "toml" => Some(Grammar::Toml),
+        "yaml" | "yml" => Some(Grammar::Yaml),
+        _ => return None,
+    };
+    let lexical = if SLASH_EXTENSIONS.contains(&ext) {
+        LexicalMode::Slash {
+            is_rust: ext == "rs",
+        }
+    } else if HASH_EXTENSIONS.contains(&ext) {
+        LexicalMode::Hash {
+            is_python: ext == "py",
+        }
+    } else {
+        return None;
+    };
+    Some(LanguageSpec { grammar, lexical })
 }
 
 /// An extensionless file is classified by its shebang, so hook scripts and other
 /// bare executables stay inside the budget too.
-fn lang_for_shebang(text: &str) -> Option<Lang> {
+fn lang_for_shebang(text: &str) -> Option<LanguageSpec> {
     let first = text.lines().next()?;
     if !first.starts_with("#!") {
         return None;
     }
-    if first.contains("python") {
-        return Some(Lang::Hash { is_python: true });
-    }
-    if ["sh", "zsh", "bash", "ruby", "perl"].iter().any(|name| first.contains(name)) {
-        return Some(Lang::Hash { is_python: false });
-    }
-    None
+    let (grammar, is_python) = if first.contains("python") {
+        (Some(Grammar::Python), true)
+    } else if first.contains("zsh") {
+        (Some(Grammar::Zsh), false)
+    } else if first.contains("ruby") {
+        (Some(Grammar::Ruby), false)
+    } else if first.contains("perl") {
+        (None, false)
+    } else if first.contains("sh") {
+        (Some(Grammar::Bash), false)
+    } else {
+        return None;
+    };
+    Some(LanguageSpec {
+        grammar,
+        lexical: LexicalMode::Hash { is_python },
+    })
 }
 
-fn check_path(path: &Path) -> Vec<String> {
+fn check_path(path: &Path, extractor: &mut CommentExtractor) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
     };
-    let lang = match path.to_str().and_then(lang_for_extension).or_else(|| lang_for_shebang(&text)) {
+    let lang = match path
+        .to_str()
+        .and_then(lang_for_extension)
+        .or_else(|| lang_for_shebang(&text))
+    {
         Some(lang) => lang,
         None => return Vec::new(),
     };
-    long_blocks(&text, lang)
+    long_blocks(&text, lang, extractor)
         .into_iter()
         .map(|(start, end)| {
             format!(
@@ -206,12 +292,13 @@ fn check_path(path: &Path) -> Vec<String> {
         .collect()
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 enum CommentKind {
     Doc,
     Plain,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 struct CommentSpan {
     start_line: usize,
     end_line: usize,
@@ -219,11 +306,169 @@ struct CommentSpan {
     is_full_line: bool,
 }
 
+impl CommentExtractor {
+    fn new() -> Self {
+        Self {
+            parser: tree_sitter::Parser::new(),
+        }
+    }
+
+    fn spans(&mut self, text: &str, spec: LanguageSpec) -> Vec<CommentSpan> {
+        match spec.grammar {
+            Some(grammar) => self
+                .tree_spans(text, grammar, spec.lexical)
+                .unwrap_or_else(|_| lexical_spans(text, spec.lexical)),
+            None => lexical_spans(text, spec.lexical),
+        }
+    }
+
+    fn tree_spans(
+        &mut self,
+        text: &str,
+        grammar: Grammar,
+        lexical: LexicalMode,
+    ) -> Result<Vec<CommentSpan>, ParseFailure> {
+        self.parser
+            .set_language(&grammar_language(grammar))
+            .map_err(|_| ParseFailure::LanguageVersion)?;
+        let tree = self.parser.parse(text, None).ok_or(ParseFailure::NoTree)?;
+        let root = tree.root_node();
+        if root.has_error() {
+            return Err(ParseFailure::SyntaxError);
+        }
+        let bytes = text.as_bytes();
+        let mut nodes = Vec::new();
+        collect_comment_nodes(root, &mut nodes);
+        nodes.sort_unstable_by_key(|node| (node.start_byte(), node.end_byte()));
+        nodes.dedup_by_key(|node| (node.start_byte(), node.end_byte()));
+        Ok(nodes
+            .into_iter()
+            .filter_map(|node| {
+                let start_byte = node.start_byte();
+                let comment = bytes.get(start_byte..node.end_byte())?;
+                if !is_comment_start(comment, lexical, grammar) {
+                    return None;
+                }
+                let start_line = node.start_position().row + 1;
+                let end = node.end_position();
+                let end_line = if end.column == 0 && end.row + 1 > start_line {
+                    end.row
+                } else {
+                    end.row + 1
+                };
+                Some(CommentSpan {
+                    start_line,
+                    end_line,
+                    kind: classify_comment(comment, lexical, start_line),
+                    is_full_line: is_full_line(bytes, start_byte),
+                })
+            })
+            .collect())
+    }
+}
+
+fn grammar_language(grammar: Grammar) -> tree_sitter::Language {
+    match grammar {
+        Grammar::Rust => tree_sitter_rust::LANGUAGE.into(),
+        Grammar::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        Grammar::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        Grammar::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+        Grammar::Go => tree_sitter_go::LANGUAGE.into(),
+        Grammar::C => tree_sitter_c::LANGUAGE.into(),
+        Grammar::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        Grammar::Java => tree_sitter_java::LANGUAGE.into(),
+        Grammar::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+        Grammar::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        Grammar::Zig => tree_sitter_zig::LANGUAGE.into(),
+        Grammar::Scala => tree_sitter_scala::LANGUAGE.into(),
+        Grammar::ObjectiveC => tree_sitter_objc::LANGUAGE.into(),
+        Grammar::Python => tree_sitter_python::LANGUAGE.into(),
+        Grammar::Bash => tree_sitter_bash::LANGUAGE.into(),
+        Grammar::Zsh => tree_sitter_zsh::LANGUAGE.into(),
+        Grammar::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        Grammar::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+        Grammar::Yaml => tree_sitter_yaml::LANGUAGE.into(),
+    }
+}
+
+fn collect_comment_nodes<'tree>(
+    root: tree_sitter::Node<'tree>,
+    nodes: &mut Vec<tree_sitter::Node<'tree>>,
+) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind().ends_with("comment") {
+            nodes.push(node);
+            continue;
+        }
+        for index in (0..node.child_count()).rev() {
+            if let Some(child) = node.child(index) {
+                stack.push(child);
+            }
+        }
+    }
+}
+
+fn is_comment_start(bytes: &[u8], mode: LexicalMode, grammar: Grammar) -> bool {
+    match mode {
+        LexicalMode::Slash { .. } => bytes.starts_with(b"//") || bytes.starts_with(b"/*"),
+        LexicalMode::Hash { .. } => {
+            bytes.starts_with(b"#") || (grammar == Grammar::Ruby && bytes.starts_with(b"=begin"))
+        }
+    }
+}
+
+fn is_full_line(bytes: &[u8], start_byte: usize) -> bool {
+    let line_start = bytes[..start_byte]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
+    std::str::from_utf8(&bytes[line_start..start_byte])
+        .is_ok_and(|prefix| prefix.chars().all(char::is_whitespace))
+}
+
+fn classify_comment(bytes: &[u8], mode: LexicalMode, start_line: usize) -> CommentKind {
+    let is_doc = match mode {
+        LexicalMode::Slash { is_rust } => {
+            if bytes.starts_with(b"//") {
+                if is_rust {
+                    bytes.starts_with(b"//!")
+                        || (bytes.starts_with(b"///") && !bytes.starts_with(b"////"))
+                } else {
+                    bytes.starts_with(b"//!") || bytes.starts_with(b"///")
+                }
+            } else {
+                bytes.starts_with(b"/*!")
+                    || (bytes.starts_with(b"/**")
+                        && !bytes.starts_with(b"/***")
+                        && !bytes.starts_with(b"/**/"))
+            }
+        }
+        LexicalMode::Hash { .. } => start_line == 1 && bytes.starts_with(b"#!"),
+    };
+    if is_doc {
+        CommentKind::Doc
+    } else {
+        CommentKind::Plain
+    }
+}
+
+fn lexical_spans(text: &str, mode: LexicalMode) -> Vec<CommentSpan> {
+    match mode {
+        LexicalMode::Slash { is_rust } => comment_spans(text, is_rust),
+        LexicalMode::Hash { is_python } => hash_comment_spans(text, is_python),
+    }
+}
+
 /// 1-based (start, end) line spans of every non-doc comment block longer than the
 /// budget. Consecutive full-line comments merge into one block; a trailing
 /// comment after code never merges with the lines below it.
-fn long_blocks(text: &str, lang: Lang) -> Vec<(usize, usize)> {
-    merged_spans(text, lang)
+fn long_blocks(
+    text: &str,
+    spec: LanguageSpec,
+    extractor: &mut CommentExtractor,
+) -> Vec<(usize, usize)> {
+    merged_spans(text, spec, extractor)
         .into_iter()
         .filter(|b| b.kind == CommentKind::Plain)
         .filter(|b| b.end_line - b.start_line + 1 > MAX_COMMENT_LINES)
@@ -234,11 +479,12 @@ fn long_blocks(text: &str, lang: Lang) -> Vec<(usize, usize)> {
 /// Every comment block (doc and non-doc), consecutive full-line comments merged into
 /// one span the same way `long_blocks` merges them — shared so `--list-json` and the
 /// length check see identical block boundaries.
-fn merged_spans(text: &str, lang: Lang) -> Vec<CommentSpan> {
-    let spans = match lang {
-        Lang::Slash { is_rust } => comment_spans(text, is_rust),
-        Lang::Hash { is_python } => hash_comment_spans(text, is_python),
-    };
+fn merged_spans(
+    text: &str,
+    spec: LanguageSpec,
+    extractor: &mut CommentExtractor,
+) -> Vec<CommentSpan> {
+    let spans = extractor.spans(text, spec);
     let mut blocks: Vec<CommentSpan> = Vec::new();
     for span in spans {
         if let Some(last) = blocks.last_mut() {
@@ -259,10 +505,10 @@ fn merged_spans(text: &str, lang: Lang) -> Vec<CommentSpan> {
 /// Renders every comment block in `text` (doc and non-doc) as a JSON array of
 /// `{start_line, end_line, kind, text}`, `text` being the exact source lines (with
 /// their own leading comment markers) the span covers.
-fn spans_to_json(text: &str, lang: Lang) -> String {
+fn spans_to_json(text: &str, spec: LanguageSpec, extractor: &mut CommentExtractor) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = String::from("[");
-    for (i, span) in merged_spans(text, lang).into_iter().enumerate() {
+    for (i, span) in merged_spans(text, spec, extractor).into_iter().enumerate() {
         if i > 0 {
             out.push(',');
         }
@@ -318,7 +564,11 @@ fn comment_spans(text: &str, is_rust: bool) -> Vec<CommentSpan> {
                 spans.push(CommentSpan {
                     start_line: line,
                     end_line: line,
-                    kind: if is_doc { CommentKind::Doc } else { CommentKind::Plain },
+                    kind: if is_doc {
+                        CommentKind::Doc
+                    } else {
+                        CommentKind::Plain
+                    },
                     is_full_line,
                 });
             }
@@ -346,7 +596,11 @@ fn comment_spans(text: &str, is_rust: bool) -> Vec<CommentSpan> {
                 spans.push(CommentSpan {
                     start_line,
                     end_line: line,
-                    kind: if is_doc { CommentKind::Doc } else { CommentKind::Plain },
+                    kind: if is_doc {
+                        CommentKind::Doc
+                    } else {
+                        CommentKind::Plain
+                    },
                     is_full_line,
                 });
                 is_line_blank_so_far = false;
@@ -468,7 +722,11 @@ fn hash_comment_spans(text: &str, is_python: bool) -> Vec<CommentSpan> {
                 spans.push(CommentSpan {
                     start_line: line,
                     end_line: line,
-                    kind: if is_shebang { CommentKind::Doc } else { CommentKind::Plain },
+                    kind: if is_shebang {
+                        CommentKind::Doc
+                    } else {
+                        CommentKind::Plain
+                    },
                     is_full_line,
                 });
             }
@@ -651,13 +909,37 @@ fn json_quote(value: &str) -> String {
 mod tests {
     use super::*;
 
-    const RUST: Lang = Lang::Slash { is_rust: true };
-    const TS: Lang = Lang::Slash { is_rust: false };
-    const PYTHON: Lang = Lang::Hash { is_python: true };
-    const SHELL: Lang = Lang::Hash { is_python: false };
+    const RUST: LanguageSpec = LanguageSpec {
+        grammar: Some(Grammar::Rust),
+        lexical: LexicalMode::Slash { is_rust: true },
+    };
+    const TS: LanguageSpec = LanguageSpec {
+        grammar: Some(Grammar::TypeScript),
+        lexical: LexicalMode::Slash { is_rust: false },
+    };
+    const TSX: LanguageSpec = LanguageSpec {
+        grammar: Some(Grammar::Tsx),
+        lexical: LexicalMode::Slash { is_rust: false },
+    };
+    const PYTHON: LanguageSpec = LanguageSpec {
+        grammar: Some(Grammar::Python),
+        lexical: LexicalMode::Hash { is_python: true },
+    };
+    const SHELL: LanguageSpec = LanguageSpec {
+        grammar: Some(Grammar::Bash),
+        lexical: LexicalMode::Hash { is_python: false },
+    };
+
+    fn blocks(text: &str, spec: LanguageSpec) -> Vec<(usize, usize)> {
+        long_blocks(text, spec, &mut CommentExtractor::new())
+    }
+
+    fn spans(text: &str, spec: LanguageSpec) -> Vec<CommentSpan> {
+        CommentExtractor::new().spans(text, spec)
+    }
 
     fn rust_blocks(text: &str) -> Vec<(usize, usize)> {
-        long_blocks(text, RUST)
+        blocks(text, RUST)
     }
 
     #[test]
@@ -677,14 +959,14 @@ mod tests {
         let text = "//! a\n//! b\n//! c\n//! d\n//! e\n//! f\n/// g\n/// h\n/// i\n/// j\n/// k\nfn main() {}\n";
         assert!(rust_blocks(text).is_empty());
         let jsdoc = "/**\n * a\n * b\n * c\n * d\n * e\n */\nexport function f() {}\n";
-        assert!(long_blocks(jsdoc, TS).is_empty());
+        assert!(blocks(jsdoc, TS).is_empty());
     }
 
     #[test]
     fn a_long_block_comment_is_flagged() {
         let text = "fn main() {}\n/* a\nb\nc\nd\ne */\n";
         assert_eq!(rust_blocks(text), vec![(2, 6)]);
-        assert_eq!(long_blocks(text, TS), vec![(2, 6)]);
+        assert_eq!(blocks(text, TS), vec![(2, 6)]);
     }
 
     #[test]
@@ -706,7 +988,7 @@ mod tests {
         let raw = "let a = r#\"// one\n// two\n// three\n// four\n// five\"#;\n";
         assert!(rust_blocks(raw).is_empty());
         let template = "const a = `// one\n// two\n// three\n// four\n// five`;\n";
-        assert!(long_blocks(template, TS).is_empty());
+        assert!(blocks(template, TS).is_empty());
     }
 
     #[test]
@@ -718,32 +1000,32 @@ mod tests {
     #[test]
     fn triple_slash_is_doc_in_every_slash_language() {
         let text = "/// a\n/// b\n/// c\n/// d\n/// e\nexport {}\n";
-        assert!(long_blocks(text, TS).is_empty());
+        assert!(blocks(text, TS).is_empty());
     }
 
     #[test]
     fn a_four_line_hash_run_is_flagged() {
         let text = "# one\n# two\n# three\n# four\nx = 1\n";
-        assert_eq!(long_blocks(text, PYTHON), vec![(1, 4)]);
-        assert!(long_blocks("# one\n# two\n# three\nx = 1\n", SHELL).is_empty());
+        assert_eq!(blocks(text, PYTHON), vec![(1, 4)]);
+        assert!(blocks("# one\n# two\n# three\nx = 1\n", SHELL).is_empty());
     }
 
     #[test]
     fn hash_inside_strings_and_words_is_not_a_comment() {
         let text = "a = \"# one\"\nb = \"# two\"\nc = \"# three\"\nd = \"# four\"\n";
-        assert!(long_blocks(text, PYTHON).is_empty());
+        assert!(blocks(text, PYTHON).is_empty());
         let doc = "def f():\n    \"\"\"\n    # a\n    # b\n    # c\n    # d\n    \"\"\"\n";
-        assert!(long_blocks(doc, PYTHON).is_empty());
+        assert!(blocks(doc, PYTHON).is_empty());
         let shell = "echo $#\nn=${#arr}\ncase x#y in esac\nz=1\n";
-        assert!(long_blocks(shell, SHELL).is_empty());
+        assert!(blocks(shell, SHELL).is_empty());
     }
 
     #[test]
     fn a_shebang_does_not_merge_with_the_run_below() {
         let text = "#!/bin/zsh\n# a\n# b\n# c\nx=1\n";
-        assert!(long_blocks(text, SHELL).is_empty());
+        assert!(blocks(text, SHELL).is_empty());
         let text = "#!/bin/zsh\n# a\n# b\n# c\n# d\nx=1\n";
-        assert_eq!(long_blocks(text, SHELL), vec![(2, 5)]);
+        assert_eq!(blocks(text, SHELL), vec![(2, 5)]);
     }
 
     #[test]
@@ -760,8 +1042,14 @@ mod tests {
 
     #[test]
     fn extensionless_files_are_classified_by_shebang() {
-        assert_eq!(lang_for_shebang("#!/bin/zsh\n# a\n"), Some(SHELL));
-        assert_eq!(lang_for_shebang("#!/usr/bin/env python3\n"), Some(PYTHON));
+        assert_eq!(
+            lang_for_shebang("#!/bin/zsh\n# a\n").map(|spec| spec.grammar),
+            Some(Some(Grammar::Zsh))
+        );
+        assert_eq!(
+            lang_for_shebang("#!/usr/bin/env python3\n").map(|spec| spec.grammar),
+            Some(Some(Grammar::Python))
+        );
         assert_eq!(lang_for_shebang("plain text\n"), None);
     }
 
@@ -783,7 +1071,7 @@ mod tests {
     #[test]
     fn list_json_includes_doc_and_plain_spans_with_their_own_text() {
         let text = "/// docstring\nfn public_fn() {}\n\n// plain comment\n// second line\nfn private_helper() {}\n";
-        let json = spans_to_json(text, RUST);
+        let json = spans_to_json(text, RUST, &mut CommentExtractor::new());
         assert_eq!(
             json,
             r#"[{"start_line":1,"end_line":1,"kind":"doc","text":"/// docstring"},{"start_line":4,"end_line":5,"kind":"plain","text":"// plain comment\n// second line"}]"#
@@ -797,14 +1085,14 @@ mod tests {
         // extraction for a downstream judge to classify.
         let text = "// one\n// two\n// three\n// four\nfn main() {}\n";
         assert_eq!(rust_blocks(text), vec![(1, 4)]);
-        let json = spans_to_json(text, RUST);
+        let json = spans_to_json(text, RUST, &mut CommentExtractor::new());
         assert!(json.contains(r#""start_line":1,"end_line":4,"kind":"plain"#));
     }
 
     #[test]
     fn list_json_escapes_quotes_and_newlines_in_span_text() {
         let text = "// says \"hi\"\nfn main() {}\n";
-        let json = spans_to_json(text, RUST);
+        let json = spans_to_json(text, RUST, &mut CommentExtractor::new());
         assert_eq!(
             json,
             r#"[{"start_line":1,"end_line":1,"kind":"plain","text":"// says \"hi\""}]"#
@@ -813,16 +1101,380 @@ mod tests {
 
     #[test]
     fn list_json_on_empty_input_is_an_empty_array() {
-        assert_eq!(spans_to_json("", RUST), "[]");
-        assert_eq!(spans_to_json("fn main() {}\n", RUST), "[]");
+        assert_eq!(spans_to_json("", RUST, &mut CommentExtractor::new()), "[]");
+        assert_eq!(
+            spans_to_json("fn main() {}\n", RUST, &mut CommentExtractor::new()),
+            "[]"
+        );
     }
 
     #[test]
     fn list_json_works_across_hash_and_slash_languages() {
         let py = "# a note\ndef f():\n    pass\n";
         assert_eq!(
-            spans_to_json(py, PYTHON),
+            spans_to_json(py, PYTHON, &mut CommentExtractor::new()),
             r##"[{"start_line":1,"end_line":1,"kind":"plain","text":"# a note"}]"##
         );
+    }
+
+    #[test]
+    fn language_extensions_select_their_grammar() {
+        assert_eq!(
+            lang_for_extension("source.ts").map(|spec| spec.grammar),
+            Some(Some(Grammar::TypeScript))
+        );
+        assert_eq!(
+            lang_for_extension("source.tsx").map(|spec| spec.grammar),
+            Some(Some(Grammar::Tsx))
+        );
+        assert_eq!(
+            lang_for_extension("source.js").map(|spec| spec.grammar),
+            Some(Some(Grammar::JavaScript))
+        );
+        assert_eq!(
+            lang_for_shebang("#!/usr/bin/env python3\n").map(|spec| spec.grammar),
+            Some(Some(Grammar::Python))
+        );
+    }
+
+    #[test]
+    fn typescript_and_tsx_grammars_parse_known_input() {
+        assert!(CommentExtractor::new()
+            .tree_spans(
+                "const value: number = 1;\n",
+                Grammar::TypeScript,
+                TS.lexical
+            )
+            .is_ok());
+        assert!(CommentExtractor::new()
+            .tree_spans("const view = <div />;\n", Grammar::Tsx, TSX.lexical)
+            .is_ok());
+    }
+
+    #[test]
+    fn typescript_template_interpolation_comments_merge() {
+        let text = "const value = `${\n// one\n// two\n// three\n// four\nvalue\n}`;\n";
+        assert_eq!(blocks(text, TS), vec![(2, 5)]);
+    }
+
+    #[test]
+    fn typescript_parser_matches_lexical_spans_for_valid_cases() {
+        let cases = [
+            "// one\n// two\nconst value = 1;\n",
+            "const value = `// text`;\n",
+            "const value = `${`${1}`}`;\n// one\n",
+            "const label = \"Δ // text\";\n// one\n",
+            "/// docs\nconst value = 1;\n",
+            "const value = 1; // trailing\n",
+        ];
+        for text in cases {
+            assert_eq!(spans(text, TS), lexical_spans(text, TS.lexical));
+        }
+    }
+
+    #[test]
+    fn typescript_parser_ignores_template_text_and_regular_expressions() {
+        let text = "const template = `// text`;\nconst pattern = /\\/\\/text/;\n";
+        assert!(spans(text, TS).is_empty());
+    }
+
+    #[test]
+    fn tsx_comments_use_the_tsx_grammar() {
+        let text = "const view = <div>{/* one */}</div>;\n// two\n";
+        assert_eq!(spans(text, TSX), lexical_spans(text, TSX.lexical));
+    }
+
+    #[test]
+    fn malformed_typescript_falls_back_to_lexical_extraction() {
+        let cases = [
+            "const value = `unterminated\n// one\n",
+            "const value = \"unterminated\n// one\n",
+            "/* unterminated\n// one\n",
+            "const value = `${\n// one\n",
+        ];
+        for text in cases {
+            let mut extractor = CommentExtractor::new();
+            assert!(extractor
+                .tree_spans(text, Grammar::TypeScript, TS.lexical)
+                .is_err());
+            assert_eq!(extractor.spans(text, TS), lexical_spans(text, TS.lexical));
+        }
+    }
+
+    #[test]
+    fn rust_tree_keeps_nested_doc_text_in_one_span() {
+        let text = "//!//x\n//! b\nfn item() {}\n";
+        assert_eq!(
+            spans_to_json(text, RUST, &mut CommentExtractor::new()),
+            r#"[{"start_line":1,"end_line":2,"kind":"doc","text":"//!//x\n//! b"}]"#
+        );
+    }
+
+    #[test]
+    fn unsupported_swift_uses_lexical_comments() {
+        let spec = lang_for_extension("source.swift").unwrap();
+        assert_eq!(spec.grammar, None);
+        assert_eq!(
+            blocks("//*******\n// one\n// two\n// three\nlet value = 1\n", spec),
+            vec![(1, 4)]
+        );
+    }
+
+    #[test]
+    fn deeply_nested_typescript_does_not_overflow_the_stack() {
+        let depth = 100_000;
+        let text = format!(
+            "const value = {}0{};\n",
+            "[".repeat(depth),
+            "]".repeat(depth)
+        );
+        assert!(spans(&text, TS).is_empty());
+    }
+
+    #[test]
+    fn every_enabled_grammar_parses_comments_and_ignores_string_markers() {
+        let slash = LexicalMode::Slash { is_rust: false };
+        let hash = LexicalMode::Hash { is_python: false };
+        let cases = [
+            (
+                Grammar::Rust,
+                LexicalMode::Slash { is_rust: true },
+                "// real\nlet value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::TypeScript,
+                slash,
+                "// real\nconst value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::Tsx,
+                slash,
+                "// real\nconst value = <div title=\"// ignored\" />;\n",
+            ),
+            (
+                Grammar::JavaScript,
+                slash,
+                "// real\nconst value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::Go,
+                slash,
+                "// real\npackage main\nvar value = \"// ignored\"\n",
+            ),
+            (
+                Grammar::C,
+                slash,
+                "// real\nconst char *value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::Cpp,
+                slash,
+                "// real\nconst char *value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::Java,
+                slash,
+                "// real\nclass Value { String value = \"// ignored\"; }\n",
+            ),
+            (
+                Grammar::Kotlin,
+                slash,
+                "// real\nval value = \"// ignored\"\n",
+            ),
+            (
+                Grammar::CSharp,
+                slash,
+                "// real\nclass Value { string value = \"// ignored\"; }\n",
+            ),
+            (
+                Grammar::Zig,
+                slash,
+                "// real\nconst value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::Scala,
+                slash,
+                "// real\nobject Value { val value = \"// ignored\" }\n",
+            ),
+            (
+                Grammar::ObjectiveC,
+                slash,
+                "// real\nconst char *value = \"// ignored\";\n",
+            ),
+            (
+                Grammar::Python,
+                LexicalMode::Hash { is_python: true },
+                "# real\nvalue = \"# ignored\"\n",
+            ),
+            (Grammar::Bash, hash, "# real\nvalue='# ignored'\n"),
+            (Grammar::Zsh, hash, "# real\nvalue='# ignored'\n"),
+            (Grammar::Ruby, hash, "# real\nvalue = \"# ignored\"\n"),
+            (Grammar::Toml, hash, "# real\nvalue = \"# ignored\"\n"),
+            (Grammar::Yaml, hash, "# real\nvalue: \"# ignored\"\n"),
+        ];
+        for (grammar, lexical, text) in cases {
+            let spans = CommentExtractor::new()
+                .tree_spans(text, grammar, lexical)
+                .unwrap();
+            assert_eq!(spans.len(), 1, "{grammar:?}");
+            assert_eq!(spans[0].start_line, 1, "{grammar:?}");
+            assert_eq!(spans[0].end_line, 1, "{grammar:?}");
+        }
+    }
+
+    #[test]
+    fn routing_covers_every_supported_extension_and_shebang() {
+        let cases = [
+            ("rs", Some(Grammar::Rust)),
+            ("ts", Some(Grammar::TypeScript)),
+            ("tsx", Some(Grammar::Tsx)),
+            ("js", Some(Grammar::JavaScript)),
+            ("jsx", Some(Grammar::JavaScript)),
+            ("mjs", Some(Grammar::JavaScript)),
+            ("cjs", Some(Grammar::JavaScript)),
+            ("go", Some(Grammar::Go)),
+            ("swift", None),
+            ("c", Some(Grammar::C)),
+            ("h", Some(Grammar::Cpp)),
+            ("cc", Some(Grammar::Cpp)),
+            ("cpp", Some(Grammar::Cpp)),
+            ("hpp", Some(Grammar::Cpp)),
+            ("java", Some(Grammar::Java)),
+            ("kt", Some(Grammar::Kotlin)),
+            ("kts", Some(Grammar::Kotlin)),
+            ("cs", Some(Grammar::CSharp)),
+            ("zig", Some(Grammar::Zig)),
+            ("scala", Some(Grammar::Scala)),
+            ("m", Some(Grammar::ObjectiveC)),
+            ("mm", None),
+            ("py", Some(Grammar::Python)),
+            ("sh", Some(Grammar::Bash)),
+            ("bash", Some(Grammar::Bash)),
+            ("zsh", Some(Grammar::Zsh)),
+            ("rb", Some(Grammar::Ruby)),
+            ("pl", None),
+            ("toml", Some(Grammar::Toml)),
+            ("yaml", Some(Grammar::Yaml)),
+            ("yml", Some(Grammar::Yaml)),
+        ];
+        for (extension, grammar) in cases {
+            assert_eq!(
+                lang_for_extension(&format!("source.{extension}")).map(|spec| spec.grammar),
+                Some(grammar)
+            );
+        }
+        let shebangs = [
+            ("#!/usr/bin/env python3\n", Some(Grammar::Python)),
+            ("#!/bin/bash\n", Some(Grammar::Bash)),
+            ("#!/usr/bin/env sh\n", Some(Grammar::Bash)),
+            ("#!/bin/dash\n", Some(Grammar::Bash)),
+            ("#!/bin/zsh\n", Some(Grammar::Zsh)),
+            ("#!/usr/bin/env ruby\n", Some(Grammar::Ruby)),
+            ("#!/home/shared/bin/ruby\n", Some(Grammar::Ruby)),
+            ("#!/usr/bin/env perl\n", None),
+            ("#!/home/shared/bin/perl\n", None),
+        ];
+        for (text, grammar) in shebangs {
+            assert_eq!(
+                lang_for_shebang(text).map(|spec| spec.grammar),
+                Some(grammar)
+            );
+        }
+    }
+
+    #[test]
+    fn ruby_block_comments_are_extracted() {
+        let spec = lang_for_extension("source.rb").unwrap();
+        assert_eq!(
+            blocks(
+                "=begin\none\ntwo\nthree\nfour\nfive\n=end\nvalue = 1\n",
+                spec
+            ),
+            vec![(1, 7)]
+        );
+    }
+
+    #[test]
+    fn grammar_fixtures_cover_focused_string_and_heredoc_cases() {
+        let javascript = LanguageSpec {
+            grammar: Some(Grammar::JavaScript),
+            lexical: LexicalMode::Slash { is_rust: false },
+        };
+        let cpp = LanguageSpec {
+            grammar: Some(Grammar::Cpp),
+            lexical: LexicalMode::Slash { is_rust: false },
+        };
+        let objective_c = LanguageSpec {
+            grammar: Some(Grammar::ObjectiveC),
+            lexical: LexicalMode::Slash { is_rust: false },
+        };
+        let lexical_objective_cpp = LanguageSpec {
+            grammar: None,
+            lexical: LexicalMode::Slash { is_rust: false },
+        };
+        let bash = LanguageSpec {
+            grammar: Some(Grammar::Bash),
+            lexical: LexicalMode::Hash { is_python: false },
+        };
+        let zsh = LanguageSpec {
+            grammar: Some(Grammar::Zsh),
+            lexical: LexicalMode::Hash { is_python: false },
+        };
+        let python = LanguageSpec {
+            grammar: Some(Grammar::Python),
+            lexical: LexicalMode::Hash { is_python: true },
+        };
+        let toml = LanguageSpec {
+            grammar: Some(Grammar::Toml),
+            lexical: LexicalMode::Hash { is_python: false },
+        };
+        let yaml = LanguageSpec {
+            grammar: Some(Grammar::Yaml),
+            lexical: LexicalMode::Hash { is_python: false },
+        };
+        assert_eq!(
+            spans(
+                "const value = <div>{/* real */}</div>;\nconst ignored = \"// ignored\";\n",
+                TSX
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            spans(
+                "const value = <div>{/* real */}</div>;\nconst ignored = \"// ignored\";\n",
+                javascript
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            spans("// real\nconst char *value = \"// ignored\";\n", cpp).len(),
+            1
+        );
+        assert_eq!(
+            spans(
+                "// real\nconst char *value = \"// ignored\";\n",
+                objective_c
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            spans(
+                "// real\nconst char *value = \"// ignored\";\n",
+                lexical_objective_cpp
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            spans("# real\ncat <<'EOF'\n# ignored\nEOF\n", bash).len(),
+            1
+        );
+        assert_eq!(spans("# real\ncat <<'EOF'\n# ignored\nEOF\n", zsh).len(), 1);
+        assert_eq!(spans("# real\nvalue = \"# ignored\"\n", python).len(), 1);
+        assert_eq!(spans("# real\nvalue = \"# ignored\"\n", toml).len(), 1);
+        assert_eq!(spans("# real\nvalue: \"# ignored\"\n", yaml).len(), 1);
     }
 }
