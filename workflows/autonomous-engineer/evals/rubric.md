@@ -19,3 +19,7 @@ Score 0-10. Grade harshly. The expected result must be met exactly.
 - The workflow omits null or stopped nodes from its expected and returned accounting.
 - The workflow repairs git state in model prose instead of calling autonomous-engineer-state repair-worktree.
 - The workflow hardcodes a model identifier instead of using controller-supplied runtime tier values.
+- The workflow ends a selected task after Plan review without exact evidence of a catastrophic security, privacy, authorization, irreversible-data-loss, or repository-boundary conflict and exact evidence that every reasonable safe workaround fails.
+- The workflow treats product preference, expected reception, aesthetics, complexity, schedule, uncertainty, missing information, or an unsupported catastrophic or unresolvable claim as a catastrophic conflict.
+- The Plan reviewer omits reasonable safe workaround options, the planner does not resolve each concern, or revision review does not continue toward approval within the bounded dialogue.
+- The workflow implements after the reviewer proves a catastrophic Plan conflict and proves why every reasonable safe workaround fails.
