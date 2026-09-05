@@ -15,6 +15,10 @@ shopt -s nullglob
 # git runs this through .git/hooks/post-merge, a symlink, so the link is resolved first;
 # without that the repo root reads as .git/hooks and every path below misses.
 SCRIPT_SELF="${BASH_SOURCE[0]}"
+IS_GIT_HOOK=0
+case "${SCRIPT_SELF##*/}" in
+  post-merge|post-rewrite) IS_GIT_HOOK=1 ;;
+esac
 while [[ -L "$SCRIPT_SELF" ]]; do
   SCRIPT_LINK="$(readlink "$SCRIPT_SELF")"
   [[ "$SCRIPT_LINK" == /* ]] || SCRIPT_LINK="$(dirname "$SCRIPT_SELF")/$SCRIPT_LINK"
@@ -31,6 +35,24 @@ for arg in "$@"; do
     --test) IS_TEST=1; REPO_TARGET="$SCRIPT_DIR"; HOME_TARGET="$SCRIPT_DIR/.install-test-home" ;;
   esac
 done
+SIMSLIM_PROFILE="$REPO_TARGET/config/simslim/main.json"
+if [[ -f "$SIMSLIM_PROFILE" ]]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "FATAL: jq is required to validate $SIMSLIM_PROFILE." >&2
+    exit 1
+  fi
+  if ! jq -e '
+    type == "object" and
+    keys == ["description", "except", "keep", "name"] and
+    .name == "main" and
+    (.description | type == "string" and length > 0) and
+    .except == [] and
+    .keep == []
+  ' "$SIMSLIM_PROFILE" >/dev/null; then
+    echo "FATAL: $SIMSLIM_PROFILE is not the maximum-isolation SimSlim profile." >&2
+    exit 1
+  fi
+fi
 SKILLS_ROOT="$HOME_TARGET/.agents/skills"
 STAMP="$(date +%Y%m%d)"
 
@@ -142,6 +164,26 @@ retire_to_trash() {
 
 [[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
 (( IS_DRY )) && plan "dry run — printing, not executing"
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if (( IS_GIT_HOOK )); then
+    plan "skip SimSlim installation (git hook)"
+  elif (( IS_DRY )); then
+    plan "install or upgrade SimSlim through Homebrew"
+  elif (( IS_TEST )) || [[ "$HOME_TARGET" != "$HOME" ]]; then
+    plan "skip SimSlim installation (sandbox install)"
+  elif ! command -v brew >/dev/null 2>&1; then
+    echo "warn: Homebrew not found, skipping SimSlim installation" >&2
+  elif brew list --formula mobai-app/tap/simslim >/dev/null 2>&1; then
+    plan "upgrade SimSlim through Homebrew"
+    brew upgrade mobai-app/tap/simslim || echo "warn: SimSlim upgrade failed" >&2
+  else
+    plan "install SimSlim through Homebrew"
+    brew install mobai-app/tap/simslim || echo "warn: SimSlim installation failed" >&2
+  fi
+else
+  plan "skip SimSlim installation (macOS only)"
+fi
 
 # 1. canonical skills root
 plan "ensure $SKILLS_ROOT"
@@ -419,6 +461,7 @@ fi
 
 link_config "$REPO_TARGET/pi/themes/owais.json" "$HOME_TARGET/.pi/agent/themes/owais.json" "Pi theme link"
 link_config "$REPO_TARGET/config/herdr/config.toml" "$HOME_TARGET/.config/herdr/config.toml" "Herdr config link"
+link_config "$SIMSLIM_PROFILE" "$HOME_TARGET/.config/simslim/main.json" "SimSlim profile link"
 link_config "$REPO_TARGET/config/pi-transcribe.json" "$HOME_TARGET/.pi/agent/pi-transcribe.json" "Pi transcription configuration link"
 link_config "$REPO_TARGET/config/plannotator.json" "$HOME_TARGET/.pi/agent/plannotator.json" "Plannotator configuration link"
 link_config "$REPO_TARGET/config/pi-keybindings.json" "$HOME_TARGET/.pi/agent/keybindings.json" "Pi keybindings link"

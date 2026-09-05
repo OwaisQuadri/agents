@@ -16,6 +16,7 @@ test("protects only managed agent destinations", () => {
 		"/tmp/config-write-guard-home/.codex/AGENTS.md",
 		"/tmp/config-write-guard-home/.codex/skills",
 		"/tmp/config-write-guard-home/.config/herdr/config.toml",
+		"/tmp/config-write-guard-home/.config/simslim",
 		"/tmp/config-write-guard-home/.pi/agent/agents",
 		"/tmp/config-write-guard-home/.pi/agent/extensions",
 		"/tmp/config-write-guard-home/.pi/agent/keybindings.json",
@@ -30,6 +31,8 @@ test("blocks managed files and descendants without blocking siblings", () => {
 	assert.equal(isProtectedConfigPath(`${home}/.claude/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.codex/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/herdr/config.toml`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/main.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/feature.json`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/herdr/session.json`, home), false);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/sessions/session.jsonl`, home), false);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/settings.json.backup`, home), false);
@@ -46,6 +49,22 @@ test("blocks managed file writes and destination shell commands", () => {
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > $HOME/.agents/skills/new/SKILL.md" }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.codex/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/herdr/config.toml` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json && echo done` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `tee ${home}/.config/simslim/main.json < feature.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/simslim` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim//main.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `simslim profile ${home}/.config/simslim/./main.json` }, home) ?? "", /Blocked/);
+	assert.equal(blockedConfigToolCall("bash", { command: `simslim verify ABC --profile ${home}/.config/simslim/main.json` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `simslim on ABC --profile ${home}/.config/simslim/main.json` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `simslim --set testing on ABC --profile ${home}/.config/simslim/main.json` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `simslim --boot-timeout=15m verify ABC --profile ${home}/.config/simslim/main.json` }, home), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: `./simslim on ABC --profile ${home}/.config/simslim/main.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json.backup` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/feature.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/simslim/` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/simslim/*` }, home) ?? "", /Blocked/);
+	assert.equal(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim-copy/main.json` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: "git status" }, home), undefined);
 });
 

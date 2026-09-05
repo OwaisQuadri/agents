@@ -58,6 +58,7 @@ function hasOutputRedirectToProtectedPath(segment: string, pathReferencePattern:
 }
 
 const GIT_FLAGS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
+const SIMSLIM_GLOBAL_FLAGS_WITH_VALUE = new Set(["--set", "--boot-timeout", "--spawn-timeout"]);
 
 function gitSubcommandWrites(segment: string): boolean {
 	const words = segment.trim().split(/\s+/);
@@ -76,6 +77,24 @@ function gitSubcommandWrites(segment: string): boolean {
 	return !GIT_READ_SUBCOMMANDS.has(subcommand);
 }
 
+function simslimCommandWrites(segment: string): boolean {
+	const words = segment.trim().split(/\s+/);
+	const commandIndex = words.findIndex((word) => word.split("/").pop()?.toLowerCase() === "simslim");
+	if (commandIndex < 0 || words[commandIndex] !== "simslim") return true;
+	let index = commandIndex + 1;
+	while (index < words.length && words[index].startsWith("-")) {
+		if (SIMSLIM_GLOBAL_FLAGS_WITH_VALUE.has(words[index])) {
+			index += 2;
+		} else if ([...SIMSLIM_GLOBAL_FLAGS_WITH_VALUE].some((flag) => words[index].startsWith(`${flag}=`))) {
+			index += 1;
+		} else {
+			return true;
+		}
+	}
+	const subcommand = words[index];
+	return subcommand !== "on" && subcommand !== "verify";
+}
+
 function segmentWritesProtectedPath(segment: string, pathReferencePattern: RegExp): boolean {
 	if (!pathReferencePattern.test(segment)) return false;
 	if (/\$\(|`|<\(|>\(/.test(segment)) return true;
@@ -86,6 +105,7 @@ function segmentWritesProtectedPath(segment: string, pathReferencePattern: RegEx
 	// binary, and must still trip the INTERPRETER_COMMANDS check below.
 	const leading = rawLeading.toLowerCase();
 	if (leading === "git") return gitSubcommandWrites(segment);
+	if (leading === "simslim") return simslimCommandWrites(segment);
 	if (leading === "sed") return /(?:^|\s)(?:-i\b|--in-place\b)/.test(segment);
 	if (leading === "awk") return /(?:^|\s)-i\b/.test(segment);
 	if (leading === "find") return /-delete\b|-exec\b|-execdir\b|-fprint\w*\b|-ok\b/.test(segment);
