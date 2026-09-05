@@ -1,10 +1,11 @@
 import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { appendUnverified, appendVerdict, hashCommentText, readVerdict, type Verdict } from "./comment-shape-guard/cache.ts";
+import { appendUnverified, appendVerdict, hashCommentText, readVerdict, unverifiedPath, verdictsPath, type Verdict } from "./comment-shape-guard/cache.ts";
 import { readWorkerVerdict, runResultPath } from "./comment-shape-guard/spawn/runs.ts";
 import { buildWorkerArgv, buildWorkerEnv, COMMENT_STYLE_DOC_PATH, resolveJudgeModel, spawnWorker } from "./comment-shape-guard/spawn/launch.ts";
 import { buildKickoffPrompt } from "./comment-shape-guard/judge/prompt.ts";
@@ -46,8 +47,8 @@ function listCommentSpans(binary: string, ext: string, text: string): Promise<Co
 /** Dispatches one span to the headless judge worker with a fail-open timeout. Returns
  * undefined on timeout, spawn failure, or a malformed result — the caller's single
  * fail-open path (allow + log to unverified.jsonl) handles every case identically. */
-async function judgeSpan(opts: { commentText: string; followingContext: string | undefined; whitelistDocText: string; runId: string }): Promise<{ shape: string; reason: string } | undefined> {
-	const resultPath = runResultPath(opts.runId);
+async function judgeSpan(opts: { commentText: string; followingContext: string | undefined; whitelistDocText: string; runId: string; home: string }): Promise<{ shape: string; reason: string } | undefined> {
+	const resultPath = runResultPath(opts.runId, opts.home);
 	const kickoffPrompt = buildKickoffPrompt({ commentText: opts.commentText, followingContext: opts.followingContext, whitelistDocText: opts.whitelistDocText });
 	const argv = buildWorkerArgv({ model: resolveJudgeModel(), sessionName: `comment-shape-guard-${opts.runId}`, kickoffPrompt });
 	const env = buildWorkerEnv(resultPath);
@@ -62,7 +63,9 @@ async function judgeSpan(opts: { commentText: string; followingContext: string |
 	}
 }
 
-async function judgeFragment(opts: { fragment: Fragment; ext: string; binary: string; whitelistDocText: string }): Promise<{ blocked: string[] }> {
+async function judgeFragment(opts: { fragment: Fragment; ext: string; binary: string; whitelistDocText: string; home: string }): Promise<{ blocked: string[] }> {
+	const unverified = unverifiedPath(opts.home);
+	const verdicts = verdictsPath(opts.home);
 	const spans = await listCommentSpans(opts.binary, opts.ext, opts.fragment.text);
 	const blocked: string[] = [];
 	await Promise.all(
@@ -74,19 +77,23 @@ async function judgeFragment(opts: { fragment: Fragment; ext: string; binary: st
 			const hash = hashCommentText(span.text);
 			let shape: string;
 			let reason: string;
-			const cached = readVerdict(hash);
+			const cached = readVerdict(hash, verdicts);
 			if (cached) {
 				shape = cached.shape;
 				reason = cached.reason;
 			} else {
 				const runId = `${hash}-${Math.random().toString(36).slice(2)}`;
-				const verdict = await judgeSpan({ commentText: span.text, followingContext, whitelistDocText: opts.whitelistDocText, runId });
+				const verdict = await judgeSpan({ commentText: span.text, followingContext, whitelistDocText: opts.whitelistDocText, runId, home: opts.home });
 				if (!verdict) {
-					appendUnverified({ hash, reason: "judge worker timed out, failed to spawn, or returned no result", at: new Date().toISOString() });
-					return; // fail open: never block on an infrastructure failure
+					try {
+						appendUnverified({ hash, reason: "judge worker timed out, failed to spawn, or returned no result", at: new Date().toISOString() }, unverified);
+					} catch {}
+					return;
 				}
 				const record: Verdict = { hash, shape: verdict.shape, reason: verdict.reason, judgedAt: new Date().toISOString() };
-				appendVerdict(record);
+				try {
+					appendVerdict(record, verdicts);
+				} catch {}
 				shape = verdict.shape;
 				reason = verdict.reason;
 			}
@@ -98,7 +105,7 @@ async function judgeFragment(opts: { fragment: Fragment; ext: string; binary: st
 	return { blocked };
 }
 
-export default function commentShapeGuard(pi: ExtensionAPI): void {
+export default function commentShapeGuard(pi: ExtensionAPI, home = process.env.HOME ?? homedir()): void {
 	const extensionPath = realpathSync(fileURLToPath(import.meta.url));
 	const repositoryRoot = resolve(dirname(extensionPath), "..", "..");
 	const binary = resolve(repositoryRoot, "tools/comment-check/target/release/comment-check");
@@ -124,7 +131,7 @@ export default function commentShapeGuard(pi: ExtensionAPI): void {
 			inScope.map((fragment) => {
 				const ext = extensionOf(fragment.path);
 				if (!ext) return Promise.resolve({ blocked: [] as string[] });
-				return judgeFragment({ fragment, ext, binary, whitelistDocText });
+				return judgeFragment({ fragment, ext, binary, whitelistDocText, home });
 			}),
 		);
 		const blocked = results.flatMap((r) => r.blocked);

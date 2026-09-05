@@ -78,11 +78,11 @@ test("allows a write whose only comment already has a cached approved verdict â€
 	const module = await loadGuard(repoRoot);
 	const captured: { handler?: (e: unknown) => Promise<unknown> } = {};
 	const api = { on: (_e: string, h: unknown) => (captured.handler = h as typeof captured.handler) };
-	module.default(api);
+	module.default(api, repoRoot);
 
 	// pre-seed the cache so no subprocess is ever dispatched
-	const { appendVerdict, hashCommentText } = await import(`${pathToFileURL(join(repoRoot, "pi", "extensions", "comment-shape-guard", "cache.ts")).href}?${Date.now()}`);
-	appendVerdict({ hash: hashCommentText("// TODO(x): follow up later"), shape: "TODO", reason: "explicit and deliberate", judgedAt: new Date().toISOString() });
+	const { appendVerdict, hashCommentText, verdictsPath } = await import(`${pathToFileURL(join(repoRoot, "pi", "extensions", "comment-shape-guard", "cache.ts")).href}?${Date.now()}`);
+	appendVerdict({ hash: hashCommentText("// TODO(x): follow up later"), shape: "TODO", reason: "explicit and deliberate", judgedAt: new Date().toISOString() }, verdictsPath(repoRoot));
 
 	const result = await captured.handler!({
 		type: "tool_call",
@@ -100,10 +100,10 @@ test("blocks a write whose only comment has a cached none verdict", async () => 
 	const module = await loadGuard(repoRoot);
 	const captured: { handler?: (e: unknown) => Promise<any> } = {};
 	const api = { on: (_e: string, h: unknown) => (captured.handler = h) };
-	module.default(api);
+	module.default(api, repoRoot);
 
-	const { appendVerdict, hashCommentText } = await import(`${pathToFileURL(join(repoRoot, "pi", "extensions", "comment-shape-guard", "cache.ts")).href}?${Date.now()}`);
-	appendVerdict({ hash: hashCommentText("// narrates what RAG-0038 needed"), shape: "none", reason: "ticket narration, not a whitelist shape", judgedAt: new Date().toISOString() });
+	const { appendVerdict, hashCommentText, verdictsPath } = await import(`${pathToFileURL(join(repoRoot, "pi", "extensions", "comment-shape-guard", "cache.ts")).href}?${Date.now()}`);
+	appendVerdict({ hash: hashCommentText("// narrates what RAG-0038 needed"), shape: "none", reason: "ticket narration, not a whitelist shape", judgedAt: new Date().toISOString() }, verdictsPath(repoRoot));
 
 	const result = await captured.handler!({
 		type: "tool_call",
@@ -123,7 +123,7 @@ test("skips a file extension comment-check does not recognize â€” no crash, no b
 	const module = await loadGuard(repoRoot);
 	const captured: { handler?: (e: unknown) => Promise<any> } = {};
 	const api = { on: (_e: string, h: unknown) => (captured.handler = h) };
-	module.default(api);
+	module.default(api, repoRoot);
 
 	const result = await captured.handler!({
 		type: "tool_call",
@@ -141,7 +141,7 @@ test("a non-edit non-write tool call is ignored entirely", async () => {
 	const module = await loadGuard(repoRoot);
 	const captured: { handler?: (e: unknown) => Promise<any> } = {};
 	const api = { on: (_e: string, h: unknown) => (captured.handler = h) };
-	module.default(api);
+	module.default(api, repoRoot);
 
 	const result = await captured.handler!({ type: "tool_call", toolCallId: "1", toolName: "bash", input: { command: "ls" } });
 	assert.equal(result, undefined);
@@ -162,7 +162,7 @@ test("a cache miss with no working judge binary on PATH fails open and logs to u
 	const module = await loadGuard(repoRoot);
 	const captured: { handler?: (e: unknown) => Promise<any> } = {};
 	const api = { on: (_e: string, h: unknown) => (captured.handler = h) };
-	module.default(api);
+	module.default(api, repoRoot);
 
 	const result = await captured.handler!({
 		type: "tool_call",
