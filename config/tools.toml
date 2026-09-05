@@ -78,6 +78,14 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "event-timestamps"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/event-timestamps.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "statusline"
 platforms = ["macos", "linux"]
 commands = []
