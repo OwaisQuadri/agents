@@ -117,7 +117,7 @@ cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 REPO_TARGET="$PWD" ./install.sh
 ```
 
-The `config-write-guard` extension blocks Pi `edit` and `write` calls that target managed destinations. It also blocks shell commands that name a managed destination, because a shell command cannot prove that it only reads the path. The guarded paths are `~/.agents/skills`, the managed `~/.claude` and `~/.codex` files, plus Pi's managed agents, extensions, and settings.
+The `config-write-guard` extension blocks Pi `edit` and `write` calls that target managed destinations. It also blocks shell commands that name a managed destination, because a shell command cannot prove that it only reads the path. The guarded paths are `~/.agents/skills`, the managed `~/.claude` and `~/.codex` files, Pi's managed agents, extensions, and settings, `~/.config/herdr/config.toml`, and `~/.config/simslim/main.json`.
 
 The source extensions provide `ask_user_question`, the `owais` theme, a custom header, and prompt snippets. Press `Alt+S` or run `/snippets` to choose snippets for the next message.
 
@@ -220,6 +220,29 @@ The tracked `rag` entry installs the `rag` command from its pinned Git revision.
 The tracked `transcript-directed-video-processor` entry has no separate installer: `install.sh` builds and links the crate under `tools/transcript-directed-video-processor` itself, alongside the repository's other Rust tools. This manifest entry exists only to link its Pi extension, `pi/extensions/transcript-directed-video-processor.ts`, which registers two tools — `video_analyze` (fetch and segment a video's transcript into candidate moments, text-only) and `video_review` (extract frames for named moments and review them with a configured vision-capable model) — so any agent session, including web research, can call the CLI without shelling out to it directly.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supported authoring path.
+
+### iOS simulator
+
+Install SimSlim on macOS, then run this repository's installer to link the shared profile:
+
+```sh
+brew install jq mobai-app/tap/simslim
+REPO_TARGET="$PWD" ./install.sh
+```
+
+Create the normal device once. Use exact-name equality to resolve one existing `iPhone 17 Pro` on iOS 26.5 with `simslim list --json`, then clone and prepare it:
+
+```sh
+simslim clone <source-identifier> "iPhone 17 Pro Main Slim"
+simslim list --json
+simslim on <clone-identifier> --profile ~/.config/simslim/main.json
+```
+
+The main profile disables every service category that SimSlim can manage. SimSlim does not remove built-in applications from Apple's signed runtime. Use `--except photos` only for photo-library tests. Use `--keep com.apple.siriactionsd` only for Shortcuts or application-intent tests. Reapply the main profile after each feature test.
+
+SimSlim prepares the simulator. XcodeBuildMCP keeps build, installation, launch, log, and screenshot work. Maestro keeps user-interface flows and receives the same simulator identifier at run time. Never commit that machine-specific identifier.
+
+Use `simslim off <identifier>` to restore stock service behavior. Every `simslim on` or `simslim off` profile change reboots the simulator and drops in-flight application state.
 
 ## pr review
 

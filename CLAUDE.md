@@ -92,6 +92,30 @@ Cross-project asks — status across agents, workspaces, or this machine's autom
 dispatching work into another project; digging into a project agent — route through the
 /hq skill.
 
+## iOS simulator
+
+Use `iPhone 17 Pro Main Slim` on iOS 26.5 as the normal simulator. SimSlim owns the
+simulator profile and preparation. XcodeBuildMCP owns booting, builds, installation,
+launch, logs, and screenshots. Maestro owns user-interface flows against an already booted
+simulator.
+
+Resolve the simulator identifier at run time with `simslim list --json`. Require exactly
+one match by name and runtime, and never persist the machine-specific identifier. Before a
+build or test, have XcodeBuildMCP boot that identifier. Then run `simslim verify
+<identifier> --profile ~/.config/simslim/main.json`. Repair drift with `simslim on <identifier>
+--profile ~/.config/simslim/main.json`. Pass the
+same resolved identifier to XcodeBuildMCP and Maestro.
+
+The main profile disables every service category that SimSlim can manage. Built-in system
+applications remain installed because Apple keeps them in the signed runtime. Launch one
+only when a test needs it.
+
+For a photo-library test, run `simslim on <identifier> --except photos`. For a Shortcuts or
+application-intent test, use `--keep com.apple.siriactionsd`. Reapply the main profile after
+each feature test. Every `simslim on` or `simslim off` profile change reboots the simulator
+and drops in-flight application state, so change profiles only between tests. Never use
+SimSlim disk cleanup as part of normal simulator preparation.
+
 ## change isolation
 
 Before a file change on the main branch, state the current branch and ask whether to use a worktree. Default autonomous changes to an isolated worktree. Do not write to main until the user explicitly chooses it.

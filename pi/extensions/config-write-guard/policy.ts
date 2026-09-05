@@ -23,7 +23,7 @@ function escapeRegExp(literal: string): string {
 function pathReferencePattern(home: string, username = currentUsername()): RegExp {
 	const escapedHome = escapeRegExp(home);
 	const tildeForms = username !== undefined ? `~(?:${escapeRegExp(username)})?` : "~";
-	return new RegExp(`(?:${escapedHome}|\\$HOME|\\$\\{HOME\\}|${tildeForms})/+(?:\\.agents|\\.claude|\\.codex|\\.pi|\\.config/herdr)(?:/|\\b)`);
+	return new RegExp(`(?:${escapedHome}|\\$HOME|\\$\\{HOME\\}|${tildeForms})/+(?:(?:\\.agents|\\.claude|\\.codex|\\.pi|\\.config/herdr)(?:/|\\b)|\\.config/simslim(?:/|(?![A-Za-z0-9._-])))`);
 }
 
 /**

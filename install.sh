@@ -31,6 +31,24 @@ for arg in "$@"; do
     --test) IS_TEST=1; REPO_TARGET="$SCRIPT_DIR"; HOME_TARGET="$SCRIPT_DIR/.install-test-home" ;;
   esac
 done
+SIMSLIM_PROFILE="$REPO_TARGET/config/simslim/main.json"
+if [[ -f "$SIMSLIM_PROFILE" ]]; then
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "FATAL: jq is required to validate $SIMSLIM_PROFILE." >&2
+    exit 1
+  fi
+  if ! jq -e '
+    type == "object" and
+    keys == ["description", "except", "keep", "name"] and
+    .name == "main" and
+    (.description | type == "string" and length > 0) and
+    .except == [] and
+    .keep == []
+  ' "$SIMSLIM_PROFILE" >/dev/null; then
+    echo "FATAL: $SIMSLIM_PROFILE is not the maximum-isolation SimSlim profile." >&2
+    exit 1
+  fi
+fi
 SKILLS_ROOT="$HOME_TARGET/.agents/skills"
 STAMP="$(date +%Y%m%d)"
 
@@ -419,6 +437,7 @@ fi
 
 link_config "$REPO_TARGET/pi/themes/owais.json" "$HOME_TARGET/.pi/agent/themes/owais.json" "Pi theme link"
 link_config "$REPO_TARGET/config/herdr/config.toml" "$HOME_TARGET/.config/herdr/config.toml" "Herdr config link"
+link_config "$SIMSLIM_PROFILE" "$HOME_TARGET/.config/simslim/main.json" "SimSlim profile link"
 link_config "$REPO_TARGET/config/pi-transcribe.json" "$HOME_TARGET/.pi/agent/pi-transcribe.json" "Pi transcription configuration link"
 link_config "$REPO_TARGET/config/plannotator.json" "$HOME_TARGET/.pi/agent/plannotator.json" "Plannotator configuration link"
 link_config "$REPO_TARGET/config/pi-keybindings.json" "$HOME_TARGET/.pi/agent/keybindings.json" "Pi keybindings link"
