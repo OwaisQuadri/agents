@@ -17,9 +17,9 @@ test("records timestamps for messages, tool calls, and tool results", () => {
 	};
 
 	eventTimestamps(api as any);
-	handlers.get("message_end")?.({ message: { role: "user", timestamp: Date.UTC(2026, 8, 5, 12, 30, 0) } });
+	handlers.get("message_start")?.({ message: { role: "user", timestamp: Date.UTC(2026, 8, 5, 12, 30, 0) } });
 	handlers.get("tool_call")?.({ toolName: "read" });
-	handlers.get("message_end")?.({
+	handlers.get("message_start")?.({
 		message: { role: "toolResult", toolName: "read", timestamp: Date.UTC(2026, 8, 5, 12, 30, 1) },
 	});
 

@@ -26,7 +26,7 @@ export default function eventTimestamps(pi: ExtensionAPI): void {
 		};
 	});
 
-	pi.on("message_end", (event) => {
+	pi.on("message_start", (event) => {
 		pi.appendEntry(ENTRY_TYPE, {
 			at: isoTimestamp(event.message.timestamp),
 			label: messageLabel(event.message),
