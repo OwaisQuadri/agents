@@ -63,7 +63,7 @@
     "oracle": "T4",
     "om-observer": "T2",
     "om-consolidator": "T3",
-    "Explore": "T2"
+    "Explore": "T3"
   },
   "untiered": {
     "delegate": "inherits the parent model by design; a pin would defeat the role",
