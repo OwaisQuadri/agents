@@ -43,12 +43,14 @@ MERGE:     Plain code combines structured safety, research, plan, judgment, impl
            verification, and repair results into the fixed task result.
 
 VERIFY:    a fresh built-in Plan agent at T4 writes the plan. A fresh general-purpose T5
-           agent judges it. A fresh anchor verifier, spec tester, or Maestro tester checks
-           the build. A fresh T4 code reviewer checks the diff. No verifier sees builder
-           chat or a prior verifier result.
-LOOP:      At most two plan judgments run. Rejected or blocked plans stop explicitly after
-           the cap. At most two fresh T4 repair agents run. Each repair has a fresh verifier
-           and a fresh code reviewer after it.
+           agent reviews it and supplies workaround options. A fresh agent from a different
+           provider verifies each claimed catastrophic conflict. A fresh anchor verifier, spec tester,
+           or Maestro tester checks the build. A fresh T4 code reviewer checks the diff.
+           No build verifier sees builder chat or a prior build verifier result.
+LOOP:      The planner and reviewer revise the plan for three rounds. The workflow checks stop
+           state before the third round. It returns plan-incomplete when the bounded dialogue cannot finish.
+           Only a verified catastrophic conflict ends the task. At most two fresh T4 repair
+           agents run. Each repair has a fresh verifier and a fresh code reviewer after it.
 
 IMPLEMENT: a T3 general-purpose agent works in an isolated worktree. It follows engineer
            and create-pr contracts. It opens only a draft Pull Request with a Closes
@@ -57,11 +59,11 @@ ANCHORS:   the safety commands, executable verifier output, reviewer output, rem
            state, and returned-versus-expected node counts anchor the result.
 CAP:       The workflow uses 24 agents at most.
 RESEARCH CAP: The workflow uses eight nested research agents at most.
-PLAN CAP:  The workflow uses two plan judgments at most.
+PLAN CAP:  The workflow reserves eight nested research agents and six downstream agents. It uses three plan rounds at most.
 
 REPAIR CAP: The workflow uses two repairs at most.
 ON FAIL:   The workflow counts null, stopped, malformed, blocked, and failed nodes. It
-           returns blocked, failed, or repair-incomplete. It never reports verified-ready.
+           returns blocked, failed, plan-incomplete, or repair-incomplete. It never reports verified-ready.
 
 STOP:      `args.stop_mode` stops at the named safe boundary. The workflow retains branch,
            commit, and draft Pull Request fields. Discard restores the prior tracker status.
@@ -77,7 +79,7 @@ The controller resolves `runtime_models.T3`, `runtime_models.T4`, and `runtime_m
 from `config/model-tiers.json`. It resolves `T4ReviewAfterRepair` from a T4 fallback whose provider differs from the T4 repair model. Do not put model identifiers in this workflow.
 
 Optional caps are `max_plan_verdicts`, `max_repairs`, and `max_agents`. Their defaults
-are 2, 2, and 24. The workflow accepts its boundary modes and the controller modes. It maps `after-current` to `none`, and maps `discard-current` or `all` to `discard`.
+are 3, 2, and 24. The minimum plan cap is 2. The workflow accepts its boundary modes and the controller modes. It maps `after-current` to `none`, and maps `discard-current` or `all` to `discard`.
 
 ## Output contract
 
@@ -85,7 +87,8 @@ The workflow returns this fixed object shape:
 
 TASK: object | null.
 REPO: string | null.
-STATUS: verified-ready | blocked | failed | repair-incomplete.
+STATUS: verified-ready | blocked | failed | plan-incomplete | repair-incomplete.
+PLAN BLOCK: The workflow returns STATUS blocked and STOP_REASON plan-catastrophic-unresolvable.
 EXPECTED: number.
 RETURNED: number.
 REPAIRS: number.

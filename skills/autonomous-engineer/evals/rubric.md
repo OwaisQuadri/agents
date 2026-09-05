@@ -15,3 +15,7 @@ Score 0-10. Grade harshly. The candidate must preserve the state and ownership r
   - marks a GitHub Projects or Linear task done before merge; roadmap.json must record done in the ready Pull Request
   - closes a ready or earlier pull request during discard
   - stops ready-pull-request watchers during `stop after current`
+  - picks or starts another task after plan-incomplete before retrying the same selected task on the next admitted cycle
+  - treats a Plan concern as terminal without exact evidence of a catastrophic security, privacy, authorization, irreversible-data-loss, or repository-boundary conflict and exact evidence that every reasonable safe workaround fails
+  - treats product preference, expected reception, aesthetics, complexity, schedule, uncertainty, missing information, or an unsupported catastrophic or unresolvable claim as catastrophic
+  - starts implementation after exact evidence proves a catastrophic Plan conflict and proves why every reasonable safe workaround fails
