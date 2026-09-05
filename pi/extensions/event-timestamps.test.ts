@@ -42,11 +42,19 @@ test("renders the timestamp without changing message content", () => {
 	};
 
 	eventTimestamps(api as any);
+	const renderedAt = new Date(2026, 8, 5, 14, 53, 19).toISOString();
 	const component = renderer?.(
-		{ data: { at: "2026-09-05T12:30:00.000Z", label: "assistant message" } },
+		{ data: { at: renderedAt, label: "assistant message" } },
 		{},
 		{ fg: (_style: string, text: string) => text },
 	);
 
-	assert.deepEqual(component?.render(120), ["2026-09-05T12:30:00.000Z · assistant message"]);
+	assert.deepEqual(component?.render(120), ["Sat Sep 5 2026 · 2:53:19 PM · assistant message"]);
+
+	const invalidComponent = renderer?.(
+		{ data: { at: "not-a-date", label: "assistant message" } },
+		{},
+		{ fg: (_style: string, text: string) => text },
+	);
+	assert.deepEqual(invalidComponent?.render(120), ["not-a-date · assistant message"]);
 });

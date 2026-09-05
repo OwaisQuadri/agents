@@ -17,10 +17,27 @@ function messageLabel(message: { role: string; toolName?: string }): string {
 	return `${message.role} message`;
 }
 
+function displayTimestamp(value: string): string {
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) return value;
+	const parts = new Intl.DateTimeFormat("en-US", {
+		weekday: "short",
+		month: "short",
+		day: "numeric",
+		year: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: true,
+	}).formatToParts(date);
+	const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+	return `${part("weekday")} ${part("month")} ${part("day")} ${part("year")} · ${part("hour")}:${part("minute")}:${part("second")} ${part("dayPeriod")}`;
+}
+
 export default function eventTimestamps(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer(ENTRY_TYPE, (entry, _options, theme) => {
 		const data = entry.data as TimestampEntry;
-		const line = `${data.at} · ${data.label}`;
+		const line = `${displayTimestamp(data.at)} · ${data.label}`;
 		return {
 			render: (width) => [theme.fg("dim", line.slice(0, Math.max(0, width)))],
 		};
