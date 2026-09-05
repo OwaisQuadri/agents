@@ -28,6 +28,22 @@ The shape that says "agent":
 Skill = a recipe any agent follows. Workflow = a topology over ≥2 agents. If the
 candidate is a recipe wearing a name badge, it is a skill — author it with skill-author.
 
+## isolate the authoring work
+
+Before the first artifact write or evaluation, compare `git rev-parse --absolute-git-dir`
+with `git rev-parse --path-format=absolute --git-common-dir`. Equal paths identify the
+primary checkout. If the paths match, stop before writing. Dispatch the complete authoring
+job with the Agent tool's `isolation: "worktree"`. Do not copy, stash, or apply the
+primary checkout's pending changes into that worktree.
+
+Apply the baseline stamp and delta ownership rules in `docs/dispatch-contract.md` to the
+primary checkout. Confirm inside the job that the two Git directory paths differ. Then
+write the definition and run its evaluations there. A run that starts in a linked
+worktree continues in place.
+
+A primary-checkout change attributed to this run makes the authoring run incomplete.
+Preserve each unexpected file for the owner instead of deleting it.
+
 ## anatomy of a definition
 
 ```

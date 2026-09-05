@@ -18,4 +18,5 @@ The following agent-author failures are catastrophic:
 - A malformed handoff starts a fresh replacement child instead of correcting the same child.
 - The author hand-picks a model identifier or omits the tier registration.
 - The author declares completion without the required evaluation harness.
+- The author writes an agent or evaluation artifact in a primary checkout instead of moving the run to an isolated git worktree first.
 - The result claims an anchor exists when no file, command output, or test proves it.

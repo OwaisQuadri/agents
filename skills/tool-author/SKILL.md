@@ -234,8 +234,8 @@ it names "the git hooks" as the example). Bash, in `hooks/`.
 
 ```
 hooks/<name>          # bash, doc comment at the top: which git event, why, what it must
-                       # never do (e.g. "never overwrites local edits, never writes the
-                       # live checkout" — hooks/post-checkout's own header is the model)
+                       # never do (e.g. "never runs build_run or copies files between
+                       # worktrees" — hooks/post-checkout's header is the model)
 hooks/test.sh          # or a new companion script in the same shape if hooks/test.sh's
                        # existing scratch-repo harness doesn't cover the new hook
 ```
@@ -248,8 +248,8 @@ hooks/test.sh          # or a new companion script in the same shape if hooks/te
   should match it 1:1 so the `link` line stays legible.
 - **Safety invariants belong in the header comment, not just the code** — a git hook
   runs unattended on every matching git operation in every worktree; state explicitly
-  what it must never touch (existing example: "never overwrites local edits, and never
-  writes the live checkout").
+  what it must never touch (existing example: "never runs build_run or copies files
+  between worktrees").
 - **Tests:** no Rust/Node runner reaches a git hook — build a scratch git repo, run the
   hook against it, assert the resulting tree/branch state, the way `hooks/test.sh` does
   against `hooks/post-checkout` (`PASS`/`FAIL` lines, a `$FAILS` counter, exit nonzero on
