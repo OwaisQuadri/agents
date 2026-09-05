@@ -837,7 +837,7 @@ test("telemetry parent lifecycle records runtime package and null metrics", asyn
 		assert.equal(record.runId, parentRunId);
 		assert.equal(record.parentRunId, null);
 		assert.equal(record.packageName, "@earendil-works/pi-coding-agent");
-		assert.equal(record.packageVersion, "0.84.2");
+		assert.equal(record.packageVersion, "0.84.4");
 		assert.equal(record.agentName, null);
 		assert.equal(record.status, "succeeded");
 		assert.deepEqual(record.tokens, {
@@ -901,7 +901,7 @@ test("telemetry subagents lifecycle records pinned package and normalized usage"
 		assert.equal(record.runId, "run-1");
 		assert.equal(record.parentRunId, null);
 		assert.equal(record.packageName, "pi-subagents");
-		assert.equal(record.packageVersion, "0.18.0");
+		assert.equal(record.packageVersion, "0.19.0");
 		assert.equal(record.agentName, "subagent-a");
 		assert.equal(record.status, "succeeded");
 		assert.deepEqual(record.tokens, {

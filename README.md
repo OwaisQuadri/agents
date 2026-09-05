@@ -97,10 +97,9 @@ The `herdr-state` extension gives Pi a read-only view into the running Herdr ses
 
 The managed upstream stack pins these immutable revisions:
 
-- `tintinweb/pi-subagents` at `3f9d35cd078d18a141eb5a6d8f4fc5010d756280`.
-
-`pi-subagents` provides a live subagent viewer and inline steering.
-- `backnotprop/plannotator` at `e1ce7dabe10474b3a653bef9ed5134b73e0b5336`.
+- `OwaisQuadri/pi-subagents` at `17308cfad322d6d238381586f575769d921ad6ae`.
+  It provides a live subagent viewer, inline steering, and durable tool output blocks.
+- `backnotprop/plannotator` at `d749c55c027ad033c76684b8445afd485fa9a4d3`.
 - `humanlayer/skills` at `3c2629142c5d437428269b1b722b08c0b87f574d`.
 - `mattpocock/skills` at `068b6e0c62393147daf03530149cdce209c93da8`.
 
@@ -133,7 +132,7 @@ Routine status shows only active and failed counts. Use these Pi slash commands:
 
 ```text
 /telemetry-status
-/telemetry-runs {"packageName":"pi-subagents","packageVersion":"0.50.0","agentName":"code-reviewer","status":"failed","minimumDurationMs":1000,"maximumCostUsd":0.25,"feedback":"corrected"}
+/telemetry-runs {"packageName":"pi-subagents","packageVersion":"0.19.0","agentName":"code-reviewer","status":"failed","minimumDurationMs":1000,"maximumCostUsd":0.25,"feedback":"corrected"}
 /telemetry-feedback <runId> <accepted|corrected|rejected>
 ```
 
@@ -141,7 +140,7 @@ The `/telemetry-runs` command accepts one JSON object. Its approved filters are 
 
 ### Updates and verification
 
-For an upstream update, change its immutable revision and any reviewed adapter paths or installer. If the `pi-subagents` package version changes, also update `PinnedSubagentPackageVersion` in `pi/extensions/telemetry.ts`, its test expectations, and the telemetry filter example above. Then build `tool-sync`, preview the complete plan, and apply it:
+For an upstream update, change its immutable revision and any reviewed adapter paths or installer. If the `pi-subagents` package version changes, also update `PinnedSubagentPackageVersion` in `pi/extensions/telemetry.ts`, its test expectations, and the telemetry filter example above. If the Pi version changes, update `TELEMETRY_PACKAGE_VERSION` and its test expectation. Then build `tool-sync`, preview the complete plan, and apply it:
 
 ```sh
 cargo build --release --manifest-path tools/tool-sync/Cargo.toml
@@ -158,16 +157,16 @@ while read -r name revision; do
   test "$(git -C "$HOME/.cache/tool-sync/$name" rev-parse HEAD)" = "$revision"
   test -z "$(git -C "$HOME/.cache/tool-sync/$name" status --porcelain)"
 done <<'REVISIONS'
-pi-subagents 27784eed57dd62021a7add4990ac2dada6690baa
-plannotator e1ce7dabe10474b3a653bef9ed5134b73e0b5336
+pi-subagents 17308cfad322d6d238381586f575769d921ad6ae
+plannotator d749c55c027ad033c76684b8445afd485fa9a4d3
 humanlayer-skills 3c2629142c5d437428269b1b722b08c0b87f574d
 mattpocock-skills 068b6e0c62393147daf03530149cdce209c93da8
 REVISIONS
 
-test "$(readlink "$HOME/.pi/agent/extensions/pi-subagents")" = "$HOME/.cache/tool-sync/pi-subagents"
+test -L "$HOME/.pi/agent/extensions/pi-subagents"
+test "$(realpath "$HOME/.pi/agent/extensions/pi-subagents")" = "$(realpath "$HOME/.cache/tool-sync/pi-subagents")"
 test "$(readlink "$HOME/.pi/agent/extensions/pi-extension")" = "$HOME/.cache/tool-sync/plannotator/apps/pi-extension"
 test "$(readlink "$HOME/.pi/agent/extensions/telemetry.ts")" = "$PWD/pi/extensions/telemetry.ts"
-test "$(readlink "$HOME/.agents/skills/pi-subagents")" = "$HOME/.cache/tool-sync/pi-subagents/skills/pi-subagents"
 test "$(readlink "$HOME/.agents/skills/show-me")" = "$HOME/.cache/tool-sync/humanlayer-skills/plugins/show-me/skills/show-me"
 test "$(readlink "$HOME/.agents/skills/wayfinder")" = "$HOME/.cache/tool-sync/mattpocock-skills/skills/engineering/wayfinder"
 test "$(readlink "$HOME/.agents/skills/grilling")" = "$HOME/.cache/tool-sync/mattpocock-skills/skills/productivity/grilling"
