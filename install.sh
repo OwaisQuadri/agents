@@ -15,6 +15,10 @@ shopt -s nullglob
 # git runs this through .git/hooks/post-merge, a symlink, so the link is resolved first;
 # without that the repo root reads as .git/hooks and every path below misses.
 SCRIPT_SELF="${BASH_SOURCE[0]}"
+IS_GIT_HOOK=0
+case "${SCRIPT_SELF##*/}" in
+  post-merge|post-rewrite) IS_GIT_HOOK=1 ;;
+esac
 while [[ -L "$SCRIPT_SELF" ]]; do
   SCRIPT_LINK="$(readlink "$SCRIPT_SELF")"
   [[ "$SCRIPT_LINK" == /* ]] || SCRIPT_LINK="$(dirname "$SCRIPT_SELF")/$SCRIPT_LINK"
@@ -160,6 +164,26 @@ retire_to_trash() {
 
 [[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
 (( IS_DRY )) && plan "dry run — printing, not executing"
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if (( IS_GIT_HOOK )); then
+    plan "skip SimSlim installation (git hook)"
+  elif (( IS_DRY )); then
+    plan "install or upgrade SimSlim through Homebrew"
+  elif (( IS_TEST )) || [[ "$HOME_TARGET" != "$HOME" ]]; then
+    plan "skip SimSlim installation (sandbox install)"
+  elif ! command -v brew >/dev/null 2>&1; then
+    echo "warn: Homebrew not found, skipping SimSlim installation" >&2
+  elif brew list --formula mobai-app/tap/simslim >/dev/null 2>&1; then
+    plan "upgrade SimSlim through Homebrew"
+    brew upgrade mobai-app/tap/simslim || echo "warn: SimSlim upgrade failed" >&2
+  else
+    plan "install SimSlim through Homebrew"
+    brew install mobai-app/tap/simslim || echo "warn: SimSlim installation failed" >&2
+  fi
+else
+  plan "skip SimSlim installation (macOS only)"
+fi
 
 # 1. canonical skills root
 plan "ensure $SKILLS_ROOT"

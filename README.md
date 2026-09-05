@@ -223,12 +223,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for every manifest field and the supporte
 
 ### iOS simulator
 
-Install SimSlim on macOS, then run this repository's installer to link the shared profile:
+The package step requires Homebrew. Install `jq`, then run this repository's installer on macOS:
 
 ```sh
-brew install jq mobai-app/tap/simslim
+brew install jq
 REPO_TARGET="$PWD" ./install.sh
 ```
+
+A manual macOS install uses Homebrew to install SimSlim when it is absent and upgrade it when it is present. Linux runs, sandbox installs, and Git hooks skip the package step. A failed Homebrew step warns and leaves the remaining configuration install running. The installer also links `~/.config/simslim/main.json` to the tracked profile.
 
 Create the normal device once. Use exact-name equality to resolve one existing `iPhone 17 Pro` on iOS 26.5 with `simslim list --json`, then clone and prepare it:
 
