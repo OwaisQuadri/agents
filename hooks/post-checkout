@@ -1,61 +1,13 @@
 #!/usr/bin/env bash
-# post-checkout — linked into .git/hooks by install.sh, so git runs it in every worktree
-# on `worktree add` and branch checkouts; conductor's setup script calls it with no args.
-# a worktree or branch landing on main's tip inherits the live checkout's uncommitted
-# work. tracked changes ride a 3-way apply so drift between the two tips surfaces as
-# conflicts, never a silent revert, and land unstaged; untracked non-ignored files come
-# over by copy. fires only into a clean tree on an attached branch, skips when either
-# side has a rebase/bisect/merge in flight, never overwrites local edits, and never
-# writes the live checkout
+# post-checkout starts test/build in the background after a branch checkout.
+# It never runs build_run or copies files between worktrees.
+# It changes no checked-out content; output goes to the ignored .install-test-home.log.
 set -euo pipefail
 
 is_branch_checkout="${3:-1}"
 [[ "$is_branch_checkout" == 1 ]] || exit 0
 
-# every branch checkout gets a backgrounded sandbox install (test/build, never
-# build_run) so install-script breakage surfaces without a manual --test run; the
-# checkout itself never waits on it. Output lands in .install-test-home.log.
 repo_root="$(git rev-parse --show-toplevel)"
 if [[ -x "$repo_root/test/build" ]]; then
   ("$repo_root/test/build" >"$repo_root/.install-test-home.log" 2>&1 &)
 fi
-
-live="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-here="$(git rev-parse --show-toplevel)"
-[[ "$here" != "$live" ]] || exit 0
-
-git symbolic-ref -q HEAD >/dev/null || exit 0
-git rev-parse --verify --quiet HEAD >/dev/null || exit 0
-
-# in-worktree checkouts export GIT_DIR pointing at this worktree's private gitdir;
-# live-side commands must not mix that index with live's working tree
-live_git() { env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$live" "$@"; }
-
-for state_file in rebase-merge rebase-apply BISECT_LOG MERGE_HEAD; do
-  if [[ -e "$(git rev-parse --git-path "$state_file")" ]]; then exit 0; fi
-  if [[ -e "$(live_git rev-parse --git-path "$state_file")" ]]; then exit 0; fi
-done
-[[ -z "$(live_git ls-files -u)" ]] || exit 0
-[[ -z "$(git status --porcelain)" ]] || exit 0
-
-head="$(git rev-parse HEAD)"
-is_from_main=0
-for ref in main origin/main; do
-  if [[ "$head" == "$(git rev-parse --verify --quiet "$ref" || true)" ]]; then is_from_main=1; fi
-done
-if (( ! is_from_main )); then exit 0; fi
-
-if ! live_git diff --quiet HEAD; then
-  if live_git diff HEAD --binary | git apply --3way; then
-    git reset -q
-  else
-    echo "post-checkout: live checkout's diff did not apply cleanly, run git status in $here" >&2
-  fi
-fi
-
-live_git ls-files -o --exclude-standard -z |
-  while IFS= read -r -d '' f; do
-    if [[ -e "$live/$f" ]]; then printf '%s\0' "$f"; fi
-  done |
-  rsync -0a --files-from=- "$live/" "$here/" ||
-    echo "post-checkout: some untracked files failed to copy from $live" >&2

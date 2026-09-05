@@ -300,7 +300,7 @@ else
 fi
 
 # 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;
-#    post-checkout carries the live checkout's uncommitted work into worktrees cut from main;
+#    post-checkout starts each worktree's sandbox build without copying checkout content;
 #    pre-push rejects any push that updates main, so main only moves through a PR
 if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-merge" "$REPO_TARGET/install.sh"

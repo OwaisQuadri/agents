@@ -25,9 +25,8 @@
 # section): tools/gepa-due and the dispatched session both read the SAME real Pi
 # transcripts directly from ~/.pi/agent/sessions/, a machine-global location every
 # worktree on this machine can already see without anything being copied. Only
-# votes/votes.jsonl is still gitignored-per-artifact and still needs copying in —
-# `git worktree` only carries committed history, and hooks/post-checkout explicitly
-# only copies untracked NON-ignored files.
+# votes/votes.jsonl is still gitignored per artifact and needs an explicit copy.
+# `git worktree` carries only committed history, and hooks/post-checkout copies no files.
 #
 # "Since last tune" is now a TIME cutoff (max of the artifact's own last-modification
 # commit and workflows/gepa-due/state/reviewed.jsonl's reviewed_through for it), not a

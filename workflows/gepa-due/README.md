@@ -68,11 +68,10 @@ Each session's worktree needs no evidence copied in for USAGE: real Pi transcrip
 live under the machine-global `~/.pi/agent/sessions/`, already visible identically
 from any worktree on this machine, nothing repo-scoped about that path. Only
 `votes/votes.jsonl` (still gitignored, per-artifact) gets copied in before the kickoff
-prompt fires — the same reason it always needed copying: `git worktree` only shares
-committed history, and `hooks/post-checkout` explicitly copies only untracked
-NON-ignored files. After settlement, the trigger merges new vote lines back into the
-main checkout under the same file lock used by `submit_vote.py`. The kickoff prompt
-also carries the exact `cutoff_iso` instant
+prompt fires. `git worktree` only shares committed history, and `hooks/post-checkout`
+does not copy files between worktrees. After settlement, the trigger merges new vote
+lines back into the main checkout under the same file lock used by `submit_vote.py`.
+The kickoff prompt also carries the exact `cutoff_iso` instant
 `tools/gepa-due` used for this artifact, so the dispatched session (running in a fresh
 worktree that cannot see the gitignored state file that cutoff came from) never has to
 — and never could — re-derive it itself.
