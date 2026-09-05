@@ -1,0 +1,7 @@
+[core]
+	pager = ~/.local/bin/delta
+[interactive]
+	diffFilter = ~/.local/bin/delta --color-only
+[delta]
+	navigate = true
+	line-numbers = true

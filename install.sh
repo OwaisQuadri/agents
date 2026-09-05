@@ -423,6 +423,86 @@ link_config "$REPO_TARGET/config/pi-transcribe.json" "$HOME_TARGET/.pi/agent/pi-
 link_config "$REPO_TARGET/config/plannotator.json" "$HOME_TARGET/.pi/agent/plannotator.json" "Plannotator configuration link"
 link_config "$REPO_TARGET/config/pi-keybindings.json" "$HOME_TARGET/.pi/agent/keybindings.json" "Pi keybindings link"
 
+GIT_DELTA_SOURCE="$REPO_TARGET/config/git-delta.gitconfig"
+if [[ ! -f "$GIT_DELTA_SOURCE" ]]; then
+  echo "warn: $GIT_DELTA_SOURCE not found, skipping the delta Git configuration" >&2
+elif ! command -v git >/dev/null 2>&1; then
+  echo "warn: git not found, skipping the delta Git configuration" >&2
+else
+  GIT_XDG_CONFIG_HOME="$HOME_TARGET/.config"
+  if [[ "$HOME_TARGET" == "$HOME" && -n "${XDG_CONFIG_HOME:-}" ]]; then
+    GIT_XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
+  fi
+  if [[ -e "$HOME_TARGET/.gitconfig" ]]; then
+    GIT_GLOBAL_CONFIG="$HOME_TARGET/.gitconfig"
+  elif [[ -e "$GIT_XDG_CONFIG_HOME/git/config" || -L "$GIT_XDG_CONFIG_HOME/git/config" ]]; then
+    GIT_GLOBAL_CONFIG="$GIT_XDG_CONFIG_HOME/git/config"
+  else
+    GIT_GLOBAL_CONFIG="$HOME_TARGET/.gitconfig"
+  fi
+  GIT_CONFIG_ENV=(
+    env -u GIT_CONFIG -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_CONFIG_COUNT
+    HOME="$HOME_TARGET" XDG_CONFIG_HOME="$GIT_XDG_CONFIG_HOME"
+  )
+  if (( ! IS_DRY )) && [[ ! -x "$HOME_TARGET/.local/bin/delta" ]]; then
+    echo "FATAL: managed delta is missing at $HOME_TARGET/.local/bin/delta; rerun: $REPO_TARGET/install.sh" >&2
+    exit 1
+  fi
+  "${GIT_CONFIG_ENV[@]}" git config --file "$GIT_DELTA_SOURCE" --list >/dev/null \
+    || { echo "FATAL: $GIT_DELTA_SOURCE is not valid Git configuration" >&2; exit 1; }
+  GIT_DELTA_KEYS=()
+  while IFS= read -r key; do
+    GIT_DELTA_KEYS+=("$key")
+  done < <("${GIT_CONFIG_ENV[@]}" git config --file "$GIT_DELTA_SOURCE" --name-only --list)
+  (( ${#GIT_DELTA_KEYS[@]} > 0 )) \
+    || { echo "FATAL: $GIT_DELTA_SOURCE contains no Git settings" >&2; exit 1; }
+  IS_GIT_DELTA_CHANGE=0
+  for key in "${GIT_DELTA_KEYS[@]}"; do
+    desired="$("${GIT_CONFIG_ENV[@]}" git config --file "$GIT_DELTA_SOURCE" --get "$key")"
+    target_current="$("${GIT_CONFIG_ENV[@]}" git config --file "$GIT_GLOBAL_CONFIG" --get "$key" 2>/dev/null || true)"
+    effective="$("${GIT_CONFIG_ENV[@]}" git config --includes --global --get-all "$key" 2>/dev/null || true)"
+    effective="${effective//$'\n'/, }"
+    printf -v target_display '%q' "${target_current:-unset}"
+    printf -v effective_display '%q' "${effective:-unset}"
+    if [[ "$target_current" == "$desired" ]]; then
+      plan "ok   $GIT_GLOBAL_CONFIG $key -> $desired"
+    else
+      plan "set  $GIT_GLOBAL_CONFIG $key: $target_display -> $desired (effective: $effective_display)"
+      IS_GIT_DELTA_CHANGE=1
+    fi
+  done
+  if (( IS_GIT_DELTA_CHANGE )); then
+    if [[ -L "$GIT_GLOBAL_CONFIG" && ! -e "$GIT_GLOBAL_CONFIG" ]]; then
+      backup "$GIT_GLOBAL_CONFIG"
+    elif [[ -e "$GIT_GLOBAL_CONFIG" ]]; then
+      GIT_CONFIG_BACKUP="$GIT_GLOBAL_CONFIG.pre-reset-$STAMP"
+      [[ -e "$GIT_CONFIG_BACKUP" || -L "$GIT_CONFIG_BACKUP" ]] \
+        && GIT_CONFIG_BACKUP="$GIT_CONFIG_BACKUP.$(date +%H%M%S)"
+      plan "backup $GIT_GLOBAL_CONFIG -> $GIT_CONFIG_BACKUP"
+      run cp -pL "$GIT_GLOBAL_CONFIG" "$GIT_CONFIG_BACKUP"
+      (( IS_DRY )) || cmp -s "$GIT_GLOBAL_CONFIG" "$GIT_CONFIG_BACKUP" \
+        || { echo "FATAL: backup mismatch at $GIT_CONFIG_BACKUP" >&2; exit 1; }
+    fi
+    run mkdir -p "$(dirname "$GIT_GLOBAL_CONFIG")"
+    for key in "${GIT_DELTA_KEYS[@]}"; do
+      desired="$("${GIT_CONFIG_ENV[@]}" git config --file "$GIT_DELTA_SOURCE" --get "$key")"
+      run "${GIT_CONFIG_ENV[@]}" git config --file "$GIT_GLOBAL_CONFIG" --replace-all "$key" "$desired"
+    done
+  fi
+  if (( ! IS_DRY )); then
+    for key in "${GIT_DELTA_KEYS[@]}"; do
+      desired="$("${GIT_CONFIG_ENV[@]}" git config --file "$GIT_DELTA_SOURCE" --get "$key")"
+      target_actual="$("${GIT_CONFIG_ENV[@]}" git config --file "$GIT_GLOBAL_CONFIG" --get "$key" 2>/dev/null || true)"
+      [[ "$target_actual" == "$desired" ]] \
+        || { echo "FATAL: $GIT_GLOBAL_CONFIG $key is $target_actual, expected $desired" >&2; exit 1; }
+      effective="$("${GIT_CONFIG_ENV[@]}" git config --includes --global --get "$key" 2>/dev/null || true)"
+      printf -v effective_display '%q' "${effective:-unset}"
+      [[ "$effective" == "$desired" ]] \
+        || { echo "FATAL: effective $key=$effective_display overrides $GIT_GLOBAL_CONFIG" >&2; exit 1; }
+    done
+  fi
+fi
+
 if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 && "$(uname -s)" == "Darwin" ]]; then
   if ! command -v uv >/dev/null 2>&1; then
     echo "FATAL: uv is required for local transcription. Install uv, then rerun install.sh." >&2
