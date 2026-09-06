@@ -92,6 +92,19 @@ Cross-project asks — status across agents, workspaces, or this machine's autom
 dispatching work into another project; digging into a project agent — route through the
 /hq skill.
 
+## visual evidence for interface changes
+
+When a change alters what a user can see or do, testing must capture visual evidence.
+A refactor, dependency change, test change, or technical-debt change needs none when
+visible and interactive behavior stay the same.
+Use screenshots for static states. Prefer before-and-after screenshots when a comparison helps.
+Use a short screen recording when time or interaction carries the result.
+This includes animation, gestures, drag-and-drop, navigation, focus changes, and transitions.
+
+Code review must inspect the same evidence before it passes the change.
+`create-pr` must upload the applicable evidence into the Pull Request (PR) description.
+Do not commit temporary evidence unless it belongs in product documentation.
+
 ## iOS simulator
 
 Use `iPhone 17 Pro Main Slim` on iOS 26.5 as the normal simulator. SimSlim owns the

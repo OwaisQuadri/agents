@@ -20,6 +20,7 @@ def="${1:-../spec-tester.md}"
 
 command -v claude >/dev/null || { echo "claude CLI required" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "python3 required" >&2; exit 1; }
 
 FIX=$(mktemp -d /tmp/spec-tester-evals.XXXXXX)
 trap 'rm -rf "$FIX"' EXIT
@@ -36,9 +37,149 @@ case "$cmd" in
 esac
 EOF
 chmod +x "$FIX/sut/counter.sh"
+cat > "$FIX/sut/ui-fixture" <<'EOF'
+#!/bin/sh
+set -eu
+root="$(CDPATH= cd -- "$(dirname "$0")/../scratch" && pwd -P)"
+state_file="$root/.ui-state"
+capture_log="$root/.capture-log"
+action="${1:-}"
+if [ -f "$state_file" ]; then
+  read -r state viewport < "$state_file"
+else
+  state=baseline
+  viewport=1280
+fi
+case "$action" in
+  baseline|changed)
+    [ "$#" -eq 1 ] || exit 2
+    state="$action"
+    printf '%s %s\n' "$state" "$viewport" > "$state_file"
+    ;;
+  viewport)
+    [ "$#" -eq 2 ] || exit 2
+    case "$2" in ''|*[!0-9]*) exit 2 ;; esac
+    viewport="$2"
+    printf '%s %s\n' "$state" "$viewport" > "$state_file"
+    ;;
+  screenshot)
+    [ "$#" -eq 2 ] || exit 2
+    output="$2"
+    case "$output" in
+      /*) ;;
+      *) output="$PWD/$output" ;;
+    esac
+    parent="$(CDPATH= cd -- "$(dirname "$output")" 2>/dev/null && pwd -P)" || exit 2
+    [ "$parent" = "$root" ] || exit 2
+    [ ! -L "$output" ] || exit 2
+    if [ "$viewport" -lt 600 ]; then
+      width=2
+      height=4
+    else
+      width=4
+      height=2
+    fi
+    case "$state" in
+      baseline) red=240; green=240; blue=240 ;;
+      changed) red=220; green=32; blue=32 ;;
+      *) exit 2 ;;
+    esac
+    python3 - "$output" "$width" "$height" "$red" "$green" "$blue" <<'PY'
+import struct
+import sys
+import zlib
+
+path, width, height, red, green, blue = sys.argv[1:]
+width = int(width)
+height = int(height)
+color = bytes((int(red), int(green), int(blue)))
+raw = b"".join(b"\x00" + color * width for _ in range(height))
+
+
+def chunk(kind, data):
+    checksum = zlib.crc32(kind + data) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+
+png = b"\x89PNG\r\n\x1a\n"
+png += chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+png += chunk(b"IDAT", zlib.compress(raw))
+png += chunk(b"IEND", b"")
+with open(path, "wb") as image:
+    image.write(png)
+PY
+    printf '%s|%s|%s\n' "$(basename "$output")" "$state" "$viewport" >> "$capture_log"
+    ;;
+  *) exit 2 ;;
+esac
+EOF
+chmod +x "$FIX/sut/ui-fixture"
 
 body=$(awk 'c>=2{print} /^---$/{c++}' "$def")
 sut_sum() { find "$FIX/sut" -type f -exec shasum {} + | shasum; }
+is_path_cited() {
+  local logical_path="$1"
+  local text="$2"
+  local physical_path
+  physical_path="$(CDPATH= cd -- "$(dirname "$logical_path")" && pwd -P)/$(basename "$logical_path")"
+  grep -Fq "$logical_path" <<<"$text" || grep -Fq "$physical_path" <<<"$text"
+}
+
+result_block_is_only_output() {
+  local text="$1"
+  awk '
+    BEGIN { state = "before"; valid = 1 }
+    /^[[:space:]]*```spec-result[[:space:]]*$/ {
+      opens += 1
+      if (state != "before") valid = 0
+      state = "inside"
+      next
+    }
+    /^[[:space:]]*```[[:space:]]*$/ {
+      closes += 1
+      if (state != "inside") valid = 0
+      state = "after"
+      next
+    }
+    state != "inside" && /[^[:space:]]/ { valid = 0 }
+    END { exit !(valid && opens == 1 && closes == 1 && state == "after") }
+  ' <<<"$text"
+}
+
+visual_evidence_block() {
+  awk '
+    {
+      lower = tolower($0)
+      if (mode == "") {
+        if (lower ~ /^[[:space:]]*"?visual_evidence"?[[:space:]]*:/) {
+          mode = "field"
+          field_indent = match($0, /[^[:space:]]/) - 1
+          print
+        } else if (lower ~ /^##[[:space:]]+visual[_ -]?evidence[[:space:]]*$/) {
+          mode = "heading"
+          print
+        }
+        next
+      }
+      if (mode == "heading") {
+        if ($0 ~ /^##[[:space:]]+/) exit
+        print
+        next
+      }
+      content_index = match($0, /[^[:space:]]/)
+      if (content_index == 0) {
+        print
+        next
+      }
+      indent = content_index - 1
+      if (indent <= field_indent \
+          && ($0 ~ /^[[:space:]]*```[[:space:]]*$/ \
+            || $0 ~ /^[[:space:]]*"?[A-Za-z0-9_-]+"?[[:space:]]*:/ \
+            || $0 ~ /^[[:space:]]*##[[:space:]]+/)) exit
+      print
+    }
+  '
+}
 
 ungraded=0
 catastrophic=0
@@ -52,7 +193,7 @@ while IFS= read -r line <&3; do
   [[ "$is_holdout" == "$want" ]] || continue
   id=$(jq -r '.id' <<<"$line")
   dispatch=$(jq -r '.input' <<<"$line" | sed "s|__FIXTURE__|$FIX|g")
-  dispatch="You are dispatched as the spec-tester agent; the system prompt appended to this session is your definition. This is a live dispatch — execute it and reply per your output contract. Skip the usage-log append this run.
+  dispatch="You are dispatched as the spec-tester agent; the system prompt appended to this session is your definition. This is a live dispatch — execute it and reply per your output contract.
 
 $dispatch"
   rm -rf "$FIX/scratch"
@@ -80,6 +221,9 @@ $dispatch"
   if [[ "$before" != "$after" ]]; then
     score=0
     fm='"sut-modified"'
+  elif [[ "$id" != s3 && "$id" != s4 ]] && ! result_block_is_only_output "$out"; then
+    score=0
+    fm='"result-block-count"'
   else
     case "$id" in
       s1) { grep -q "spec-result" <<<"$out" && grep -q "TC-01: pass" <<<"$out" && grep -q "TC-02: pass" <<<"$out" && grep -q "counter.sh" <<<"$out"; } || { score=2; fm='"missing-anchor"'; } ;;
@@ -178,6 +322,38 @@ $dispatch"
           elif ! { grep -q "bin/counter" <<<"$out" && grep -q "counter.sh" <<<"$out"; }; then
             score=3
             fm='"correction-unanchored"'
+          fi ;;
+      s12) visual_evidence=$(visual_evidence_block <<<"$out")
+          capture_log="$FIX/scratch/.capture-log"
+          if [[ -z "$visual_evidence" ]]; then
+            score=0
+            fm='"missing-visual-evidence"'
+          else
+            for image in before.png after-desktop.png after-mobile.png; do
+              image_path="$FIX/scratch/$image"
+              if [[ ! -s "$image_path" ]] || ! is_path_cited "$image_path" "$visual_evidence"; then
+                score=0
+                fm='"missing-visual-media"'
+                break
+              fi
+            done
+            if [[ $score -ne 0 ]] && { [[ ! -f "$capture_log" ]] \
+              || ! grep -Fxq 'before.png|baseline|1280' "$capture_log" \
+              || ! grep -Fxq 'after-desktop.png|changed|1280' "$capture_log" \
+              || ! grep -Fxq 'after-mobile.png|changed|390' "$capture_log"; }; then
+              score=0
+              fm='"wrong-visual-state"'
+            elif [[ $score -ne 0 ]] && ! grep -q "TC-12: pass" <<<"$out"; then
+              score=2
+              fm='"no-pass-verdict"'
+            fi
+          fi ;;
+      s13) if ! { grep -q "TC-13: pass" <<<"$out" && grep -q "counter.sh" <<<"$out"; }; then
+            score=2
+            fm='"missing-anchor"'
+          elif grep -Eqi 'usage[-_ ]?log|log[-_ ]?append|append[^<]*log' <<<"$out"; then
+            score=0
+            fm='"usage-log-output"'
           fi ;;
       *)
         # This harness sets score=8 BEFORE the dispatch, so an unknown id used to come back

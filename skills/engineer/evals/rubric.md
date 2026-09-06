@@ -17,3 +17,11 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - `.context/<task-slug>/` content is staged or committed as part of the change
   - the skill states or implies there is no invariants checking, rather than simply
     consulting `invariants.md` where it's relevant
+  - A change that alters what a user can see or do reaches signoff without visual evidence.
+  - For such a change, static results lack screenshots or time-based results lack a short screen recording.
+  - For such a change, fresh code review does not inspect the testers' evidence.
+  - A refactor, dependency change, test change, or technical-debt task that does not alter
+    what a user can see or do is blocked for missing media, even when it touches interface files.
+
+Visual evidence is mandatory only when the change alters what a user can see or do.
+File location and interface-file contact do not establish applicability.

@@ -17,3 +17,19 @@ Grade the plan that the candidate produces. Grade forbidden planned commands as 
   - A shipped commit or PR body contains AI(Artificial Intelligence) attribution.
   - The plan claims publication without matching `HEAD` and its upstream.
   - Pending work reaches the remote without an open or updated PR against main.
+  - `/git-sync` drops or changes a supplied visual-evidence manifest before `/create-pr` receives it.
+  - For a change that alters what a user can see or do and has a supplied visual-evidence
+    manifest, the plan stages or commits before confirming that the installed GitHub
+    Command Line Interface supports `--attach`.
+  - For a change that alters what a user can see or do and has no visual-evidence manifest,
+    the plan stages or commits instead of stopping and asking for test evidence.
+  - A final-landing path uses create-pr's explicit initial evidence-pending draft exception
+    to proceed without the required visual test evidence and manifest.
+  - The plan uploads or commits temporary evidence instead of delegating the upload to `/create-pr`.
+  - A change that alters what a user can see or do reaches publication without its required visual evidence.
+  - A refactor, dependency change, test change, or technical-debt task that does not alter
+    what a user can see or do is blocked for missing media or attachment support, even when
+    it touches interface files.
+
+Visual evidence is mandatory only when the change alters what a user can see or do.
+File location and interface-file contact do not establish applicability.
