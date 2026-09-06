@@ -114,9 +114,13 @@ How the assignment reaches each harness:
 ONE definition per role lives in `agents/<name>/<name>.md`. The installer derives
 everything else from it.
 
-- Pi: the installer GENERATES `~/.pi/agent/agents/<name>.md` from that definition. Same body, tool
-  names mapped to pi's registry (`Glob` to `find`, `WebSearch` to `web_search`), and no
-  model line at all. Subagents receive a tier's whole ordered `fallbacks` list through
+- Pi: the installer generates `~/.pi/agent/agents/<name>.md` from that definition without a
+  model line. Built-in tool names map to Pi names (`Glob` to `find`). `WebSearch` expands
+  into `ext:pi-extension/web_search` and `ext:web/fallback_web_search`. `WebFetch` expands
+  into `ext:pi-extension/web_fetch`, `ext:pi-extension/web_crawl`, `ext:web/fetch_content`,
+  `ext:web/source_check`, and `ext:web/get_search_content`. The installer retains the body. For agents
+  with web grants, the installer appends DonSeTch-first guidance and fallback conditions.
+  Subagents receive a tier's whole ordered `fallbacks` list through
   `subagents.agentOverrides`. The session map (`modelTierFallbacks`) holds each model in
   that ordered chain. It keys each model to the model that comes next. The session walks one
   hop per limit, re-enters on the new model, then looks that model up on its own next limit.
