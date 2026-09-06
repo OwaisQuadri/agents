@@ -138,6 +138,11 @@ code-reviewer seat gives the final coherence verdict and stays T4.
 
 ## pi session defaults
 
+- `/turbo` toggles a session-local T5 override. Activation switches the parent session and
+  new non-review workers to T5; deactivation restores the model and thinking level captured
+  before activation. It survives resume only while active. New sessions start inactive.
+  `anchor-verifier`, `code-reviewer`, `maestro-tester`, and `spec-tester` keep independent
+  provider routing while Turbo is active.
 - The session `defaultModel` follows the `orchestrator` tier (T3). The installer does not
   enforce it, so a deliberate `/model` choice survives a pull. Escalate a session by hand
   at a real escalation point; drop back after.

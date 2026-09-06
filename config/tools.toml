@@ -34,7 +34,7 @@ name = "pi-subagents"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
-source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "17308cfad322d6d238381586f575769d921ad6ae" }
+source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "e20af0be481339efa5236e9bbe5cd0dfc6d13ae8" }
 installer = { command = "/bin/sh", args = ["-c", "npm ci && npm run bundle"], preview_args = ["-c", "npm --version"] }
 
 [[tools]]
@@ -138,6 +138,22 @@ name = "tier-settings-lib"
 platforms = ["macos", "linux"]
 commands = []
 pi_extension = "pi/extensions/tier-settings"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "turbo"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/turbo.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "turbo-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/turbo"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
