@@ -12,6 +12,18 @@ Default to the simplest thing that works and ships today. When in doubt, write l
   cases. Narrowing needs an observed false positive, never an imagined one
   (arXiv:2301.12987). Fix stays minimal; cause stays weak.
 
+## web tools
+
+In Pi sessions with both web packages, use DonSeTch `web_search`, `web_fetch`, and `web_crawl` first for supported work.
+Use available `fallback_web_search`, `fetch_content`, `source_check`, or `get_search_content` only after a relevant failure or for an unsupported capability.
+Exact raw bodies and saved authentication profiles can go directly to fallback.
+Keep legacy response identifiers with `get_search_content`.
+
+Judge whether empty or partial results answer the task.
+Do not call another provider after an adequate success.
+Report why you used fallback.
+This rule does not add automatic retries.
+
 ## ticket urgency
 
 When the user asks for a feature, first check the active tracker. If an unfinished matching ticket already exists, raise its priority by one level: `low` to `med`, `med` to `high`, or `high` to `urgent`. An `urgent` ticket stays urgent. Never change a `done` or `cancelled` ticket. Apply this across GitHub Issues, Linear, and local roadmap tickets.
