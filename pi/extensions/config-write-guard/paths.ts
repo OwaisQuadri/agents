@@ -1,5 +1,6 @@
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const protectedRelativePaths = [
 	[".agents", "skills"],
@@ -33,6 +34,23 @@ function isInside(root: string, candidate: string): boolean {
 	return relativePath === "" || (!relativePath.startsWith(`..${sep}`) && relativePath !== ".." && !isAbsolute(relativePath));
 }
 
+function canonicalPotentialPath(path: string, cwd: string): string {
+	let existing = resolve(cwd, path);
+	const missing: string[] = [];
+	while (!existsSync(existing)) {
+		const parent = dirname(existing);
+		if (parent === existing) break;
+		missing.push(basename(existing));
+		existing = parent;
+	}
+	const canonicalExisting = existsSync(existing) ? realpathSync(existing) : existing;
+	return resolve(canonicalExisting, ...missing.reverse());
+}
+
+export function isPathInsideRoot(path: string, root: string, cwd = process.cwd()): boolean {
+	return isInside(canonicalPotentialPath(root, cwd), canonicalPotentialPath(path, cwd));
+}
+
 /**
  * Checks whether a path names a managed agent destination.
  *
@@ -43,5 +61,5 @@ function isInside(root: string, candidate: string): boolean {
  */
 export function isProtectedConfigPath(path: string, home = homedir()): boolean {
 	const candidate = resolve(path);
-	return protectedConfigRoots(home).some((root) => isInside(root, candidate));
+	return protectedConfigRoots(home).some((root) => isInside(root, candidate) || isPathInsideRoot(path, root));
 }
