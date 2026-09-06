@@ -20,7 +20,7 @@ const supportRepo = (input && input.support_repo) || repo
 const maxPlanVerdicts = Math.min(Math.max(Number(input && input.max_plan_verdicts) || 3, 2), 3)
 const maxRepairs = Math.min(Number(input && input.max_repairs) || 2, 2)
 const maxAgents = Math.min(Number(input && input.max_agents) || 24, 24)
-const downstreamAgentReserve = 6
+const downstreamAgentReserve = 7
 let researchBudgetOffset = 0
 const requestedStopMode = (input && input.stop_mode) || 'none'
 const stopMode = requestedStopMode === 'after-current' ? 'none' : ['discard-current', 'all'].includes(requestedStopMode) ? 'discard' : requestedStopMode
@@ -29,6 +29,7 @@ const validStopModes = ['none', 'after-research', 'before-implementation', 'afte
 function result(status, state, stopReason) {
   return {
     status,
+    is_pass: Boolean(state.is_pass),
     task: task ? { id: task.id, title: task.title, url: task.url, tracker: task.tracker, prior_status: task.prior_status } : null,
     repo,
     expected: state.expected,
@@ -38,6 +39,8 @@ function result(status, state, stopReason) {
     branch: state.branch,
     commit: state.commit,
     checks: state.checks,
+    verification_verdict: state.verificationVerdict,
+    visual_evidence: state.visualEvidence,
     blockers: state.blockers,
     stop_reason: stopReason || null,
   }
@@ -51,6 +54,8 @@ const state = {
   branch: null,
   commit: null,
   checks: [],
+  verificationVerdict: null,
+  visualEvidence: [],
   blockers: [],
   changedPaths: [],
 }
@@ -260,6 +265,7 @@ const PLAN_SCHEMA = {
     plan: { type: 'string' },
     planned_files: { type: 'array', items: { type: 'string' } },
     verification_kind: { type: 'string', enum: ['anchor', 'spec', 'maestro'] },
+    is_user_visible_change: { type: 'boolean' },
     verify_command: { type: 'string' },
     rubric: { type: 'array', items: { type: 'string' } },
     test_cases: { type: 'string' },
@@ -277,7 +283,7 @@ const PLAN_SCHEMA = {
       },
     },
   },
-  required: ['control', 'plan', 'planned_files', 'verification_kind', 'verify_command', 'rubric', 'test_cases', 'drive_matrix', 'concern_resolutions'],
+  required: ['control', 'plan', 'planned_files', 'verification_kind', 'is_user_visible_change', 'verify_command', 'rubric', 'test_cases', 'drive_matrix', 'concern_resolutions'],
 }
 
 const JUDGMENT_SCHEMA = {
@@ -349,12 +355,34 @@ while (planVerdicts < maxPlanVerdicts) {
   }
   const serializedFeedback = JSON.stringify(planFeedback)
   const candidatePlan = await tracked(
-    `You are the built-in Plan agent. Work with the plan reviewer until the selected task has a safe plan. Plan only task ${taskReference} in ${repo}. Use this research output: ${JSON.stringify(research || {})}. Reviewer feedback: ${serializedFeedback}. Resolve every concern. Use each concern's zero-based array index as concern_index. Return one resolution and selected workaround for every index. Prefer a safe workaround over abandoning the task. Return a bounded implementation plan. Name planned files, one applicable verification kind, an executable verify command, a rubric, test cases, and a drive matrix. Do not implement.`,
+    `You are the built-in Plan agent. Work with the plan reviewer until the selected task has a safe plan. Plan only task ${taskReference} in ${repo}. Use this research output: ${JSON.stringify(research || {})}. Reviewer feedback: ${serializedFeedback}. Resolve every concern. Use each concern's zero-based array index as concern_index. Return one resolution and selected workaround for every index. Prefer a safe workaround over abandoning the task. Return a bounded implementation plan. Name planned files and one applicable verification kind. Set is_user_visible_change only when the task alters what a user can see or do. Interface-file contact alone does
+not qualify. Return an executable verify command, a rubric, test cases, and
+a drive matrix. For a user-visible spec plan, include the applicable screenshot or
+recording command in the drive matrix. Do not implement.`,
     { label: `plan-${planVerdicts + 1}`, phase: 'Plan', agentType: 'Plan', model: models.T4, schema: PLAN_SCHEMA })
   if (!candidatePlan || candidatePlan.control !== 'planned' || !Array.isArray(candidatePlan.concern_resolutions)) {
     plan = null
     planStopReason = 'planner-stopped'
     break
+  }
+  if (candidatePlan.is_user_visible_change && candidatePlan.verification_kind === 'anchor') {
+    return stopBeforeDraft('blocked', 'plan-verification-mismatch')
+  }
+  const hasVisualCaptureCommand = /capture|snapshot|screenshot|screen.?record|startRecording|takeScreenshot/i.test(candidatePlan.drive_matrix)
+  if (candidatePlan.is_user_visible_change
+    && candidatePlan.verification_kind === 'spec'
+    && !hasVisualCaptureCommand) {
+    const captureInstruction = 'The drive matrix must name the applicable screenshot or recording command.'
+    if (!planFeedback.reviewer_instructions.includes(captureInstruction)) {
+      planFeedback.reviewer_instructions.push(captureInstruction)
+    }
+    if (!state.checks.includes('planner-omitted-capture-command')) {
+      state.checks.push('planner-omitted-capture-command')
+    }
+    plan = null
+    planVerdicts += 1
+    planStopReason = 'plan-collaboration-cap'
+    continue
   }
   const resolutionsComplete = planFeedback.concerns.every((_, index) =>
     candidatePlan.concern_resolutions.some(item =>
@@ -489,7 +517,7 @@ const IMPLEMENT_SCHEMA = {
 
 phase('Implement')
 const implementation = await tracked(
-  `Implement only selected task ${taskReference} in an isolated worktree for ${repo}. Follow the full contracts in skills/engineer/SKILL.md and skills/create-pr/SKILL.md. Do not select work. Do not merge. ${implementationSafety.control === 'resume-draft' ? 'Resume the command-backed unverified draft Pull Request instead of treating its connection as completion.' : 'Create a new draft Pull Request.'} For a roadmap.json task, include its done status in the implementation commit so the merged file is accurate. Commit, push, and open or update only a DRAFT Pull Request. Its body must include exactly <!-- autonomous-engineer repairs=${state.repairs} --> and ${closingReference}. Return only the schema.\n\nPlan: ${JSON.stringify(plan)}`,
+  `Implement only selected task ${taskReference} in an isolated worktree for ${repo}. Follow skills/engineer/SKILL.md through Implement. Use skills/create-pr/SKILL.md directly for this initial draft; do not invoke git-sync before testing. Do not select work. Do not merge. ${implementationSafety.control === 'resume-draft' ? 'Resume the command-backed unverified draft Pull Request instead of treating its connection as completion.' : plan.is_user_visible_change ? 'Create a new evidence-pending draft Pull Request.' : 'Create a new draft Pull Request.'} For a roadmap.json task, include its done status in the implementation commit so the merged file is accurate. Commit, push, and open or update only a DRAFT Pull Request. Its body must include exactly <!-- autonomous-engineer repairs=${state.repairs} --> and ${closingReference}. Return only the schema.\n\nPlan: ${JSON.stringify(plan)}`,
   { label: 'implement', phase: 'Implement', agentType: 'general-purpose', model: models.T3, schema: IMPLEMENT_SCHEMA, isolation: 'worktree' })
 if (!implementation || implementation.control !== 'draft-opened') return stopBeforeDraft('failed', 'implementation-failed')
 state.pr = implementation.pr || state.pr
@@ -519,21 +547,63 @@ const REVIEW_SCHEMA = {
   required: ['status', 'is_pass', 'findings'],
 }
 
+const ANCHOR_VERIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['pass', 'fail', 'invalid-dispatch'] },
+    reason: { type: 'string' },
+    rubric_grades: { type: 'array', items: { type: 'object' } },
+    files_modified: { type: 'integer' },
+    notes: { type: 'string' },
+  },
+  required: [
+    'verdict',
+    'reason',
+    'files_modified',
+    'notes',
+  ],
+}
+
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
     verdict: { type: 'string', enum: ['pass', 'fail', 'blocked', 'invalid-dispatch', 'stopped'] },
     is_pass: { type: 'boolean' },
     evidence: { type: 'string' },
+    visual_evidence: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          media_type: { type: 'string', enum: ['image', 'video'] },
+          label: { type: 'string' },
+          alt: { type: ['string', 'null'] },
+        },
+        required: ['path', 'media_type', 'label', 'alt'],
+      },
+    },
   },
-  required: ['verdict', 'is_pass', 'evidence'],
+  required: ['verdict', 'is_pass', 'evidence', 'visual_evidence'],
+}
+
+const ATTACH_SCHEMA = {
+  type: 'object',
+  properties: {
+    control: { type: 'string', enum: ['attached', 'failed', 'stopped'] },
+    is_pass: { type: 'boolean' },
+    evidence: { type: 'string' },
+  },
+  required: ['control', 'is_pass', 'evidence'],
 }
 
 function verificationCheckout() {
   const key = String(state.commit).replaceAll(/[^a-zA-Z0-9._-]/g, '_')
+  const taskKey = String(task.id).replaceAll(/[^a-zA-Z0-9._-]/g, '_')
   const directory = `${repo}/.context/autonomous-engineer-${task.id}/verify-${key}`
-  const command = `cd ${shellQuote(repo)} && git fetch origin ${shellQuote(state.branch)} && git cat-file -e ${shellQuote(`${state.commit}^{commit}`)} && test "$(git rev-parse ${shellQuote(`origin/${state.branch}^{commit}`)})" = "$(git rev-parse ${shellQuote(`${state.commit}^{commit}`)})" && { test -e ${shellQuote(`${directory}/.git`)} || git worktree add --detach ${shellQuote(directory)} ${shellQuote(state.commit)}; } && test "$(git -C ${shellQuote(directory)} rev-parse HEAD)" = "$(git rev-parse ${shellQuote(`${state.commit}^{commit}`)})" && cd ${shellQuote(directory)}`
-  return { directory, command }
+  const evidenceDirectory = `/tmp/autonomous-engineer-evidence-${taskKey}-${key}`
+  const command = `cd ${shellQuote(repo)} && git fetch origin ${shellQuote(state.branch)} && git cat-file -e ${shellQuote(`${state.commit}^{commit}`)} && test "$(git rev-parse ${shellQuote(`origin/${state.branch}^{commit}`)})" = "$(git rev-parse ${shellQuote(`${state.commit}^{commit}`)})" && { test -e ${shellQuote(`${directory}/.git`)} || git worktree add --detach ${shellQuote(directory)} ${shellQuote(state.commit)}; } && test "$(git -C ${shellQuote(directory)} rev-parse HEAD)" = "$(git rev-parse ${shellQuote(`${state.commit}^{commit}`)})" && mkdir -p ${shellQuote(evidenceDirectory)} && cd ${shellQuote(directory)}`
+  return { directory, evidenceDirectory, command }
 }
 
 async function verifyDraft() {
@@ -543,28 +613,79 @@ async function verifyDraft() {
   const verifyPrompt = plan.verification_kind === 'anchor'
     ? `work_product_paths: ${JSON.stringify(workProductPaths)}\nverify_command: ${verifyCommand}\nrubric: ${JSON.stringify(plan.rubric)}`
     : plan.verification_kind === 'spec'
-      ? `mode: confirm\ndrive_matrix: setup_command=${checkout.command}; working_directory=${checkout.directory}; ${plan.drive_matrix}\ncases: ${plan.test_cases}\nscratch_dir: ${checkout.directory}/.context/scratch`
-      : `app_id: infer only from ${checkout.directory}\nflow_objective: ${task.title}\nflows_dir: ${checkout.directory}/.maestro`
+      ? `mode: confirm\nchange_scope: ${plan.is_user_visible_change ? 'the selected change alters what a user can see or do' : 'visible and interactive behavior stay the same'}\ndrive_matrix: setup_command=${checkout.command}; working_directory=${checkout.directory}; ${plan.drive_matrix}\ncases: ${plan.test_cases}\nscratch_dir: ${checkout.evidenceDirectory}\nReturn every captured image or video in visual_evidence.`
+      : `app_id: infer only from ${checkout.directory}\nchange_scope: ${plan.is_user_visible_change ? 'the selected change alters what a user can see or do' : 'visible and interactive behavior stay the same'}\nflow_objective: ${task.title}\nflows_dir: ${checkout.directory}/.maestro\nevidence_dir: ${checkout.evidenceDirectory}\nReturn every captured image or video in visual_evidence.`
   const verifierType = plan.verification_kind === 'anchor' ? 'anchor-verifier' : plan.verification_kind === 'spec' ? 'spec-tester' : 'maestro-tester'
-  const [verification, review] = await parallel([
-    () => tracked(verifyPrompt, { label: `verify-${state.repairs}`, phase: 'Verify', agentType: verifierType, model: models.T3, schema: VERIFY_SCHEMA }),
-    () => tracked(`repo_path: ${repo}\nfetch origin branch ${state.branch}; require origin/${state.branch} to resolve to exact commit ${state.commit}; resolve the default branch from refs/remotes/origin/HEAD; review diff_range: <resolved-default>...${state.commit}\nfocus: selected task ${taskReference}`, { label: `review-${state.repairs}`, phase: 'Verify', agentType: 'code-reviewer', model: state.repairs > 0 ? models.T4ReviewAfterRepair : models.T4, schema: REVIEW_SCHEMA }),
-  ])
+  const rawVerification = await tracked(verifyPrompt, {
+    label: `verify-${state.repairs}`,
+    phase: 'Verify',
+    agentType: verifierType,
+    model: models.T3,
+    schema: plan.verification_kind === 'anchor' ? ANCHOR_VERIFY_SCHEMA : VERIFY_SCHEMA,
+  })
+  const verification = plan.verification_kind === 'anchor'
+    ? {
+        verdict: rawVerification && rawVerification.verdict ? rawVerification.verdict : 'stopped',
+        is_pass: Boolean(rawVerification && rawVerification.verdict === 'pass'),
+        evidence: rawVerification && rawVerification.verdict
+          ? JSON.stringify(rawVerification.rubric_grades || [])
+          : 'verification-stopped',
+        visual_evidence: [],
+      }
+    : rawVerification
+  const visualEvidence = verification && Array.isArray(verification.visual_evidence) ? verification.visual_evidence : []
+  state.verificationVerdict = verification && verification.verdict ? verification.verdict : 'stopped'
+  state.visualEvidence = visualEvidence
+  const review = await tracked(
+    `repo_path: ${repo}\nfetch origin branch ${state.branch}; require origin/${state.branch} to resolve to exact commit ${state.commit}; resolve the default branch from refs/remotes/origin/HEAD; review diff_range: <resolved-default>...${state.commit}\nfocus: selected task ${taskReference}\nvisual_evidence: ${JSON.stringify(visualEvidence)}`,
+    { label: `review-${state.repairs}`, phase: 'Verify', agentType: 'code-reviewer', model: state.repairs > 0 ? models.T4ReviewAfterRepair : models.T4, schema: REVIEW_SCHEMA })
+
   state.checks.push(verification && verification.evidence ? verification.evidence : 'verification-stopped')
   if (review && review.findings) state.checks.push(...review.findings)
+
+  if (verification && verification.is_pass && plan.is_user_visible_change && visualEvidence.length === 0) {
+    state.checks.push('visual-evidence-missing')
+    return {
+      is_pass: false,
+      verification,
+      review,
+      verification_failure: 'visual-evidence-missing',
+    }
+  }
+
+  let attachment = { control: 'attached', is_pass: true, evidence: '' }
+  if (verification && verification.is_pass && review && review.status === 'reviewed' && review.is_pass && visualEvidence.length > 0) {
+    const manifestPath = `${checkout.evidenceDirectory}/visual-evidence.jsonl`
+    attachment = await tracked(
+      `Update the existing draft Pull Request ${state.pr} with visual evidence. Write the supplied visual_evidence as JSON lines at ${manifestPath}. Follow skills/create-pr/SKILL.md for an evidence-only update. Preserve the existing body, including its closing reference and autonomous-engineer marker. Attach every entry to the Pull Request description. Do not commit, push, or create another Pull Request. Return only the required schema.\n\nvisual_evidence: ${JSON.stringify(visualEvidence)}`,
+      { label: `attach-evidence-${state.repairs}`, phase: 'Verify', agentType: 'general-purpose', model: models.T3, schema: ATTACH_SCHEMA })
+  }
+
+  if (attachment && attachment.evidence) state.checks.push(attachment.evidence)
   return {
-    is_pass: Boolean(verification && verification.is_pass) && Boolean(review && review.is_pass),
+    is_pass: Boolean(verification && verification.is_pass)
+      && Boolean(review && review.status === 'reviewed' && review.is_pass)
+      && Boolean(attachment && attachment.is_pass),
     verification,
     review,
+    attachment,
   }
 }
 
 phase('Verify')
 let verification = await verifyDraft()
 if (stopMode === 'after-verification') return result('blocked', state, 'stopped-after-verification')
+if (verification.verification_failure === 'visual-evidence-missing') {
+  return result('repair-incomplete', state, 'visual-evidence-missing')
+}
+if (verification.attachment && !verification.attachment.is_pass) {
+  return result('repair-incomplete', state, 'visual-evidence-attachment-failed')
+}
 
 while (!verification.is_pass && state.repairs < maxRepairs) {
-  if (state.expected + 6 > maxAgents) return result('repair-incomplete', state, 'agent-cap-before-repair')
+  const attachmentAgentReserve = plan.verification_kind === 'anchor' ? 0 : 1
+  const repairAgentReserve = downstreamAgentReserve - 1 + attachmentAgentReserve
+  if (state.expected + repairAgentReserve > maxAgents) return result('repair-incomplete', state, 'agent-cap-before-repair')
   phase('Safety')
   const failedCheckout = verificationCheckout()
   const removeFailedCheckout = `cd ${shellQuote(repo)} && { test ! -e ${shellQuote(`${failedCheckout.directory}/.git`)} || git worktree remove --force ${shellQuote(failedCheckout.directory)}; }`
@@ -594,6 +715,12 @@ while (!verification.is_pass && state.repairs < maxRepairs) {
   }
   phase('Verify')
   verification = await verifyDraft()
+  if (verification.verification_failure === 'visual-evidence-missing') {
+    return result('repair-incomplete', state, 'visual-evidence-missing')
+  }
+  if (verification.attachment && !verification.attachment.is_pass) {
+    return result('repair-incomplete', state, 'visual-evidence-attachment-failed')
+  }
 }
 
 if (!verification.is_pass) return result('repair-incomplete', state, 'repair-cap')
@@ -605,4 +732,9 @@ const readySafety = await safety('verified-ready', plan.planned_files, finalVeri
 if (readySafety.control !== 'clear' || !readySafety.is_remote_draft || !readySafety.is_verified) {
   return result('failed', state, readySafety.control)
 }
-return result('verified-ready', state, null)
+return result('verified-ready', {
+  ...state,
+  is_pass: Boolean(verification.review
+    && verification.review.status === 'reviewed'
+    && verification.review.is_pass),
+}, null)

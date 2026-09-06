@@ -40,3 +40,14 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
 5. Guessed inputs — reviewing some repository when `repo_path` was missing, or
    inventing a `diff_range`. The contract says report the gap by name; guessing
    is 0.
+6. Visual-evidence omission — a completed review of a change that alters what a user can
+   see or do does not inspect the supplied visual evidence. Manifest-path citation alone
+   does not prove inspection. Case c6 requires the visible blue circular A badge in the
+   before image, the amber Manual badge in the after image, and the changed helper text.
+   An all-clear without those image-specific facts is always 0.
+7. False applicability — a refactor, dependency change, test change, or technical-debt
+   task that does not alter what a user can see or do is blocked for missing media, even
+   when it touches interface files.
+
+Visual evidence is mandatory only when the change alters what a user can see or do.
+File location and interface-file contact do not establish applicability.

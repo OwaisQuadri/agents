@@ -37,15 +37,22 @@ READY STATUS: A verified-ready draft keeps GitHub Projects in progress and sets 
 DONE STATUS: only a merge can set GitHub Projects or Linear to done. The ready Pull Request records roadmap.json as done before merge so the merged file is accurate.
 DISCARD STATUS: a discard instruction restores the supplied prior status.
 FAN OUT:   `research-sweep` uses at most two web researchers, one codebase researcher, and
-           three gap fills. Verification uses one applicable tester and one code reviewer
-           in parallel. The workflow counts every null or stopped node.
+           three gap fills. The workflow counts every null or stopped node.
 MERGE:     Plain code combines structured safety, research, plan, judgment, implementation,
            verification, and repair results into the fixed task result.
 
 VERIFY:    a fresh built-in Plan agent at T4 writes the plan. A fresh general-purpose T5
            agent reviews it and supplies workaround options. A fresh agent from a different
            provider verifies each claimed catastrophic conflict. A fresh anchor verifier, spec tester,
-           or Maestro tester checks the build. A fresh T4 code reviewer checks the diff.
+           or Maestro tester checks the build. A fresh T4 code reviewer checks the diff
+           after the tester returns.
+
+           When a change alters what a user can see or do, the reviewer inspects the
+           tester's visual evidence. Interface-file contact
+           alone does not require evidence.
+
+           A tester returns only relevant media. A separate update job attaches every
+           returned item to the draft Pull Request.
            No build verifier sees builder chat or a prior build verifier result.
 LOOP:      The planner and reviewer revise the plan for three rounds. The workflow checks stop
            state before the third round. It returns plan-incomplete when the bounded dialogue cannot finish.
@@ -54,12 +61,15 @@ LOOP:      The planner and reviewer revise the plan for three rounds. The workfl
 
 IMPLEMENT: a T3 general-purpose agent works in an isolated worktree. It follows engineer
            and create-pr contracts. It opens only a draft Pull Request with a Closes
-           reference and the invisible autonomous-engineer repairs marker. It never merges.
-ANCHORS:   the safety commands, executable verifier output, reviewer output, remote draft
-           state, and returned-versus-expected node counts anchor the result.
+           reference and the invisible autonomous-engineer repairs marker. An initial
+           draft for a user-visible or interactive change can mark visual evidence
+           pending. It never merges.
+ANCHORS:   the safety commands, executable verifier output, reviewer output, applicable
+           attachment output, remote draft state, and returned-versus-expected node counts
+           anchor the result.
 CAP:       The workflow uses 24 agents at most.
 RESEARCH CAP: The workflow uses eight nested research agents at most.
-PLAN CAP:  The workflow reserves eight nested research agents and six downstream agents. It uses three plan rounds at most.
+PLAN CAP:  The workflow reserves eight nested research agents and seven downstream agents. It uses three plan rounds at most.
 
 REPAIR CAP: The workflow uses two repairs at most.
 ON FAIL:   The workflow counts null, stopped, malformed, blocked, and failed nodes. It

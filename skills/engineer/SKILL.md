@@ -17,15 +17,16 @@ metadata:
 JOB: carry one task from a research base to a landed, signed-off change
 IN:  a task \u2014 a backend id + short/long from `/pick-task`, or a plain description; if
      none is given, step 0 dispatches `/pick-task` and uses its pick
-OUT: the change landed through `/git-sync` (a PR when the repo has a remote, a local
-     squash merge otherwise), a short manual-test checklist the human signed off on,
-     and the run's working notes on disk in `.context/<task-slug>/` (gitignored,
-     never part of the change under review)
+OUT: the change landed through `/git-sync`, with a PR when the repo has a remote.
+     Without a remote, `/git-sync` lands a local squash merge.
+     It includes the signed manual-test checklist and applicable visual evidence.
+     Working notes stay in the gitignored `.context/<task-slug>/` directory.
 
 ## working notes
 
 Everything this run writes while working \u2014 the research summary, the plan doc, test
-results \u2014 lives in `.context/<task-slug>/`, which `.gitignore` excludes. It is scratch
+results, and visual evidence \u2014 lives in `.context/<task-slug>/`, which `.gitignore`
+excludes. It is scratch
 for this one run, not a project artifact. Nothing under it is ever staged or committed;
 a step that touches tracked repo paths commits those real paths directly.
 
@@ -110,10 +111,34 @@ and fold the deviation back into `plan.md` rather than quietly absorbing it.
 ## 4. Test
 
 Dispatch fresh-context testers (`spec-tester`, `maestro-tester` \u2014 whichever fits the
-surface) against the plan's cases, and a fresh-context reviewer (`code-reviewer`) over
-the diff. Neither shares context with whoever built the change \u2014 a verifier reading
-the builder's chat is grading its own homework. Collect failures plainly; fix and
-re-run rather than arguing with a result.
+surface) against the plan's cases. Pass each tester a `change_scope` that states whether
+the change alters what a user can see or do. Give Maestro an `evidence_dir` under `.context/<task-slug>/`.
+For a qualifying spec test, include an applicable capture command in the drive matrix.
+
+Require visual evidence only when the change alters what a user can see or do. A refactor, dependency change, test change, or technical-debt
+change needs none when visible and interactive behavior stay the same. For other work,
+testers return media only when it helps verify or explain the result. Use screenshots
+for static states. Prefer before-and-after
+screenshots when a comparison helps.
+
+Use a short screen recording when time or interaction carries the result. This includes
+animation, gestures, drag-and-drop, navigation, focus changes, and transitions.
+
+Collect each tester's `visual_evidence` items in
+`.context/<task-slug>/visual-evidence.jsonl`. Write one JSON(JavaScript Object
+Notation) object per line with `path`, `media_type`, `label`, and `alt`. Use `null` for video alt text. Resolve each path. Verify that each file exists.
+Verify that each path stays under `.context/<task-slug>/` or the tester's declared
+scratch directory.
+
+Do not stage the manifest or its evidence files.
+
+Dispatch a fresh-context reviewer (`code-reviewer`) over the diff. Pass the evidence
+manifest when the diff alters what a user can see or do. The reviewer must inspect every
+entry. A missing or incomplete visual review is a test failure.
+
+Neither verifier shares context with whoever built the change. A verifier that reads
+the builder's chat grades its own homework. Collect failures plainly. Fix each failure
+and re-run the affected tester and reviewer.
 
 ## 5. Minimal manual test + signoff
 
@@ -125,8 +150,9 @@ verdict. This is the last stop before the change leaves the machine.
 
 Hand off to `/git-sync` for the whole landing sequence \u2014 committing, pushing, opening
 or updating the PR (or the local squash merge when there's no remote), and pruning
-branches main already contains. Pass every id from `.context/branch-tickets.md`
-along: for each GitHub Issue id, `/create-pr` adds a `Closes #<id>` line to the PR
+branches main already contains. Pass `.context/<task-slug>/visual-evidence.jsonl` when
+it exists. Pass every id from `.context/branch-tickets.md` along: for each GitHub Issue
+id, `/create-pr` adds a `Closes #<id>` line to the PR
 body, which is what makes merging the PR auto-close the issue; for each
 `roadmap.json` id (no PR-merge equivalent exists there) flip its `status` to `done`
 as part of this same step, not left for a later run; a Linear item with no linked
