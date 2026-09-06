@@ -565,6 +565,10 @@ for obsolete in \
   "$HOME_TARGET"/.pi/agent/extensions/voice.ts.pre-reset-*; do
   retire_pi_extension "$obsolete"
 done
+PI_EVENT_TIMESTAMP_PATH="$HOME_TARGET/.pi/agent/extensions/event-timestamps.ts"
+if [[ -L "$PI_EVENT_TIMESTAMP_PATH" && "$(readlink "$PI_EVENT_TIMESTAMP_PATH")" == "$REPO_TARGET/pi/extensions/event-timestamps.ts" ]]; then
+  retire_pi_extension "$PI_EVENT_TIMESTAMP_PATH"
+fi
 if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 ]]; then
   retire_to_trash "$HOME_TARGET/.pi/agent/pi-voice-server"
   retire_to_trash "$HOME_TARGET/.local/bin/pi-voice-server"
