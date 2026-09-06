@@ -39,8 +39,9 @@
       ]
     },
     "T5": {
-      "pi": { "model": "anthropic/claude-fable-5-1", "thinking": "medium" },
+      "pi": { "model": "openai-codex/gpt-6-astra", "thinking": "medium" },
       "fallbacks": [
+        { "model": "anthropic/claude-fable-5-1", "thinking": "medium" },
         { "model": "openai-codex/gpt-5.6-sol", "thinking": "high" },
         { "model": "anthropic/claude-fable-5", "thinking": "medium" }
       ],
