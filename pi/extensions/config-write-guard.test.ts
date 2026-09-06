@@ -86,6 +86,22 @@ test("allows read-only bash access to managed config", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude diff` }, home), undefined);
 });
 
+test("allows command-name lookup of a managed config path without executing it", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: `command -v ${home}/.pi/agent/settings.json` }, home), undefined);
+});
+
+test("blocks command-name lookup output redirected to managed config", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `command -v tmux > ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
+});
+
+test("blocks command-name lookup with substitution referencing managed config", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `command -v $(touch ${home}/.pi/agent/settings.json)` }, home) ?? "", /Blocked/);
+});
+
+test("blocks command touch targeting managed config", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `command touch ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
+});
+
 test("allows read-only navigation and search commands", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `fd -t f . ${home}/.pi/agent/sessions` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `cd ${home}/.pi/agent/sessions && ls -la` }, home), undefined);
@@ -233,6 +249,74 @@ test("classifies checkout shell reads and static Z shell wrappers", () => {
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status --short'"), "read");
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'rg guard pi/extensions | head -20'"), "read");
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status 2>/dev/null'"), "read");
+});
+
+test("classifies tmux command-name lookup as a checkout read", () => {
+	assert.equal(classifyCheckoutCommand("command -v tmux"), "read");
+});
+
+test("classifies sandbox-exec command-name lookup as a checkout read", () => {
+	assert.equal(classifyCheckoutCommand("command -v sandbox-exec"), "read");
+});
+
+test("classifies combined command-name lookups in a static Z shell wrapper as a checkout read", () => {
+	const target = "/tmp/config-write-guard-probe/home/.pi/agent/extensions/live-diff";
+	const command = `/bin/zsh -lc 'command -v sandbox-exec; command -v tmux; /usr/bin/readlink ${target}; /usr/bin/test -f ${target}/engine.ts && printf "footer dependency resolves\\n"'`;
+	assert.equal(classifyCheckoutCommand(command), "read");
+});
+
+test("blocks checkout output redirection from command-name lookup", () => {
+	for (const command of [
+		"command -v tmux > leaked.md",
+		"/bin/zsh -lc 'command -v sandbox-exec >> leaked.md'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("blocks substitution in command-name lookup", () => {
+	for (const command of [
+		"command -v $(touch leaked.md)",
+		"/bin/zsh -lc 'command -v `touch leaked.md`'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("blocks checkout writes after command-name lookup", () => {
+	for (const command of [
+		"command -v tmux; touch leaked.md",
+		"/bin/zsh -lc 'command -v sandbox-exec && touch leaked.md'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("does not allow unrestricted command execution as a checkout read", () => {
+	assert.equal(classifyCheckoutCommand("command touch leaked.md"), "write-or-unknown");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'command touch leaked.md'"), "write-or-unknown");
+});
+
+test("allows lookup and reads through a primary-checkout symbolic link but blocks writes", () => {
+	const root = mkdtempSync(join(tmpdir(), "config-write-guard-lookup-main-"));
+	const worktree = mkdtempSync(join(tmpdir(), "config-write-guard-lookup-worktree-"));
+	try {
+		writeFileSync(join(root, "engine.ts"), "x\n");
+		const target = join(worktree, "source-link");
+		symlinkSync(root, target);
+		const context: GuardContext = {
+			cwd: worktree,
+			repositoryRoot: root,
+			isRepositoryClean: () => true,
+			worktreeRoots: () => [root, worktree],
+		};
+		assert.match(blockedConfigToolCall("bash", { command: `command touch ${target}/leaked.md` }, home, user, context) ?? "", /worktree/);
+		const command = `/bin/zsh -lc 'command -v sandbox-exec; command -v tmux; /usr/bin/readlink ${target}; /usr/bin/test -f ${target}/engine.ts && printf "footer dependency resolves\\n"'`;
+		assert.equal(blockedConfigToolCall("bash", { command }, home, user, context), undefined);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+		rmSync(worktree, { recursive: true, force: true });
+	}
 });
 
 test("classifies checkout shell writes and uncertain wrappers", () => {
