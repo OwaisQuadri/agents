@@ -459,15 +459,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 
 			isBranchSummaryGenerating = true;
 			requestRender();
-			let response: string | undefined;
-			try {
-				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles, transcriptAsks));
-			} finally {
-				if (generation === refreshGeneration && summaryGeneration === branchSummaryGeneration) {
-					isBranchSummaryGenerating = false;
-					requestRender();
-				}
-			}
+			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles, transcriptAsks));
 			if (generation !== refreshGeneration || summaryGeneration !== branchSummaryGeneration || response === undefined) return;
 			const challenger = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
 			if (isBranchSummaryChallengerBetter(branchSummary, challenger)) {
@@ -579,7 +571,6 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		activeContext = ctx;
 		ctx.ui.setWorkingVisible?.(false);
 		void refreshRepository(ctx.cwd);
-		if (pullRequestTimer) clearInterval(pullRequestTimer);
 		pullRequestTimer = setInterval(() => void refreshRepository(ctx.cwd), PR_POLL_INTERVAL_MS);
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const render = () => tui.requestRender();
