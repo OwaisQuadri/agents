@@ -57,7 +57,7 @@ function hasOutputRedirectToProtectedPath(segment: string, pathReferencePattern:
 	return false;
 }
 
-const GIT_FLAGS_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
+const GIT_FLAGS_WITH_VALUE = new Set(["-C", "--git-dir", "--work-tree", "--namespace"]);
 const SIMSLIM_GLOBAL_FLAGS_WITH_VALUE = new Set(["--set", "--boot-timeout", "--spawn-timeout"]);
 
 function gitSubcommandWrites(segment: string): boolean {
@@ -136,4 +136,52 @@ function groupWritesProtectedPath(group: string, pathReferencePattern: RegExp): 
  */
 export function bashCommandWritesProtectedPath(command: string, pathReferencePattern: RegExp): boolean {
 	return splitTopLevelGroups(command).some((group) => groupWritesProtectedPath(group, pathReferencePattern));
+}
+
+export type CheckoutCommandClassification = "read" | "clean-fast-forward-pull" | "write-or-unknown";
+
+function staticZshPayload(command: string): string | undefined {
+	const match = /^\s*(?:\/bin\/)?zsh\s+-lc\s+'([^']*)'\s*$/.exec(command);
+	return match?.[1];
+}
+
+function outputRedirectWritesCheckout(segment: string): boolean {
+	const pattern = /(?:[12]?>>?|&>>?)\s*(['"]?)([^\s'"|;&]+)\1/g;
+	let match: RegExpExecArray | null = pattern.exec(segment);
+	while (match !== null) {
+		if (match[2] !== "/dev/null") return true;
+		match = pattern.exec(segment);
+	}
+	return false;
+}
+
+function segmentWritesCheckout(segment: string): boolean {
+	if (/\$\(|`|<\(|>\(/.test(segment)) return true;
+	if (/^\s*[A-Za-z_][\w]*=/.test(segment)) return true;
+	if (outputRedirectWritesCheckout(segment)) return true;
+	const rawLeading = leadingCommand(segment);
+	if (rawLeading === undefined) return true;
+	const leading = rawLeading.toLowerCase();
+	if (INTERPRETER_COMMANDS.has(leading)) return true;
+	if (leading === "git") {
+		return /(?:^|\s)(?:\S*\/)?git\s+-/.test(segment)
+			|| /(?:^|\s)(?:--output|--ext-diff|--textconv|--open-files-in-pager)(?:=|\s|$)/.test(segment)
+			|| gitSubcommandWrites(segment);
+	}
+	if (leading === "rg" && /(?:^|\s)(?:--pre|--generate)(?:=|\s|$)/.test(segment)) return true;
+	if (leading === "find") return /-delete\b|-exec\b|-execdir\b|-fprint\w*\b|-fls\b|-ok\b/.test(segment);
+	return !READ_ONLY_COMMANDS.has(leading);
+}
+
+export function classifyCheckoutCommand(command: string): CheckoutCommandClassification {
+	const trimmed = command.trim();
+	const isZshWrapper = /^(?:\/bin\/)?zsh\s+-lc\b/.test(trimmed);
+	const inner = staticZshPayload(trimmed);
+	if (isZshWrapper && inner === undefined) return "write-or-unknown";
+	const classified = inner ?? trimmed;
+	if (/^git\s+pull\s+--ff-only$/.test(classified.trim())) return "clean-fast-forward-pull";
+	const isWrite = splitTopLevelGroups(classified).some((group) =>
+		splitPipeStages(group).some((segment) => segmentWritesCheckout(segment)),
+	);
+	return isWrite ? "write-or-unknown" : "read";
 }

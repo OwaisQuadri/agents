@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { test } from "node:test";
-import { isProtectedConfigPath, protectedConfigRoots } from "./config-write-guard/paths.ts";
-import { blockedConfigToolCall } from "./config-write-guard/policy.ts";
+import { classifyCheckoutCommand } from "./config-write-guard/bash-intent.ts";
+import { isPathInsideRoot, isProtectedConfigPath, protectedConfigRoots } from "./config-write-guard/paths.ts";
+import { blockedConfigToolCall, type GuardContext } from "./config-write-guard/policy.ts";
 
 const home = "/tmp/config-write-guard-home";
 const user = "config-write-guard-user";
+const repositoryRoot = "/tmp/agents-main";
+const worktreeRoot = "/tmp/agents-worktree";
+
+function guard(cwd = repositoryRoot, isRepositoryClean = true, worktreeRoots = [repositoryRoot, worktreeRoot]): GuardContext {
+	return { cwd, repositoryRoot, isRepositoryClean: () => isRepositoryClean, worktreeRoots: () => worktreeRoots };
+}
 
 test("protects only managed agent destinations", () => {
 	assert.deepEqual(protectedConfigRoots(home), [
@@ -165,4 +175,173 @@ test("recognizes a mixed-case interpreter name", () => {
 		blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.claude/AGENTS.md" | BASH` }, home, user) ?? "",
 		/Blocked/,
 	);
+});
+
+test("blocks file tools in the primary checkout and allows a worktree", () => {
+	assert.match(blockedConfigToolCall("edit", { path: `${repositoryRoot}/skills/x.md` }, home, user, guard()) ?? "", /worktree/);
+	assert.match(blockedConfigToolCall("write", { path: "skills/x.md" }, home, user, guard()) ?? "", /worktree/);
+	assert.equal(blockedConfigToolCall("write", { path: `${worktreeRoot}/skills/x.md` }, home, user, guard(worktreeRoot)), undefined);
+});
+
+test("canonical containment follows existing and partial symbolic-link paths", () => {
+	const root = mkdtempSync(join(tmpdir(), "main-checkout-root-"));
+	const outside = mkdtempSync(join(tmpdir(), "main-checkout-outside-"));
+	try {
+		mkdirSync(join(root, "skills"));
+		writeFileSync(join(root, "skills", "existing.md"), "x\n");
+		symlinkSync(join(root, "skills"), join(outside, "skills-link"));
+		assert.equal(isPathInsideRoot(join(outside, "skills-link", "existing.md"), root), true);
+		assert.equal(isPathInsideRoot(join(outside, "skills-link", "new", "file.md"), root), true);
+		assert.equal(isPathInsideRoot(join(outside, "ordinary.md"), root), false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+		rmSync(outside, { recursive: true, force: true });
+	}
+});
+
+test("a symbolic-link alias into managed config stays protected", () => {
+	const linkedHome = mkdtempSync(join(tmpdir(), "config-write-guard-alias-home-"));
+	const aliasRoot = mkdtempSync(join(tmpdir(), "config-write-guard-alias-root-"));
+	try {
+		mkdirSync(join(linkedHome, ".claude", "skills"), { recursive: true });
+		symlinkSync(join(linkedHome, ".claude", "skills"), join(aliasRoot, "skills-link"));
+		assert.equal(isProtectedConfigPath(join(aliasRoot, "skills-link", "new.md"), linkedHome), true);
+	} finally {
+		rmSync(linkedHome, { recursive: true, force: true });
+		rmSync(aliasRoot, { recursive: true, force: true });
+	}
+});
+
+test("managed config stays protected when its root is a symbolic link", () => {
+	const linkedHome = mkdtempSync(join(tmpdir(), "config-write-guard-linked-home-"));
+	const source = mkdtempSync(join(tmpdir(), "config-write-guard-linked-source-"));
+	try {
+		mkdirSync(join(linkedHome, ".agents"));
+		mkdirSync(join(source, "agent-author"));
+		writeFileSync(join(source, "agent-author", "SKILL.md"), "x\n");
+		symlinkSync(source, join(linkedHome, ".agents", "skills"));
+		assert.equal(isProtectedConfigPath(join(linkedHome, ".agents", "skills", "agent-author", "SKILL.md"), linkedHome), true);
+	} finally {
+		rmSync(linkedHome, { recursive: true, force: true });
+		rmSync(source, { recursive: true, force: true });
+	}
+});
+
+test("classifies checkout shell reads and static Z shell wrappers", () => {
+	assert.equal(classifyCheckoutCommand("git status --short"), "read");
+	assert.equal(classifyCheckoutCommand("rg guard pi/extensions | head -20"), "read");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status --short'"), "read");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'rg guard pi/extensions | head -20'"), "read");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status 2>/dev/null'"), "read");
+});
+
+test("classifies checkout shell writes and uncertain wrappers", () => {
+	for (const command of [
+		"printf x > leaked.md",
+		"git status && touch leaked.md",
+		"python3 -c 'open(\"leaked.md\", \"w\")'",
+		"cargo test",
+		"rg --pre 'touch leaked.md' guard .",
+		"git diff --output=leaked.patch",
+		"git -c diff.external=./write.sh diff HEAD",
+		"git --git-dir=/tmp/other status",
+		"GIT_EXTERNAL_DIFF=./write.sh git diff HEAD",
+		"sed 'w leaked.md' README.md",
+		"find . -fls leaked.md",
+		"/bin/zsh -lc 'touch leaked.md'",
+		"/bin/zsh -lc \"git status $EXTRA\"",
+		"/bin/zsh -lc 'git status",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("allows only the exact fast-forward pull form", () => {
+	assert.equal(classifyCheckoutCommand("git pull --ff-only"), "clean-fast-forward-pull");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git pull --ff-only'"), "clean-fast-forward-pull");
+	for (const command of [
+		"git pull",
+		"git pull --rebase",
+		"git pull --ff-only origin main",
+		"git status && git pull --ff-only",
+		"git pull --ff-only && git status",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("allows an exact pull only on a clean primary checkout", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: "git pull --ff-only" }, home, user, guard()), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: "git pull --ff-only" }, home, user, guard(repositoryRoot, false)) ?? "", /clean/);
+	assert.match(blockedConfigToolCall("bash", { command: "git pull" }, home, user, guard()) ?? "", /worktree/);
+});
+
+test("blocks checkout shell writes and keeps reads usable", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: "git status --short" }, home, user, guard()), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: "touch leaked.md" }, home, user, guard()) ?? "", /worktree/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${repositoryRoot}/leaked.md` }, home, user, guard(worktreeRoot)) ?? "", /worktree/);
+});
+
+test("blocks absolute, home-variable, tilde, and changed-directory references from a worktree", () => {
+	const root = `${home}/Documents/agents`;
+	const context: GuardContext = {
+		cwd: worktreeRoot,
+		repositoryRoot: root,
+		isRepositoryClean: () => true,
+		worktreeRoots: () => [root, worktreeRoot],
+	};
+	const relativeRoot = relative(worktreeRoot, root);
+	for (const command of [
+		`printf x > ${root}/leaked.md`,
+		`printf x > ${home}/Documents/./agents/leaked.md`,
+		"printf x > $HOME/Documents/agents/leaked.md",
+		"printf x > ${HOME}/Documents/agents/leaked.md",
+		"printf x > \"$HOME\"/Documents/agents/leaked.md",
+		"printf x > \"${HOME}\"/Documents/agents/leaked.md",
+		"printf x > $HOME/Documents//agents/leaked.md",
+		"printf x > ~/Documents/agents/leaked.md",
+		`printf x > ~${user}/Documents/agents/leaked.md`,
+		`cd ${root} && rm -rf skills`,
+		`cd ${home}/Documents && touch agents/leaked.md`,
+		`cd ${home}/Documents && cd agents && touch leaked.md`,
+		"cd ~ && cd Documents/agents && touch leaked.md",
+		`printf x > ${home}/Documents/x/../agents/leaked.md`,
+		"cd ~/Documents/agents && touch leaked.md",
+		`printf x > ${relativeRoot}/leaked.md`,
+		`cd ${relativeRoot} && touch leaked.md`,
+	]) {
+		assert.match(blockedConfigToolCall("bash", { command }, home, user, context) ?? "", /worktree/, command);
+	}
+});
+
+test("keeps a nested feature worktree writable", () => {
+	const nestedWorktree = `${repositoryRoot}/.claude/worktrees/feature`;
+	const context = guard(nestedWorktree, true, [repositoryRoot, nestedWorktree]);
+	assert.equal(blockedConfigToolCall("write", { path: `${nestedWorktree}/skills/x.md` }, home, user, context), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: "touch note.md" }, home, user, context), undefined);
+	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, context), undefined);
+});
+
+test("allows shell writes aimed at nested and sibling worktrees", () => {
+	const root = `${home}/Documents/agents`;
+	const nestedWorktree = `${root}/.claude/worktrees/feature`;
+	const siblingWorktree = `${root}-worktrees/feature`;
+	const context: GuardContext = {
+		cwd: worktreeRoot,
+		repositoryRoot: root,
+		isRepositoryClean: () => true,
+		worktreeRoots: () => [root, nestedWorktree, siblingWorktree, worktreeRoot],
+	};
+	assert.equal(blockedConfigToolCall("bash", { command: `touch ${nestedWorktree}/x.md` }, home, user, context), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `touch ${siblingWorktree}/x.md` }, home, user, context), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: `touch ${nestedWorktree}/../../../leaked.md` }, home, user, context) ?? "", /worktree/);
+});
+
+test("requires worktree isolation for write-capable child agents", () => {
+	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "Explore" }, home, user, guard()), undefined);
+	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "code-reviewer" }, home, user, guard()), undefined);
+	assert.match(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, guard()) ?? "", /worktree/);
+	assert.match(blockedConfigToolCall("Agent", { subagent_type: "general-purpose", isolation: "off" }, home, user, guard()) ?? "", /worktree/);
+	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer", isolation: "worktree" }, home, user, guard()), undefined);
+	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, guard(worktreeRoot)), undefined);
 });
