@@ -136,12 +136,14 @@ function groupWritesProtectedPath(group: string, pathReferencePattern: RegExp): 
  * @throws Never.
  */
 export function bashCommandWritesProtectedPath(command: string, pathReferencePattern: RegExp): boolean {
-	return splitTopLevelGroups(command).some((group) => groupWritesProtectedPath(group, pathReferencePattern));
+	const inner = staticZshPayload(command);
+	if (inner !== undefined && pathReferencePattern.test(inner) && classifyCheckoutCommand(inner) !== "read") return true;
+	return splitTopLevelGroups(inner ?? command).some((group) => groupWritesProtectedPath(group, pathReferencePattern));
 }
 
 export type CheckoutCommandClassification = "read" | "clean-fast-forward-pull" | "write-or-unknown";
 
-function staticZshPayload(command: string): string | undefined {
+export function staticZshPayload(command: string): string | undefined {
 	const match = /^\s*(?:\/bin\/)?zsh\s+-lc\s+'([^']*)'\s*$/.exec(command);
 	return match?.[1];
 }
