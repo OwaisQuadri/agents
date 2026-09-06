@@ -37,7 +37,10 @@ the linked one carries your rule.
 
 Facts survive the pass verbatim. Never drop a fact to reach a plain word, and never soften
 one. Sometimes the term of art is the fact itself, like a command name or the text of an
-error. That is exact information. Put it in backticks, and the check leaves it alone.
+error. That is exact information. The checker masks fenced code blocks, inline backticks,
+bare paths, and double-quoted spans (both straight and curly quotes), so the check leaves
+them alone. For shipping (register `shipped`), the checker also masks relative paths, URLs,
+and FLAG lines.
 
 Plain words cost characters, and that is fine. The prose yields to the fact: cut your own
 words, never cut a fact, and never drop an expansion to save room.
