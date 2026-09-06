@@ -99,6 +99,7 @@ function segmentWritesProtectedPath(segment: string, pathReferencePattern: RegEx
 	if (!pathReferencePattern.test(segment)) return false;
 	if (/\$\(|`|<\(|>\(/.test(segment)) return true;
 	if (hasOutputRedirectToProtectedPath(segment, pathReferencePattern)) return true;
+	if (/^\s*command\s+-v(?:\s|$)/.test(segment)) return false;
 	const rawLeading = leadingCommand(segment);
 	if (rawLeading === undefined) return true;
 	// Lowercase once: a differently-cased spelling (`BASH`) still resolves to the same
@@ -159,6 +160,7 @@ function segmentWritesCheckout(segment: string): boolean {
 	if (/\$\(|`|<\(|>\(/.test(segment)) return true;
 	if (/^\s*[A-Za-z_][\w]*=/.test(segment)) return true;
 	if (outputRedirectWritesCheckout(segment)) return true;
+	if (/^\s*command\s+-v(?:\s|$)/.test(segment)) return false;
 	const rawLeading = leadingCommand(segment);
 	if (rawLeading === undefined) return true;
 	const leading = rawLeading.toLowerCase();
