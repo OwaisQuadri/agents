@@ -50,9 +50,11 @@ exec "$repo/tools/skill-eval/run.sh" --eval-dir "$here" "$@"
 
 Convention: `./run.sh [candidate-file]` delegates to `tools/skill-eval/run.sh`. It grades
 BOTH slices (non-holdout, then holdout) against the current artifact or candidate with
-rubric.md. The runner emits one JSON line per (case, tier) to stdout
-(`{"id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`). It writes a mean-per-tier,
-per-slice summary to stderr.
+rubric.md. A full paired run splits work into `(arm, tier, slice, case, repeat)` units.
+The runner emits stable JSON lines per paired case to stdout with an additive `arm` field
+(`{"arm":"candidate","id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`).
+It writes durable-unit progress to stderr. The one final coordinator owns the selection,
+frontier write, and conditional acceptance after every unit is complete.
 
 Grading both slices in one pass supplies the conditional acceptance rule below. `--holdout`
 is a lighter, frontier-write-free mode for a quick holdout recheck. Use
@@ -103,9 +105,13 @@ executable, or the runner stops with an error. The runner gives `preflight.sh` t
 candidate as its first argument. It exports the absolute `CASES_FILE` path. These checks add
 evidence and never replace tier execution.
 
-A full candidate invocation evaluates the live incumbent and candidate as one paired,
-in-memory comparison. It removes only `metadata.minimum-tier` from model prompts, candidate
-identity, and the frontier snapshot; preflight receives the submitted candidate unchanged.
+A full candidate invocation evaluates the live incumbent and candidate as one paired comparison.
+It prepares immutable arm-qualified prompts, runs bounded units, and saves completed units under
+`evals/.skill-eval-state/<run-key>/`. The same command resumes an exact incomplete run. Use
+`--jobs N` or `SKILL_EVAL_JOBS` to set workers. Use `--restart` to rerun the current exact key.
+Only the final coordinator aggregates complete units. It removes only `metadata.minimum-tier` from
+model prompts, candidate identity, and the frontier snapshot; preflight receives the submitted
+candidate unchanged.
 It appends one row per configured tier even when a tier is unavailable. A dry run records
 its paired evidence only. `--accept-if-winning` applies a winner conditionally: accepted
 is exit 0, a valid rejection is exit 1, and incomplete or execution failure is exit 2.

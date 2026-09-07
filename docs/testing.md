@@ -61,7 +61,11 @@ hooks/test.sh
 Every skill and workflow runner delegates to `tools/skill-eval`. A full candidate run
 compares the live incumbent and candidate together. It executes every configured tier and records
 paired evidence. The runner selects the highest-scoring contiguous suffix ending at the highest
-tier.
+tier. It runs bounded `(arm, tier, slice, case, repeat)` units with four workers by default.
+Use `--jobs N` or `SKILL_EVAL_JOBS` to set a positive worker count. The full paired modes save
+complete units under `evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run.
+Use `--restart` to discard only that run's saved units. The runner writes progress to standard error
+after each durable unit. It writes stable paired case records, with an `arm` field, to standard output.
 
 A surviving median keeps a partly ungraded tier in that ranking. The completeness gate then
 rejects a selected suffix with any missing repeat. Tiers below the selected floor remain recorded,
@@ -71,10 +75,10 @@ These exit codes apply to the paired candidate forms. A complete dry comparison 
 Conditional acceptance exits 0 when applied and 1 for a valid rejection. Incomplete evidence or
 an execution failure exits 2.
 
-Configuration and usage errors also exit 2 in every mode. Baseline and narrow diagnostic runs
-otherwise retain their earlier result behavior. The runner uses `tools/tier-dispatch` for real
-artifact runs and judge runs. It disables extension discovery and loads `pi-anthropic-auth` as
-the minimum extension.
+Configuration and usage errors also exit 2 in every mode. A corrupt saved run or a second coordinator
+for the same run also exits 2. Baseline and narrow diagnostic runs otherwise retain their earlier
+result behavior. The runner uses `tools/tier-dispatch` for real artifact runs and judge runs. It
+disables extension discovery and loads `pi-anthropic-auth` as the minimum extension.
 
 ## manifest / policy checks
 
