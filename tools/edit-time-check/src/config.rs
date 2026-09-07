@@ -119,6 +119,33 @@ impl Config {
         Ok(())
     }
 
+    fn apply_repository(&mut self, text: &str) -> Result<(), String> {
+        let mut candidate = self.clone();
+        candidate.apply(text)?;
+        if !self.rules.iter().all(|rule| candidate.rules.contains(rule)) {
+            return Err("repository configuration cannot remove inherited rules".into());
+        }
+        if !self
+            .include
+            .iter()
+            .all(|pattern| candidate.include.contains(pattern))
+        {
+            return Err("repository include must retain every inherited pattern".into());
+        }
+        for (name, inherited, proposed) in [
+            ("exclude", &self.exclude, &candidate.exclude),
+            ("generated", &self.generated, &candidate.generated),
+        ] {
+            if !proposed.iter().all(|pattern| inherited.contains(pattern)) {
+                return Err(format!(
+                    "repository {name} cannot add patterns outside the inherited list"
+                ));
+            }
+        }
+        *self = candidate;
+        Ok(())
+    }
+
     pub fn rule_limit(&self, rule: Rule) -> u64 {
         self.rule_ms.get(&rule).copied().unwrap_or(500)
     }
@@ -245,7 +272,7 @@ impl Options {
         if let Some(root) = root.as_ref() {
             let path = root.join(".edit-time.toml");
             match std::fs::symlink_metadata(&path) {
-                Ok(_) => config.apply(&read_required(&path)?)?,
+                Ok(_) => config.apply_repository(&read_required(&path)?)?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(_) => return Err("cannot inspect repository configuration".into()),
             }

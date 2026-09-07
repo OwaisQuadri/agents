@@ -27,7 +27,16 @@ impl Fixture {
         Self { root, options }
     }
     fn run(&self, old: &str, new: &str, operation: &str) -> edit_time_check::Response {
-        let input = serde_json::json!({"version":1,"request_id":"fixture","operation":operation,"path":self.root.join("x.rs"),"repository_root":self.root,"original_text":old,"proposed_text":new,"changed_ranges":[],"budget_ms":20000});
+        self.run_path("x.rs", old, new, operation)
+    }
+    fn run_path(
+        &self,
+        path: &str,
+        old: &str,
+        new: &str,
+        operation: &str,
+    ) -> edit_time_check::Response {
+        let input = serde_json::json!({"version":1,"request_id":"fixture","operation":operation,"path":self.root.join(path),"repository_root":self.root,"original_text":old,"proposed_text":new,"changed_ranges":[],"budget_ms":20000});
         let request = decode_request(&serde_json::to_vec(&input).unwrap()).unwrap();
         let response = evaluate(&request, &self.options, &Stage::new());
         assert!(response.is_valid(), "{response:?}");
@@ -137,6 +146,80 @@ fn whole_comments_context_and_fallback() {
     assert_eq!(joined.decision, Decision::Block);
 }
 #[test]
+fn unterminated_block_comments_use_actual_lines_at_end_of_file() {
+    for language in ["rs", "ts"] {
+        for text in ["/* a\nfn main(){}", "/* a\nb\nc"] {
+            for suffix in ["", "\n"] {
+                let fixture = Fixture::new("'comment-length','comment-shape'");
+                let candidate = format!("{text}{suffix}");
+                let result = fixture.run_path(&format!("x.{language}"), "", &candidate, "write");
+                assert_eq!(
+                    result.decision,
+                    Decision::NeedsJudgment,
+                    "{language}: {candidate:?}"
+                );
+                assert!(result.diagnostics.is_empty(), "{result:?}");
+                assert_eq!(result.judgments.len(), 1);
+                let judgment = &result.judgments[0];
+                assert_eq!(judgment.line, 1);
+                assert_eq!(judgment.input.language, language);
+                assert_eq!(judgment.input.comment, text);
+                assert!(judgment.input.code_context.is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn unterminated_block_comments_over_three_actual_lines_still_block() {
+    for language in ["rs", "ts"] {
+        for suffix in ["", "\n"] {
+            let fixture = Fixture::new("'comment-length','comment-shape'");
+            let candidate = format!("/* a\nb\nc\nd{suffix}");
+            let result = fixture.run_path(&format!("x.{language}"), "", &candidate, "write");
+            assert_eq!(
+                result.decision,
+                Decision::Block,
+                "{language}: {candidate:?}"
+            );
+            assert!(result.judgments.is_empty());
+            assert_eq!(result.diagnostics.len(), 1, "{result:?}");
+            assert_eq!(result.diagnostics[0].rule, Rule::CommentLength.into());
+            assert_eq!(result.diagnostics[0].line, 1);
+        }
+    }
+}
+
+#[test]
+fn terminated_block_and_line_comments_preserve_text_and_context() {
+    for language in ["rs", "ts"] {
+        for (text, comment, context) in [
+            ("/* a\nb\n*/", "/* a\nb\n*/", ""),
+            ("// a", "// a", ""),
+            ("// a\nwork();", "// a", "work();"),
+        ] {
+            for suffix in ["", "\n"] {
+                let fixture = Fixture::new("'comment-length','comment-shape'");
+                let candidate = format!("{text}{suffix}");
+                let result = fixture.run_path(&format!("x.{language}"), "", &candidate, "write");
+                assert_eq!(
+                    result.decision,
+                    Decision::NeedsJudgment,
+                    "{language}: {candidate:?}"
+                );
+                assert!(result.diagnostics.is_empty(), "{result:?}");
+                assert_eq!(result.judgments.len(), 1);
+                let judgment = &result.judgments[0];
+                assert_eq!(judgment.line, 1);
+                assert_eq!(judgment.input.language, language);
+                assert_eq!(judgment.input.comment, comment);
+                assert_eq!(judgment.input.code_context, context);
+            }
+        }
+    }
+}
+
+#[test]
 fn inserted_comment_context_uses_candidate_code_before_unchanged_suffix() {
     let fixture = Fixture::new("'comment-shape'");
     let suffix = "pub fn retained() {}\n";
@@ -183,8 +266,21 @@ fn effective_budget_and_enabled_ids_are_authoritative() {
         "version=1\nrules=[]\ntotal_ms=42\n",
     )
     .unwrap();
-    let result = fixture.run("", "let ready = true;", "write");
+    let result = fixture.run("", "fn f() { let ready = true; }", "write");
+    assert_eq!(result.decision, Decision::Error);
+    assert!(result.diagnostics[0]
+        .reason
+        .contains("cannot remove inherited rules"));
+    std::fs::write(
+        fixture.root.join(".edit-time.toml"),
+        "version=1\nrules=['boolean-name']\ntotal_ms=42\n",
+    )
+    .unwrap();
+    let result = fixture.run("", "fn f() { let ready = true; }", "write");
+    assert_eq!(result.decision, Decision::Block);
+    assert_eq!(result.diagnostics[0].rule, Rule::BooleanName.into());
+    assert_eq!(result.budget_ms, 42);
+    let result = fixture.run("", "fn f() { let is_ready = true; }", "write");
     assert_eq!(result.decision, Decision::Pass);
     assert_eq!(result.budget_ms, 42);
-    assert_eq!(Rule::Privacy, Rule::Privacy);
 }

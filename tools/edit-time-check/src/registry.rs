@@ -209,7 +209,7 @@ fn evaluate_inner(
                 });
                 for span in spans.iter() {
                     let start = span.start_line - 1;
-                    let end = span.end_line;
+                    let end = span.end_line.min(lines.text.len());
                     let context_end = (end + 3).min(lines.text.len());
                     if !touches(&ranges, lines.offsets[start], lines.offsets[end])
                         && !touches(&ranges, lines.offsets[end], lines.offsets[context_end])

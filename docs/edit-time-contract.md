@@ -6,7 +6,7 @@ This contract defines pre-write checks for direct Pi `edit` and `write` calls. I
 
 Issue #319 covers shell commands. The user deferred that issue. Shell commands remain unchanged and outside this contract's enforcement coverage. Existing commit-time checks remain active. The `no-ai-attribution` rules and invocation remain unchanged.
 
-This document specifies required behavior. It does not certify an implementation or a performance result. Human-only emergency approval remains unavailable because the inspected host transport does not establish human origin. That acceptance criterion remains unfinished.
+This document specifies required behavior. It does not certify an implementation or a performance result. The user approved the direct-only release scope for #317 and #318 in pull request #349. Human-only emergency approval remains unavailable because the inspected host transport does not establish human origin. The unfinished authority requirement moves to [#351](https://github.com/OwaisQuadri/agents/issues/351). Missing measurements move to [#352](https://github.com/OwaisQuadri/agents/issues/352); they do not count as passed.
 
 ## Parser boundary
 
@@ -105,7 +105,9 @@ A full write checks the whole candidate. An edit checks actual changed text for 
 
 ### Privacy
 
-The registry reuses `privacy-lint` matching behavior and its existing allowances. Named private identifiers come from the machine-local configuration. Required configuration and input errors block the new direct-edit caller. Existing command interfaces retain their behavior.
+The registry reuses `privacy-lint` matching behavior and its existing allowances. It loads named private identifiers when the optional machine-local file exists. A missing optional file means shape-only scanning, without named identifiers.
+
+An unreadable present file blocks the request. An explicit identifier-file argument or environment setting requires a readable file, even when that file is missing. Required configuration and input errors block the new direct-edit caller. Existing command interfaces retain their behavior.
 
 A diagnostic must not repeat the matched private value. The path, line, rule identifier, and safe reason provide the repair location. Tests must distinguish newly introduced text from unchanged violations and removed violations.
 
@@ -121,7 +123,7 @@ A judgment receives the comment, following-code context, language, rule document
 
 Names for proven Boolean variables, fields, properties, parameters, functions, and methods must use the `is` prefix. Evidence includes explicit Boolean types and language-defined Boolean expressions. Truthy values do not establish Boolean types.
 
-The rule preserves names whose external ownership it can prove. External protocols, traits, framework overrides, serialization, and foreign interfaces need ownership evidence. An annotation or syntax marker alone does not prove an external naming requirement. Local aliases remain separately subject to the rule.
+The rule preserves external names only within the resolved Rust trait-method coverage declared below. The release provides no general protocol, framework, serialization, or foreign-interface exemption. An annotation or syntax marker alone does not prove an external naming requirement. Local aliases remain separately subject to the rule.
 
 Generated-file selection provides the generated-code exemption. Unknown language or type evidence must remain explicit in coverage reports. The implementation must not claim proof for unsupported forms.
 
@@ -147,7 +149,7 @@ Unsupported extensions and trees with syntax errors return no Boolean findings. 
 
 Tracked global defaults live in `config/edit-time.toml`. An optional tracked `.edit-time.toml` supplies repository overrides. The target path determines the repository, not the session directory. Files outside repositories use global defaults.
 
-Configuration selects compiled rule identifiers, file patterns, and lower total or per-rule time limits. It cannot supply executable commands or approval switches. Defaults exclude dependencies, build output, caches, and generated files. Repository overrides must support explicit selection changes.
+Configuration selects compiled rule identifiers, file patterns, and lower total or per-rule time limits. It cannot supply executable commands or approval switches. Defaults exclude dependencies, build output, caches, and generated files. Repository settings can only preserve or strengthen the installed checks and file coverage.
 
 The registry accepts missing optional overrides. Invalid or unreadable present configuration blocks applicable requests. The registry reads rules and effective configuration consistently for each request. Judgment-affecting configuration forms part of the cache identity.
 
@@ -176,7 +178,26 @@ boolean-name = 500
 
 Every limit must be a positive integer. The global limits cannot exceed these approved ceilings. Repository limits can only lower the global limits. Unknown rule identifiers and invalid limits block the request.
 
-Each supplied `rules`, `include`, `exclude`, or `generated` list replaces its inherited list, including an empty list. Omitted fields retain inherited values: built-in defaults for global configuration, then global values for repository overrides. Entries in `rule_ms` lower individual inherited ceilings; omitted entries retain their limits. An empty `rules` list selects no checks. An empty `include` list selects no files.
+Each supplied `rules`, `include`, `exclude`, or `generated` list replaces its inherited list before validation. Omitted fields retain inherited values: built-in defaults for installed global configuration, then installed values for repository settings. Entries in `rule_ms` lower individual inherited ceilings; omitted entries retain their limits.
+
+Installed global configuration retains unrestricted selection replacement. An empty global `rules` list selects no checks. An empty global `include` list selects no files. Repository configuration has stricter limits:
+
+- `rules` must retain every inherited rule. It can add compiled rules.
+- `include` must retain every inherited pattern. It can add patterns.
+- `exclude` and `generated` can retain or remove inherited patterns. They cannot add patterns.
+
+Pattern comparison uses exact strings, not glob-language containment. The registry rejects replacement patterns whose coverage it cannot prove under these limits. This includes replacements that would select the same files. An empty repository `rules` or `include` list fails when its inherited list is not empty. Empty `exclude` and `generated` lists remove those exemptions.
+
+This repository override strengthens the global example above. Omitted rule and include lists retain all inherited checks and coverage:
+
+```toml
+version = 1
+exclude = []
+generated = []
+total_ms = 10000
+```
+
+With those global defaults, `rules = []`, `include = ["src/**"]`, and `exclude = ["**/private/**"]` each block the request. A repository cannot disable inherited checks through selection changes.
 
 Patterns use `globset` with literal path separators. A single `*` does not cross `/`; `**` can match directory levels. Matching uses repository-relative paths, or absolute paths without the leading `/` outside repositories. Selection requires an include match and no exclude or generated match. Directory patterns match components, not substrings: defaults exclude `node_modules/x.ts`, but select `src/node_modules_notes.ts`.
 
@@ -204,15 +225,19 @@ Only validated completed worker decisions enter the process-local memory cache, 
 
 A cache miss triggers a fresh judgment within the same request deadline. The request remains blocked until that judgment passes. Failure, malformed output, cancellation, or timeout cannot cache a pass and leaves the target unchanged.
 
-Cached block decisions remain blocks. Tests must preserve the decisions in sampled historical records without trusting their incomplete old identities. Historical judgment parity remains unverified. Synthetic validation and cache tests establish mechanics, not historical decision parity.
+Cached block decisions remain blocks. Historical records retain their original decisions as diagnostic evidence, without authority from incomplete old identities. The approved release replaces exact historical agreement with correctness against approved rules and fixed expected examples. Historical judgment parity remains unverified. Synthetic validation and cache tests establish mechanics, not historical decision parity.
 
-## Emergency approval
+Documentation attached above a public declaration must describe that declaration, even if its content could otherwise qualify as architecture. Architecture comments must yield to clearer code names when those names can express the purpose. The user resolved historical case 7 as a block on that basis. The recorded sample matched 11 of 12 historical decisions; that disagreement remains visible. Four independent cases produced eight recorded decisions across two instruction versions, all with the expected shapes. Those calls show observed behavior, not repeatable answers or universal historical agreement.
+
+## Emergency approval follow-up
+
+The approved scope change moves the following original requirement to [#351](https://github.com/OwaisQuadri/agents/issues/351). No emergency bypass ships in this release.
 
 An emergency approval must originate from a verified human action. The host must record approval. Approval must expire and authorize one exact proposed change. Its identity includes the proposal and original target. A changed proposal or target invalidates approval. Use consumes the approval.
 
-Approval can waive rule decisions only. It cannot waive unsupported filesystem operations. A tool argument, environment switch, command, or agent-writable file cannot provide authority.
+Approval can waive rule decisions only. It cannot waive unsupported filesystem operations. A tool argument, environment switch, command, or agent-writable file cannot provide authority. Repository configuration is not an approval channel. Its exact-pattern checks preserve every inherited rule and prevent reduced file coverage.
 
-The inspected Pi client response transport proves receipt of a response, not a human action. Therefore this implementation exposes no emergency approval path. Issues #317 and #318 cannot claim this criterion complete without verified authority or an approved scope change.
+The inspected Pi client response transport proves receipt of a response, not a human action. Therefore this implementation exposes no emergency approval path. The scope change removes this criterion from release acceptance without marking it complete. Missing, invalid, failed, or timed-out required checks still block writes.
 
 ## Required fixtures
 
@@ -226,16 +251,20 @@ Every rejected direct-edit fixture checks original bytes and metadata. Successfu
 
 ## Measurement and release checks
 
-Compare one process per request with a persistent checker on the same repeated workload. Report process startup, blocking time, memory, cache state, judgment count, and diagnostic size. Choose the simpler process model if it meets the measured budget. A persistent process must earn its added complexity.
+The approved release accepts existing bounded process and token comparisons only for their recorded scope. It does not certify complete memory, historical retry attribution, or additional cold/warm measurement coverage.
 
-Measure the extension's warm import and registration twice with `PI_TIMING=1`. The combined limit is 50 milliseconds unless a required registration cost has an explicit justification. Defer other work until first use.
+The original measurement requirements below remain in [#352](https://github.com/OwaisQuadri/agents/issues/352). They are follow-up work, not passed release criteria.
+
+Compare one process per request with a persistent checker on the same repeated workload. Report process startup, blocking time, memory, cache state, judgment count, and diagnostic size. Choose the simpler process model if it meets the measured budget. A persistent process must earn its added complexity.
 
 Compare edit-time and commit-time feedback on identical starting files and intended changes. Use the same model tier, task instructions, and test outcomes. Run repeated trials with separate cold and warm cache conditions. Record actual retry counts and main-model tokens from session records.
 
 Edit-time feedback must use fewer median retry tokens without a 95th-percentile regression. Report the workload size and failed trials. Do not replace token measurements with character counts or estimates. Historical session checks establish prior behavior, not a controlled causal comparison.
 
-Release checks include existing privacy, comment, and attribution parity suites, direct-edit integration tests, strict builds, independent tests, and independent review. Unsupported criteria and unmeasured results remain unfinished. Manual signoff precedes landing.
+The release still requires two warm import and registration measurements with `PI_TIMING=1`. The combined limit is 50 milliseconds unless the user approves an explicit justification. Defer other work until first use.
+
+Release checks include existing privacy, rule-based comment, and attribution suites, direct-edit integration tests, strict builds, independent tests, and independent review. Final candidate checks, independent review, visible behavior evidence, and manual signoff remain pending. Unsupported criteria and unmeasured results remain unfinished. Manual signoff precedes landing.
 
 ## Complexity review
 
-Issue #290 extends `simplify`, `engineer`, and `code-reviewer`. It adds evidence-backed time and space analysis, with simplification before independent testing and review. It does not add a mechanical edit-time complexity rule.
+Issue [#290](https://github.com/OwaisQuadri/agents/issues/290) remains open and outside this release. Its preserved work extends `simplify`, `engineer`, and `code-reviewer` with time and space analysis. The execution-evidence runner also remains outside the direct-edit release. This scope change does not cancel or complete that work.
