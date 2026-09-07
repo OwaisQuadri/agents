@@ -1,0 +1,209 @@
+# Direct edit rule contract
+
+## Scope and status
+
+This contract defines pre-write checks for direct Pi `edit` and `write` calls. It covers privacy, comment length, comment shape, and Boolean naming. One compiled Rust registry evaluates the selected rules. One Pi extension owns enforcement.
+
+Issue #319 covers shell commands. The user deferred that issue. Shell commands remain unchanged and outside this contract's enforcement coverage. Existing commit-time checks remain active. The `no-ai-attribution` rules and invocation remain unchanged.
+
+This document specifies required behavior. It does not certify an implementation or a performance result. Human-only emergency approval remains unavailable because the inspected host transport does not establish human origin. That acceptance criterion remains unfinished.
+
+## Parser boundary
+
+Issues #310 and #328 selected Tree-sitter for accuracy, with whole-file lexical fallback when parsing fails. The registry reuses the existing comment parser. Swift, Objective-C++, and Perl currently use lexical extraction.
+
+A rule receives the complete proposed text, its language, and the actual changed text ranges. Parser structural changes do not replace text differences. Syntax-aware rules must distinguish unsupported evidence from a failed required check. Unknown type evidence does not establish a Boolean violation. A parser failure must not silently skip comment checks.
+
+The existing comment extractor emits `start_line`, `end_line`, `kind`, and `text`. The integration must validate and convert these fields. It must not cast them to a different field convention.
+
+## Direct file boundary
+
+The extension reuses installed Pi edit matching, normalization, candidate reconstruction, and result rendering. Validation runs inside the supplied file-write operation against the exact proposed bytes. The existing per-path queue orders Pi mutations. It does not lock out external programs.
+
+The extension replaces both supplied write operations. Its directory operation creates nothing. The extension blocks a request whose parent directory does not exist. The extension rejects symbolic-link targets and regular files with multiple hard links. Unsupported operations return a reason before writing.
+
+The extension checks original content and file identity again before writing. A detected conflict blocks the edit. This recheck does not provide an atomic comparison against external writers. The contract does not promise crash-safe direct writes.
+
+Rule rejection must leave the target bytes and metadata unchanged. A filesystem failure after validation is an execution error, not proof that the file stayed unchanged. The caller must distinguish these outcomes.
+
+## Cancellation
+
+The wrapper owns the original cancellation signal. It checks cancellation before and after pre-write asynchronous operations and immediately before writing. It does not pass that signal to the installed tool's post-write abort check.
+
+Cancellation before writing blocks the request. A completed write returns the installed success result, even if cancellation follows. The wrapper must not report a completed write as a rejected proposal.
+
+## Wire protocol
+
+Version 1 uses one JSON (JavaScript Object Notation) request and response on standard streams. Text uses valid UTF-8 (Unicode Transformation Format, 8-bit). Invalid encoding blocks instead of replacing bytes.
+
+```text
+Request {
+  version: 1,
+  request_id: string,
+  operation: "edit" | "write",
+  path: absolute string,
+  repository_root: absolute string | null,
+  original_text: string | null,
+  proposed_text: string,
+  changed_ranges: [{start_byte: integer, end_byte: integer}],
+  budget_ms: integer
+}
+
+Diagnostic {
+  path: string,
+  line: positive integer,
+  rule: "privacy" | "comment-length" | "comment-shape" | "boolean-name" | "checker",
+  reason: string
+}
+
+JudgmentInput {
+  comment: string,
+  code_context: string,
+  language: string,
+  rule_document: string,
+  prompt_version: integer,
+  schema_version: integer,
+  judgment_configuration: string
+}
+
+JudgmentRequest {
+  line: positive integer,
+  input: JudgmentInput
+}
+
+Response {
+  version: 1,
+  request_id: string,
+  decision: "pass" | "block" | "needs_judgment" | "error",
+  diagnostics: Diagnostic[],
+  judgments: JudgmentRequest[],
+  elapsed_ms: integer,
+  budget_ms: positive integer
+}
+
+CacheEntry {
+  version: 1,
+  key: digest of every JudgmentInput field,
+  decision: "pass" | "block",
+  reason: string
+}
+```
+
+The `checker` category identifies infrastructure errors only, with decision `error`. It is diagnostic-only, not a configurable rule. Protocol version 1 and the diagnostic path, line, and reason fields remain unchanged.
+
+Source line metadata wraps a judgment input. It does not enter the judgment cache key. The wrapper preserves source positions for failed judgments without changing their decision inputs.
+
+The caller validates fields, versions, request identity, integer ranges, and decision combinations. It rejects extra terminal responses and malformed output. A response from another request cannot authorize a write. Only a valid final pass permits writing. `needs_judgment` never permits writing by itself.
+
+## Changed content
+
+Changed ranges are half-open byte ranges in the proposed text. The registry derives affected content from the original and proposed text. Caller-provided ranges cannot hide a difference. A deletion retains a zero-width boundary. Comment selection includes blocks that contain or touch that boundary.
+
+A full write checks the whole candidate. An edit checks actual changed text for privacy while parsing the complete candidate. An unchanged comment needs a fresh decision when its supplied following-code context changes. Source line numbers start at one.
+
+## Rules
+
+### Privacy
+
+The registry reuses `privacy-lint` matching behavior and its existing allowances. Named private identifiers come from the machine-local configuration. Required configuration and input errors block the new direct-edit caller. Existing command interfaces retain their behavior.
+
+A diagnostic must not repeat the matched private value. The path, line, rule identifier, and safe reason provide the repair location. Tests must distinguish newly introduced text from unchanged violations and removed violations.
+
+### Comment length and shape
+
+The registry preserves existing comment extraction and the current three-line limit. Documentation blocks retain their current length exemption. Adjacent full-line comments retain their existing grouping behavior.
+
+Deterministic filters decide clear cases only where the existing rules establish the answer. Ambiguous comments use the existing judgment worker. An uncertain local filter must not invent approval. Existing pass and block fixtures remain required parity tests.
+
+A judgment receives the comment, following-code context, language, rule document, and versioned judgment configuration. Missing required rule documents block the request. A malformed worker decision is not a pass.
+
+### Boolean naming
+
+Names for proven Boolean variables, fields, properties, parameters, functions, and methods must use the `is` prefix. Evidence includes explicit Boolean types and language-defined Boolean expressions. Truthy values do not establish Boolean types.
+
+The rule preserves names whose external ownership it can prove. External protocols, traits, framework overrides, serialization, and foreign interfaces need ownership evidence. An annotation or syntax marker alone does not prove an external naming requirement. Local aliases remain separately subject to the rule.
+
+Generated-file selection provides the generated-code exemption. Unknown language or type evidence must remain explicit in coverage reports. The implementation must not claim proof for unsupported forms.
+
+## Configuration and selection
+
+Tracked global defaults live in `config/edit-time.toml`. An optional tracked `.edit-time.toml` supplies repository overrides. The target path determines the repository, not the session directory. Files outside repositories use global defaults.
+
+Configuration selects compiled rule identifiers, file patterns, and lower total or per-rule time limits. It cannot supply executable commands or approval switches. Defaults exclude dependencies, build output, caches, and generated files. Repository overrides must support explicit selection changes.
+
+The registry accepts missing optional overrides. Invalid or unreadable present configuration blocks applicable requests. The registry reads rules and effective configuration consistently for each request. Judgment-affecting configuration forms part of the cache identity.
+
+The time-limit fields use this shape:
+
+```toml
+total_ms = 20000
+process_budget_ms = 3000
+
+[rule_ms]
+privacy = 500
+comment-length = 500
+comment-shape = 500
+boolean-name = 500
+```
+
+Every limit must be a positive integer. The global limits cannot exceed these approved ceilings. Repository limits can only lower the global limits. Unknown rule identifiers and invalid limits block the request.
+
+The remaining selection fields and language coverage must match the implemented, tested format before release. These declarations do not claim coverage from an untested example.
+
+## Deadlines and failure results
+
+The approved total validation deadline is 20,000 milliseconds per request. It includes process startup, checks, cache work, and fresh judgments. Proposed inner ceilings are 500 milliseconds per deterministic rule and 3,000 milliseconds for the Rust process. These ceilings do not establish measured latency.
+
+The response supplies the effective total `budget_ms` after configuration. This ceiling cannot exceed the requested budget or the approved total. The extension measures it from the original request start, not response receipt.
+
+Validation remains globally serialized. Queue waiting uses the original request deadline and cancellation signal. An expired or cancelled waiter returns without starting checks and cannot let later requests overtake an active worker. Cancellation and deadline expiry return their own guidance, not build advice.
+
+Every worker shares the remaining request budget. Expiry blocks writing. The parent stops expired workers and drains their output. Partial and late results cannot authorize the request. No error or timeout disables a required rule.
+
+A failed rule reports its identifier and elapsed time. Missing tools, rule crashes, invalid configuration, malformed output, and required-check timeouts block the request. A result must preserve every failure decision even when display space runs out.
+
+The combined blocking diagnostic has a 2,000-character limit. It includes the omitted-diagnostic count. Each displayed failure names the validated target path, line, category, and controlled repair guidance. The display escapes the path and never copies arbitrary checker reason text or matched private values. The display omits and counts any diagnostic whose full location and guidance do not fit. Display truncation never converts a block to a pass.
+
+## Judgment cache
+
+A key includes every `JudgmentInput` field. Changed text, context, language, rules, versions, or judgment configuration invalidate the prior decision. Old text-only keys are misses, not approvals.
+
+Only validated completed worker decisions enter the process-local memory cache, after cleanup and deadline checks. The cache holds at most 256 immutable records and evicts the oldest stored record when full. It is not persisted or restored from session records. A fresh process starts empty. Agent-writable disk records, including legacy `decisions-v1` records with complete keys, provide no approval authority and are never read by this decision path.
+
+A cache miss triggers a fresh judgment within the same request deadline. The request remains blocked until that judgment passes. Failure, malformed output, cancellation, or timeout cannot cache a pass and leaves the target unchanged.
+
+Cached block decisions remain blocks. Tests must preserve the decisions in sampled historical records without trusting their incomplete old identities.
+
+## Emergency approval
+
+An emergency approval must originate from a verified human action. The host must record approval. Approval must expire and authorize one exact proposed change. Its identity includes the proposal and original target. A changed proposal or target invalidates approval. Use consumes the approval.
+
+Approval can waive rule decisions only. It cannot waive unsupported filesystem operations. A tool argument, environment switch, command, or agent-writable file cannot provide authority.
+
+The inspected Pi client response transport proves receipt of a response, not a human action. Therefore this implementation exposes no emergency approval path. Issues #317 and #318 cannot claim this criterion complete without verified authority or an approved scope change.
+
+## Required fixtures
+
+Selection fixtures cover ordinary code and text, excluded directories, generated files, repository overrides, and files outside a repository. A filename that contains an excluded directory's name must not count as that directory. Missing optional configuration must differ from invalid present configuration.
+
+Privacy fixtures preserve current address and configured-name decisions. Comment fixtures preserve current pass, block, grouping, documentation, and lexical-fallback behavior. Cache fixtures change each decision input separately. Boolean fixtures cover each supported language and declaration form, external ownership, local aliases, truthiness, and unknown evidence.
+
+Integrity fixtures cover disjoint, ambiguous, overlapping, and normalized replacements. They cover line endings, byte-order marks, Unicode positions, deletions, and unchanged comments with changed context. Tests also cover stale targets, links, missing parents, cancellation, failed tools, invalid output, and late results.
+
+Every rejected direct-edit fixture checks original bytes and metadata. Successful fixtures compare the validated candidate with the written bytes. Concurrent fixtures use unique paths.
+
+## Measurement and release checks
+
+Compare one process per request with a persistent checker on the same repeated workload. Report process startup, blocking time, memory, cache state, judgment count, and diagnostic size. Choose the simpler process model if it meets the measured budget. A persistent process must earn its added complexity.
+
+Measure the extension's warm import and registration twice with `PI_TIMING=1`. The combined limit is 50 milliseconds unless a required registration cost has an explicit justification. Defer other work until first use.
+
+Compare edit-time and commit-time feedback on identical starting files and intended changes. Use the same model tier, task instructions, and test outcomes. Run repeated trials with separate cold and warm cache conditions. Record actual retry counts and main-model tokens from session records.
+
+Edit-time feedback must use fewer median retry tokens without a 95th-percentile regression. Report the workload size and failed trials. Do not replace token measurements with character counts or estimates. Historical session checks establish prior behavior, not a controlled causal comparison.
+
+Release checks include existing privacy, comment, and attribution parity suites, direct-edit integration tests, strict builds, independent tests, and independent review. Unsupported criteria and unmeasured results remain unfinished. Manual signoff precedes landing.
+
+## Complexity review
+
+Issue #290 extends `simplify`, `engineer`, and `code-reviewer`. It adds evidence-backed time and space analysis, with simplification before independent testing and review. It does not add a mechanical edit-time complexity rule.

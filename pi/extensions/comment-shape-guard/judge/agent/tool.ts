@@ -17,12 +17,18 @@ export type SubmitVerdictInput = Static<typeof SubmitVerdictSchema>;
  * subprocess down right after) — unlike observational-memory's observer, which
  * accumulates across many calls, a judge decides exactly one span per run. */
 export function registerVerdictTool(pi: ExtensionAPI, resultPath: string): void {
+	let isSubmitted = false;
 	pi.registerTool({
 		name: "submit_verdict",
 		label: "Submit verdict",
 		description: "Submit the shape verdict for the one comment shown to you. Call this exactly once.",
 		parameters: SubmitVerdictSchema,
 		async execute(_id: string, params: SubmitVerdictInput, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: ExtensionContext) {
+			if (isSubmitted) {
+				writeWorkerVerdict(resultPath, { shape: "", reason: "duplicate terminal decision" });
+				throw new Error("Only one verdict is permitted.");
+			}
+			isSubmitted = true;
 			writeWorkerVerdict(resultPath, { shape: params.shape.trim(), reason: params.reason.trim() });
 			return { content: [{ type: "text" as const, text: "verdict recorded" }] };
 		},

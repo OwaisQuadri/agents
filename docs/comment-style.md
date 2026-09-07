@@ -13,8 +13,10 @@ code instead. Two mechanical checks enforce this now.
 comment block runs past 3 lines. `pi/extensions/comment-shape-guard.ts` judges the
 shape itself, at write time. It asks a small headless model whether a new or changed
 comment fits one of the shapes below. It also checks whether a docstring actually
-sits on a public declaration. It caches the verdict and blocks the edit on a clear
-miss. A timeout or an infrastructure error allows the edit through instead.
+sits on a public declaration. It caches validated verdicts in process-local memory.
+
+A rule failure, timeout, cancellation, or infrastructure error blocks the direct edit
+or write before mutation. Shell writes remain outside this enforcement.
 
 - inexpressible concept or architecture — a design decision, invariant, or
   cross-component contract that cannot be made implicit in the code itself

@@ -19,6 +19,7 @@ export type KickoffPromptInput = {
 	commentText: string;
 	followingContext: string | undefined;
 	whitelistDocText: string;
+	language?: string;
 };
 
 export function buildKickoffPrompt(input: KickoffPromptInput): string {
@@ -26,6 +27,7 @@ export function buildKickoffPrompt(input: KickoffPromptInput): string {
 		? `The code immediately following this comment:\n\`\`\`\n${input.followingContext}\n\`\`\``
 		: "No code follows this comment within what is visible to you. Treat any position-dependent shape claim (like a docstring) as unverifiable.";
 	return [
+		...(input.language ? [`Source language: ${input.language}`, ""] : []),
 		"The whitelist (verbatim from docs/comment-style.md):",
 		"```",
 		input.whitelistDocText.trim(),

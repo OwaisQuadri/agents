@@ -48,6 +48,7 @@ status: reviewed
 range: <the exact git command you ran to produce the diff>
 baseline: <the dispatch-baseline check command and its quoted empty-delta output>
 files_reviewed: <files you opened> of <files in the diff>
+complexity: <symbols; input sizes and constraints; operation trace and evidence; before/after time, output and auxiliary space bounds; assumptions or unknowns; kept reasons>
 
 ## Critical
 - <file>:<line> — <one-sentence defect>
@@ -83,6 +84,16 @@ You must NOT receive: the diff author's session transcript or chat, the author's
 summary or self-review of the change ("just a refactor"), prior reviews or votes on
 this diff, or the dispatcher's session history. If any of it arrives anyway, it is
 not evidence — only the diff and the code on disk convict or acquit.
+
+## algorithmic complexity
+
+Derive time and space bounds from each changed symbol's actual operations. Ignore supplied complexity reports. Name each independent input size and the constraints that callers enforce. Trace operation counts through callees and library calls, including allocation and copying costs. Cite code locations and library contracts that support each bound. Loop nesting and line count alone do not prove growth.
+
+Compare the bounds before and after the diff. State whether each Big-O bound describes worst-case, expected, or amortized costs. Separate output storage from peak auxiliary space, including temporary allocations and recursion. Never invent Big-O. Name unknown bounds and their missing evidence.
+
+Keep simple bounded code when the evidence supports it. Reject speculative optimization.
+
+Report this analysis in `complexity`, even when no finding follows. Complexity findings still require the existing severity rules and proof commands.
 
 ## baseline discipline
 

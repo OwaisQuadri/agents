@@ -45,29 +45,28 @@ test("resolveJudgeModel reads T2's primary model from a tiers file", () => {
 	rmSync(dir, { recursive: true, force: true });
 });
 
-test("resolveJudgeModel falls back to a fixed model on a missing or malformed tiers file", () => {
-	const entry = resolveJudgeModel("/nonexistent/model-tiers.json");
-	assert.equal(entry.model, "anthropic/claude-haiku-4-5");
+test("resolveJudgeModel rejects missing required tier configuration", () => {
+	assert.throws(() => resolveJudgeModel("/nonexistent/model-tiers.json"));
 });
 
 test("spawnWorker resolves with exit code 0 on success", async () => {
-	const exit = await spawnWorker({ argv: ["/usr/bin/true"], cwd: tmpdir(), env: process.env });
+	const exit = await spawnWorker({ argv: ["/usr/bin/true"], cwd: tmpdir(), env: process.env, deadline: performance.now() + 1000 });
 	assert.equal(exit.code, 0);
 });
 
 test("spawnWorker resolves (never rejects) with a non-zero code on failure", async () => {
-	const exit = await spawnWorker({ argv: ["/usr/bin/false"], cwd: tmpdir(), env: process.env });
+	const exit = await spawnWorker({ argv: ["/usr/bin/false"], cwd: tmpdir(), env: process.env, deadline: performance.now() + 1000 });
 	assert.notEqual(exit.code, 0);
 });
 
 test("spawnWorker resolves with an error code when the command does not exist", async () => {
-	const exit = await spawnWorker({ argv: ["/nonexistent/binary-xyz"], cwd: tmpdir(), env: process.env });
+	const exit = await spawnWorker({ argv: ["/nonexistent/binary-xyz"], cwd: tmpdir(), env: process.env, deadline: performance.now() + 1000 });
 	assert.notEqual(exit.code, 0);
 });
 
 test("spawnWorker kills the process and resolves when its AbortSignal fires", async () => {
 	const controller = new AbortController();
-	const promise = spawnWorker({ argv: ["/bin/sleep", "30"], cwd: tmpdir(), env: process.env, signal: controller.signal });
+	const promise = spawnWorker({ argv: ["/bin/sleep", "30"], cwd: tmpdir(), env: process.env, signal: controller.signal, deadline: performance.now() + 1000 });
 	controller.abort();
 	const exit = await promise;
 	assert.notEqual(exit.code, 0);
