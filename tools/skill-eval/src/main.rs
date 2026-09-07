@@ -2307,9 +2307,6 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     }
     let nonholdout: Vec<&Case> = cases.iter().filter(|case| !case.is_holdout).collect();
     let holdout: Vec<&Case> = cases.iter().filter(|case| case.is_holdout).collect();
-    if nonholdout.is_empty() || holdout.is_empty() {
-        return Err("cases require non-holdout and holdout slices".to_string());
-    }
     let tiers = load_tiers(&settings.tiers_file)?;
     if settings.args.is_accept_if_winning && is_floor_declared {
         for tier in &tiers {
