@@ -1,124 +1,323 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import ragExtension, { type CommandResult } from "./rag.ts";
+import ragExtension from "./rag.ts";
 
+type SearchMemoryInput = { query: string; k?: number; source_filter?: string };
+type SearchMemoryResult = { content: Array<{ type: string; text: string }>; details: { hits: Array<Record<string, unknown>> } };
 type RegisteredTool = {
 	name: string;
-	parameters: {
-		required: readonly string[];
-		properties: Record<string, unknown>;
-	};
-	execute(
-		toolCallId: string,
-		params: { query: string; k?: number; source_filter?: string },
-		signal?: AbortSignal,
-	): Promise<{
-		content: Array<{ type: string; text: string }>;
-		details: { hits: Array<Record<string, unknown>> };
-	}>;
+	parameters: { required: readonly string[]; properties: Record<string, unknown> };
+	execute(toolCallId: string, params: SearchMemoryInput, signal?: AbortSignal): Promise<SearchMemoryResult>;
 };
+type EventHandler = () => Promise<void> | void;
+type SpawnProcess = (command: string, args: string[]) => ChildProcessWithoutNullStreams;
 
-function registerWith(exec: (command: string, args: string[], options?: { signal?: AbortSignal }) => Promise<CommandResult>) {
-	let tool: RegisteredTool | undefined;
-	const pi = {
-		registerTool(candidate: RegisteredTool) {
-			tool = candidate;
-		},
-		exec,
-	};
-	ragExtension(pi as never);
-	assert.ok(tool);
-	return tool;
-}
+const fixtureSource = String.raw`
+const fs = require("node:fs");
+const [mode, logPath] = process.argv.slice(2);
+const requests = [];
+function send(value) { process.stdout.write(JSON.stringify(value) + "\n"); }
+function log(value) { requests.push(value); fs.writeFileSync(logPath, JSON.stringify(requests)); }
+function result(id, result) { send({ jsonrpc: "2.0", id, result }); }
+const tool = { name: "search_memory" };
+let calls = [];
+process.stdin.setEncoding("utf8");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const end = buffer.indexOf("\n");
+    if (end < 0) return;
+    const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+    if (!line) continue;
+    const request = JSON.parse(line); log(request);
+    if (request.method === "initialize") {
+      if (mode === "protocol-mismatch") result(request.id, { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "fixture", version: "1" } });
+      else if (mode !== "hang-startup") result(request.id, { protocolVersion: "2025-11-25", capabilities: {}, serverInfo: { name: "fixture", version: "1" } });
+    } else if (request.method === "tools/list") {
+      result(request.id, { tools: mode === "missing-tool" ? [] : [tool] });
+    } else if (request.method === "tools/call") {
+      if (mode === "crash") { process.stderr.write("x".repeat(5000)); process.exit(2); }
+      else if (mode === "jsonrpc-error") send({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "index unavailable" } });
+      else if (mode === "mcp-error") result(request.id, { isError: true, content: [{ type: "text", text: "search failed" }], structuredContent: [] });
+      else if (mode === "invalid-structured") result(request.id, { content: [], structuredContent: [null] });
+      else if (mode === "malformed") process.stdout.write("not json\n");
+      else if (mode === "unframed-stdout") process.stdout.write("x".repeat(8 * 1024 * 1024 + 1));
+      else if (mode === "large-framed") result(request.id, { content: [{ type: "text", text: "x".repeat(1_870_000) }], structuredContent: [{ query: request.params.arguments.query }] });
+      else if (mode === "fallback-content") result(request.id, { content: [{ type: "image" }], structuredContent: [{ query: request.params.arguments.query }] });
+      else if (mode === "late-response" && calls.length === 0) { calls.push(request); setTimeout(() => result(request.id, { content: [{ type: "text", text: request.params.arguments.query }], structuredContent: [{ query: request.params.arguments.query }] }), 35); }
+      else if (mode === "hang-call" || (mode === "cancel-first" && calls.length === 0)) calls.push(request);
+      else if (mode === "notification") { send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }); result(request.id, { content: [{ type: "text", text: request.params.arguments.query }], structuredContent: [{ query: request.params.arguments.query }] }); }
+      else if (mode === "concurrent") { calls.push(request); if (calls.length === 2) for (const call of calls.reverse()) result(call.id, { content: [{ type: "text", text: call.params.arguments.query }], structuredContent: [{ query: call.params.arguments.query }] }); }
+      else result(request.id, { content: [{ type: "text", text: request.params.arguments.query }], structuredContent: [{ query: request.params.arguments.query }] });
+    }
+  }
+});
+`;
 
-function fakeResult(overrides: Partial<CommandResult> = {}): CommandResult {
-	return { stdout: "", stderr: "", code: 0, isKilled: false, ...overrides };
-}
-
-function executeFile(command: string, args: string[], options?: { signal?: AbortSignal }): Promise<CommandResult> {
-	return new Promise((resolve, reject) => {
-		execFile(command, args, { signal: options?.signal }, (error, stdout, stderr) => {
-			if (error) {
-				reject(error);
-				return;
-			}
-			resolve({ stdout, stderr, code: 0, isKilled: false });
-		});
-	});
-}
-
-test("registers search_memory and returns fake rag results", async () => {
+async function makeFixture(modes: string | string[] = "success") {
 	const directory = await mkdtemp(join(tmpdir(), "rag-extension-"));
-	const argumentsPath = join(directory, "arguments.txt");
-	const commandPath = join(directory, "rag");
-	await writeFile(
-		commandPath,
-		`#!/bin/sh\nprintf '%s\\n' "$@" > "${argumentsPath}"\nprintf '%s\\n' '{"text":"first","source":"notes"}' '{"text":"second","source":"notes"}'\n`,
-	);
-	await chmod(commandPath, 0o755);
+	const scriptPath = join(directory, "fixture.cjs");
+	const logPath = join(directory, "requests.json");
+	const modeList = Array.isArray(modes) ? modes : [modes];
+	const children: ChildProcessWithoutNullStreams[] = [];
+	await writeFile(scriptPath, fixtureSource);
+	return {
+		spawn: ((_command, _args) => {
+			const child = spawn(process.execPath, [scriptPath, modeList[children.length] ?? modeList.at(-1)!, logPath]);
+			children.push(child);
+			return child;
+		}) satisfies SpawnProcess,
+		spawnCount: () => children.length,
+		emitStreamError(stream: "stdout" | "stderr", index = children.length - 1) {
+			const child = children[index];
+			assert.ok(child);
+			child[stream].emit("error", new Error(`fixture ${stream} error`));
+		},
+		async requests() {
+			try {
+				return JSON.parse(await readFile(logPath, "utf8")) as Array<Record<string, unknown>>;
+			} catch {
+				return [];
+			}
+		},
+		async waitForExit(index = children.length - 1) {
+			const child = children[index];
+			assert.ok(child);
+			if (child.exitCode !== null) return;
+			await new Promise<void>((resolve, reject) => {
+				const timeout = setTimeout(() => {
+					child.off("exit", onExit);
+					reject(new Error("fixture child did not exit"));
+				}, 1000);
+				const onExit = () => {
+					clearTimeout(timeout);
+					resolve();
+				};
+				child.once("exit", onExit);
+			});
+		},
+	};
+}
 
-	const originalPath = process.env.PATH;
-	process.env.PATH = `${directory}:${originalPath ?? ""}`;
-	try {
-		const tool = registerWith(executeFile);
-		assert.equal(tool.name, "search_memory");
-		assert.deepEqual(tool.parameters.required, ["query"]);
-		assert.deepEqual(Object.keys(tool.parameters.properties), ["query", "k", "source_filter"]);
+function registerWith(spawnProcess: SpawnProcess, timeouts = { startupMs: 1000, requestMs: 1000 }) {
+	let tool: RegisteredTool | undefined;
+	const handlers = new Map<string, EventHandler>();
+	ragExtension({ registerTool(candidate: RegisteredTool) { tool = candidate; }, on(event: string, handler: EventHandler) { handlers.set(event, handler); } } as never, spawnProcess, timeouts);
+	assert.ok(tool);
+	return { tool, fire: async (event: string) => handlers.get(event)?.() };
+}
 
-		const result = await tool.execute("call-1", {
-			query: "pi extensions",
-			k: 2,
-			source_filter: "notes",
+async function start(mode: string | string[] = "success") {
+	const fixture = await makeFixture(mode);
+	const harness = registerWith(fixture.spawn);
+	await harness.fire("session_start");
+	return { ...harness, fixture };
+}
+
+async function waitForRequests(fixture: Awaited<ReturnType<typeof makeFixture>>, count: number): Promise<void> {
+	for (let attempt = 0; attempt < 1000; attempt += 1) {
+		if ((await fixture.requests()).length >= count) return;
+		await new Promise((resolve) => setTimeout(resolve, 2));
+	}
+	throw new Error("fixture did not receive the expected request");
+}
+
+test("does not spawn an MCP child for an idle session", async () => {
+	const fixture = await makeFixture();
+	const { fire } = registerWith(fixture.spawn);
+	await fire("session_start");
+	assert.equal(fixture.spawnCount(), 0);
+	await fire("session_shutdown");
+});
+
+test("concurrent first searches share one lazy startup and preserve the Pi schema", async () => {
+	const { tool, fixture, fire } = await start("concurrent");
+	assert.deepEqual(tool.parameters.required, ["query"]);
+	const [first, second] = await Promise.all([tool.execute("first", { query: "first" }), tool.execute("second", { query: "second" })]);
+	assert.equal(fixture.spawnCount(), 1);
+	assert.equal(first.content[0]?.text, "first");
+	assert.equal(second.content[0]?.text, "second");
+	await fire("session_shutdown");
+	await fixture.waitForExit();
+});
+
+test("cancellation only removes its request", async (context) => {
+	await context.test("a later search works after cancellation", async () => {
+		const { tool, fixture, fire } = await start("cancel-first");
+		const controller = new AbortController();
+		const pending = tool.execute("cancel", { query: "cancel" }, controller.signal);
+		await waitForRequests(fixture, 4);
+		controller.abort();
+		await assert.rejects(pending, /cancelled/);
+		assert.equal((await tool.execute("next", { query: "next" })).content[0]?.text, "next");
+		await fire("session_shutdown");
+	});
+	await context.test("an unrelated concurrent search survives cancellation", async () => {
+		const { tool, fixture, fire } = await start("cancel-first");
+		const controller = new AbortController();
+		const cancelled = tool.execute("cancel", { query: "cancel" }, controller.signal);
+		await waitForRequests(fixture, 4);
+		const active = tool.execute("active", { query: "active" });
+		controller.abort();
+		await assert.rejects(cancelled, /cancelled/);
+		assert.equal((await active).content[0]?.text, "active");
+		await fire("session_shutdown");
+	});
+});
+
+test("recovers from a crashed child on the next search", async () => {
+	const { tool, fixture, fire } = await start(["crash", "success"]);
+	await assert.rejects(tool.execute("crash", { query: "crash" }), /rag server exited/);
+	assert.equal((await tool.execute("retry", { query: "retry" })).content[0]?.text, "retry");
+	assert.equal(fixture.spawnCount(), 2);
+	await fire("session_shutdown");
+});
+
+test("failed initialization closes its child and retries later", async () => {
+	const fixture = await makeFixture(["missing-tool", "success"]);
+	const { tool, fire } = registerWith(fixture.spawn);
+	await fire("session_start");
+	await assert.rejects(tool.execute("missing", { query: "missing" }), /search_memory/);
+	await fixture.waitForExit(0);
+	assert.equal((await tool.execute("retry", { query: "retry" })).content[0]?.text, "retry");
+	assert.equal(fixture.spawnCount(), 2);
+	await fire("session_shutdown");
+});
+
+test("rejects a mismatched initialize protocol version", async () => {
+	const fixture = await makeFixture("protocol-mismatch");
+	const { tool, fire } = registerWith(fixture.spawn);
+	await fire("session_start");
+	await assert.rejects(tool.execute("mismatch", { query: "mismatch" }), /incompatible protocol version/);
+	await fixture.waitForExit();
+});
+
+test("bounds unframed stdout and supports large framed responses", async (context) => {
+	await context.test("unframed stdout", async () => {
+		const fixture = await makeFixture("unframed-stdout");
+		const { tool, fire } = registerWith(fixture.spawn);
+		await fire("session_start");
+		await assert.rejects(tool.execute("overflow", { query: "overflow" }), /maximum unframed stdout length/);
+		await fixture.waitForExit();
+	});
+	await context.test("large framed response", async () => {
+		const { tool, fire } = await start("large-framed");
+		assert.equal((await tool.execute("large", { query: "large" })).content[0]?.text.length, 1_870_000);
+		await fire("session_shutdown");
+	});
+});
+
+test("rejects a stream read error without an uncaught exception", async (context) => {
+	for (const stream of ["stdout", "stderr"] as const) {
+		await context.test(stream, async () => {
+			const { tool, fixture } = await start("hang-call");
+			const pending = tool.execute("error", { query: "query" });
+			await waitForRequests(fixture, 4);
+			fixture.emitStreamError(stream);
+			await assert.rejects(pending, /rag server exited/);
+			await fixture.waitForExit();
 		});
-
-		assert.deepEqual((await readFile(argumentsPath, "utf8")).trim().split("\n"), [
-			"search",
-			"pi extensions",
-			"--k",
-			"2",
-			"--source",
-			"notes",
-			"--json",
-		]);
-		assert.equal(
-			result.content[0]?.text,
-			'[{"text":"first","source":"notes"},{"text":"second","source":"notes"}]',
-		);
-	} finally {
-		process.env.PATH = originalPath;
 	}
 });
 
-test("propagates command, output, and cancellation failures", async (context) => {
-	await context.test("missing command", async () => {
-		const error = Object.assign(new Error("spawn rag ENOENT"), { code: "ENOENT" });
-		const tool = registerWith(async () => Promise.reject(error));
-		await assert.rejects(tool.execute("call-2", { query: "query" }), /rag command was not found/);
-	});
+test("does not search or respawn outside an active session", async () => {
+	const { tool, fixture, fire } = await start();
+	await tool.execute("first", { query: "first" });
+	await fire("session_shutdown");
+	await fixture.waitForExit();
+	await assert.rejects(tool.execute("after-shutdown", { query: "after-shutdown" }), /only available during an active session/);
+	assert.equal(fixture.spawnCount(), 1);
+});
 
-	await context.test("nonzero exit", async () => {
-		const tool = registerWith(async () => fakeResult({ stderr: "index unavailable", code: 2 }));
-		await assert.rejects(tool.execute("call-3", { query: "query" }), /index unavailable/);
+test("ignores late stdout and stderr errors after shutdown", async () => {
+	const { tool, fixture, fire } = await start();
+	await tool.execute("first", { query: "first" });
+	await fire("session_shutdown");
+	assert.doesNotThrow(() => {
+		fixture.emitStreamError("stdout");
+		fixture.emitStreamError("stderr");
 	});
+	assert.equal(fixture.spawnCount(), 1);
+	await fixture.waitForExit();
+});
 
-	await context.test("nonzero exit without stderr", async () => {
-		const tool = registerWith(async () => fakeResult({ code: 1 }));
-		await assert.rejects(tool.execute("call-3b", { query: "query" }), /failed with exit code 1/);
-	});
+test("ignores a well-formed server notification", async () => {
+	const { tool, fire } = await start("notification");
+	assert.equal((await tool.execute("notification", { query: "notification" })).content[0]?.text, "notification");
+	await fire("session_shutdown");
+});
 
-	await context.test("invalid output", async () => {
-		const tool = registerWith(async () => fakeResult({ stdout: "not-json\n" }));
-		await assert.rejects(tool.execute("call-4", { query: "query" }), /invalid JSON output/);
+test("times out hung startup and calls", async (context) => {
+	await context.test("startup", async () => {
+		const fixture = await makeFixture("hang-startup");
+		const { tool, fire } = registerWith(fixture.spawn, { startupMs: 20, requestMs: 20 });
+		await fire("session_start");
+		await assert.rejects(tool.execute("hang", { query: "hang" }), /startup timed out/);
+		await fixture.waitForExit();
 	});
+	await context.test("call", async () => {
+		const fixture = await makeFixture("hang-call");
+		const { tool, fire } = registerWith(fixture.spawn, { startupMs: 1000, requestMs: 20 });
+		await fire("session_start");
+		await assert.rejects(tool.execute("hang", { query: "hang" }), /request timed out/);
+		await fire("session_shutdown");
+	});
+});
 
-	await context.test("cancellation", async () => {
-		const controller = new AbortController();
-		controller.abort();
-		const tool = registerWith(async () => fakeResult({ isKilled: true }));
-		await assert.rejects(tool.execute("call-5", { query: "query" }, controller.signal), /cancelled/);
+test("maps protocol and structured response failures", async (context) => {
+	await context.test("JSON-RPC error", async () => {
+		const { tool, fire } = await start("jsonrpc-error");
+		await assert.rejects(tool.execute("error", { query: "query" }), /index unavailable/);
+		await fire("session_shutdown");
 	});
+	await context.test("MCP isError", async () => {
+		const { tool, fire } = await start("mcp-error");
+		await assert.rejects(tool.execute("error", { query: "query" }), /search failed/);
+		await fire("session_shutdown");
+	});
+	await context.test("invalid structured payload", async () => {
+		const { tool, fire } = await start("invalid-structured");
+		await assert.rejects(tool.execute("invalid", { query: "query" }), /invalid structured output/);
+		await fire("session_shutdown");
+	});
+	await context.test("malformed stdout", async () => {
+		const { tool, fire } = await start("malformed");
+		await assert.rejects(tool.execute("malformed", { query: "query" }), /invalid JSON-RPC output/);
+		await fire("session_shutdown");
+	});
+});
+
+test("preserves call arguments and falls back to structured content", async () => {
+	const { tool, fixture, fire } = await start("fallback-content");
+	const result = await tool.execute("arguments", { query: "pi", source_filter: "notes" });
+	assert.deepEqual((await fixture.requests())[3], { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "search_memory", arguments: { query: "pi", k: 8, source_filter: "notes" } } });
+	assert.deepEqual(result, { content: [{ type: "text", text: JSON.stringify([{ query: "pi" }]) }], details: { hits: [{ query: "pi" }] } });
+	await fire("session_shutdown");
+});
+
+test("bounds stderr diagnostics after a crash", async () => {
+	const { tool } = await start("crash");
+	await assert.rejects(tool.execute("crash", { query: "query" }), (error: Error) => error.message.length < 1200 && /rag server exited/.test(error.message));
+});
+
+test("ignores a timed-out response and serves the next request", async () => {
+	const fixture = await makeFixture("late-response");
+	const { tool, fire } = registerWith(fixture.spawn, { startupMs: 1000, requestMs: 20 });
+	await fire("session_start");
+	await assert.rejects(tool.execute("late", { query: "late" }), /request timed out/);
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	assert.equal((await tool.execute("next", { query: "next" })).content[0]?.text, "next");
+	await fire("session_shutdown");
+});
+
+test("reports a missing rag executable at the tool call", async () => {
+	const missing = (() => spawn("/definitely-missing-rag-command", ["serve"])) satisfies SpawnProcess;
+	const { tool, fire } = registerWith(missing);
+	await fire("session_start");
+	await assert.rejects(tool.execute("missing", { query: "missing" }), /rag command was not found/);
 });
