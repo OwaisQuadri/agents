@@ -57,13 +57,6 @@ advisories on standard error. Advisories never change its exit code.
 | T5 | project-level synthesis, deep architecture (falls back to T4) |
 | T6 | code review only, dual-model on purpose (Fable authors, Astra is its cross-provider fallback); never a generic escalation target, no `climbOnExhaustion` |
 
-T6 stays on the same difficulty axis as T1-T5, not a different one: it is scoped to code
-review specifically because that is where a second full high-thinking pass earns its
-cost — harder work than a single T5 call. The dual-model shape (Fable authors, Astra is
-its fallback) is how that extra rigor gets spent, not a break from the ladder's own
-logic. It exists only for the `pr-ready` workflow's review stage; nothing climbs to it
-and it climbs to nothing on exhaustion.
-
 Each tier's `fallbacks` list crosses provider families on purpose. A provider outage or a
 usage-limit stop then degrades one tier sideways instead of failing the run. The list is
 ordered and each entry names its own model and thinking level.
