@@ -12,8 +12,7 @@ use std::process::{Command, ExitCode, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const USAGE: &str =
-    "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [candidate]";
+const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--accept-if-winning] [candidate]";
 
 #[derive(Debug)]
 struct Args {
@@ -21,6 +20,7 @@ struct Args {
     is_holdout_only: bool,
     tier: Option<String>,
     candidate: Option<PathBuf>,
+    is_accept_if_winning: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,7 +46,6 @@ struct Settings {
     cases_file: PathBuf,
     tiers_file: PathBuf,
     tier_dispatch_bin: PathBuf,
-    is_accepted: bool,
     auth_extension: PathBuf,
 }
 
@@ -64,14 +63,14 @@ enum DispatchKind {
     Failed,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SliceResult {
     scores: Vec<Option<f64>>,
     repeats: BTreeMap<String, Vec<Option<u8>>>,
     models: BTreeSet<String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct TierResult {
     nonholdout: SliceResult,
     holdout: SliceResult,
@@ -103,6 +102,24 @@ struct FrontierEntry {
     is_accepted: bool,
     #[serde(default)]
     ts: String,
+    #[serde(default)]
+    comparison_id: String,
+    #[serde(default)]
+    incumbent_id: String,
+    #[serde(default)]
+    incumbent_model_ran: Vec<String>,
+    #[serde(default)]
+    incumbent_scores_nonholdout: Vec<Option<f64>>,
+    #[serde(default)]
+    incumbent_scores_holdout: Vec<Option<f64>>,
+    #[serde(default)]
+    incumbent_repeat_scores_nonholdout: BTreeMap<String, Vec<Option<u8>>>,
+    #[serde(default)]
+    incumbent_repeat_scores_holdout: BTreeMap<String, Vec<Option<u8>>>,
+    #[serde(default)]
+    selected_minimum_tier: Option<String>,
+    #[serde(default)]
+    decision: String,
     #[serde(flatten)]
     legacy: Map<String, Value>,
 }
@@ -189,6 +206,7 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
     let mut is_holdout_only = false;
     let mut tier = None;
     let mut candidate = None;
+    let mut is_accept_if_winning = false;
     let mut index = 0;
     while index < raw.len() {
         match raw[index].to_str() {
@@ -200,6 +218,7 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
                 }
             }
             Some("--holdout") => is_holdout_only = true,
+            Some("--accept-if-winning") => is_accept_if_winning = true,
             Some("--tier") => {
                 index += 1;
                 tier = raw
@@ -223,11 +242,17 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
         }
         index += 1;
     }
+    if is_accept_if_winning && (is_holdout_only || tier.is_some() || candidate.is_none()) {
+        return Err(format!(
+            "--accept-if-winning requires one candidate and cannot be combined with --holdout or --tier\n{USAGE}"
+        ));
+    }
     Ok(Args {
         eval_dir: eval_dir.ok_or_else(|| format!("--eval-dir is required\n{USAGE}"))?,
         is_holdout_only,
         tier,
         candidate,
+        is_accept_if_winning,
     })
 }
 
@@ -243,12 +268,6 @@ fn settings(args: Args) -> Result<Settings, String> {
     if repeats == 0 {
         return Err("REPEATS must be a positive integer".to_string());
     }
-    let accepted = env::var("ACCEPTED").unwrap_or_else(|_| "false".to_string());
-    let is_accepted = match accepted.as_str() {
-        "true" => true,
-        "false" => false,
-        _ => return Err("ACCEPTED must be true or false".to_string()),
-    };
     let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     Ok(Settings {
         cases_file: env_path("CASES_FILE", args.eval_dir.join("cases.jsonl")),
@@ -263,7 +282,6 @@ fn settings(args: Args) -> Result<Settings, String> {
         ),
         args,
         repeats,
-        is_accepted,
     })
 }
 
@@ -710,8 +728,18 @@ fn dominates(left: &FrontierEntry, right: &FrontierEntry) -> bool {
     is_strict
 }
 
+fn is_prunable(entry: &FrontierEntry, accepted_comparisons: &BTreeSet<String>) -> bool {
+    !entry.is_accepted
+        && (entry.comparison_id.is_empty() || !accepted_comparisons.contains(&entry.comparison_id))
+}
+
 fn prune(entries: &mut Vec<FrontierEntry>) {
     let tiers: BTreeSet<String> = entries.iter().map(|entry| entry.tier.clone()).collect();
+    let accepted_comparisons: BTreeSet<String> = entries
+        .iter()
+        .filter(|entry| entry.is_accepted && !entry.comparison_id.is_empty())
+        .map(|entry| entry.comparison_id.clone())
+        .collect();
     for tier in tiers {
         loop {
             let indices: Vec<usize> = entries
@@ -721,7 +749,7 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
                 .collect();
             let unaccepted = indices
                 .iter()
-                .filter(|index| !entries[**index].is_accepted)
+                .filter(|index| is_prunable(&entries[**index], &accepted_comparisons))
                 .count();
             if unaccepted <= 20 {
                 break;
@@ -730,20 +758,20 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
                 .iter()
                 .rev()
                 .copied()
-                .find(|index| !entries[*index].is_accepted)
-                .expect("tier has too many unaccepted entries");
+                .find(|index| is_prunable(&entries[*index], &accepted_comparisons))
+                .expect("tier has too many prunable entries");
             let remove = indices
                 .iter()
                 .copied()
                 .find(|candidate| {
                     *candidate != newest
-                        && !entries[*candidate].is_accepted
+                        && is_prunable(&entries[*candidate], &accepted_comparisons)
                         && has_incomplete_scores(&entries[*candidate])
                 })
                 .or_else(|| {
                     indices.iter().copied().find(|candidate| {
                         *candidate != newest
-                            && !entries[*candidate].is_accepted
+                            && is_prunable(&entries[*candidate], &accepted_comparisons)
                             && indices.iter().copied().any(|other| {
                                 other != *candidate
                                     && dominates(&entries[other], &entries[*candidate])
@@ -751,15 +779,20 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
                     })
                 })
                 .or_else(|| {
-                    indices
-                        .iter()
-                        .copied()
-                        .find(|candidate| *candidate != newest && !entries[*candidate].is_accepted)
+                    indices.iter().copied().find(|candidate| {
+                        *candidate != newest
+                            && is_prunable(&entries[*candidate], &accepted_comparisons)
+                    })
                 });
             let Some(remove) = remove else {
                 break;
             };
-            entries.remove(remove);
+            if entries[remove].comparison_id.is_empty() {
+                entries.remove(remove);
+            } else {
+                let comparison_id = entries[remove].comparison_id.clone();
+                entries.retain(|entry| entry.comparison_id != comparison_id);
+            }
         }
     }
 }
@@ -828,7 +861,7 @@ fn read_frontier(path: &Path) -> Result<Vec<FrontierEntry>, String> {
         .collect()
 }
 
-fn update_frontier(
+fn update_frontier_locked(
     eval_dir: &Path,
     candidate: &str,
     new_entries: Vec<FrontierEntry>,
@@ -836,7 +869,6 @@ fn update_frontier(
     if new_entries.is_empty() {
         return Ok(());
     }
-    let _lock = FrontierLock::acquire(eval_dir)?;
     let frontier_path = eval_dir.join("frontier.jsonl");
     let mut entries = read_frontier(&frontier_path)?;
     entries.extend(new_entries);
@@ -877,7 +909,53 @@ fn update_frontier(
     Ok(())
 }
 
-fn run(mut settings: Settings) -> Result<(), String> {
+fn update_frontier(
+    eval_dir: &Path,
+    candidate: &str,
+    new_entries: Vec<FrontierEntry>,
+) -> Result<(), String> {
+    let _lock = FrontierLock::acquire(eval_dir)?;
+    update_frontier_locked(eval_dir, candidate, new_entries)
+}
+
+fn update_comparison_locked(
+    eval_dir: &Path,
+    comparison_id: &str,
+    selected_tiers: &BTreeSet<String>,
+    is_accepted: bool,
+    decision: &str,
+) -> Result<(), String> {
+    let frontier_path = eval_dir.join("frontier.jsonl");
+    let mut entries = read_frontier(&frontier_path)?;
+    let mut is_found = false;
+    for entry in &mut entries {
+        if entry.comparison_id != comparison_id {
+            continue;
+        }
+        is_found = true;
+        if selected_tiers.contains(&entry.tier) {
+            entry.is_accepted = is_accepted;
+            entry.decision = decision.to_string();
+        } else {
+            entry.is_accepted = false;
+            entry.decision = "excluded_below_floor".to_string();
+        }
+    }
+    if !is_found {
+        return Err(format!(
+            "comparison {comparison_id} is missing from the frontier"
+        ));
+    }
+    let mut serialized = Vec::new();
+    for entry in &entries {
+        serde_json::to_writer(&mut serialized, entry)
+            .map_err(|error| format!("cannot serialize frontier entry: {error}"))?;
+        serialized.push(b'\n');
+    }
+    atomic_write(&frontier_path, &serialized)
+}
+
+fn run_legacy(mut settings: Settings) -> Result<(), String> {
     let eval_dir = fs::canonicalize(&settings.args.eval_dir).map_err(|error| {
         format!(
             "cannot resolve {}: {error}",
@@ -894,8 +972,9 @@ fn run(mut settings: Settings) -> Result<(), String> {
             .map_err(|error| format!("cannot read current directory: {error}"))?
             .join(candidate_path)
     };
-    let candidate = fs::read_to_string(&candidate_path)
+    let submitted = fs::read_to_string(&candidate_path)
         .map_err(|error| format!("cannot read {}: {error}", candidate_path.display()))?;
+    let candidate = normalize_minimum_tier(&submitted)?;
     let rubric_path = eval_dir.join("rubric.md");
     let rubric = fs::read_to_string(&rubric_path)
         .map_err(|error| format!("cannot read {}: {error}", rubric_path.display()))?;
@@ -977,16 +1056,6 @@ fn run(mut settings: Settings) -> Result<(), String> {
     let id = candidate_id(&candidate);
     let tested_against = prompt_version(artifact_dir);
     let ts = timestamp();
-    let run_is_complete = results.values().all(|result| {
-        result
-            .nonholdout
-            .repeats
-            .values()
-            .chain(result.holdout.repeats.values())
-            .flatten()
-            .all(Option::is_some)
-    });
-    let is_accepted = settings.is_accepted && run_is_complete;
     let entries = results
         .into_iter()
         .map(|(tier, result)| {
@@ -1012,30 +1081,614 @@ fn run(mut settings: Settings) -> Result<(), String> {
                 scores_holdout: result.holdout.scores,
                 repeat_scores_nonholdout: result.nonholdout.repeats,
                 repeat_scores_holdout: result.holdout.repeats,
-                is_accepted,
+                is_accepted: false,
                 ts: ts.clone(),
+                comparison_id: String::new(),
+                incumbent_id: String::new(),
+                incumbent_model_ran: Vec::new(),
+                incumbent_scores_nonholdout: Vec::new(),
+                incumbent_scores_holdout: Vec::new(),
+                incumbent_repeat_scores_nonholdout: BTreeMap::new(),
+                incumbent_repeat_scores_holdout: BTreeMap::new(),
+                selected_minimum_tier: None,
+                decision: String::new(),
                 legacy: Map::new(),
             }
         })
         .collect();
     update_frontier(&eval_dir, &candidate, entries)?;
     eprintln!("candidate_id: {id}");
-    if settings.is_accepted && !run_is_complete {
-        return Err(
-            "candidate was not accepted because at least one repeat is ungraded".to_string(),
+    Ok(())
+}
+
+#[derive(Clone)]
+struct PairedArm {
+    text: String,
+    id: String,
+    repeats: usize,
+    results: BTreeMap<String, TierResult>,
+}
+#[derive(Clone, Copy)]
+struct Ratio {
+    n: i64,
+    d: i64,
+}
+impl Ratio {
+    fn cmp(self, other: Self) -> std::cmp::Ordering {
+        (i128::from(self.n) * i128::from(other.d)).cmp(&(i128::from(other.n) * i128::from(self.d)))
+    }
+
+    fn as_f64(self) -> f64 {
+        self.n as f64 / self.d as f64
+    }
+}
+struct Selection {
+    start: Option<usize>,
+    is_accepted: bool,
+    reason: &'static str,
+    candidate_nonholdout: Option<Ratio>,
+    incumbent_nonholdout: Option<Ratio>,
+    candidate_holdout: Option<Ratio>,
+    incumbent_holdout: Option<Ratio>,
+}
+
+fn trim_line_ending(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+fn normalize_minimum_tier(text: &str) -> Result<String, String> {
+    let mut lines: Vec<&str> = text.split_inclusive('\n').collect();
+    if lines
+        .first()
+        .is_none_or(|line| trim_line_ending(line) != "---")
+    {
+        return Err("frontmatter must start with ---".to_string());
+    }
+    let end = lines
+        .iter()
+        .skip(1)
+        .position(|line| trim_line_ending(line) == "---")
+        .map(|index| index + 1)
+        .ok_or_else(|| "frontmatter must end with ---".to_string())?;
+    let mut is_metadata = false;
+    let mut metadata_index = None;
+    let mut found = 0;
+    for (index, line) in lines.iter_mut().enumerate().take(end).skip(1) {
+        let value = trim_line_ending(line);
+        if !value.is_empty()
+            && !value.trim_start().starts_with('#')
+            && !value.starts_with(char::is_whitespace)
+        {
+            is_metadata = false;
+        }
+        if value == "metadata:" {
+            if metadata_index.is_some() {
+                return Err("frontmatter has duplicate metadata".to_string());
+            }
+            metadata_index = Some(index);
+            is_metadata = true;
+            continue;
+        }
+        if value.starts_with("metadata:") {
+            return Err("metadata must be a mapping".to_string());
+        }
+        if is_metadata
+            && value.trim_start().starts_with("minimum-tier:")
+            && !value.starts_with("  minimum-tier:")
+        {
+            return Err("metadata.minimum-tier must use two-space indentation".to_string());
+        }
+        if is_metadata && value.starts_with("  minimum-tier:") {
+            let floor = value
+                .strip_prefix("  minimum-tier:")
+                .expect("checked prefix")
+                .trim();
+            if floor.is_empty() || floor.contains('#') || floor.contains(": ") {
+                return Err("metadata.minimum-tier must be one unambiguous scalar".to_string());
+            }
+            *line = "";
+            found += 1;
+        }
+    }
+    if found > 1 {
+        return Err("frontmatter has duplicate metadata.minimum-tier".to_string());
+    }
+    if let Some(index) = metadata_index {
+        let block_end = (index + 1..end)
+            .find(|item| {
+                let value = trim_line_ending(lines[*item]);
+                !value.is_empty()
+                    && !value.trim_start().starts_with('#')
+                    && !value.starts_with(char::is_whitespace)
+            })
+            .unwrap_or(end);
+        if !lines[index + 1..block_end].iter().any(|line| {
+            let value = trim_line_ending(line).trim();
+            !value.is_empty() && !value.starts_with('#')
+        }) {
+            lines[index] = "";
+        }
+    }
+    Ok(lines.concat())
+}
+
+fn is_minimum_tier_declared(text: &str) -> bool {
+    let mut is_metadata = false;
+    for line in text.lines().skip(1) {
+        if line == "---" {
+            break;
+        }
+        if !line.is_empty()
+            && !line.trim_start().starts_with('#')
+            && !line.starts_with(char::is_whitespace)
+        {
+            is_metadata = line == "metadata:";
+            continue;
+        }
+        if is_metadata && line.starts_with("  minimum-tier:") {
+            return true;
+        }
+    }
+    false
+}
+
+fn set_minimum_tier(submitted: &str, tier: &str) -> Result<String, String> {
+    let expected = normalize_minimum_tier(submitted)?;
+    let mut lines: Vec<String> = submitted.split_inclusive('\n').map(str::to_owned).collect();
+    let end = lines
+        .iter()
+        .skip(1)
+        .position(|line| trim_line_ending(line) == "---")
+        .map(|index| index + 1)
+        .ok_or_else(|| "frontmatter must end with ---".to_string())?;
+    let newline = if submitted
+        .split_once('\n')
+        .is_some_and(|(first, _)| first.ends_with('\r'))
+    {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    if let Some(metadata) = (1..end).find(|index| trim_line_ending(&lines[*index]) == "metadata:") {
+        let block_end = (metadata + 1..end)
+            .find(|index| {
+                let value = trim_line_ending(&lines[*index]);
+                !value.is_empty()
+                    && !value.trim_start().starts_with('#')
+                    && !value.starts_with(char::is_whitespace)
+            })
+            .unwrap_or(end);
+        if let Some(floor) = (metadata + 1..block_end)
+            .find(|index| trim_line_ending(&lines[*index]).starts_with("  minimum-tier:"))
+        {
+            lines[floor] = format!("  minimum-tier: {tier}{newline}");
+        } else {
+            lines.insert(metadata + 1, format!("  minimum-tier: {tier}{newline}"));
+        }
+    } else {
+        lines.insert(end, format!("metadata:{newline}"));
+        lines.insert(end + 1, format!("  minimum-tier: {tier}{newline}"));
+    }
+    let result = lines.concat();
+    if normalize_minimum_tier(&result)? != expected {
+        return Err("setting metadata.minimum-tier changed normalized text".to_string());
+    }
+    Ok(result)
+}
+fn exact_mean(scores: &[Option<f64>]) -> Option<Ratio> {
+    if scores.is_empty() || scores.iter().any(Option::is_none) {
+        return None;
+    }
+    Some(Ratio {
+        n: scores
+            .iter()
+            .map(|score| (score.unwrap() * 2.0).round() as i64)
+            .sum(),
+        d: 2 * i64::try_from(scores.len()).ok()?,
+    })
+}
+fn suffix_mean(arm: &PairedArm, tiers: &[String], start: usize, is_holdout: bool) -> Option<Ratio> {
+    let values: Option<Vec<Ratio>> = tiers[start..]
+        .iter()
+        .map(|tier| {
+            exact_mean(if is_holdout {
+                &arm.results.get(tier)?.holdout.scores
+            } else {
+                &arm.results.get(tier)?.nonholdout.scores
+            })
+        })
+        .collect();
+    let values = values?;
+    let denominator = values.iter().fold(1_i64, |value, item| value * item.d);
+    Some(Ratio {
+        n: values
+            .iter()
+            .map(|item| item.n * (denominator / item.d))
+            .sum::<i64>(),
+        d: denominator * i64::try_from(values.len()).ok()?,
+    })
+}
+fn is_complete_slice(slice: &SliceResult, cases: &[&Case], expected_repeats: usize) -> bool {
+    slice.scores.len() == cases.len()
+        && slice.scores.iter().all(Option::is_some)
+        && cases.iter().all(|case| {
+            slice.repeats.get(&case.id).is_some_and(|repeats| {
+                repeats.len() == expected_repeats && repeats.iter().all(Option::is_some)
+            })
+        })
+}
+fn is_new_zero_present(
+    candidate: &PairedArm,
+    incumbent: &PairedArm,
+    tiers: &[String],
+    start: usize,
+) -> bool {
+    tiers[start..].iter().any(|tier| {
+        [
+            (
+                &candidate.results[tier].nonholdout,
+                &incumbent.results[tier].nonholdout,
+            ),
+            (
+                &candidate.results[tier].holdout,
+                &incumbent.results[tier].holdout,
+            ),
+        ]
+        .into_iter()
+        .any(|(candidate, incumbent)| {
+            candidate
+                .scores
+                .iter()
+                .zip(&incumbent.scores)
+                .any(|(candidate, incumbent)| candidate == &Some(0.0) && incumbent != &Some(0.0))
+        })
+    })
+}
+fn select_suffix(
+    candidate: &PairedArm,
+    incumbent: &PairedArm,
+    tiers: &[String],
+    nonholdout: &[&Case],
+    holdout: &[&Case],
+) -> Selection {
+    let mut selected = None;
+    for start in 0..tiers.len() {
+        if let (Some(score), Some(_)) = (
+            suffix_mean(candidate, tiers, start, false),
+            suffix_mean(incumbent, tiers, start, false),
+        ) && selected.is_none_or(|(_, best): (usize, Ratio)| score.cmp(best).is_gt())
+        {
+            selected = Some((start, score));
+        }
+    }
+    let Some((start, candidate_nonholdout)) = selected else {
+        return Selection {
+            start: None,
+            is_accepted: false,
+            reason: "incomplete",
+            candidate_nonholdout: None,
+            incumbent_nonholdout: None,
+            candidate_holdout: None,
+            incumbent_holdout: None,
+        };
+    };
+    let incumbent_nonholdout = suffix_mean(incumbent, tiers, start, false);
+    let candidate_holdout = suffix_mean(candidate, tiers, start, true);
+    let incumbent_holdout = suffix_mean(incumbent, tiers, start, true);
+    let is_complete = tiers[start..].iter().all(|tier| {
+        is_complete_slice(
+            &candidate.results[tier].nonholdout,
+            nonholdout,
+            candidate.repeats,
+        ) && is_complete_slice(&candidate.results[tier].holdout, holdout, candidate.repeats)
+            && is_complete_slice(
+                &incumbent.results[tier].nonholdout,
+                nonholdout,
+                incumbent.repeats,
+            )
+            && is_complete_slice(&incumbent.results[tier].holdout, holdout, incumbent.repeats)
+    });
+    let reason = if !is_complete {
+        "incomplete"
+    } else if is_new_zero_present(candidate, incumbent, tiers, start) {
+        "new_catastrophic_score"
+    } else if !candidate_nonholdout
+        .cmp(incumbent_nonholdout.expect("complete suffix has incumbent scores"))
+        .is_gt()
+    {
+        "nonholdout_not_strictly_better"
+    } else if !candidate_holdout
+        .expect("complete suffix has candidate holdout scores")
+        .cmp(incumbent_holdout.expect("complete suffix has incumbent holdout scores"))
+        .is_gt()
+    {
+        "holdout_not_strictly_better"
+    } else {
+        "accepted"
+    };
+    Selection {
+        start: Some(start),
+        is_accepted: reason == "accepted",
+        reason,
+        candidate_nonholdout: Some(candidate_nonholdout),
+        incumbent_nonholdout,
+        candidate_holdout,
+        incumbent_holdout,
+    }
+}
+fn evaluate_paired_arm(
+    context: &EvalContext<'_>,
+    tiers: &[String],
+    nonholdout: &[&Case],
+    holdout: &[&Case],
+) -> Result<PairedArm, String> {
+    let mut results = BTreeMap::new();
+    for (index, tier) in tiers.iter().enumerate() {
+        let judge_tier = tiers.get(index + 1).unwrap_or(tier);
+        results.insert(
+            tier.clone(),
+            TierResult {
+                nonholdout: run_slice(context, tier, judge_tier, nonholdout, "nonholdout")?,
+                holdout: run_slice(context, tier, judge_tier, holdout, "holdout")?,
+            },
         );
     }
-    Ok(())
+    Ok(PairedArm {
+        text: context.candidate.to_string(),
+        id: candidate_id(context.candidate),
+        repeats: context.settings.repeats,
+        results,
+    })
+}
+fn paired_entries(
+    candidate: &PairedArm,
+    incumbent: &PairedArm,
+    tiers: &[String],
+    selection: &Selection,
+    tested_against: &str,
+) -> Vec<FrontierEntry> {
+    let comparison_id = format!("{}-{}", candidate.id, now_nanos());
+    let ts = timestamp();
+    tiers
+        .iter()
+        .enumerate()
+        .map(|(index, tier)| {
+            let result = &candidate.results[tier];
+            let current = &incumbent.results[tier];
+            FrontierEntry {
+                candidate_id: candidate.id.clone(),
+                tested_against: tested_against.to_string(),
+                tier: tier.clone(),
+                judge_tier: tiers.get(index + 1).unwrap_or(tier).clone(),
+                model_ran: result
+                    .nonholdout
+                    .models
+                    .union(&result.holdout.models)
+                    .cloned()
+                    .collect(),
+                scores_nonholdout: result.nonholdout.scores.clone(),
+                scores_holdout: result.holdout.scores.clone(),
+                repeat_scores_nonholdout: result.nonholdout.repeats.clone(),
+                repeat_scores_holdout: result.holdout.repeats.clone(),
+                mean_nonholdout: mean(&result.nonholdout.scores),
+                is_accepted: false,
+                ts: ts.clone(),
+                comparison_id: comparison_id.clone(),
+                incumbent_id: incumbent.id.clone(),
+                incumbent_model_ran: current
+                    .nonholdout
+                    .models
+                    .union(&current.holdout.models)
+                    .cloned()
+                    .collect(),
+                incumbent_scores_nonholdout: current.nonholdout.scores.clone(),
+                incumbent_scores_holdout: current.holdout.scores.clone(),
+                incumbent_repeat_scores_nonholdout: current.nonholdout.repeats.clone(),
+                incumbent_repeat_scores_holdout: current.holdout.repeats.clone(),
+                selected_minimum_tier: selection.start.map(|start| tiers[start].clone()),
+                decision: if selection.start.is_some_and(|start| index < start) {
+                    "excluded_below_floor".to_string()
+                } else {
+                    selection.reason.to_string()
+                },
+                legacy: Map::new(),
+            }
+        })
+        .collect()
+}
+fn run(mut settings: Settings) -> Result<i32, String> {
+    if settings.args.candidate.is_none()
+        || settings.args.is_holdout_only
+        || settings.args.tier.is_some()
+    {
+        run_legacy(settings)?;
+        return Ok(0);
+    }
+    let eval_dir = fs::canonicalize(&settings.args.eval_dir).map_err(|error| {
+        format!(
+            "cannot resolve {}: {error}",
+            settings.args.eval_dir.display()
+        )
+    })?;
+    settings.cases_file = fs::canonicalize(&settings.cases_file)
+        .map_err(|error| format!("cannot resolve {}: {error}", settings.cases_file.display()))?;
+    let candidate_path = candidate_path(&settings.args);
+    let candidate_path = if candidate_path.is_absolute() {
+        candidate_path
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("cannot read current directory: {error}"))?
+            .join(candidate_path)
+    };
+    let submitted = fs::read_to_string(&candidate_path)
+        .map_err(|error| format!("cannot read {}: {error}", candidate_path.display()))?;
+    run_preflight(&eval_dir, &candidate_path, &settings.cases_file)?;
+    let artifact_path = eval_dir.join("../SKILL.md");
+    let live = fs::read_to_string(&artifact_path)
+        .map_err(|error| format!("cannot read {}: {error}", artifact_path.display()))?;
+    let candidate = normalize_minimum_tier(&submitted)?;
+    let incumbent = normalize_minimum_tier(&live)?;
+    let is_floor_declared = is_minimum_tier_declared(&submitted);
+    let cases = load_cases(&settings.cases_file)?;
+    let mut case_ids = BTreeSet::new();
+    for case in &cases {
+        if !case_ids.insert(&case.id) {
+            return Err(format!(
+                "{} has duplicate case id {}",
+                settings.cases_file.display(),
+                case.id
+            ));
+        }
+    }
+    if !cases.iter().any(|case| !case.is_holdout) {
+        return Err(format!(
+            "{} has no non-holdout cases",
+            settings.cases_file.display()
+        ));
+    }
+    if !cases.iter().any(|case| case.is_holdout) {
+        return Err(format!(
+            "{} has no holdout cases",
+            settings.cases_file.display()
+        ));
+    }
+    let nonholdout: Vec<&Case> = cases.iter().filter(|case| !case.is_holdout).collect();
+    let holdout: Vec<&Case> = cases.iter().filter(|case| case.is_holdout).collect();
+    if nonholdout.is_empty() || holdout.is_empty() {
+        return Err("cases require non-holdout and holdout slices".to_string());
+    }
+    let tiers = load_tiers(&settings.tiers_file)?;
+    if settings.args.is_accept_if_winning && is_floor_declared {
+        for tier in &tiers {
+            set_minimum_tier(&submitted, tier)?;
+        }
+    }
+    let rubric = fs::read_to_string(eval_dir.join("rubric.md"))
+        .map_err(|error| format!("cannot read rubric.md: {error}"))?;
+    let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
+    let wrapper = write_wrapper(&temp, &settings.auth_extension)?;
+    let artifact_dir = eval_dir
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", eval_dir.display()))?;
+    let incumbent_context = EvalContext {
+        settings: &settings,
+        wrapper: &wrapper,
+        temp: &temp,
+        candidate: &incumbent,
+        rubric: &rubric,
+        eval_dir: &eval_dir,
+        artifact_dir,
+    };
+    let candidate_context = EvalContext {
+        settings: &settings,
+        wrapper: &wrapper,
+        temp: &temp,
+        candidate: &candidate,
+        rubric: &rubric,
+        eval_dir: &eval_dir,
+        artifact_dir,
+    };
+    let incumbent = evaluate_paired_arm(&incumbent_context, &tiers, &nonholdout, &holdout)?;
+    let candidate = evaluate_paired_arm(&candidate_context, &tiers, &nonholdout, &holdout)?;
+    let selection = select_suffix(&candidate, &incumbent, &tiers, &nonholdout, &holdout);
+    let tested_against = prompt_version(artifact_dir);
+    let mut evidence = paired_entries(&candidate, &incumbent, &tiers, &selection, &tested_against);
+    if settings.args.is_accept_if_winning && selection.is_accepted {
+        let _lock = FrontierLock::acquire(&eval_dir)?;
+        let locked_live = fs::read_to_string(&artifact_path)
+            .map_err(|error| format!("cannot read {}: {error}", artifact_path.display()))?;
+        if normalize_minimum_tier(&locked_live)? != incumbent.text {
+            for entry in &mut evidence {
+                entry.decision = "stale_incumbent".to_string();
+            }
+            update_frontier_locked(&eval_dir, &candidate.text, evidence)?;
+            return Err("live incumbent changed during comparison".to_string());
+        }
+        let selected = selection.start.expect("accepted selection has a suffix");
+        let selected_tiers: BTreeSet<String> = tiers[selected..].iter().cloned().collect();
+        let comparison_id = evidence
+            .first()
+            .expect("configured tiers produce evidence")
+            .comparison_id
+            .clone();
+        let winner = if is_floor_declared {
+            set_minimum_tier(&submitted, &tiers[selected])?
+        } else {
+            submitted.clone()
+        };
+        for entry in &mut evidence {
+            if selected_tiers.contains(&entry.tier) {
+                entry.decision = "pending_acceptance".to_string();
+            }
+        }
+        update_frontier_locked(&eval_dir, &candidate.text, evidence)?;
+        if let Err(write_error) = atomic_write(&artifact_path, winner.as_bytes()) {
+            let evidence_result = update_comparison_locked(
+                &eval_dir,
+                &comparison_id,
+                &selected_tiers,
+                false,
+                "live_write_failed",
+            );
+            return match evidence_result {
+                Ok(()) => Err(format!(
+                    "cannot write live definition; preserved frontier evidence: {write_error}"
+                )),
+                Err(frontier_error) => Err(format!(
+                    "cannot write live definition ({write_error}); cannot update frontier evidence ({frontier_error})"
+                )),
+            };
+        }
+        if let Err(frontier_error) =
+            update_comparison_locked(&eval_dir, &comparison_id, &selected_tiers, true, "accepted")
+        {
+            return match atomic_write(&artifact_path, locked_live.as_bytes()) {
+                Ok(()) => Err(format!(
+                    "frontier acceptance failed; restored live definition: {frontier_error}"
+                )),
+                Err(rollback_error) => Err(format!(
+                    "frontier acceptance failed ({frontier_error}); live rollback failed ({rollback_error})"
+                )),
+            };
+        }
+    } else {
+        if selection.is_accepted {
+            for entry in &mut evidence {
+                if entry.decision == "accepted" {
+                    entry.decision = "would_accept".to_string();
+                }
+            }
+        }
+        update_frontier(&eval_dir, &candidate.text, evidence)?;
+    }
+    let selected_minimum_tier = selection.start.map(|start| tiers[start].clone());
+    let decision = if selection.is_accepted && !settings.args.is_accept_if_winning {
+        "would_accept"
+    } else {
+        selection.reason
+    };
+    println!(
+        "{}",
+        json!({"type":"decision","candidate_id":candidate.id,"incumbent_id":incumbent.id,"selected_minimum_tier":selected_minimum_tier,"decision":decision,"candidate_nonholdout":selection.candidate_nonholdout.map(Ratio::as_f64),"incumbent_nonholdout":selection.incumbent_nonholdout.map(Ratio::as_f64),"candidate_holdout":selection.candidate_holdout.map(Ratio::as_f64),"incumbent_holdout":selection.incumbent_holdout.map(Ratio::as_f64)})
+    );
+    if selection.reason == "incomplete" {
+        Ok(2)
+    } else if settings.args.is_accept_if_winning && !selection.is_accepted {
+        Ok(1)
+    } else {
+        Ok(0)
+    }
 }
 
 fn main() -> ExitCode {
     let raw: Vec<OsString> = env::args_os().skip(1).collect();
-    let result = parse_args(&raw).and_then(settings).and_then(run);
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
+    match parse_args(&raw).and_then(settings).and_then(run) {
+        Ok(0) => ExitCode::SUCCESS,
+        Ok(1) => ExitCode::from(1),
+        Ok(_) => ExitCode::from(2),
         Err(error) => {
             eprintln!("skill-eval: {error}");
-            ExitCode::FAILURE
+            ExitCode::from(2)
         }
     }
 }
@@ -1082,6 +1735,7 @@ mod tests {
             is_holdout_only: false,
             tier: None,
             candidate: None,
+            is_accept_if_winning: false,
         };
         (
             temp,
@@ -1091,7 +1745,6 @@ mod tests {
                 cases_file: eval_dir.join("cases.jsonl"),
                 tiers_file,
                 tier_dispatch_bin: dispatch,
-                is_accepted: false,
                 auth_extension: extension,
             },
             eval_dir,
@@ -1125,8 +1778,7 @@ fi
 
     #[test]
     fn minimum_tier_does_not_limit_the_exhaustive_sweep() {
-        let (temp, mut settings, eval_dir) = fixture("exhaustive", FAKE);
-        settings.is_accepted = true;
+        let (temp, settings, eval_dir) = fixture("exhaustive", FAKE);
         run(settings).unwrap();
         let calls = fs::read_to_string(temp.path.join("calls")).unwrap();
         assert_eq!(
@@ -1161,7 +1813,7 @@ fi
         assert_eq!(entries[2].judge_tier, "T3");
         assert_eq!(entries[1].repeat_scores_nonholdout["n1"], vec![Some(8); 3]);
         assert_eq!(entries[1].model_ran, vec!["actual-T2"]);
-        assert!(entries.iter().all(|entry| entry.is_accepted));
+        assert!(entries.iter().all(|entry| !entry.is_accepted));
         let wrapper_path = calls.lines().next().unwrap().split('\t').nth(3).unwrap();
         let wrapper_error = fs::read_to_string(wrapper_path).unwrap_err();
         assert_eq!(wrapper_error.kind(), io::ErrorKind::NotFound);
@@ -1228,7 +1880,7 @@ fi
             .unwrap();
         assert!(!Path::new(prompt_path).exists());
         let prompts = fs::read_to_string(temp.path.join("calls.prompts")).unwrap();
-        assert!(prompts.contains("minimum-tier: T3"));
+        assert!(!prompts.contains("minimum-tier: T3"));
         assert!(prompts.contains("candidate text"));
         assert!(prompts.contains("--- context.txt ---\nfile sentinel"));
     }
@@ -1327,9 +1979,7 @@ fi
         let (_temp, mut settings, eval_dir) = fixture("late-judge-exhaustion", fake);
         fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{},"T2":{}}}"#).unwrap();
         settings.repeats = 3;
-        settings.is_accepted = true;
-        let error = run(settings).unwrap_err();
-        assert!(error.contains("at least one repeat is ungraded"));
+        run(settings).unwrap();
         let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
         let tier_one = entries.iter().find(|entry| entry.tier == "T1").unwrap();
         assert_eq!(
@@ -1508,6 +2158,15 @@ print output-without-attribution
             mean_nonholdout: Some(score),
             is_accepted: false,
             ts: id.to_string(),
+            comparison_id: String::new(),
+            incumbent_id: String::new(),
+            incumbent_model_ran: Vec::new(),
+            incumbent_scores_nonholdout: Vec::new(),
+            incumbent_scores_holdout: Vec::new(),
+            incumbent_repeat_scores_nonholdout: BTreeMap::new(),
+            incumbent_repeat_scores_holdout: BTreeMap::new(),
+            selected_minimum_tier: None,
+            decision: String::new(),
             legacy: Map::new(),
         }
     }
@@ -1613,5 +2272,458 @@ print output-without-attribution
         accepted_outside_cap.extend((100..110).map(|id| entry(id, "T5", 1.0)));
         prune(&mut accepted_outside_cap);
         assert_eq!(accepted_outside_cap.len(), 25);
+    }
+    #[test]
+    fn normalizer_removes_only_metadata_floor() {
+        let text = "---\nmetadata:\n  minimum-tier: T4\n  short: x\nother:\n  minimum-tier: keep\n---\nbody\n";
+        assert!(
+            normalize_minimum_tier(text)
+                .unwrap()
+                .contains("minimum-tier: keep")
+        );
+        assert!(
+            !normalize_minimum_tier(text)
+                .unwrap()
+                .contains("minimum-tier: T4")
+        );
+    }
+
+    #[test]
+    fn normalizer_rejects_ambiguous_floor() {
+        assert!(
+            normalize_minimum_tier("---\nmetadata:\n  minimum-tier: T3 # old\n---\nx").is_err()
+        );
+    }
+
+    #[test]
+    fn floor_insertion_preserves_frontmatter() {
+        let text = "---\nname: x\nmetadata:\n  minimum-tier: T4\n  short: x\n---\nbody\n";
+        assert_eq!(
+            set_minimum_tier(text, "T2").unwrap(),
+            "---\nname: x\nmetadata:\n  minimum-tier: T2\n  short: x\n---\nbody\n"
+        );
+        assert_eq!(
+            set_minimum_tier("---\nname: x\n---\nbody\n", "T2").unwrap(),
+            "---\nname: x\nmetadata:\n  minimum-tier: T2\n---\nbody\n"
+        );
+        assert_eq!(
+            set_minimum_tier("---\nname: x\nmetadata:\n---\nbody\n", "T2").unwrap(),
+            "---\nname: x\nmetadata:\n  minimum-tier: T2\n---\nbody\n"
+        );
+        assert_eq!(
+            set_minimum_tier("---\nname: x\nmetadata:\n# note\n---\nbody\n", "T2").unwrap(),
+            "---\nname: x\nmetadata:\n  minimum-tier: T2\n# note\n---\nbody\n"
+        );
+    }
+
+    #[test]
+    fn exact_ratio_comparison_avoids_display_rounding() {
+        assert!(Ratio { n: 1601, d: 200 }.cmp(Ratio { n: 8, d: 1 }).is_gt());
+    }
+
+    #[test]
+    fn paired_entry_carries_incumbent_identity() {
+        let mut entry = entry(1, "T1", 8.0);
+        entry.comparison_id = "paired".to_string();
+        entry.incumbent_id = "incumbent".to_string();
+        assert_eq!(entry.comparison_id, "paired");
+        assert_eq!(entry.incumbent_id, "incumbent");
+    }
+
+    #[test]
+    fn selected_floor_is_not_part_of_identity() {
+        let low =
+            normalize_minimum_tier("---\nmetadata:\n  minimum-tier: T1\n---\nbody\n").unwrap();
+        let high =
+            normalize_minimum_tier("---\nmetadata:\n  minimum-tier: T5\n---\nbody\n").unwrap();
+        assert_eq!(candidate_id(&low), candidate_id(&high));
+    }
+
+    #[test]
+    fn empty_floor_is_an_error_and_crlf_is_supported() {
+        assert!(normalize_minimum_tier("---\nmetadata:\n  minimum-tier:\n---\nbody\n").is_err());
+        assert_eq!(
+            normalize_minimum_tier("---\r\nmetadata:\r\n  minimum-tier: T4\r\n---\r\nbody\r\n")
+                .unwrap(),
+            "---\r\n---\r\nbody\r\n"
+        );
+        assert!(
+            normalize_minimum_tier("---\nmetadata:\n    minimum-tier: T4\n---\nbody\n").is_err()
+        );
+        assert!(normalize_minimum_tier("---\nmetadata:\n\tminimum-tier: T4\n---\nbody\n").is_err());
+        assert_eq!(
+            normalize_minimum_tier(
+                "---\nmetadata:\n  minimum-tier: T4\nother:\n  sub: y\n---\nbody\n"
+            )
+            .unwrap(),
+            "---\nother:\n  sub: y\n---\nbody\n"
+        );
+        let commented = "---\nname: x\nmetadata:\n# note\n\n  minimum-tier: T4\n---\nbody\n";
+        assert_eq!(
+            normalize_minimum_tier(commented).unwrap(),
+            "---\nname: x\n# note\n\n---\nbody\n"
+        );
+        assert_eq!(
+            set_minimum_tier(commented, "T2").unwrap(),
+            "---\nname: x\nmetadata:\n# note\n\n  minimum-tier: T2\n---\nbody\n"
+        );
+    }
+
+    #[test]
+    fn acceptance_flag_requires_a_full_candidate_run() {
+        let base = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--accept-if-winning"),
+        ];
+        assert!(parse_args(&base).is_err());
+
+        let with_holdout = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--accept-if-winning"),
+            OsString::from("--holdout"),
+            OsString::from("candidate.md"),
+        ];
+        assert!(parse_args(&with_holdout).is_err());
+
+        let with_tier = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--accept-if-winning"),
+            OsString::from("--tier"),
+            OsString::from("T3"),
+            OsString::from("candidate.md"),
+        ];
+        assert!(parse_args(&with_tier).is_err());
+    }
+
+    fn scored_slice(case_id: &str, score: Option<f64>) -> SliceResult {
+        SliceResult {
+            scores: vec![score],
+            repeats: BTreeMap::from([(case_id.to_string(), vec![score.map(|value| value as u8)])]),
+            models: BTreeSet::new(),
+        }
+    }
+
+    fn scored_arm(id: &str, tiers: &[String], values: &[(Option<f64>, Option<f64>)]) -> PairedArm {
+        PairedArm {
+            text: id.to_string(),
+            id: id.to_string(),
+            repeats: 1,
+            results: tiers
+                .iter()
+                .zip(values)
+                .map(|(tier, (nonholdout, holdout))| {
+                    (
+                        tier.clone(),
+                        TierResult {
+                            nonholdout: scored_slice("n", *nonholdout),
+                            holdout: scored_slice("h", *holdout),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn selection_cases() -> (Case, Case) {
+        (
+            Case {
+                id: "n".to_string(),
+                input: Value::Null,
+                expect: String::new(),
+                is_holdout: false,
+                files: Vec::new(),
+            },
+            Case {
+                id: "h".to_string(),
+                input: Value::Null,
+                expect: String::new(),
+                is_holdout: true,
+                files: Vec::new(),
+            },
+        )
+    }
+
+    #[test]
+    fn suffix_selection_uses_absolute_score_and_widest_exact_tie() {
+        let tiers = ["T1", "T2", "T3"].map(str::to_string);
+        let candidate = scored_arm(
+            "candidate",
+            &tiers,
+            &[
+                (Some(8.0), Some(9.0)),
+                (Some(9.0), Some(9.0)),
+                (Some(9.0), Some(9.0)),
+            ],
+        );
+        let incumbent = scored_arm(
+            "incumbent",
+            &tiers,
+            &[
+                (Some(7.0), Some(7.0)),
+                (Some(7.0), Some(7.0)),
+                (Some(7.0), Some(7.0)),
+            ],
+        );
+        let (nonholdout, holdout) = selection_cases();
+        let selection = select_suffix(&candidate, &incumbent, &tiers, &[&nonholdout], &[&holdout]);
+        assert_eq!(selection.start, Some(1));
+        assert!(selection.is_accepted);
+    }
+
+    #[test]
+    fn selected_suffix_failure_does_not_fall_back() {
+        let tiers = ["T1", "T2", "T3"].map(str::to_string);
+        let candidate = scored_arm(
+            "candidate",
+            &tiers,
+            &[
+                (Some(7.0), Some(9.0)),
+                (Some(8.0), Some(9.0)),
+                (Some(10.0), Some(5.0)),
+            ],
+        );
+        let incumbent = scored_arm(
+            "incumbent",
+            &tiers,
+            &[
+                (Some(6.0), Some(6.0)),
+                (Some(6.0), Some(6.0)),
+                (Some(6.0), Some(6.0)),
+            ],
+        );
+        let (nonholdout, holdout) = selection_cases();
+        let selection = select_suffix(&candidate, &incumbent, &tiers, &[&nonholdout], &[&holdout]);
+        assert_eq!(selection.start, Some(2));
+        assert_eq!(selection.reason, "holdout_not_strictly_better");
+        assert!(!selection.is_accepted);
+    }
+
+    #[test]
+    fn incomplete_lower_tier_does_not_block_selected_suffix() {
+        let tiers = ["T1", "T2", "T3"].map(str::to_string);
+        let candidate = scored_arm(
+            "candidate",
+            &tiers,
+            &[
+                (Some(10.0), Some(10.0)),
+                (Some(9.0), Some(9.0)),
+                (Some(9.0), Some(9.0)),
+            ],
+        );
+        let incumbent = scored_arm(
+            "incumbent",
+            &tiers,
+            &[(None, None), (Some(7.0), Some(7.0)), (Some(7.0), Some(7.0))],
+        );
+        let (nonholdout, holdout) = selection_cases();
+        let selection = select_suffix(&candidate, &incumbent, &tiers, &[&nonholdout], &[&holdout]);
+        assert_eq!(selection.start, Some(1));
+        assert!(selection.is_accepted);
+
+        let temp = test_temp("selected-tier-acceptance");
+        let eval_dir = temp.path.join("evals");
+        fs::create_dir_all(&eval_dir).unwrap();
+        let evidence = paired_entries(&candidate, &incumbent, &tiers, &selection, "base");
+        let comparison_id = evidence[0].comparison_id.clone();
+        update_frontier(&eval_dir, &candidate.text, evidence).unwrap();
+        let selected_tiers = BTreeSet::from(["T2".to_string(), "T3".to_string()]);
+        let _lock = FrontierLock::acquire(&eval_dir).unwrap();
+        update_comparison_locked(&eval_dir, &comparison_id, &selected_tiers, true, "accepted")
+            .unwrap();
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert!(
+            !entries
+                .iter()
+                .find(|entry| entry.tier == "T1")
+                .unwrap()
+                .is_accepted
+        );
+        assert!(
+            entries
+                .iter()
+                .filter(|entry| entry.tier != "T1")
+                .all(|entry| entry.is_accepted)
+        );
+        let accepted_comparisons = BTreeSet::from([comparison_id]);
+        let excluded = entries.iter().find(|entry| entry.tier == "T1").unwrap();
+        assert!(!is_prunable(excluded, &accepted_comparisons));
+
+        let mut truncated = candidate.clone();
+        truncated
+            .results
+            .get_mut("T2")
+            .unwrap()
+            .nonholdout
+            .repeats
+            .get_mut("n")
+            .unwrap()
+            .clear();
+        let selection = select_suffix(&truncated, &incumbent, &tiers, &[&nonholdout], &[&holdout]);
+        assert_eq!(selection.start, Some(1));
+        assert_eq!(selection.reason, "incomplete");
+
+        let unscored = scored_arm(
+            "unscored",
+            &tiers,
+            &[(None, None), (None, None), (None, None)],
+        );
+        let selection = select_suffix(&unscored, &incumbent, &tiers, &[&nonholdout], &[&holdout]);
+        assert_eq!(selection.start, None);
+        assert_eq!(selection.reason, "incomplete");
+    }
+
+    const PAIRED_FAKE: &str = r#"#!/bin/zsh
+set -eu
+while (( $# )); do
+  case "$1" in
+    --tier) tier=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    --system-prompt-file) prompt=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  if [[ "$input" == *winning-output* ]]; then score=9; else score=7; fi
+  print "{\"score\":$score,\"failure_mode\":null}"
+  print -u2 'model_ran: judge-model'
+else
+  if [[ "$(<"$prompt")" == *'winning candidate'* ]]; then
+    print winning-output
+  else
+    print incumbent-output
+  fi
+  print -u2 "model_ran: actual-$tier"
+fi
+"#;
+
+    fn paired_fixture(name: &str, fake: &str) -> (TempDir, Settings, PathBuf, PathBuf) {
+        let (temp, mut settings, eval_dir) = fixture(name, fake);
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{}}}"#).unwrap();
+        settings.repeats = 1;
+        let candidate = temp.path.join("candidate.md");
+        fs::write(
+            &candidate,
+            "---\nname: candidate\nmetadata:\n  minimum-tier: T4\n---\nwinning candidate\n",
+        )
+        .unwrap();
+        settings.args.candidate = Some(candidate.clone());
+        (temp, settings, eval_dir, candidate)
+    }
+
+    #[test]
+    fn dry_winner_stays_unaccepted_and_apply_inserts_floor() {
+        let (_temp, settings, eval_dir, _candidate) = paired_fixture("paired-dry", PAIRED_FAKE);
+        assert_eq!(run(settings).unwrap(), 0);
+        let live = fs::read_to_string(eval_dir.join("../SKILL.md")).unwrap();
+        assert!(live.contains("candidate text"));
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert!(entries.iter().all(|entry| !entry.is_accepted));
+        assert!(entries.iter().all(|entry| entry.decision == "would_accept"));
+
+        let (_temp, mut settings, eval_dir, _candidate) =
+            paired_fixture("paired-accept", PAIRED_FAKE);
+        settings.args.is_accept_if_winning = true;
+        assert_eq!(run(settings).unwrap(), 0);
+        let live = fs::read_to_string(eval_dir.join("../SKILL.md")).unwrap();
+        assert!(live.contains("metadata:\n  minimum-tier: T1\n"));
+        assert!(live.contains("winning candidate"));
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert!(entries.iter().all(|entry| entry.is_accepted));
+
+        let (_temp, mut settings, eval_dir, candidate) =
+            paired_fixture("paired-floorless", PAIRED_FAKE);
+        fs::write(
+            eval_dir.join("../SKILL.md"),
+            "---\nname: incumbent\n---\nincumbent body\n",
+        )
+        .unwrap();
+        fs::write(&candidate, "---\nname: candidate\n---\nwinning candidate\n").unwrap();
+        settings.args.is_accept_if_winning = true;
+        assert_eq!(run(settings).unwrap(), 0);
+        let live = fs::read_to_string(eval_dir.join("../SKILL.md")).unwrap();
+        assert!(!live.contains("minimum-tier"));
+        assert!(live.contains("winning candidate"));
+
+        let (_temp, mut settings, eval_dir, candidate) =
+            paired_fixture("paired-floor-removal", PAIRED_FAKE);
+        fs::write(&candidate, "---\nname: candidate\n---\nwinning candidate\n").unwrap();
+        settings.args.is_accept_if_winning = true;
+        assert_eq!(run(settings).unwrap(), 0);
+        let live = fs::read_to_string(eval_dir.join("../SKILL.md")).unwrap();
+        assert!(!live.contains("minimum-tier"));
+    }
+
+    #[test]
+    fn live_write_failure_preserves_unaccepted_evidence() {
+        let (_temp, mut settings, eval_dir, _candidate) =
+            paired_fixture("live-write-failure", PAIRED_FAKE);
+        settings.args.is_accept_if_winning = true;
+        let artifact_dir = eval_dir.parent().unwrap();
+        let original_mode = fs::metadata(artifact_dir).unwrap().permissions().mode();
+        let mut permissions = fs::metadata(artifact_dir).unwrap().permissions();
+        permissions.set_mode(0o500);
+        fs::set_permissions(artifact_dir, permissions).unwrap();
+        let error = run(settings).unwrap_err();
+        let mut permissions = fs::metadata(artifact_dir).unwrap().permissions();
+        permissions.set_mode(original_mode);
+        fs::set_permissions(artifact_dir, permissions).unwrap();
+        assert!(error.contains("preserved frontier evidence"));
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert!(entries.iter().all(|entry| !entry.is_accepted));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.decision == "live_write_failed")
+        );
+    }
+
+    #[test]
+    fn stale_incumbent_preserves_unaccepted_evidence() {
+        let fake = r#"#!/bin/zsh
+set -eu
+while (( $# )); do
+  case "$1" in
+    --tier) tier=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    --system-prompt-file) prompt=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  if [[ "$input" == *winning-output* ]]; then score=9; else score=7; fi
+  print "{\"score\":$score,\"failure_mode\":null}"
+  print -u2 'model_ran: judge-model'
+else
+  if [[ "$(<"$prompt")" == *'winning candidate'* ]]; then
+    print '\nchanged during evaluation' >> "${0:h}/artifact/SKILL.md"
+    print winning-output
+  else
+    print incumbent-output
+  fi
+  print -u2 "model_ran: actual-$tier"
+fi
+"#;
+        let (_temp, mut settings, eval_dir, _candidate) = paired_fixture("stale-incumbent", fake);
+        settings.args.is_accept_if_winning = true;
+        let error = run(settings).unwrap_err();
+        assert!(error.contains("live incumbent changed"));
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert!(entries.iter().all(|entry| !entry.is_accepted));
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.decision == "stale_incumbent")
+        );
+    }
+
+    #[test]
+    fn legacy_duplicate_pruning_removes_only_one_row() {
+        let mut entries: Vec<FrontierEntry> = (0..21).map(|id| entry(id, "T1", 5.0)).collect();
+        entries[1].candidate_id = entries[0].candidate_id.clone();
+        prune(&mut entries);
+        assert_eq!(entries.len(), 20);
     }
 }

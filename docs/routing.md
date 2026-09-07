@@ -192,8 +192,9 @@ run on nearly every reply. A floor on any of them would floor the whole session,
 one task. `ste-check` already grades their output, which is the cheap catch
 that makes the floor unnecessary.
 
-Every floor is a hypothesis. They rest on judgment today, and the bottom-up sweep in
-AGNT-0018 is what can prove one wrong.
+Every floor is a hypothesis. Judgment supplies the initial floor. A complete shared-harness
+comparison can replace it with the first tier in the highest-scoring contiguous suffix. The
+selector does not trade score for cost. It chooses the widest suffix only on an exact score tie.
 
 ## what T1 cost, measured
 
