@@ -2156,7 +2156,7 @@ fn paired_record_values(
     nonholdout: &[&Case],
     holdout: &[&Case],
     completed: &BTreeMap<String, UnitResult>,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, String> {
     let mut records = Vec::new();
     for (index, tier) in tiers.iter().enumerate() {
         let judge_tier = tiers.get(index + 1).unwrap_or(tier);
@@ -2165,20 +2165,18 @@ fn paired_record_values(
             ("holdout", holdout, &paired.results[tier].holdout),
         ] {
             for (case, median_score) in cases.iter().zip(&result.scores) {
-                let output_check_failures = (0..paired.repeats)
-                    .filter(|repeat| {
-                        completed_unit(
-                            completed,
-                            &make_unit(arm, tier, judge_tier, slice, &case.id, *repeat),
-                        )
-                        .is_ok_and(|result| result.is_output_check_failed)
-                    })
-                    .count();
+                let mut output_check_failures = 0;
+                for repeat in 0..paired.repeats {
+                    let unit = make_unit(arm, tier, judge_tier, slice, &case.id, repeat);
+                    if completed_unit(completed, &unit)?.is_output_check_failed {
+                        output_check_failures += 1;
+                    }
+                }
                 records.push(json!({"arm":arm,"id":case.id,"tier":tier,"repeat_scores":result.repeats[&case.id],"median":median_score,"output_check_failures":output_check_failures}));
             }
         }
     }
-    records
+    Ok(records)
 }
 
 fn emit_paired_records(
@@ -2188,10 +2186,11 @@ fn emit_paired_records(
     nonholdout: &[&Case],
     holdout: &[&Case],
     completed: &BTreeMap<String, UnitResult>,
-) {
-    for record in paired_record_values(arm, paired, tiers, nonholdout, holdout, completed) {
+) -> Result<(), String> {
+    for record in paired_record_values(arm, paired, tiers, nonholdout, holdout, completed)? {
         println!("{record}");
     }
+    Ok(())
 }
 
 fn paired_entries(
@@ -2403,7 +2402,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         &nonholdout,
         &holdout,
         &completed,
-    );
+    )?;
     emit_paired_records(
         "candidate",
         &candidate,
@@ -2411,7 +2410,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         &nonholdout,
         &holdout,
         &completed,
-    );
+    )?;
     let selection = select_suffix(&candidate, &incumbent, &tiers, &nonholdout, &holdout);
     let tested_against = prompt_version(artifact_dir);
     let mut evidence = paired_entries(&candidate, &incumbent, &tiers, &selection, &tested_against);
@@ -2493,15 +2492,16 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         "{}",
         json!({"type":"decision","candidate_id":candidate.id,"incumbent_id":incumbent.id,"selected_minimum_tier":selected_minimum_tier,"decision":decision,"candidate_nonholdout":selection.candidate_nonholdout.map(Ratio::as_f64),"incumbent_nonholdout":selection.incumbent_nonholdout.map(Ratio::as_f64),"candidate_holdout":selection.candidate_holdout.map(Ratio::as_f64),"incumbent_holdout":selection.incumbent_holdout.map(Ratio::as_f64)})
     );
+    if selection.reason == "incomplete" {
+        return Ok(2);
+    }
     fs::remove_dir_all(&state_dir).map_err(|error| {
         format!(
             "cannot remove completed state {}: {error}",
             state_dir.display()
         )
     })?;
-    if selection.reason == "incomplete" {
-        Ok(2)
-    } else if settings.args.is_accept_if_winning && !selection.is_accepted {
+    if settings.args.is_accept_if_winning && !selection.is_accepted {
         Ok(1)
     } else {
         Ok(0)
@@ -3515,6 +3515,28 @@ fi
         (temp, settings, eval_dir, candidate)
     }
 
+    fn paired_state_dir(settings: &Settings, eval_dir: &Path, candidate_path: &Path) -> PathBuf {
+        let artifact_dir = eval_dir.parent().unwrap();
+        let submitted = fs::read_to_string(candidate_path).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let incumbent =
+            normalize_minimum_tier(&fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap())
+                .unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+        let run_key = paired_run_key(
+            settings,
+            &candidate,
+            &incumbent,
+            &submitted,
+            &cases,
+            &rubric,
+            artifact_dir,
+        )
+        .unwrap();
+        eval_dir.join(".skill-eval-state").join(run_key)
+    }
+
     #[test]
     fn dry_winner_stays_unaccepted_and_apply_inserts_floor() {
         let (_temp, settings, eval_dir, _candidate) = paired_fixture("paired-dry", PAIRED_FAKE);
@@ -4004,9 +4026,10 @@ fi
 
     #[test]
     fn fatal_worker_stops_new_units_after_running_unit_finishes() {
-        let (temp, mut settings, _eval_dir, _candidate) =
+        let (temp, mut settings, eval_dir, candidate) =
             paired_fixture("fatal-worker", FATAL_CONCURRENT_FAKE);
         settings.jobs = 2;
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
         assert!(run(settings).unwrap_err().contains("config or usage error"));
         let events = fs::read_to_string(temp.path.join("events")).unwrap();
         assert!(events.contains("start actual incumbent"));
@@ -4018,6 +4041,50 @@ fi
                 .filter(|event| event.starts_with("start actual"))
                 .count(),
             2
+        );
+        assert_eq!(fs::read_dir(state_dir.join("units")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn incomplete_paired_run_retains_state_and_restarts_despite_advisory_lock() {
+        let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
+        let (temp, mut settings, eval_dir, candidate) = paired_fixture("restart-lock", exhausted);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
+        let run_lock = state_dir.with_extension("lock");
+
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        assert!(state_dir.exists());
+        assert!(run_lock.exists());
+        assert_eq!(fs::metadata(&run_lock).unwrap().len(), 0);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            4
+        );
+
+        settings.args.is_restart = true;
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        assert!(state_dir.exists());
+        assert!(run_lock.exists());
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            8
+        );
+
+        assert_eq!(run(settings).unwrap(), 2);
+        assert!(state_dir.exists());
+        assert!(run_lock.exists());
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            12
         );
     }
 
@@ -4035,7 +4102,7 @@ fi
             .trim()
             .parse::<usize>()
             .unwrap();
-        assert!((2..=2).contains(&max_dispatches));
+        assert_eq!(max_dispatches, 2);
         assert_eq!(
             fs::read_to_string(eval_dir.join("check-max"))
                 .unwrap()
@@ -4072,20 +4139,51 @@ fi
             &[(Some(8.0), Some(7.0)), (Some(9.0), Some(8.0))],
         );
         let (nonholdout, holdout) = selection_cases();
+        assert!(
+            paired_record_values(
+                "candidate",
+                &arm,
+                &tiers,
+                &[&nonholdout],
+                &[&holdout],
+                &BTreeMap::new(),
+            )
+            .unwrap_err()
+            .contains("incomplete unit candidate T1 nonholdout n 0")
+        );
+
+        let mut completed = BTreeMap::new();
+        for (index, tier) in tiers.iter().enumerate() {
+            let judge_tier = tiers.get(index + 1).unwrap_or(tier);
+            for (slice, case) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
+                let unit = make_unit("candidate", tier, judge_tier, slice, &case.id, 0);
+                completed.insert(
+                    unit_name(&unit).unwrap(),
+                    UnitResult {
+                        unit,
+                        score: Some(8),
+                        actual_model: Some("model".to_string()),
+                        is_output_check_failed: tier == "T2" && slice == "holdout",
+                    },
+                );
+            }
+        }
         let records = paired_record_values(
             "candidate",
             &arm,
             &tiers,
             &[&nonholdout],
             &[&holdout],
-            &BTreeMap::new(),
-        );
+            &completed,
+        )
+        .unwrap();
         assert_eq!(records.len(), 4);
         assert_eq!(records[0]["arm"], "candidate");
         assert_eq!(records[0]["tier"], "T1");
         assert_eq!(records[0]["id"], "n");
         assert_eq!(records[1]["id"], "h");
         assert_eq!(records[2]["tier"], "T2");
+        assert_eq!(records[3]["output_check_failures"], 1);
         let result = UnitResult {
             unit: WorkUnit {
                 arm: "candidate".to_string(),
