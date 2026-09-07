@@ -53,8 +53,8 @@ BOTH slices (non-holdout, then holdout) against the current artifact or candidat
 rubric.md. A full paired run splits work into `(arm, tier, slice, case, repeat)` units.
 The runner emits stable JSON lines per paired case to stdout with an additive `arm` field
 (`{"arm":"candidate","id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`).
-It writes durable-unit progress to stderr. The one final coordinator owns the selection,
-frontier write, and conditional acceptance after every unit is complete.
+It writes durable-unit progress and per-arm tier summaries to stderr. It serializes `output-check.sh`.
+The one final coordinator owns the selection, frontier write, and conditional acceptance after every unit is complete.
 
 Grading both slices in one pass supplies the conditional acceptance rule below. `--holdout`
 is a lighter, frontier-write-free mode for a quick holdout recheck. Use

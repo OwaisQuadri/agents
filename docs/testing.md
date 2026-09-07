@@ -66,6 +66,7 @@ Use `--jobs N` or `SKILL_EVAL_JOBS` to set a positive worker count. The full pai
 complete units under `evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run.
 Use `--restart` to discard only that run's saved units. The runner writes progress to standard error
 after each durable unit. It writes stable paired case records, with an `arm` field, to standard output.
+It serializes `output-check.sh` while model dispatches run concurrently. Its advisory lock file stays as a stable identity, even at zero bytes.
 
 A surviving median keeps a partly ungraded tier in that ranking. The completeness gate then
 rejects a selected suffix with any missing repeat. Tiers below the selected floor remain recorded,

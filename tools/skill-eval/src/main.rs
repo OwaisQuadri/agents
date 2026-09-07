@@ -10,11 +10,7 @@ use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output, Stdio};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-    mpsc,
-};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1518,7 +1514,7 @@ impl RunLock {
             .open(&path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
         FileExt::try_lock_exclusive(&file)
-            .map_err(|error| format!("paired evaluation already runs for {run_key}: {error}"))?;
+            .map_err(|error| run_lock_error(&path, run_key, error))?;
         Ok(Self { file })
     }
 }
@@ -1526,6 +1522,17 @@ impl RunLock {
 impl Drop for RunLock {
     fn drop(&mut self) {
         let _ = FileExt::unlock(&self.file);
+    }
+}
+
+fn run_lock_error(path: &Path, run_key: &str, error: io::Error) -> String {
+    if error.kind() == io::ErrorKind::WouldBlock {
+        format!("paired evaluation already runs for {run_key}: {error}")
+    } else {
+        format!(
+            "cannot acquire advisory lock {} for {run_key}: {error}",
+            path.display()
+        )
     }
 }
 
@@ -1537,6 +1544,7 @@ struct WorkerContext<'a> {
     cases: &'a [Case],
     prompts_dir: &'a Path,
     judge_prompt: &'a Path,
+    output_check_lock: &'a Mutex<()>,
 }
 
 fn scoring_file(path: &Path) -> Result<Vec<u8>, String> {
@@ -1551,6 +1559,58 @@ fn scoring_file(path: &Path) -> Result<Vec<u8>, String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(b"missing\n".to_vec()),
         Err(error) => Err(format!("cannot read {}: {error}", path.display())),
     }
+}
+
+fn append_run_key_input(output: &mut Vec<u8>, label: &[u8], value: &[u8]) {
+    output.extend_from_slice(label);
+    output.push(0);
+    output.extend_from_slice(value.len().to_string().as_bytes());
+    output.push(0);
+    output.extend_from_slice(value);
+    output.push(0);
+}
+
+fn run_key_input(path: &Path) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    append_run_key_input(&mut output, b"root", b"");
+    append_path_to_run_key(path, Path::new(""), &mut output)?;
+    Ok(output)
+}
+
+fn append_path_to_run_key(
+    path: &Path,
+    relative: &Path,
+    output: &mut Vec<u8>,
+) -> Result<(), String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+    append_run_key_input(output, b"path", relative.as_os_str().as_encoded_bytes());
+    append_run_key_input(
+        output,
+        b"mode",
+        format!("{:o}", metadata.permissions().mode()).as_bytes(),
+    );
+    if metadata.is_file() {
+        append_run_key_input(
+            output,
+            b"file",
+            &fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+        );
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(format!("{} is not a file or directory", path.display()));
+    }
+    append_run_key_input(output, b"directory", b"");
+    let mut entries: Vec<_> = fs::read_dir(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+        .collect::<Result<_, _>>()
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        append_path_to_run_key(&entry.path(), &relative.join(entry.file_name()), output)?;
+    }
+    Ok(())
 }
 
 fn update_key(hasher: &mut Sha1, label: &str, value: &[u8]) {
@@ -1619,6 +1679,16 @@ fn paired_run_key(
         "tiers",
         &fs::read(&settings.tiers_file)
             .map_err(|error| format!("cannot read {}: {error}", settings.tiers_file.display()))?,
+    );
+    update_key(
+        &mut hasher,
+        "tier-dispatch",
+        &run_key_input(&settings.tier_dispatch_bin)?,
+    );
+    update_key(
+        &mut hasher,
+        "auth-extension",
+        &run_key_input(&settings.auth_extension)?,
     );
     update_key(
         &mut hasher,
@@ -1701,6 +1771,15 @@ fn ensure_immutable_file(path: &Path, content: &[u8]) -> Result<(), String> {
     }
 }
 
+fn prompt_name(arm: &str, case_id: &str) -> String {
+    let encoded_id: String = case_id
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("{arm}-{encoded_id}.md")
+}
+
 fn prepare_prompts(
     state_dir: &Path,
     incumbent: &str,
@@ -1710,7 +1789,7 @@ fn prepare_prompts(
 ) -> Result<(), String> {
     for (arm, text) in [("incumbent", incumbent), ("candidate", candidate)] {
         for case in cases {
-            let name = format!("{arm}-{}.md", candidate_id(&case.id));
+            let name = prompt_name(arm, &case.id);
             ensure_immutable_file(
                 &state_dir.join("prompts").join(name),
                 prompt_for_case(text, artifact_dir, case)?.as_bytes(),
@@ -1737,7 +1816,7 @@ fn make_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<Work
                             slice: slice.to_string(),
                             case_id: case.id.clone(),
                             repeat,
-                            prompt_name: format!("{arm}-{}.md", candidate_id(&case.id)),
+                            prompt_name: prompt_name(arm, &case.id),
                         });
                     }
                 }
@@ -1811,7 +1890,13 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
             is_output_check_failed: false,
         });
     }
-    let output_check_failure = run_output_check(context.eval_dir, &actual.stdout)?;
+    let output_check_failure = {
+        let _output_check = context
+            .output_check_lock
+            .lock()
+            .map_err(|_| "output check lock poisoned".to_string())?;
+        run_output_check(context.eval_dir, &actual.stdout)?
+    };
     let judge = dispatch(
         context.settings,
         context.wrapper,
@@ -1847,6 +1932,33 @@ fn progress_line(completed: usize, total: usize, result: &UnitResult) -> String 
     )
 }
 
+fn emit_paired_summary(arm: &str, tier: &str, slice_name: &str, result: &SliceResult) {
+    let graded: Vec<f64> = result.scores.iter().flatten().copied().collect();
+    let ungraded = result
+        .repeats
+        .values()
+        .flatten()
+        .filter(|score| score.is_none())
+        .count();
+    if graded.is_empty() {
+        eprintln!(
+            "{arm} tier {tier}: every case ungraded, {ungraded} ungraded repeats ({slice_name} slice)"
+        );
+        return;
+    }
+    let mean = graded.iter().sum::<f64>() / graded.len() as f64;
+    let verdict = if mean >= 5.0 { "PASS" } else { "FAIL" };
+    eprintln!(
+        "{arm} tier {tier}: mean {mean:.2} over {} graded cases, {ungraded} ungraded repeats, {verdict} (>= 5 threshold) ({slice_name} slice)",
+        graded.len()
+    );
+}
+
+struct WorkQueue {
+    pending: std::collections::VecDeque<WorkUnit>,
+    is_fatal: bool,
+}
+
 fn run_work_units(
     context: &WorkerContext<'_>,
     state_dir: &Path,
@@ -1869,28 +1981,33 @@ fn run_work_units(
     if missing.is_empty() {
         return Ok(completed);
     }
-    let queue = Arc::new(Mutex::new(std::collections::VecDeque::from(missing)));
-    let is_fatal = Arc::new(AtomicBool::new(false));
+    let missing_count = missing.len();
+    let queue = Arc::new(Mutex::new(WorkQueue {
+        pending: std::collections::VecDeque::from(missing),
+        is_fatal: false,
+    }));
     let (sender, receiver) = mpsc::channel();
     let mut worker_error = None;
     thread::scope(|scope| {
-        let workers = context.settings.jobs.min(units.len());
+        let workers = context.settings.jobs.min(missing_count);
         for _ in 0..workers {
             let queue = Arc::clone(&queue);
-            let is_fatal = Arc::clone(&is_fatal);
             let sender = sender.clone();
             scope.spawn(move || {
                 loop {
-                    if is_fatal.load(Ordering::Acquire) {
-                        return;
-                    }
-                    let unit = queue.lock().expect("work queue lock poisoned").pop_front();
+                    let unit = {
+                        let mut queue = queue.lock().expect("work queue lock poisoned");
+                        if queue.is_fatal {
+                            return;
+                        }
+                        queue.pending.pop_front()
+                    };
                     let Some(unit) = unit else {
                         return;
                     };
                     let result = run_work_unit(context, &unit);
                     if result.is_err() {
-                        is_fatal.store(true, Ordering::Release);
+                        queue.lock().expect("work queue lock poisoned").is_fatal = true;
                     }
                     if sender.send((unit, result)).is_err() {
                         return;
@@ -1912,7 +2029,7 @@ fn run_work_units(
                         eprintln!("{}", progress_line(completed.len(), units.len(), &result));
                     }
                     Err(error) => {
-                        is_fatal.store(true, Ordering::Release);
+                        queue.lock().expect("work queue lock poisoned").is_fatal = true;
                         worker_error.get_or_insert(error);
                     }
                 },
@@ -1931,9 +2048,42 @@ fn run_work_units(
     Ok(completed)
 }
 
+fn completed_unit<'a>(
+    completed: &'a BTreeMap<String, UnitResult>,
+    unit: &WorkUnit,
+) -> Result<&'a UnitResult, String> {
+    let name = unit_name(unit)?;
+    completed.get(&name).ok_or_else(|| {
+        format!(
+            "incomplete unit {} {} {} {} {}",
+            unit.arm, unit.tier, unit.slice, unit.case_id, unit.repeat
+        )
+    })
+}
+
+fn make_unit(
+    arm: &str,
+    tier: &str,
+    judge_tier: &str,
+    slice: &str,
+    case_id: &str,
+    repeat: usize,
+) -> WorkUnit {
+    WorkUnit {
+        arm: arm.to_string(),
+        tier: tier.to_string(),
+        judge_tier: judge_tier.to_string(),
+        slice: slice.to_string(),
+        case_id: case_id.to_string(),
+        repeat,
+        prompt_name: prompt_name(arm, case_id),
+    }
+}
+
 fn slice_from_units(
     arm: &str,
     tier: &str,
+    judge_tier: &str,
     slice: &str,
     cases: &[&Case],
     repeats: usize,
@@ -1947,18 +2097,8 @@ fn slice_from_units(
     for case in cases {
         let mut repeat_scores = Vec::with_capacity(repeats);
         for repeat in 0..repeats {
-            let unit_result = completed
-                .values()
-                .find(|item| {
-                    item.unit.arm == arm
-                        && item.unit.tier == tier
-                        && item.unit.slice == slice
-                        && item.unit.case_id == case.id
-                        && item.unit.repeat == repeat
-                })
-                .ok_or_else(|| {
-                    format!("incomplete unit {arm} {tier} {slice} {} {repeat}", case.id)
-                })?;
+            let unit = make_unit(arm, tier, judge_tier, slice, &case.id, repeat);
+            let unit_result = completed_unit(completed, &unit)?;
             if let Some(model) = &unit_result.actual_model {
                 result.models.insert(model.clone());
             }
@@ -1981,19 +2121,23 @@ fn paired_arm_from_units(
     completed: &BTreeMap<String, UnitResult>,
 ) -> Result<PairedArm, String> {
     let mut results = BTreeMap::new();
-    for tier in tiers {
+    for (index, tier) in tiers.iter().enumerate() {
+        let judge_tier = tiers.get(index + 1).unwrap_or(tier);
         results.insert(
             tier.clone(),
             TierResult {
                 nonholdout: slice_from_units(
                     arm,
                     tier,
+                    judge_tier,
                     "nonholdout",
                     nonholdout,
                     repeats,
                     completed,
                 )?,
-                holdout: slice_from_units(arm, tier, "holdout", holdout, repeats, completed)?,
+                holdout: slice_from_units(
+                    arm, tier, judge_tier, "holdout", holdout, repeats, completed,
+                )?,
             },
         );
     }
@@ -2014,7 +2158,8 @@ fn paired_record_values(
     completed: &BTreeMap<String, UnitResult>,
 ) -> Vec<Value> {
     let mut records = Vec::new();
-    for tier in tiers {
+    for (index, tier) in tiers.iter().enumerate() {
+        let judge_tier = tiers.get(index + 1).unwrap_or(tier);
         for (slice, cases, result) in [
             ("nonholdout", nonholdout, &paired.results[tier].nonholdout),
             ("holdout", holdout, &paired.results[tier].holdout),
@@ -2022,14 +2167,11 @@ fn paired_record_values(
             for (case, median_score) in cases.iter().zip(&result.scores) {
                 let output_check_failures = (0..paired.repeats)
                     .filter(|repeat| {
-                        completed.values().any(|item| {
-                            item.unit.arm == arm
-                                && item.unit.tier == *tier
-                                && item.unit.slice == slice
-                                && item.unit.case_id == case.id
-                                && item.unit.repeat == *repeat
-                                && item.is_output_check_failed
-                        })
+                        completed_unit(
+                            completed,
+                            &make_unit(arm, tier, judge_tier, slice, &case.id, *repeat),
+                        )
+                        .is_ok_and(|result| result.is_output_check_failed)
                     })
                     .count();
                 records.push(json!({"arm":arm,"id":case.id,"tier":tier,"repeat_scores":result.repeats[&case.id],"median":median_score,"output_check_failures":output_check_failures}));
@@ -2197,6 +2339,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     let wrapper = write_wrapper(&temp, &settings.auth_extension)?;
     let prompts_dir = state_dir.join("prompts");
     let judge_prompt = prompts_dir.join("judge.md");
+    let output_check_lock = Mutex::new(());
     let worker_context = WorkerContext {
         settings: &settings,
         wrapper: &wrapper,
@@ -2205,6 +2348,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         cases: &cases,
         prompts_dir: &prompts_dir,
         judge_prompt: &judge_prompt,
+        output_check_lock: &output_check_lock,
     };
     let units = make_work_units(&tiers, &cases, settings.repeats);
     let completed = run_work_units(&worker_context, &state_dir, &units, is_resumed)?;
@@ -2226,6 +2370,32 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         settings.repeats,
         &completed,
     )?;
+    for tier in &tiers {
+        emit_paired_summary(
+            "incumbent",
+            tier,
+            "nonholdout",
+            &incumbent.results[tier].nonholdout,
+        );
+        emit_paired_summary(
+            "incumbent",
+            tier,
+            "holdout",
+            &incumbent.results[tier].holdout,
+        );
+        emit_paired_summary(
+            "candidate",
+            tier,
+            "nonholdout",
+            &candidate.results[tier].nonholdout,
+        );
+        emit_paired_summary(
+            "candidate",
+            tier,
+            "holdout",
+            &candidate.results[tier].holdout,
+        );
+    }
     emit_paired_records(
         "incumbent",
         &incumbent,
@@ -2384,8 +2554,9 @@ mod tests {
         .unwrap();
         let tiers_file = temp.path.join("tiers.json");
         fs::write(&tiers_file, r#"{"tiers":{"T1":{},"T2":{},"T3":{}}}"#).unwrap();
-        let extension = temp.path.join("auth.ts");
-        fs::write(&extension, "extension").unwrap();
+        let extension = temp.path.join("auth");
+        fs::create_dir(&extension).unwrap();
+        fs::write(extension.join("extension.ts"), "extension").unwrap();
         let dispatch = temp.path.join("tier-dispatch");
         write_executable(&dispatch, fake);
         let args = Args {
@@ -3260,6 +3431,35 @@ else
 fi
 "#;
 
+    const FATAL_CONCURRENT_FAKE: &str = r#"#!/bin/zsh
+set -eu
+base=${0:h}
+while (( $# )); do
+  case "$1" in
+    --input) input=$2; shift 2 ;;
+    --system-prompt-file) prompt=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  print 'start judge' >> "$base/events"
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+  exit 0
+fi
+if [[ "$(<"$prompt")" == *'winning candidate'* ]]; then
+  while [[ ! -f "$base/incumbent-start" ]]; do sleep 0.001; done
+  print 'start actual candidate' >> "$base/events"
+  print -u2 bad-config
+  exit 2
+fi
+print 'start actual incumbent' >> "$base/events"
+touch "$base/incumbent-start"
+sleep 0.05
+print output
+print -u2 'model_ran: actual-model'
+"#;
+
     const CONCURRENT_FAKE: &str = r#"#!/bin/zsh
 set -eu
 base=${0:h}
@@ -3637,6 +3837,53 @@ fi
             )
             .unwrap()
         );
+        settings.repeats = 1;
+        assert_eq!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&settings.tier_dispatch_bin, "#!/bin/zsh\nexit 0\n");
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&settings.tier_dispatch_bin, PAIRED_FAKE);
+        fs::write(
+            settings.auth_extension.join("extension.ts"),
+            "changed extension",
+        )
+        .unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
         assert!(temp.path.exists());
     }
 
@@ -3654,6 +3901,19 @@ fi
             initialize_state(&temp.path, key, false)
                 .unwrap_err()
                 .contains("corrupt state")
+        );
+    }
+
+    #[test]
+    fn run_lock_reports_contention_and_system_errors_separately() {
+        let path = Path::new("state/run.lock");
+        assert!(
+            run_lock_error(&path, "run", io::Error::from(io::ErrorKind::WouldBlock))
+                .contains("already runs")
+        );
+        assert!(
+            run_lock_error(&path, "run", io::Error::other("disk error"))
+                .contains("cannot acquire advisory lock state/run.lock for run: disk error")
         );
     }
 
@@ -3743,18 +4003,44 @@ fi
     }
 
     #[test]
-    fn fake_dispatches_stay_bounded_and_start_both_arms_before_completion() {
+    fn fatal_worker_stops_new_units_after_running_unit_finishes() {
         let (temp, mut settings, _eval_dir, _candidate) =
-            paired_fixture("bounded", CONCURRENT_FAKE);
+            paired_fixture("fatal-worker", FATAL_CONCURRENT_FAKE);
         settings.jobs = 2;
+        assert!(run(settings).unwrap_err().contains("config or usage error"));
+        let events = fs::read_to_string(temp.path.join("events")).unwrap();
+        assert!(events.contains("start actual incumbent"));
+        assert!(events.contains("start actual candidate"));
+        assert!(events.contains("start judge"));
+        assert_eq!(
+            events
+                .lines()
+                .filter(|event| event.starts_with("start actual"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn fake_dispatches_stay_bounded_and_start_both_arms_before_completion() {
+        let (temp, mut settings, eval_dir, _candidate) = paired_fixture("bounded", CONCURRENT_FAKE);
+        settings.jobs = 2;
+        write_executable(
+            &eval_dir.join("output-check.sh"),
+            "#!/bin/zsh\nset -eu\nwhile ! mkdir \"$PWD/check-mutex\" 2>/dev/null; do sleep 0.001; done\nactive=0\n[[ -f \"$PWD/check-active\" ]] && active=$(<\"$PWD/check-active\")\nactive=$((active + 1))\nprint \"$active\" > \"$PWD/check-active\"\nmax=0\n[[ -f \"$PWD/check-max\" ]] && max=$(<\"$PWD/check-max\")\nif (( active > max )); then print \"$active\" > \"$PWD/check-max\"; fi\nrmdir \"$PWD/check-mutex\"\nsleep 0.05\nwhile ! mkdir \"$PWD/check-mutex\" 2>/dev/null; do sleep 0.001; done\nactive=$(<\"$PWD/check-active\")\nprint \"$((active - 1))\" > \"$PWD/check-active\"\nrmdir \"$PWD/check-mutex\"\n",
+        );
         run(settings).unwrap();
-        assert!(
-            fs::read_to_string(temp.path.join("max"))
+        let max_dispatches = fs::read_to_string(temp.path.join("max"))
+            .unwrap()
+            .trim()
+            .parse::<usize>()
+            .unwrap();
+        assert!((2..=2).contains(&max_dispatches));
+        assert_eq!(
+            fs::read_to_string(eval_dir.join("check-max"))
                 .unwrap()
-                .trim()
-                .parse::<usize>()
-                .unwrap()
-                <= 2
+                .trim(),
+            "1"
         );
         let events: Vec<_> = fs::read_to_string(temp.path.join("events"))
             .unwrap()
