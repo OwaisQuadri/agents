@@ -21,9 +21,15 @@ const T5_CHAIN = [
   { model: 'anthropic/claude-fable-5', effort: 'medium', provider: 'anthropic' },
 ]
 
-const repo_path = args && args.repo_path
-if (!repo_path) return { error: 'missing input: repo_path' }
-const pr_number_arg = args && args.pr_number
+// args sometimes arrives pre-parsed, sometimes as a JSON string (dispatcher-dependent) —
+// normalize both shapes the same way research-sweep's own workflow does for its `goal`.
+let parsedArgs = args
+if (typeof parsedArgs === 'string') {
+  try { parsedArgs = JSON.parse(parsedArgs) } catch (e) { parsedArgs = null }
+}
+const repo_path = parsedArgs && parsedArgs.repo_path
+if (!repo_path) return { error: 'missing input: repo_path', receivedArgsType: typeof args, receivedArgs: args }
+const pr_number_arg = parsedArgs && parsedArgs.pr_number
 
 // The autopilot skill's own protocol, embedded verbatim (workflow scripts have no fs
 // access at runtime, so this can't be read from skills/autopilot/SKILL.md live — keep
