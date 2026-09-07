@@ -1587,9 +1587,19 @@ fn append_path_to_run_key(
     relative: &Path,
     output: &mut Vec<u8>,
 ) -> Result<(), String> {
-    let metadata = fs::metadata(path)
-        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+    let metadata = if relative.as_os_str().is_empty() {
+        fs::metadata(path)
+    } else {
+        fs::symlink_metadata(path)
+    }
+    .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
     append_run_key_input(output, b"path", relative.as_os_str().as_encoded_bytes());
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path)
+            .map_err(|error| format!("cannot read link {}: {error}", path.display()))?;
+        append_run_key_input(output, b"link", target.as_os_str().as_encoded_bytes());
+        return Ok(());
+    }
     append_run_key_input(
         output,
         b"mode",
@@ -1613,7 +1623,14 @@ fn append_path_to_run_key(
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        append_path_to_run_key(&entry.path(), &relative.join(entry.file_name()), output)?;
+        let is_git_metadata_dir = entry.file_name() == ".git"
+            && entry
+                .file_type()
+                .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?
+                .is_dir();
+        if !is_git_metadata_dir {
+            append_path_to_run_key(&entry.path(), &relative.join(entry.file_name()), output)?;
+        }
     }
     Ok(())
 }
@@ -3952,6 +3969,39 @@ fi
             .unwrap()
         );
         assert!(temp.path.exists());
+    }
+
+    #[test]
+    fn auth_extension_git_metadata_does_not_change_the_paired_run_key() {
+        let (_temp, settings, eval_dir, candidate_path) =
+            paired_fixture("git-metadata", PAIRED_FAKE);
+        let before = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        let git_dir = settings.auth_extension.join(".git");
+        fs::create_dir(&git_dir).unwrap();
+        fs::write(git_dir.join("FETCH_HEAD"), "first fetch").unwrap();
+        let after_first_fetch = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        fs::write(git_dir.join("FETCH_HEAD"), "second fetch").unwrap();
+        let after_second_fetch = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        assert_eq!(before, after_first_fetch);
+        assert_eq!(before, after_second_fetch);
+    }
+
+    #[test]
+    fn broken_nested_auth_extension_link_hashes_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let (temp, mut settings, _eval_dir) = fixture("broken-nested-link", FAKE);
+        let extension = settings.auth_extension.clone();
+        let configured_link = temp.path.join("configured-auth");
+        symlink(&extension, &configured_link).unwrap();
+        settings.auth_extension = configured_link;
+        let nested_link = extension.join("missing-nested-link");
+        symlink("missing-first", &nested_link).unwrap();
+        let first = run_key_input(&settings.auth_extension).unwrap();
+        assert_eq!(first, run_key_input(&extension).unwrap());
+        fs::remove_file(&nested_link).unwrap();
+        symlink("missing-second", &nested_link).unwrap();
+        assert_ne!(first, run_key_input(&settings.auth_extension).unwrap());
     }
 
     #[test]
