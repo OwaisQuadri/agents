@@ -11,7 +11,7 @@ description: >-
   wants to review PRs generally rather than get one specific PR/diff to ready
   (`pr-review` skill).
 metadata:
-  minimum-tier: T3
+  minimum-tier: T6
 ---
 
 # pr-ready

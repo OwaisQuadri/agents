@@ -1,6 +1,8 @@
 ---
 name: pr-ready
 description: Use as the autonomous half of a merge-readiness pass — an autopilot-or-local-checks stage, a project-briefed dual code review (bugbot + security-review, T6), and a cross-provider triage stage that writes evidence for every finding. Never dispatch this directly for interactive work — it posts nothing and decides nothing on its own; the `pr-ready` skill calls it and owns the human review loop and any posting. Skip when only the autopilot loop is wanted with no review pass (autopilot skill directly), and skip for a one-off `/review-bugbot` or `/review-security` run with no triage needed.
+metadata:
+  minimum-tier: T6
 ---
 
 # pr-ready (workflow)
