@@ -18,6 +18,9 @@ sits on a public declaration. It caches validated verdicts in process-local memo
 A rule failure, timeout, cancellation, or infrastructure error blocks the direct edit
 or write before mutation. Shell writes remain outside this enforcement.
 
+A documentation-form comment attached above a public declaration must describe that declaration.
+Reject it if it does not, even if its content could qualify as architecture.
+
 - inexpressible concept or architecture — a design decision, invariant, or
   cross-component contract that cannot be made implicit in the code itself
 - standard-violation exception — the code deliberately breaks a standing convention;

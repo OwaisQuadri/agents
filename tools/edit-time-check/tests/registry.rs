@@ -137,6 +137,25 @@ fn whole_comments_context_and_fallback() {
     assert_eq!(joined.decision, Decision::Block);
 }
 #[test]
+fn inserted_comment_context_uses_candidate_code_before_unchanged_suffix() {
+    let fixture = Fixture::new("'comment-shape'");
+    let suffix = "pub fn retained() {}\n";
+    let inserted = "/// Routes each record to its owning shard.\n/// Returns the selected shard; rejects unknown keys.\npub fn route(key: u64) -> Result<u32, RouteError> {\n    lookup(key)\n}\n";
+    for (prefix, line) in [("", 1), ("use crate::routing::*;\n\n", 3)] {
+        let old = format!("{prefix}{suffix}");
+        let candidate = format!("{prefix}{inserted}{suffix}");
+        let result = fixture.run(&old, &candidate, "edit");
+        assert_eq!(result.decision, Decision::NeedsJudgment);
+        assert_eq!(result.judgments.len(), 1);
+        assert_eq!(result.judgments[0].line, line);
+        assert_eq!(
+            result.judgments[0].input.code_context,
+            "pub fn route(key: u64) -> Result<u32, RouteError> {\n    lookup(key)\n}"
+        );
+    }
+}
+
+#[test]
 fn missing_required_documents_and_present_bad_identifiers_fail_closed() {
     let mut fixture = Fixture::new("'comment-shape','boolean-name','privacy'");
     std::fs::remove_file(&fixture.options.rule_document).unwrap();

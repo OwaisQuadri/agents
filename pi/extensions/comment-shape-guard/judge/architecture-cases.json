@@ -1,0 +1,30 @@
+[
+  {
+    "id": "receipt-tests-without-tax-discovery",
+    "commentText": "// Return no tax regions so receipt layout tests do not run tax discovery.",
+    "followingContext": "const executor = async (operation: string) => {\n  if (operation === 'list-tax-regions') return [];\n  throw new Error(`Unexpected operation: ${operation}`);\n};\nconst receipt = await renderReceipt(order, executor);",
+    "expectedShape": "none",
+    "rationale": "The test double controls a local test boundary. Naming it receiptLayoutExecutorWithoutTaxDiscovery expresses its purpose without a comment or an external design constraint."
+  },
+  {
+    "id": "shipment-partition-by-readiness",
+    "commentText": "// Keep incomplete addresses out of the carrier upload and send them for repair.",
+    "followingContext": "const ready = shipments.filter(shipment => shipment.isAddressComplete);\nconst pending = shipments.filter(shipment => !shipment.isAddressComplete);\nawait carrier.upload(ready);\nawait addressRepair.enqueue(pending);",
+    "expectedShape": "none",
+    "rationale": "The selection and destinations are fully represented by the executable steps. Clearer collection names or a partition function can express the distinction without prose."
+  },
+  {
+    "id": "historical-signature-byte-contract",
+    "commentText": "// External auditors verify historical signatures against these exact bytes.\n// Equivalent re-encoding breaks their evidence chain; retain the original payload.",
+    "followingContext": "await evidenceStore.put({\n  recordId: envelope.recordId,\n  payload: receivedBytes,\n  signature: envelope.signature,\n});",
+    "expectedShape": "inexpressible concept or architecture",
+    "rationale": "Storing bytes shows the current representation but cannot establish the external audit obligation that forbids replacing it with an equivalent encoding. The constraint must remain available to future maintainers."
+  },
+  {
+    "id": "equipment-quarantine-release-authority",
+    "commentText": "// A clean sensor reading does not authorize release from quarantine.\n// The operating license requires an independent inspector's clearance after any leak.",
+    "followingContext": "if (inspection.isCleared && sensor.isLeakFree) {\n  await equipment.releaseFromQuarantine(equipmentId);\n}",
+    "expectedShape": "inexpressible concept or architecture",
+    "rationale": "The condition expresses the release checks but not the licensing authority or the required independence of the inspector. Those external requirements explain why sensor recovery cannot replace clearance."
+  }
+]

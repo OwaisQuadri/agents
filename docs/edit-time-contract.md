@@ -113,7 +113,7 @@ A diagnostic must not repeat the matched private value. The path, line, rule ide
 
 The registry preserves existing comment extraction and the current three-line limit. Documentation blocks retain their current length exemption. Adjacent full-line comments retain their existing grouping behavior.
 
-Deterministic filters decide clear cases only where the existing rules establish the answer. Ambiguous comments use the existing judgment worker. An uncertain local filter must not invent approval. Existing pass and block fixtures remain required parity tests.
+For comment shape, `is_empty_rust_comment` in `registry.rs` blocks empty full-line Rust comments, including empty documentation comments. Every other selected comment requires the existing judgment worker or a verified cache decision. The registry supplies no local shape approvals. An uncertain local filter must not invent approval. Existing pass and block fixtures remain required parity tests.
 
 A judgment receives the comment, following-code context, language, rule document, and versioned judgment configuration. Missing required rule documents block the request. A malformed worker decision is not a pass.
 
@@ -125,6 +125,24 @@ The rule preserves names whose external ownership it can prove. External protoco
 
 Generated-file selection provides the generated-code exemption. Unknown language or type evidence must remain explicit in coverage reports. The implementation must not claim proof for unsupported forms.
 
+The Boolean checker accepts these case-sensitive extensions:
+
+```text
+rs ts tsx js jsx mjs cjs py go java cs c h cc cpp hpp scala kt kts zig
+```
+
+It checks simple named declarations, not destructuring or general type inference. Tested forms include variables, fields, properties, parameters, functions, and methods across the supported grammars, not every form in every language. Python assignments and Go short declarations also have fixtures. Names that start with `is` and the name `_` produce no finding.
+
+Explicit evidence uses `bool` for Rust, C, C++, C#, and Zig; C also accepts `_Bool`. TypeScript and Java use `boolean`. Python and Go use unshadowed `bool`. Kotlin and Scala use unshadowed `Boolean` or the qualified types `kotlin.Boolean` and `scala.Boolean`. Shadow detection covers the whole parsed file, not just the declaration's scope.
+
+Expression evidence includes Boolean literals and parenthesized Boolean expressions. Python adds `not`, but not comparisons or `and`/`or`. JavaScript, TypeScript, Rust, Go, and Java add comparisons. Rust, Go, and Java add `&&` and `||`; JavaScript and TypeScript do not. JavaScript, TypeScript, Go, and Java add unary `!`; Rust does not. The checker does not infer Rust function return types from bodies or C++ Boolean types from overloaded comparisons.
+
+Resolved external ownership covers only Rust implementation methods: `eq` and `ne` for `PartialEq`; `lt`, `le`, `gt`, and `ge` for `PartialOrd`. The trait path must resolve to `std::cmp` or `core::cmp`. Supported forms include prelude names, qualified paths, absolute paths, explicit imports, grouped imports, and import aliases. Local bindings, ambiguous imports, wildcard imports, attributed imports, and disabled preludes can prevent resolution. The resolver also checks `no_std` and `no_core`; it does not resolve generic trait arguments or arbitrary external traits.
+
+Framework, serialization, and foreign-interface markers supply no exemption by themselves. Local Boolean declarations inside an exempt method still require the prefix.
+
+Unsupported extensions and trees with syntax errors return no Boolean findings. They do not trigger Boolean lexical fallback or establish naming compliance. Grammar setup failures and missing parse trees return errors. Comment checks retain their separate whole-file lexical fallback.
+
 ## Configuration and selection
 
 Tracked global defaults live in `config/edit-time.toml`. An optional tracked `.edit-time.toml` supplies repository overrides. The target path determines the repository, not the session directory. Files outside repositories use global defaults.
@@ -133,7 +151,17 @@ Configuration selects compiled rule identifiers, file patterns, and lower total 
 
 The registry accepts missing optional overrides. Invalid or unreadable present configuration blocks applicable requests. The registry reads rules and effective configuration consistently for each request. Judgment-affecting configuration forms part of the cache identity.
 
-The time-limit fields use this shape:
+Configuration uses TOML (Tom's Obvious Minimal Language). Each present file requires `version = 1`. The selection fields use this shape from the global configuration:
+
+```toml
+version = 1
+rules = ["privacy", "comment-length", "comment-shape", "boolean-name"]
+include = ["**"]
+exclude = ["**/.git/**", "**/node_modules/**", "**/vendor/**", "**/target/**", "**/build/**", "**/dist/**", "**/.cache/**", "**/__pycache__/**", "**/.venv/**"]
+generated = ["**/*.generated.*", "**/*.min.js", "**/*.g.cs"]
+```
+
+The time-limit fields follow these selection fields in the same file:
 
 ```toml
 total_ms = 20000
@@ -148,7 +176,11 @@ boolean-name = 500
 
 Every limit must be a positive integer. The global limits cannot exceed these approved ceilings. Repository limits can only lower the global limits. Unknown rule identifiers and invalid limits block the request.
 
-The remaining selection fields and language coverage must match the implemented, tested format before release. These declarations do not claim coverage from an untested example.
+Each supplied `rules`, `include`, `exclude`, or `generated` list replaces its inherited list, including an empty list. Omitted fields retain inherited values: built-in defaults for global configuration, then global values for repository overrides. Entries in `rule_ms` lower individual inherited ceilings; omitted entries retain their limits. An empty `rules` list selects no checks. An empty `include` list selects no files.
+
+Patterns use `globset` with literal path separators. A single `*` does not cross `/`; `**` can match directory levels. Matching uses repository-relative paths, or absolute paths without the leading `/` outside repositories. Selection requires an include match and no exclude or generated match. Directory patterns match components, not substrings: defaults exclude `node_modules/x.ts`, but select `src/node_modules_notes.ts`.
+
+Each pattern list allows at most 256 entries. Each pattern must contain 1 to 1,024 bytes and no null byte. Invalid globs block configuration. Unknown fields, unknown or duplicate rule identifiers, unsupported versions, and invalid field types block configuration. No unknown key acts as a command or approval switch.
 
 ## Deadlines and failure results
 
@@ -172,7 +204,7 @@ Only validated completed worker decisions enter the process-local memory cache, 
 
 A cache miss triggers a fresh judgment within the same request deadline. The request remains blocked until that judgment passes. Failure, malformed output, cancellation, or timeout cannot cache a pass and leaves the target unchanged.
 
-Cached block decisions remain blocks. Tests must preserve the decisions in sampled historical records without trusting their incomplete old identities.
+Cached block decisions remain blocks. Tests must preserve the decisions in sampled historical records without trusting their incomplete old identities. Historical judgment parity remains unverified. Synthetic validation and cache tests establish mechanics, not historical decision parity.
 
 ## Emergency approval
 
