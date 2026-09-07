@@ -55,6 +55,7 @@ advisories on standard error. Advisories never change its exit code.
 | T3 | normal engineering: build, test, debug, verify |
 | T4 | hard problems, planning, final review |
 | T5 | project-level synthesis, deep architecture (falls back to T4) |
+| T6 | code review only, dual-model on purpose (Fable authors, Astra is its cross-provider fallback); never a generic escalation target, no `climbOnExhaustion` |
 
 Each tier's `fallbacks` list crosses provider families on purpose. A provider outage or a
 usage-limit stop then degrades one tier sideways instead of failing the run. The list is
