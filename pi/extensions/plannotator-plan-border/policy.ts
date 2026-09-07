@@ -12,6 +12,18 @@ function isHorizontalBorder(line: string): boolean {
 	return /^─{2,}(?: |$)/.test(line);
 }
 
+function spaceBorderRuns(line: string): string {
+	let isDashNext = true;
+	return line.replace(/─+/g, (run) => {
+		let spacedRun = "";
+		for (let index = 0; index < run.length; index += 1) {
+			spacedRun += isDashNext ? "-" : " ";
+			isDashNext = !isDashNext;
+		}
+		return spacedRun;
+	});
+}
+
 function phaseFromData(data: unknown): PlannotatorPhase | undefined {
 	if (typeof data !== "object" || data === null || !("phase" in data)) return undefined;
 	const phase = data.phase;
@@ -37,7 +49,7 @@ export function getPlannotatorPhase(entries: readonly SessionEntry[]): Plannotat
  * Replaces solid fill glyphs in the outer editor lines during planning.
  * @param lines The rendered editor lines.
  * @param phase The authoritative Plannotator phase.
- * @returns New rendered lines with dotted planning borders or unchanged content.
+ * @returns New rendered lines with spaced planning borders or unchanged content.
  * @throws Never.
  */
 export function renderPlanningBorder(lines: string[], phase: PlannotatorPhase): string[] {
@@ -46,12 +58,12 @@ export function renderPlanningBorder(lines: string[], phase: PlannotatorPhase): 
 
 	const topLine = stripVTControlCharacters(rendered[0] ?? "");
 	if (isHorizontalBorder(topLine)) {
-		rendered[0] = rendered[0]?.replaceAll("─", "┈") ?? "";
+		rendered[0] = spaceBorderRuns(rendered[0] ?? "");
 	}
 	for (let index = rendered.length - 1; index > 0; index -= 1) {
 		const visibleLine = stripVTControlCharacters(rendered[index] ?? "");
 		if (!isHorizontalBorder(visibleLine)) continue;
-		rendered[index] = rendered[index]?.replaceAll("─", "┈") ?? "";
+		rendered[index] = spaceBorderRuns(rendered[index] ?? "");
 		break;
 	}
 	return rendered;

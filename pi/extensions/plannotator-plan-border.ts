@@ -10,7 +10,7 @@ import { getPlannotatorPhase, renderPlanningBorder } from "./plannotator-plan-bo
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
 
 /**
- * Registers a phase-aware dotted border around the existing Pi editor.
+ * Registers a phase-aware spaced border around the existing Pi editor.
  * @param pi The Pi extension interface used to register session handlers.
  * @returns Nothing.
  * @throws Never.

@@ -31,12 +31,12 @@ test("fails closed to idle for malformed or unknown Plannotator state", () => {
 	);
 });
 
-test("dots only the planning border lines", () => {
+test("spaces only the planning border lines", () => {
 	const lines = ["\u001b[90m────────\u001b[39m", "input ─ stays solid", "────────"];
 	assert.deepEqual(renderPlanningBorder(lines, "planning"), [
-		"\u001b[90m┈┈┈┈┈┈┈┈\u001b[39m",
+		"\u001b[90m- - - - \u001b[39m",
 		"input ─ stays solid",
-		"┈┈┈┈┈┈┈┈",
+		"- - - - ",
 	]);
 	assert.deepEqual(renderPlanningBorder(lines, "idle"), lines);
 	assert.deepEqual(renderPlanningBorder(lines, "executing"), lines);
@@ -51,14 +51,14 @@ test("finds the centered scroll border before autocomplete rows", () => {
 		"> /plan command",
 	];
 	assert.deepEqual(renderPlanningBorder(lines, "planning"), [
-		"┈┈┈┈┈┈ ↑ 5 more ┈┈┈┈┈┈",
+		"- - -  ↑ 5 more - - - ",
 		"─2─",
-		"┈┈┈┈┈┈ ↓ 23 more ┈┈┈┈┈┈",
+		"- - -  ↓ 23 more - - - ",
 		"> /plan command",
 	]);
 });
 
-test("preserves labels while dotting real top-border variants", () => {
+test("preserves labels while spacing real top-border variants", () => {
 	const workingStatus = "⠋ Working (esc to interrupt)";
 	const narrowWorkingBorder = `── ${workingStatus} ${"─".repeat(80 - workingStatus.length - 4)}`;
 	for (const top of [
@@ -69,8 +69,19 @@ test("preserves labels while dotting real top-border variants", () => {
 		"─── ↑ 5...",
 	]) {
 		const rendered = renderPlanningBorder([top, "input", "────────"], "planning");
-		assert.equal(rendered[0], top.replaceAll("─", "┈"));
+		assert.equal(rendered[0]?.length, top.length);
+		assert.equal(rendered[0]?.includes("─"), false);
+		assert.equal(rendered[0]?.includes("- "), true);
 	}
+	assert.equal(renderPlanningBorder(["── 12s ──────", "input", "────────"], "planning")[0], "-  12s - - - ");
+});
+
+test("keeps spacing regular across styled border runs", () => {
+	const top = "\u001b[90m───\u001b[39m\u001b[90m─────\u001b[39m";
+	assert.equal(
+		renderPlanningBorder([top, "input", "────────"], "planning")[0],
+		"\u001b[90m- -\u001b[39m\u001b[90m - - \u001b[39m",
+	);
 });
 
 test("leaves a borderless custom editor unchanged", () => {
@@ -230,7 +241,7 @@ test("decorates the existing editor and follows live phase state", async () => {
 	const renders: number[] = [];
 	const wrapped = installedFactory?.({ requestRender: () => renders.push(renders.length) }, {}, {});
 	assert.equal(wrapped, editor);
-	assert.deepEqual(wrapped?.render(8), ["┈┈┈┈┈┈┈┈", "input", "┈┈┈┈┈┈┈┈"]);
+	assert.deepEqual(wrapped?.render(8), ["- - - - ", "input", "- - - - "]);
 
 	entries.push(phaseEntry("executing"));
 	await runtime.run("tool_result", context);
@@ -301,7 +312,7 @@ test("decorates an editor installed later in the shared session-start dispatch",
 	assert.notEqual(installedFactory, initialFactory);
 	assert.notEqual(installedFactory, laterFactory);
 	assert.equal(installedFactory?.({ requestRender: () => undefined }, {}, {}), laterEditor);
-	assert.deepEqual(laterEditor.render(4), ["┈┈┈┈", "input", "┈┈┈┈"]);
+	assert.deepEqual(laterEditor.render(4), ["- - ", "input", "- - "]);
 });
 
 test("reuses the base editor across repeated session starts", async () => {
@@ -315,7 +326,7 @@ test("reuses the base editor across repeated session starts", async () => {
 	await new Promise((resolve) => setTimeout(resolve, 0));
 
 	assert.equal(context.currentFactory()?.({ requestRender: () => undefined }, {}, {}), baseEditor);
-	assert.deepEqual(baseEditor.render(4), ["┈┈┈┈", "input", "┈┈┈┈"]);
+	assert.deepEqual(baseEditor.render(4), ["- - ", "input", "- - "]);
 });
 
 test("restores the previous editor only while it owns the slot", async () => {
