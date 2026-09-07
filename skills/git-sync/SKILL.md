@@ -9,18 +9,22 @@ metadata:
 # git-sync
 
 JOB: Put every pending change into a PR and prune only branches that main contains.
-IN:  A Git repository with possible local changes, work branches, remote changes, or merged branches.
-OUT: The step 8 report. It names the PR URL, published hash, commits, branch verdicts, refusals, and omitted files.
+IN:  A Git repository with possible local changes, work branches, remote changes, merged branches, or a visual-evidence manifest.
+OUT: The step 8 report. It names the PR URL, published hash, commits, branch verdicts, evidence, refusals, and omitted files.
 
 ## hard rules
 
 - Never commit, merge, squash, or push directly on main. Every change reaches main through a PR.
+- This skill prepares a final PR, not an evidence-pending initial draft. The initial-draft
+  exception belongs only to a direct create-pr run.
 - A branch is deletable only on one of two proofs: `git branch --merged origin/main` lists it, OR `git diff origin/main <branch>` is run and shown empty. Never infer stale status from its name or age. The second proof exists because a squash-merged PR never makes its branch an ancestor of main, so `--merged` alone would keep every squash-landed branch forever.
 - Never delete the current PR branch during the run. A squash merge does not make that branch an ancestor of main.
 - `git branch -D` is legal only directly after the empty-diff proof, because `-d` refuses a squash-merged branch however completely main holds it. Without that shown proof, keep the branch.
 - Never force-push. A rejected push means that the remote diverged. Stop and ask the user.
 - Never rebase a branch after another person can use its pushed commits.
 - No AI(Artificial Intelligence) attribution can enter a commit or PR body. Inspect both outputs before reporting success.
+- Never commit temporary screenshots, recordings, or a visual-evidence manifest. Commit
+  media only when it belongs in product documentation.
 - Explicit instructions in the user's request beat every default except the safety rules above.
 
 ## steps
@@ -31,11 +35,18 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
 
 3. **Protect main.** When main has pending work, create `git-sync/$(date +%Y%m%d-%H%M%S)` before staging anything. Stop if work exists and Git cannot create the branch. Done when pending work is on a non-main branch.
 
-4. **Commit pending work.** Review the diff and every untracked file. Split unrelated concerns into separate commits. Route each message through `/byline`, then run `ste-check --register byline`. Reject an attributed draft before the commit. Verify each final message contains no attribution. Done when the tree is clean or every omitted file has a reason.
+4. **Commit pending work.** Review the diff and every untracked file. Decide whether the work alters what a user can see or do. Interface-file contact alone
+does not qualify. Require a visual-evidence manifest for qualifying work. Forward any
+supplied manifest for other work as relevant evidence. If a required manifest is
+missing, stop before staging and ask for test evidence. When a manifest is required or
+supplied, use step 1 to select `gh pr create --help` or `gh pr edit --help`. Require the
+relevant output to contain `--attach`. Otherwise, stop before staging and report the requirement for GitHub Command Line Interface 2.99.0 or newer.
+
+   Exclude each temporary path in the manifest. Split unrelated concerns into separate commits. Route each message through `/byline`, then run `ste-check --register byline`. Reject an attributed draft before the commit. Verify each final message contains no attribution. Done when the tree is clean or every omitted file has a reason.
 
 5. **Handle remote divergence.** Rebase unpublished local commits onto their current upstream when the upstream is ahead. Stop and name each conflict. Never resolve a conflict or use `git rebase --skip`. Do not rewrite commits that another person can use. Done when the branch can push without force, or the report names the blocker.
 
-6. **Create the PR.** Invoke `/create-pr` for the current branch and target main, forwarding any closing ticket ids the caller passed (e.g. engineer's `.context/branch-tickets.md`) so the PR body auto-closes them on merge. The clean branch allows it to push and open or update the PR. Never reproduce its push procedure here. Done when `/create-pr` returns a verified PR URL, or its failure becomes the named refusal.
+6. **Create the PR.** Invoke `/create-pr` for the current branch and target main. Forward each closing ticket id from the caller. Forward the visual-evidence manifest unchanged when the caller supplies one. Never upload or commit temporary evidence in this skill. The clean branch allows `/create-pr` to push and open or update the PR. Never reproduce its push procedure here. Done when `/create-pr` returns a verified PR URL and its applicable evidence checks, or its failure becomes the named refusal.
 
 7. **Triage merged branches.** Run both commands after the PR step:
    ```sh
@@ -50,6 +61,7 @@ OUT: The step 8 report. It names the PR URL, published hash, commits, branch ver
    published: <matching local and upstream hash>
    commits:   <hash and subject>
    branches:  <name and verdict>
+   evidence:  <uploaded visual evidence, when applicable>
    refused:   <reason>
    left out:  <files and reason>
    ```

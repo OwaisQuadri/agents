@@ -86,6 +86,53 @@ test("allows read-only bash access to managed config", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude diff` }, home), undefined);
 });
 
+test("allows a static Z shell wrapper reading managed config", () => {
+	const command = `/bin/zsh -lc 'cat ${home}/.pi/agent/settings.json'`;
+	assert.equal(blockedConfigToolCall("bash", { command }, home), undefined);
+});
+
+test("allows a static Z shell wrapper changing to managed config and listing files", () => {
+	const command = `/bin/zsh -lc 'cd ${home}/.claude && ls'`;
+	assert.equal(blockedConfigToolCall("bash", { command }, home), undefined);
+});
+
+for (const [name, command] of [
+	["relative deletion after changing directory", `/bin/zsh -lc 'cd ${home}/.claude && rm -rf x'`],
+	["relative redirect after changing directory", `/bin/zsh -lc 'cd ${home}/.claude; printf x > settings.json'`],
+	["relative deletion in a pipeline", `/bin/zsh -lc 'cd ${home}/.claude | rm x'`],
+	["interpreter after a managed-config read", `/bin/zsh -lc 'cat ${home}/.claude/settings.json && bash'`],
+	["missing closing quote", `/bin/zsh -lc 'cat ${home}/.pi/agent/settings.json`],
+	["dynamic double-quoted payload", `/bin/zsh -lc "cat ${home}/.pi/agent/settings.json $EXTRA"`],
+	["output redirect", `/bin/zsh -lc 'printf x > ${home}/.pi/agent/settings.json'`],
+	["adjacent output redirect", `/bin/zsh -lc 'printf x>${home}/.pi/agent/settings.json'`],
+	["append redirect", `/bin/zsh -lc 'printf x>>${home}/.pi/agent/settings.json'`],
+	["command substitution", `/bin/zsh -lc 'cat $(touch ${home}/.pi/agent/settings.json)'`],
+	["backtick substitution", `/bin/zsh -lc 'cat \`touch ${home}/.pi/agent/settings.json\`'`],
+	["interpreter pipeline", `/bin/zsh -lc 'cat ${home}/.pi/agent/settings.json | sh'`],
+	["command execution", `/bin/zsh -lc 'command touch ${home}/.pi/agent/settings.json'`],
+	["unsupported inventory loop", `/bin/zsh -lc 'for file in ${home}/.pi/agent/extensions/*(N); do printf "%s\\n" "\${file:t}"; done'`],
+]) {
+	test(`blocks a managed-config Z shell wrapper with ${name}`, () => {
+		assert.match(blockedConfigToolCall("bash", { command }, home) ?? "", /Blocked/, command);
+	});
+}
+
+test("allows command-name lookup of a managed config path without executing it", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: `command -v ${home}/.pi/agent/settings.json` }, home), undefined);
+});
+
+test("blocks command-name lookup output redirected to managed config", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `command -v tmux > ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
+});
+
+test("blocks command-name lookup with substitution referencing managed config", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `command -v $(touch ${home}/.pi/agent/settings.json)` }, home) ?? "", /Blocked/);
+});
+
+test("blocks command touch targeting managed config", () => {
+	assert.match(blockedConfigToolCall("bash", { command: `command touch ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
+});
+
 test("allows read-only navigation and search commands", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `fd -t f . ${home}/.pi/agent/sessions` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `cd ${home}/.pi/agent/sessions && ls -la` }, home), undefined);
@@ -234,6 +281,115 @@ test("classifies checkout shell reads and static Z shell wrappers", () => {
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'rg guard pi/extensions | head -20'"), "read");
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status 2>/dev/null'"), "read");
 });
+
+test("classifies tmux command-name lookup as a checkout read", () => {
+	assert.equal(classifyCheckoutCommand("command -v tmux"), "read");
+});
+
+test("classifies sandbox-exec command-name lookup as a checkout read", () => {
+	assert.equal(classifyCheckoutCommand("command -v sandbox-exec"), "read");
+});
+
+test("classifies combined command-name lookups in a static Z shell wrapper as a checkout read", () => {
+	const target = "/tmp/config-write-guard-probe/home/.pi/agent/extensions/live-diff";
+	const command = `/bin/zsh -lc 'command -v sandbox-exec; command -v tmux; /usr/bin/readlink ${target}; /usr/bin/test -f ${target}/engine.ts && printf "footer dependency resolves\\n"'`;
+	assert.equal(classifyCheckoutCommand(command), "read");
+});
+
+test("blocks checkout output redirection from command-name lookup", () => {
+	for (const command of [
+		"command -v tmux > leaked.md",
+		"/bin/zsh -lc 'command -v sandbox-exec >> leaked.md'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("blocks substitution in command-name lookup", () => {
+	for (const command of [
+		"command -v $(touch leaked.md)",
+		"/bin/zsh -lc 'command -v `touch leaked.md`'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("blocks checkout writes after command-name lookup", () => {
+	for (const command of [
+		"command -v tmux; touch leaked.md",
+		"/bin/zsh -lc 'command -v sandbox-exec && touch leaked.md'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("does not allow unrestricted command execution as a checkout read", () => {
+	assert.equal(classifyCheckoutCommand("command touch leaked.md"), "write-or-unknown");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'command touch leaked.md'"), "write-or-unknown");
+});
+
+test("allows lookup and reads through a primary-checkout symbolic link but blocks writes", () => {
+	const root = mkdtempSync(join(tmpdir(), "config-write-guard-lookup-main-"));
+	const worktree = mkdtempSync(join(tmpdir(), "config-write-guard-lookup-worktree-"));
+	try {
+		writeFileSync(join(root, "engine.ts"), "x\n");
+		const target = join(worktree, "source-link");
+		symlinkSync(root, target);
+		const context: GuardContext = {
+			cwd: worktree,
+			repositoryRoot: root,
+			isRepositoryClean: () => true,
+			worktreeRoots: () => [root, worktree],
+		};
+		assert.match(blockedConfigToolCall("bash", { command: `command touch ${target}/leaked.md` }, home, user, context) ?? "", /worktree/);
+		const command = `/bin/zsh -lc 'command -v sandbox-exec; command -v tmux; /usr/bin/readlink ${target}; /usr/bin/test -f ${target}/engine.ts && printf "footer dependency resolves\\n"'`;
+		assert.equal(blockedConfigToolCall("bash", { command }, home, user, context), undefined);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+		rmSync(worktree, { recursive: true, force: true });
+	}
+});
+
+for (const [operation, separator] of [
+	["cmp", " "],
+	["shasum -a 256", " "],
+	["cmp", " > "],
+	["shasum -a 256", " >> "],
+	["cmp", ">"],
+	["shasum -a 256", ">>"],
+]) {
+	for (const isWrapped of [false, true]) {
+		const isRedirect = separator.includes(">");
+		test(`${isRedirect ? "blocks" : "allows"} ${isWrapped ? "wrapped" : "bare"} ${operation} with separator ${JSON.stringify(separator)} and worktree plus primary-alias operands`, () => {
+			const fixture = mkdtempSync(join(tmpdir(), `config-write-guard-comparison-${process.pid}-`));
+			const root = join(fixture, "primary");
+			const worktree = join(fixture, "worktree");
+			const alias = join(fixture, "primary-link");
+			try {
+				mkdirSync(root);
+				mkdirSync(worktree);
+				writeFileSync(join(root, "engine.ts"), "x\n");
+				writeFileSync(join(worktree, "engine.ts"), "x\n");
+				symlinkSync(root, alias);
+				const context: GuardContext = {
+					cwd: worktree,
+					repositoryRoot: root,
+					isRepositoryClean: () => true,
+					worktreeRoots: () => [root, worktree],
+				};
+				const payload = `${operation} ${worktree}/engine.ts${separator}${alias}/engine.ts`;
+				const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+				if (isRedirect) {
+					assert.match(blockedConfigToolCall("bash", { command }, home, user, context) ?? "", /worktree/, command);
+				} else {
+					assert.equal(blockedConfigToolCall("bash", { command }, home, user, context), undefined, command);
+				}
+			} finally {
+				rmSync(fixture, { recursive: true, force: true });
+			}
+		});
+	}
+}
 
 test("classifies checkout shell writes and uncertain wrappers", () => {
 	for (const command of [

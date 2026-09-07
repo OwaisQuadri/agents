@@ -99,6 +99,7 @@ function segmentWritesProtectedPath(segment: string, pathReferencePattern: RegEx
 	if (!pathReferencePattern.test(segment)) return false;
 	if (/\$\(|`|<\(|>\(/.test(segment)) return true;
 	if (hasOutputRedirectToProtectedPath(segment, pathReferencePattern)) return true;
+	if (/^\s*command\s+-v(?:\s|$)/.test(segment)) return false;
 	const rawLeading = leadingCommand(segment);
 	if (rawLeading === undefined) return true;
 	// Lowercase once: a differently-cased spelling (`BASH`) still resolves to the same
@@ -135,12 +136,14 @@ function groupWritesProtectedPath(group: string, pathReferencePattern: RegExp): 
  * @throws Never.
  */
 export function bashCommandWritesProtectedPath(command: string, pathReferencePattern: RegExp): boolean {
-	return splitTopLevelGroups(command).some((group) => groupWritesProtectedPath(group, pathReferencePattern));
+	const inner = staticZshPayload(command);
+	if (inner !== undefined && pathReferencePattern.test(inner) && classifyCheckoutCommand(inner) !== "read") return true;
+	return splitTopLevelGroups(inner ?? command).some((group) => groupWritesProtectedPath(group, pathReferencePattern));
 }
 
 export type CheckoutCommandClassification = "read" | "clean-fast-forward-pull" | "write-or-unknown";
 
-function staticZshPayload(command: string): string | undefined {
+export function staticZshPayload(command: string): string | undefined {
 	const match = /^\s*(?:\/bin\/)?zsh\s+-lc\s+'([^']*)'\s*$/.exec(command);
 	return match?.[1];
 }
@@ -159,6 +162,7 @@ function segmentWritesCheckout(segment: string): boolean {
 	if (/\$\(|`|<\(|>\(/.test(segment)) return true;
 	if (/^\s*[A-Za-z_][\w]*=/.test(segment)) return true;
 	if (outputRedirectWritesCheckout(segment)) return true;
+	if (/^\s*command\s+-v(?:\s|$)/.test(segment)) return false;
 	const rawLeading = leadingCommand(segment);
 	if (rawLeading === undefined) return true;
 	const leading = rawLeading.toLowerCase();

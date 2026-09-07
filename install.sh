@@ -285,7 +285,8 @@ else
         if (t == "Read") return "read"; if (t == "Write") return "write";
         if (t == "Edit") return "edit"; if (t == "Bash") return "bash";
         if (t == "Grep") return "grep"; if (t == "Glob") return "find";
-        if (t == "WebSearch") return "web_search"; if (t == "WebFetch") return "fetch_content";
+        if (t == "WebSearch") { is_web = 1; return "ext:pi-extension/web_search\n  - ext:web/fallback_web_search" }
+        if (t == "WebFetch") { is_web = 1; return "ext:pi-extension/web_fetch\n  - ext:pi-extension/web_crawl\n  - ext:web/fetch_content\n  - ext:web/source_check\n  - ext:web/get_search_content" }
         print "UNMAPPED_TOOL:" t > "/dev/stderr"; exit 3
       }
       NR == 1 && $0 == "---" { print; infm = 1; next }
@@ -296,6 +297,16 @@ else
       infm && /^tools:/ { sub(/^tools: */, ""); n = split($0, a, /, */); for (i = 1; i <= n; i++) tools[i] = map(a[i]); next }
       infm { next }
       { print }
+      END {
+        if (is_web) {
+          print "\n## Web tools\n";
+          print "Use DonSeTch web_search, web_fetch, and web_crawl first when available for supported work.";
+          print "Use available fallback_web_search, fetch_content, source_check, or get_search_content only after a relevant failure or for an unsupported capability.";
+          print "Exact raw bodies and saved authentication profiles can go directly to fallback. Keep legacy response identifiers with get_search_content.";
+          print "Judge whether empty or partial results answer the task. Do not call another provider after an adequate success.";
+          print "Report why you used fallback. This rule does not add automatic retries.";
+        }
+      }
     ' "$src")" || { echo "FATAL: unmapped tool in $src" >&2; exit 1; }
     if [[ -f "$dest" ]] && [[ "$gen" == "$(cat "$dest")" ]]; then
       plan "ok   $dest generated from $src"
@@ -608,20 +619,18 @@ else
   fi
 fi
 
-# web_search curator: never open the browser. workflow=none skips the curator entirely and
-# returns raw results; autoOpenBrowser=false keeps the window shut even if the curator runs.
-# Config lives in its own file, separate from ~/.pi/agent/settings.json.
+# DonSeTch owns web_search; the legacy package reads its separate config for the fallback name.
 if ! command -v jq >/dev/null 2>&1; then
-  echo "warn: jq not found, skipping web_search curator preference" >&2
+  echo "warn: jq not found, skipping web search fallback configuration" >&2
 else
   PI_WEBSEARCH="$HOME_TARGET/.pi/web-search.json"
   run mkdir -p "$HOME_TARGET/.pi"
-  if [[ -f "$PI_WEBSEARCH" ]] && jq -e '.workflow == "none" and .autoOpenBrowser == false' "$PI_WEBSEARCH" >/dev/null 2>&1; then
-    plan "ok   $PI_WEBSEARCH curator off"
+  if [[ -f "$PI_WEBSEARCH" ]] && jq -e '.workflow == "none" and .autoOpenBrowser == false and .tools.webSearch.enabled == true and .toolNames.webSearch == "fallback_web_search"' "$PI_WEBSEARCH" >/dev/null 2>&1; then
+    plan "ok   $PI_WEBSEARCH fallback search enabled, curator off"
   else
     backup "$PI_WEBSEARCH"
-    plan "set  $PI_WEBSEARCH curator off"
-    json_update "$PI_WEBSEARCH" '.workflow = "none" | .autoOpenBrowser = false'
+    plan "set  $PI_WEBSEARCH fallback search enabled, curator off"
+    json_update "$PI_WEBSEARCH" '.workflow = "none" | .autoOpenBrowser = false | .tools.webSearch.enabled = true | .toolNames.webSearch = "fallback_web_search"'
   fi
 fi
 

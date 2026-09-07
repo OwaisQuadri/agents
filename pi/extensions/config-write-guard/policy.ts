@@ -1,7 +1,7 @@
 import { homedir, userInfo } from "node:os";
 import { relative, resolve } from "node:path";
 
-import { bashCommandWritesProtectedPath, classifyCheckoutCommand } from "./bash-intent.ts";
+import { bashCommandWritesProtectedPath, classifyCheckoutCommand, staticZshPayload } from "./bash-intent.ts";
 import { isPathInsideRoot, isProtectedConfigPath } from "./paths.ts";
 
 type FileToolInput = { path: string };
@@ -60,7 +60,7 @@ function repositoryReferencePattern(repositoryRoot: string, cwd: string, home: s
 		const tildeForms = username === undefined ? "~" : `~(?:${escapeRegExp(username)})?`;
 		forms.push(`(?:\\$HOME|\\$\\{HOME\\}|${tildeForms})["']?/+(?:\\./+)*${relativeHomeRoot}`);
 	}
-	return new RegExp(`(?:${forms.join("|")})(?=/+|[\\s'"|;&]|$)`);
+	return new RegExp(`(?:${forms.join("|")})(?=/+|[\\s'"|;&<>]|$)`);
 }
 
 function mainCheckoutBlockReason(): string {
@@ -95,8 +95,8 @@ function shellPath(word: string, cwd: string, home: string, username: string | u
 
 function shellCommandReferencesPrimaryCheckout(command: string, guard: GuardContext, home: string, username: string | undefined): boolean {
 	let cwd = guard.cwd;
-	for (const segment of command.split(/&&|\|\||[;\n|]/)) {
-		const words = segment.match(/"[^"]*"|'[^']*'|[^\s]+/g) ?? [];
+	for (const segment of (staticZshPayload(command) ?? command).split(/&&|\|\||[;\n|]/)) {
+		const words = segment.match(/"[^"]*"|'[^']*'|[^\s<>]+/g) ?? [];
 		const leading = words[0]?.split("/").pop();
 		for (const word of words.slice(1)) {
 			const path = shellPath(word, cwd, home, username);
@@ -114,10 +114,10 @@ function commandWithoutWorktreeReferences(command: string, guard: GuardContext, 
 	return guard.worktreeRoots().reduce((remaining, root) => {
 		if (pathsEqual(root, guard.repositoryRoot)) return remaining;
 		const pattern = repositoryReferencePattern(root, guard.cwd, home, username);
-		const rootedPath = new RegExp(`(${pattern.source})([^\\s'"|;&]*)`, "g");
+		const rootedPath = new RegExp(`(${pattern.source})([^\\s'"|;&<>]*)`, "g");
 		return remaining.replace(rootedPath, (match, _reference: string, suffix: string) => {
 			const target = resolve(root, suffix.replace(/^\/+/, ""));
-			return isPathInsideRoot(target, root) ? "<worktree>" : match;
+			return isPathInsideRoot(target, root) ? "__worktree__" : match;
 		});
 	}, command);
 }

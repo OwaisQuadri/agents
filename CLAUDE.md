@@ -12,6 +12,18 @@ Default to the simplest thing that works and ships today. When in doubt, write l
   cases. Narrowing needs an observed false positive, never an imagined one
   (arXiv:2301.12987). Fix stays minimal; cause stays weak.
 
+## web tools
+
+In Pi sessions with both web packages, use DonSeTch `web_search`, `web_fetch`, and `web_crawl` first for supported work.
+Use available `fallback_web_search`, `fetch_content`, `source_check`, or `get_search_content` only after a relevant failure or for an unsupported capability.
+Exact raw bodies and saved authentication profiles can go directly to fallback.
+Keep legacy response identifiers with `get_search_content`.
+
+Judge whether empty or partial results answer the task.
+Do not call another provider after an adequate success.
+Report why you used fallback.
+This rule does not add automatic retries.
+
 ## ticket urgency
 
 When the user asks for a feature, first check the active tracker. If an unfinished matching ticket already exists, raise its priority by one level: `low` to `med`, `med` to `high`, or `high` to `urgent`. An `urgent` ticket stays urgent. Never change a `done` or `cancelled` ticket. Apply this across GitHub Issues, Linear, and local roadmap tickets.
@@ -91,6 +103,19 @@ rewrite there buys nothing.
 Cross-project asks — status across agents, workspaces, or this machine's automations;
 dispatching work into another project; digging into a project agent — route through the
 /hq skill.
+
+## visual evidence for interface changes
+
+When a change alters what a user can see or do, testing must capture visual evidence.
+A refactor, dependency change, test change, or technical-debt change needs none when
+visible and interactive behavior stay the same.
+Use screenshots for static states. Prefer before-and-after screenshots when a comparison helps.
+Use a short screen recording when time or interaction carries the result.
+This includes animation, gestures, drag-and-drop, navigation, focus changes, and transitions.
+
+Code review must inspect the same evidence before it passes the change.
+`create-pr` must upload the applicable evidence into the Pull Request (PR) description.
+Do not commit temporary evidence unless it belongs in product documentation.
 
 ## iOS simulator
 

@@ -364,7 +364,11 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let isWorking = false;
 	let startedAt = 0;
 	const activeSubagentIds = new Set<string>();
-	let requestRender: (() => void) | undefined;
+	let footerRequestRender: (() => void) | undefined;
+	let widgetRequestRender: (() => void) | undefined;
+	let renderTimer: ReturnType<typeof setInterval> | undefined;
+	let renderDelay: number | undefined;
+	let branchSummaryGeneration = 0;
 	let refreshGeneration = 0;
 	let pullRequestTimer: ReturnType<typeof setInterval> | undefined;
 	let branchSummary: string | undefined;
@@ -375,6 +379,38 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	let isFoundationModelsAvailableCache: boolean | undefined;
 	const execForBranchPoint: Exec = (command, args, options) => pi.exec(command, args, { cwd: options?.cwd, timeout: 5_000 });
 
+	function updateRenderSchedule(): void {
+		const delay = activeContext && (footerRequestRender || widgetRequestRender)
+			? (isWorking || isBranchSummaryGenerating ? 120 : 1000)
+			: undefined;
+		if (delay === renderDelay) return;
+		if (renderTimer !== undefined) clearInterval(renderTimer);
+		renderTimer = undefined;
+		renderDelay = delay;
+		if (delay !== undefined) {
+			renderTimer = setInterval(() => (widgetRequestRender ?? footerRequestRender)?.(), delay);
+		}
+	}
+
+	function requestRender(): void {
+		updateRenderSchedule();
+		if (activeContext) (widgetRequestRender ?? footerRequestRender)?.();
+	}
+
+	function clearSession(): void {
+		activeContext = undefined;
+		footerRequestRender = undefined;
+		widgetRequestRender = undefined;
+		refreshGeneration++;
+		branchSummaryGeneration++;
+		isBranchSummaryGenerating = false;
+		isWorking = false;
+		activeSubagentIds.clear();
+		if (pullRequestTimer !== undefined) clearInterval(pullRequestTimer);
+		pullRequestTimer = undefined;
+		updateRenderSchedule();
+	}
+
 	async function hasGitHubRemote(cwd: string): Promise<boolean> {
 		const result = await pi.exec("git", ["remote", "-v"], { cwd, timeout: 5_000 });
 		return result.code === 0 && /github\.com[:/]/i.test(result.stdout);
@@ -383,22 +419,23 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	// checked on every agent_settled/branch change. the incumbent stays visible for the whole call —
 	// only swapped if the challenger is non-empty and different; the commit-count anchor advances either way.
 	async function refreshBranchSummary(cwd: string, generation: number): Promise<void> {
+		const summaryGeneration = ++branchSummaryGeneration;
 		try {
 			const branchPoint = await resolveBranchPointCommit(execForBranchPoint, cwd);
-			if (generation !== refreshGeneration || branchPoint === null) return;
+			if (generation !== refreshGeneration || summaryGeneration !== branchSummaryGeneration || branchPoint === null) return;
 
 			const logResult = await pi.exec(
 				"git",
 				["log", "--oneline", `-${BRANCH_SUMMARY_MAX_COMMITS}`, `${branchPoint}..HEAD`],
 				{ cwd, timeout: 5_000 },
 			);
-			if (generation !== refreshGeneration || logResult.code !== 0) return;
+			if (generation !== refreshGeneration || summaryGeneration !== branchSummaryGeneration || logResult.code !== 0) return;
 			const subjects = logResult.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 
 			// mid-session uncommitted work never shows up in commit count, so a second signal watches the
 			// working tree directly — any change to the changed-file list counts as "the branch moved" too.
 			const statusResult = await pi.exec("git", ["status", "--porcelain"], { cwd, timeout: 5_000 });
-			if (generation !== refreshGeneration || statusResult.code !== 0) return;
+			if (generation !== refreshGeneration || summaryGeneration !== branchSummaryGeneration || statusResult.code !== 0) return;
 			const workingTreeFiles = parseWorkingTreeFiles(statusResult.stdout).slice(0, BRANCH_SUMMARY_MAX_WORKING_TREE_FILES);
 			const workingTreeFingerprint = workingTreeFiles.join("\n");
 
@@ -418,17 +455,12 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			if (isFoundationModelsAvailableCache === undefined) {
 				isFoundationModelsAvailableCache = await isFoundationModelsAvailable(pi.exec);
 			}
-			if (generation !== refreshGeneration || !isFoundationModelsAvailableCache) return;
+			if (generation !== refreshGeneration || summaryGeneration !== branchSummaryGeneration || !isFoundationModelsAvailableCache) return;
 
 			isBranchSummaryGenerating = true;
-			requestRender?.();
-			let response: string | undefined;
-			try {
-				response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles, transcriptAsks));
-			} finally {
-				isBranchSummaryGenerating = false;
-			}
-			if (generation !== refreshGeneration || response === undefined) return;
+			requestRender();
+			const response = await runFoundationModelsRespond(pi.exec, buildBranchSummaryPrompt(subjects, workingTreeFiles, transcriptAsks));
+			if (generation !== refreshGeneration || summaryGeneration !== branchSummaryGeneration || response === undefined) return;
 			const challenger = truncateSegmentText(response, BRANCH_SUMMARY_MAX_WIDTH);
 			if (isBranchSummaryChallengerBetter(branchSummary, challenger)) {
 				branchSummary = challenger;
@@ -439,7 +471,10 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		} catch {
 			return;
 		} finally {
-			if (generation === refreshGeneration) requestRender?.();
+			if (generation === refreshGeneration && summaryGeneration === branchSummaryGeneration) {
+				isBranchSummaryGenerating = false;
+				requestRender();
+			}
 		}
 	}
 
@@ -464,16 +499,20 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		} catch {
 			return;
 		} finally {
-			if (generation === refreshGeneration) requestRender?.();
+			if (generation === refreshGeneration) requestRender();
 		}
 	}
 
 	async function refreshRepository(cwd: string | undefined): Promise<void> {
+		if (!activeContext) return;
 		const generation = ++refreshGeneration;
+		branchSummaryGeneration++;
+		isBranchSummaryGenerating = false;
+		requestRender();
 		if (!cwd) {
 			pullRequest = undefined;
 			repository = { isGit: false, path: "unknown" };
-			requestRender?.();
+			requestRender();
 			return;
 		}
 		try {
@@ -482,7 +521,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 			if (root.code !== 0 || root.stdout.trim() === "") {
 				pullRequest = undefined;
 				repository = { isGit: false, path: compactPath(cwd) };
-				requestRender?.();
+				requestRender();
 				return;
 			}
 			const branchResult = await pi.exec("git", ["branch", "--show-current"], { cwd, timeout: 5_000 });
@@ -497,7 +536,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 				branchSummaryTranscriptAskCount = undefined;
 				branchSummaryWorkingTreeFingerprint = undefined;
 			}
-			requestRender?.();
+			requestRender();
 			if (branch) {
 				await refreshPullRequest(cwd, generation);
 				// steady state runs off agent_settled; this only fires on first population or branch switch.
@@ -506,14 +545,14 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		} catch {
 			if (generation !== refreshGeneration) return;
 			repository = { isGit: false, path: compactPath(cwd) };
-			requestRender?.();
+			requestRender();
 		}
 	}
 
 	function setWorking(isActive: boolean): void {
 		isWorking = isActive;
 		if (isActive) startedAt = Date.now();
-		requestRender?.();
+		requestRender();
 	}
 
 	function setSubagentActive(payload: unknown, isActive: boolean): void {
@@ -523,24 +562,25 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		const sizeBefore = activeSubagentIds.size;
 		if (isActive) activeSubagentIds.add(id);
 		else activeSubagentIds.delete(id);
-		if (activeSubagentIds.size !== sizeBefore) requestRender?.();
+		if (activeSubagentIds.size !== sizeBefore) requestRender();
 	}
 
 	pi.on("session_start", (_event, ctx) => {
-		isWorking = false;
-		activeSubagentIds.clear();
+		clearSession();
 		if (ctx.mode !== "tui") return;
 		activeContext = ctx;
 		ctx.ui.setWorkingVisible?.(false);
 		void refreshRepository(ctx.cwd);
-		if (pullRequestTimer) clearInterval(pullRequestTimer);
 		pullRequestTimer = setInterval(() => void refreshRepository(ctx.cwd), PR_POLL_INTERVAL_MS);
 		ctx.ui.setFooter((tui, theme, footerData) => {
-			const timer = setInterval(() => tui.requestRender(), 120);
+			const render = () => tui.requestRender();
+			footerRequestRender = render;
+			updateRenderSchedule();
 			const unsubscribeBranch = footerData.onBranchChange(() => void refreshRepository(ctx.cwd));
 			return {
 				dispose: () => {
-					clearInterval(timer);
+					if (footerRequestRender === render) footerRequestRender = undefined;
+					updateRenderSchedule();
 					unsubscribeBranch();
 				},
 				invalidate() {},
@@ -572,12 +612,13 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 		ctx.ui.setWidget(
 			"owais-pre-input",
 			(tui, theme) => {
-				requestRender = () => tui.requestRender();
-				const timer = setInterval(() => tui.requestRender(), 120);
+				const render = () => tui.requestRender();
+				widgetRequestRender = render;
+				updateRenderSchedule();
 				return {
 					dispose: () => {
-						clearInterval(timer);
-						requestRender = undefined;
+						if (widgetRequestRender === render) widgetRequestRender = undefined;
+						updateRenderSchedule();
 					},
 					invalidate() {},
 					render(width) {
@@ -714,15 +755,7 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 	pi.events.on("subagents:failed", (payload) => setSubagentActive(payload, false));
 	pi.on("model_select", (_event, ctx) => {
 		activeContext = ctx;
-		requestRender?.();
+		requestRender();
 	});
-	pi.on("session_shutdown", () => {
-		if (pullRequestTimer) clearInterval(pullRequestTimer);
-		pullRequestTimer = undefined;
-		isWorking = false;
-		activeSubagentIds.clear();
-		requestRender?.();
-		activeContext = undefined;
-		requestRender = undefined;
-	});
+	pi.on("session_shutdown", clearSession);
 }
