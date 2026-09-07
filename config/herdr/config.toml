@@ -18,6 +18,14 @@ description = "new worktree off freshest origin/main"
 width = "70%"
 height = "60%"
 
+[[keys.command]]
+key = "prefix+shift+d"
+type = "popup"
+command = "/bin/zsh /Users/owaisquadri/Documents/agents/herdr/workspace-close-or-remove.zsh"
+description = "close workspace or remove worktree checkout"
+width = "70%"
+height = "30%"
+
 [ui.toast]
 delivery = "system"
 
