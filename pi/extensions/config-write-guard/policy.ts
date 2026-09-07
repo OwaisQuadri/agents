@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { relative, resolve } from "node:path";
 
@@ -26,6 +28,27 @@ const READ_ONLY_AGENT_TYPES = new Set([
 	"log-summarizer",
 	"web-research-summarizer",
 ]);
+
+const REVIEWED_SELECTOR_SHA256 = "4e1341d3824081cfa1f9fc0408167e686b621b984ec5380338e132ff8dc4d912";
+
+function commandWithReadOnlySelector(command: string, home: string): string {
+	const inner = staticZshPayload(command);
+	const payload = inner ?? command;
+	if (/[^A-Za-z0-9_/.\- \t\n;&]/.test(payload) || /(?<!&)&(?!&)/.test(payload)) return command;
+	const classified = payload.split(/(&&|;|\n)/).map((segment) => {
+		const match = /^\s*(?:(?:\/bin\/)?sh\s+)?(\/[^\s]+\/next-issue\.sh)\s*$/.exec(segment);
+		if (match === null) return segment;
+		try {
+			const installed = realpathSync(resolve(home, ".agents/skills/task-graph/scripts/next-issue.sh"));
+			if (realpathSync(match[1]) !== installed) return segment;
+			if (createHash("sha256").update(readFileSync(installed)).digest("hex") !== REVIEWED_SELECTOR_SHA256) return segment;
+			return `cat ${match[1]}`;
+		} catch {
+			return segment;
+		}
+	}).join("");
+	return inner === undefined ? classified : `/bin/zsh -lc '${classified}'`;
+}
 
 function currentUsername(): string | undefined {
 	try {
@@ -181,6 +204,7 @@ export function blockedConfigToolCall(
 	username = currentUsername(),
 	guard?: GuardContext,
 ): string | undefined {
+	if (toolName === "bash") input = { command: commandWithReadOnlySelector((input as BashToolInput).command, home) };
 	const mainCheckoutReason = guard === undefined
 		? undefined
 		: blockedMainCheckoutToolCall(toolName, input, guard, home, username);
