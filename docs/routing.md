@@ -55,6 +55,12 @@ advisories on standard error. Advisories never change its exit code.
 | T3 | normal engineering: build, test, debug, verify |
 | T4 | hard problems, planning, final review |
 | T5 | project-level synthesis, deep architecture (falls back to T4) |
+| T6 | code review only, dual-model on purpose (Fable authors, Astra is its cross-provider fallback); never a generic escalation target, no `climbOnExhaustion` |
+
+T6 breaks the single-axis pattern the rest of this ladder follows: T1-T5 answer "how hard
+is this task", and T6 answers a different question, "which two models review this so
+neither grades its own homework". It exists only for the `pr-ready` workflow's review
+stage; nothing climbs to it and it climbs to nothing on exhaustion.
 
 Each tier's `fallbacks` list crosses provider families on purpose. A provider outage or a
 usage-limit stop then degrades one tier sideways instead of failing the run. The list is
