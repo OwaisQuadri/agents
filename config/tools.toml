@@ -275,6 +275,22 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "plannotator-plan-border"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/plannotator-plan-border.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "plannotator-plan-border-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/plannotator-plan-border"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "config-write-guard"
 platforms = ["macos", "linux"]
 commands = []
