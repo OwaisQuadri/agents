@@ -15,6 +15,7 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - go-live, acceptance, or "no regression" claimed without the run.sh output that shows
     it: per-case scores, how many non-holdout cases passed, and the holdout slice
   - a harness TIE reported as a harness win
+  - a candidate accepted when any case in the selected tier suffix has a new median score of zero
   - the mutation-proposer writing `evals/` cases, the rubric, or `votes/`
   - a judge that read `votes/`, another vote, or prior `logs/` history before grading
   - a vote written by editing `votes/votes.jsonl` instead of `scripts/submit_vote.py`

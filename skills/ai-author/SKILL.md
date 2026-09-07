@@ -276,21 +276,23 @@ Run per artifact, on demand or once logs/votes accumulate:
    from there instead of the incumbent. This changes only which text step 2 starts from —
    it never changes what step 4 ships; the incumbent is still the only thing that can become
    the live artifact, gated by the unchanged rule below.
-3. **Test**: run `evals/run.sh` for the incumbent and candidate on the same cases. The
-   harness attempts every configured tier on every run through `tools/tier-dispatch`.
-   This exhaustive test runs for every GEPA candidate. The harness ignores
-   `metadata.minimum-tier`. It walks same-tier fallbacks when quota limits or availability
-   stop a model. If no model can run, it records a `null` frontier line to keep the gap
-   visible. The run stays incomplete until every configured tier and repeat has a numeric
-   score.
-4. **Decide**: accept ONLY on a harness win across every configured tier. Any `null` repeat
-   makes the run incomplete and blocks acceptance. Require no new catastrophic
-   failure at any tier. Require a higher mean score at every tier and at least one strict
-   improvement. The win must hold on each tier's holdout slice. A candidate that wins at some tiers and regresses at others is not a harness
-   win; it's exactly the frontier case step 2 already handles (it may still be worth keeping
-   as a non-incumbent frontier member for a future Propose to mutate from, without shipping
-   as the incumbent). Ties go to the incumbent; two candidates tying each other → the one
-   adding fewer conditions ships (weakest wins).
+3. **Test**: for a skill or workflow that delegates to the shared runner, run
+   `evals/run.sh --accept-if-winning <candidate>` once. The runner evaluates
+   the live incumbent and candidate together in memory at every configured tier.
+   It normalizes only `metadata.minimum-tier` from their model prompts and identities, while
+   preflight receives the submitted candidate unchanged. It records all tiers, including
+   unavailable tiers. A plain run is an optional dry comparison, not a prerequisite. Every
+   skill or workflow that delegates to the shared runner uses the suffix selector. The runner
+   updates a declared floor and preserves a deliberate absence. An artifact with a custom
+   harness keeps its own command.
+4. **Decide**: the same runner invocation ranks each contiguous suffix where both arms have
+   case medians. Each suffix ends at the highest configured tier, and the candidate's exact
+   non-holdout average ranks it. The runner equally weights tier
+   means, and an exact tie selects the widest suffix. It then gates only that selected suffix.
+   All scores and repeats for both arms and slices must be numeric. The candidate must add no
+   rubric score-zero case unless the matching incumbent case is zero. Its aggregate
+   non-holdout and holdout averages must both win strictly. The runner never falls back after
+   a selected suffix fails.
    No churn on noise. **That rule assumes the harness can see the change, and it silently
    assumes the mutation is a tuning tweak.** When the mutation is a DEFECT FIX whose effect no
    existing case measures, a tie is the expected result and rejecting on it would mean a proven
@@ -301,11 +303,10 @@ Run per artifact, on demand or once logs/votes accumulate:
    in a history line instead is a dead letter. Say plainly which of the two paths was used.
    Reporting a tie as a harness win is the failure this clause exists to stop.
 
-   **If the candidate was tested via `evals/run.sh` and accepted**, mark it as this
-   loop's final action — flip that run's `candidate_id` (printed by `run.sh` to stderr)
-   to `accepted:true` in place in `evals/frontier.jsonl`, per the `jq` one-liner in
-   `templates/eval-harness.md`'s "frontier.jsonl" section. Never re-run `run.sh` just to
-   set this: that re-grades every case through the judge for zero new information.
+   **If the candidate passes**, that same command verifies the live incumbent under its
+   frontier lock. It writes the normalized winner with the selected minimum tier and persists
+   the paired frontier evidence. Only selected-suffix rows become accepted. Lower excluded
+   rows remain unaccepted. Do not rerun the harness or edit frontier rows manually.
 
 There is no Record step. `evals/frontier.jsonl`'s score-vector archive is the only
 durable record a Decide leaves behind — what was tested and whether it won, not the
@@ -328,20 +329,16 @@ steps above with frontier data folded in at the points it actually matters:
    artifact has ≥ 2 non-incumbent frontier members AT THE TIER BEING TESTED; below that, it
    mutates from the incumbent exactly as before. Nothing to choose here either — it's
    automatic once enough real candidates exist at that tier.
-3. Test (step 3): run `evals/run.sh <candidate>` with NO `--holdout` flag. This grades
-   both slices and attempts every configured tier. It ignores `metadata.minimum-tier`.
-   The run appends one frontier line per tier plus the candidate text, whether the
-   candidate wins or loses. Use `--holdout` only for a quick recheck, never for a real
-   Decide.
-4. Decide (step 4): apply the unchanged, now tier-scoped holdout-gating rule (see step 4
-   above — a win at every tier tested, not just one). If it accepts, run the mark-accepted
-   `jq` one-liner (above) against that run's `candidate_id` — it flips every tier line for
-   that `candidate_id` together, since acceptance is a property of the candidate's text, not
-   of any single tier. This is the loop's last step (no Record).
+3. Test (step 3): for a skill or workflow on the shared runner, run
+   `evals/run.sh --accept-if-winning <candidate>` with no narrow flags. This grades both arms
+   and slices at every tier. Use narrow modes only for diagnosis, never for a Decide.
+4. Decide (step 4): read the final decision from that same invocation. The runner records a
+   rejection or applies a winner with its selected floor. Do not run the model harness twice.
 
-The shared runner keeps the 20 newest unaccepted frontier entries per artifact and tier.
-It keeps the newly appended line and all accepted entries. It drops the oldest prior
-incomplete entry first, then a dominated entry, then the oldest remaining unaccepted entry.
+The shared runner keeps 20 recent unaccepted comparison groups per tier. A comparison with
+an accepted selected-suffix row stays outside the cap as one complete group, including its
+excluded lower rows. Pruning removes an older incomplete group first, then a dominated group,
+then the oldest remaining unaccepted group.
 
 Fence: the mutation-proposer never writes `evals/` cases, the rubric, or `votes/`. The
 exam stays out of the student's hands — and dispatching someone else to type it does not

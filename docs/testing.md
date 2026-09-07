@@ -51,14 +51,30 @@ node --test pi/extensions/telemetry.test.ts pi/extensions/telemetry.security.tes
 hooks/test.sh
 
 # a skill or workflow's eval harness (per-artifact contract, see skill-author/SKILL.md)
-./skills/<name>/evals/run.sh              # all tiers, both slices, frontier writes
-./skills/<name>/evals/run.sh --holdout    # all tiers, held-out slice, no frontier writes
-./skills/<name>/evals/run.sh --tier T3    # one requested tier, both slices, no frontier writes
+./skills/<name>/evals/run.sh                                  # incumbent baseline, all tiers and slices
+./skills/<name>/evals/run.sh <candidate>                      # paired dry comparison, all tiers and slices
+./skills/<name>/evals/run.sh --accept-if-winning <candidate>  # conditionally apply a paired winner
+./skills/<name>/evals/run.sh --holdout                        # diagnostic holdout mode
+./skills/<name>/evals/run.sh --tier T3                        # diagnostic single-tier mode
 ```
 
-Every skill and workflow runner delegates to `tools/skill-eval`. The runner uses
-`tools/tier-dispatch` for real artifact runs and judge runs. It disables extension
-discovery and loads `pi-anthropic-auth` as the minimum extension.
+Every skill and workflow runner delegates to `tools/skill-eval`. A full candidate run
+compares the live incumbent and candidate together. It executes every configured tier and records
+paired evidence. The runner selects the highest-scoring contiguous suffix ending at the highest
+tier.
+
+A surviving median keeps a partly ungraded tier in that ranking. The completeness gate then
+rejects a selected suffix with any missing repeat. Tiers below the selected floor remain recorded,
+but they do not gate acceptance.
+
+These exit codes apply to the paired candidate forms. A complete dry comparison exits 0.
+Conditional acceptance exits 0 when applied and 1 for a valid rejection. Incomplete evidence or
+an execution failure exits 2.
+
+Configuration and usage errors also exit 2 in every mode. Baseline and narrow diagnostic runs
+otherwise retain their earlier result behavior. The runner uses `tools/tier-dispatch` for real
+artifact runs and judge runs. It disables extension discovery and loads `pi-anthropic-auth` as
+the minimum extension.
 
 ## manifest / policy checks
 
