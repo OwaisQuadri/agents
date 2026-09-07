@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
@@ -14,6 +14,98 @@ const worktreeRoot = "/tmp/agents-worktree";
 
 function guard(cwd = repositoryRoot, isRepositoryClean = true, worktreeRoots = [repositoryRoot, worktreeRoot]): GuardContext {
 	return { cwd, repositoryRoot, isRepositoryClean: () => isRepositoryClean, worktreeRoots: () => worktreeRoots };
+}
+
+for (const isWrapped of [false, true]) {
+	for (const form of ["direct", "sh", "pwd-sh"]) {
+		test(`allows the pinned installed selector: ${form}, wrapped=${isWrapped}`, () => {
+			withSelectorFixture(({ script, worktree, home: linkedHome, context }) => {
+				const payload = form === "pwd-sh" ? `pwd && sh ${script}`
+					: `cd ${worktree} && ${form === "sh" ? "sh " : ""}${script}`;
+				const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+				for (const currentContext of [undefined, context, { ...context, cwd: context.repositoryRoot }]) {
+					assert.equal(blockedConfigToolCall("bash", { command }, linkedHome, user, currentContext), undefined, command);
+				}
+			});
+		});
+	}
+}
+
+function withSelectorFixture(run: (fixture: {
+	script: string; source: string; worktree: string; home: string; context: GuardContext;
+}) => void): void {
+	const fixture = mkdtempSync(join(tmpdir(), `config-write-guard-selector-${process.pid}-`));
+	const root = join(fixture, "primary");
+	const worktree = join(fixture, "other-worktree");
+	const linkedHome = join(fixture, "home");
+	const source = join(root, "skills/task-graph/scripts/next-issue.sh");
+	const script = join(linkedHome, ".agents/skills/task-graph/scripts/next-issue.sh");
+	try {
+		mkdirSync(join(root, "skills/task-graph/scripts"), { recursive: true });
+		mkdirSync(join(linkedHome, ".agents/skills"), { recursive: true });
+		mkdirSync(worktree);
+		writeFileSync(source, readFileSync(new URL("../../skills/task-graph/scripts/next-issue.sh", import.meta.url)), { mode: 0o755 });
+		symlinkSync(join(root, "skills/task-graph"), join(linkedHome, ".agents/skills/task-graph"));
+		run({ script, source, worktree, home: linkedHome, context: {
+			cwd: worktree, repositoryRoot: root, isRepositoryClean: () => true, worktreeRoots: () => [root],
+		} });
+	} finally {
+		rmSync(fixture, { recursive: true, force: true });
+	}
+}
+
+for (const isWrapped of [false, true]) {
+	test(`allows the installed selector without leaving the primary checkout, wrapped=${isWrapped}`, () => {
+		withSelectorFixture(({ script, home: linkedHome, context }) => {
+			for (const payload of [script, `sh ${script}`, `/bin/sh ${script}`]) {
+				const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+				assert.equal(blockedConfigToolCall("bash", { command }, linkedHome, user, { ...context, cwd: context.repositoryRoot }), undefined, command);
+			}
+		});
+	});
+
+	test(`denies selector exceptions for external aliases and primary source paths, wrapped=${isWrapped}`, () => {
+		withSelectorFixture(({ script, source, worktree, home: linkedHome, context }) => {
+			const alias = join(worktree, "next-issue.sh");
+			symlinkSync(script, alias);
+			for (const path of [alias, source, script.replace("/scripts/", "/scripts/./")]) {
+				for (const payload of [path, `sh ${path}`, `/bin/sh ${path}`]) {
+					const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+					assert.match(blockedConfigToolCall("bash", { command }, linkedHome, user, { ...context, cwd: context.repositoryRoot }) ?? "", /Blocked/, command);
+				}
+			}
+		});
+	});
+
+	test(`selector exceptions preserve write and execution guards, wrapped=${isWrapped}`, () => {
+		withSelectorFixture(({ script, source, home: linkedHome, context }) => {
+			const neighbor = script.replace("next-issue.sh", "unknown.sh");
+			const copy = join(linkedHome, ".agents/skills/next-issue.sh");
+			writeFileSync(copy, readFileSync(source));
+			for (const payload of [
+				`${copy}`, `sh ${copy}`, `${neighbor}`, `sh ${neighbor}`,
+				`${script} --help`, `sh ${script} extra`, `/bin/sh -e ${script}`,
+				`${script} && sh ${neighbor}`, `sh ${script} && ${neighbor}`,
+				`${script} > ${linkedHome}/.pi/agent/settings.json`,
+				`sh ${script} > ${context.repositoryRoot}/output`,
+				`${script} && touch ${context.repositoryRoot}/output`,
+				`sh ${script} && touch ${linkedHome}/.pi/agent/settings.json`,
+				`cd ${context.repositoryRoot} && sh ${script} && touch output`,
+				`eval ${script}`, `command ${script}`, `. ${script}`,
+				`echo $(${script})`, `echo \`sh ${script}\``,
+				`${script} | sh`, `sh ${script} | sh`, `cat ${script} | sh`,
+				`sh < ${script}`, `X=1 sh ${script}`, `sh ${script} $EXTRA`,
+			]) {
+				const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+				assert.match(blockedConfigToolCall("bash", { command }, linkedHome, user, context) ?? "", /Blocked/, command);
+			}
+			writeFileSync(source, `${readFileSync(source, "utf8")}\nprintf changed\n`);
+			for (const payload of [script, `sh ${script}`]) {
+				const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+				assert.match(blockedConfigToolCall("bash", { command }, linkedHome, user, context) ?? "", /Blocked/, command);
+			}
+		});
+	});
 }
 
 test("protects only managed agent destinations", () => {
