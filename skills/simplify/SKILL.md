@@ -48,12 +48,6 @@ Prefer fewer concepts, branches, and repeated words. A lower line count is evide
 
 Cyclomatic complexity is a review signal. It is not a target. Keep a high score when flat branches are the clearest form. Never add a helper only to lower the score.
 
-Assess asymptotic time and space for the changed symbols before any simplify edit. Name each independent input size and its caller constraints. Trace operation counts through callees and library calls, including allocation and copying costs. Cite code locations and library contracts that support each bound. Do not infer growth from loop nesting or line count alone.
-
-Report Big-O bounds with their assumptions, including whether they describe worst-case, expected, or amortized costs. Distinguish output storage from peak auxiliary space, including temporary allocations and recursion. Never invent Big-O. Name unknown bounds and their missing evidence. State when no input-sized operation exists in the relevant changes.
-
-Compare the bounds before and after each algorithmic change. Keep simple bounded code when the evidence supports it. Avoid speculative optimization.
-
 Keep a candidate unchanged when it does any of these jobs:
 
 - Names a domain concept that would disappear inside its caller.
@@ -78,7 +72,6 @@ Baseline: <command and result>
 Reduced: <removed symbols, branches, repetitions, or boilerplate>
 Kept: <valuable candidates left unchanged, or none>
 Complexity: <function records from rust-code-analysis-cli; before → after or kept reason>
-Algorithmic: <symbols; input sizes and constraints; operations and evidence; time, output and auxiliary space bounds; assumptions or unknowns; before/after or kept reason>
 Final: <test, formatter, and static-check results>
 ```
 

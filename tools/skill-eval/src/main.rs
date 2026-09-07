@@ -1,5 +1,3 @@
-mod execution;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
@@ -66,7 +64,7 @@ enum DispatchKind {
     Failed,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct SliceResult {
     scores: Vec<Option<f64>>,
     repeats: BTreeMap<String, Vec<Option<u8>>>,
@@ -300,15 +298,9 @@ fn load_tiers(path: &Path) -> Result<Vec<String>, String> {
 }
 
 fn candidate_path(args: &Args) -> PathBuf {
-    args.candidate.clone().unwrap_or_else(|| {
-        if args.eval_dir.parent().and_then(Path::file_name)
-            == Some(std::ffi::OsStr::new("code-reviewer"))
-        {
-            args.eval_dir.join("../code-reviewer.md")
-        } else {
-            args.eval_dir.join("../SKILL.md")
-        }
-    })
+    args.candidate
+        .clone()
+        .unwrap_or_else(|| args.eval_dir.join("../SKILL.md"))
 }
 
 fn run_preflight(eval_dir: &Path, candidate: &Path, cases_file: &Path) -> Result<(), String> {
@@ -559,18 +551,6 @@ fn run_slice(
         let mut repeat_scores = Vec::with_capacity(context.settings.repeats);
         let mut output_check_failures = 0;
         for _ in 0..context.settings.repeats {
-            if execution::is_case(context.eval_dir, &case.id) {
-                let (score, model) =
-                    execution::repeat(context, tier, judge_tier, case, &prompt_path, &input)?;
-                if let Some(model) = model {
-                    result.models.insert(model);
-                }
-                if score.is_none() {
-                    ungraded += 1;
-                }
-                repeat_scores.push(score);
-                continue;
-            }
             let actual = dispatch(
                 context.settings,
                 context.wrapper,
@@ -977,11 +957,11 @@ fn run(mut settings: Settings) -> Result<(), String> {
             .position(|item| item == &tier)
             .expect("validated tier");
         let judge_tier = full_tiers.get(index + 1).unwrap_or(&tier).clone();
-        let nonholdout_result = if settings.args.is_holdout_only {
-            SliceResult::default()
-        } else {
-            run_slice(&context, &tier, &judge_tier, &nonholdout, "nonholdout")?
-        };
+        if settings.args.is_holdout_only {
+            run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
+            continue;
+        }
+        let nonholdout_result = run_slice(&context, &tier, &judge_tier, &nonholdout, "nonholdout")?;
         let holdout_result = run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
         results.insert(
             tier,
@@ -991,22 +971,8 @@ fn run(mut settings: Settings) -> Result<(), String> {
             },
         );
     }
-    let is_execution_incomplete = results.values().any(|result| {
-        result
-            .nonholdout
-            .repeats
-            .iter()
-            .chain(result.holdout.repeats.iter())
-            .any(|(id, repeats)| {
-                execution::is_case(&eval_dir, id) && repeats.iter().any(Option::is_none)
-            })
-    });
     if settings.args.is_holdout_only || settings.args.tier.is_some() {
-        return if is_execution_incomplete {
-            Err("execution evidence incomplete".into())
-        } else {
-            Ok(())
-        };
+        return Ok(());
     }
     let id = candidate_id(&candidate);
     let tested_against = prompt_version(artifact_dir);
@@ -1054,9 +1020,6 @@ fn run(mut settings: Settings) -> Result<(), String> {
         .collect();
     update_frontier(&eval_dir, &candidate, entries)?;
     eprintln!("candidate_id: {id}");
-    if is_execution_incomplete {
-        return Err("execution evidence incomplete".into());
-    }
     if settings.is_accepted && !run_is_complete {
         return Err(
             "candidate was not accepted because at least one repeat is ungraded".to_string(),
@@ -1067,8 +1030,7 @@ fn run(mut settings: Settings) -> Result<(), String> {
 
 fn main() -> ExitCode {
     let raw: Vec<OsString> = env::args_os().skip(1).collect();
-    let result = execution::internal(&raw)
-        .unwrap_or_else(|| parse_args(&raw).and_then(settings).and_then(run));
+    let result = parse_args(&raw).and_then(settings).and_then(run);
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -1234,30 +1196,6 @@ fi
         run(settings).unwrap();
         assert!(!eval_dir.join("frontier.jsonl").exists());
         assert!(!eval_dir.join("frontier").exists());
-    }
-
-    #[test]
-    fn incomplete_execution_fails_narrow_modes_without_writing_frontier() {
-        for is_holdout_only in [true, false] {
-            let (temp, mut settings, eval_dir) =
-                fixture("incomplete-narrow", "#!/bin/zsh\nexit 3\n");
-            let artifact = temp.path.join("code-reviewer");
-            fs::rename(eval_dir.parent().unwrap(), &artifact).unwrap();
-            let eval_dir = artifact.join("evals");
-            settings.args.eval_dir = eval_dir.clone();
-            settings.args.candidate = Some(artifact.join("SKILL.md"));
-            settings.cases_file = eval_dir.join("cases.jsonl");
-            settings.args.is_holdout_only = is_holdout_only;
-            settings.args.tier = if is_holdout_only {
-                None
-            } else {
-                Some("T1".into())
-            };
-            settings.repeats = 1;
-            assert_eq!(run(settings).unwrap_err(), "execution evidence incomplete");
-            assert!(!eval_dir.join("frontier.jsonl").exists());
-            assert!(!eval_dir.join("frontier").exists());
-        }
     }
 
     #[test]

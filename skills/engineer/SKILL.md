@@ -107,8 +107,6 @@ parallel work pays for its own coordination cost; that's a deliberate, named cal
 this step, never the default path. When a build deviates from the plan, say so plainly
 and fold the deviation back into `plan.md` rather than quietly absorbing it.
 
-Run `/simplify` on the completed code change before step 4. Its passing baseline and final checks remain required. Resolve any failed check before continuing. Its report does not replace fresh-context testing or independent review.
-
 ## 4. Test
 
 Dispatch fresh-context testers (`spec-tester`, `maestro-tester` \u2014 whichever fits the
