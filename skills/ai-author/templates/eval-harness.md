@@ -50,13 +50,13 @@ exec "$repo/tools/skill-eval/run.sh" --eval-dir "$here" "$@"
 
 Convention: `./run.sh [candidate-file]` delegates to `tools/skill-eval/run.sh`. It grades
 BOTH slices (non-holdout, then holdout) against the current artifact or candidate with
-rubric.md. The runner emits one
-JSON line per (case, tier) to stdout
-(`{"id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`) and a mean-per-tier,
-per-slice summary to stderr. Grading both slices in one pass matches what the Holdout
-gating rule below already needs together ("the win holds on the holdout slice").
-`--holdout` is a lighter, frontier-write-free mode for a quick recheck of the holdout
-slice alone — use the plain (no-flag) form for anything feeding a real Decide.
+rubric.md. The runner emits one JSON line per (case, tier) to stdout
+(`{"id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`). It writes a mean-per-tier,
+per-slice summary to stderr.
+
+Grading both slices in one pass supplies the conditional acceptance rule below. `--holdout`
+is a lighter, frontier-write-free mode for a quick holdout recheck. Use
+`--accept-if-winning <candidate>` for a real Decide. A plain candidate run is a dry comparison.
 
 **Execution arm, not a prose judge.** Keep the per-artifact `run.sh` as a thin wrapper
 around `tools/skill-eval/run.sh`. The shared runner does not send the artifact's own text
@@ -103,15 +103,12 @@ executable, or the runner stops with an error. The runner gives `preflight.sh` t
 candidate as its first argument. It exports the absolute `CASES_FILE` path. These checks add
 evidence and never replace tier execution.
 
-After grading BOTH slices in the plain (no-flag) form (candidate or incumbent, accepted
-or rejected), append one line PER TIER TESTED to `evals/frontier.jsonl` and write the
-full candidate text to `evals/frontier/<candidate_id>.md` — see "frontier.jsonl" below.
-This runs every time, not only on acceptance: a rejected candidate's score vector is
-exactly what a later Pareto-frontier selection (GEPA loop step 2) needs, and today's
-harness threw it away the moment `run.sh` exited. `accepted` defaults to `false` unless
-the caller sets `ACCEPTED=true` in the environment, since `run.sh` cannot know the
-Decide-step verdict at grading time. An incomplete run still writes its frontier rows,
-leaves them unaccepted, and exits with an error.
+A full candidate invocation evaluates the live incumbent and candidate as one paired,
+in-memory comparison. It removes only `metadata.minimum-tier` from model prompts, candidate
+identity, and the frontier snapshot; preflight receives the submitted candidate unchanged.
+It appends one row per configured tier even when a tier is unavailable. A dry run records
+its paired evidence only. `--accept-if-winning` applies a winner conditionally: accepted
+is exit 0, a valid rejection is exit 1, and incomplete or execution failure is exit 2.
 
 ## frontier.jsonl
 
@@ -123,11 +120,15 @@ an artifact's prose would produce the same score on every tier. This execution a
 tier axis real information:
 
 ```json
-{"candidate_id":"<short hash of the candidate's full text>","tested_against":"<prompt_version of the incumbent it competed with>","tier":"<T1..T5, the tier actually dispatched>","judge_tier":"<one tier above tier, or tier itself when tier is the top tier — no tier above the top exists>","model_ran":["<every distinct model id tools/tier-dispatch actually used this tier, after any same-tier fallback walk>"],"scores_nonholdout":[7,8,6],"scores_holdout":[7],"repeat_scores_nonholdout":{"<case id>":[7,8,7]},"repeat_scores_holdout":{"<case id>":[7]},"mean_nonholdout":7.00,"accepted":false,"ts":"<local iso with offset>"}
+{"candidate_id":"<short hash of the normalized candidate text>","tested_against":"<prompt_version of the incumbent it competed with>","tier":"<T1..T5, the tier actually dispatched>","judge_tier":"<one tier above tier, or tier itself when tier is the top tier — no tier above the top exists>","model_ran":["<every distinct model id tools/tier-dispatch actually used this tier, after any same-tier fallback walk>"],"scores_nonholdout":[7,8,6],"scores_holdout":[7],"repeat_scores_nonholdout":{"<case id>":[7,8,7]},"repeat_scores_holdout":{"<case id>":[7]},"mean_nonholdout":7.00,"accepted":false,"ts":"<local iso with offset>"}
 ```
 
-- `candidate_id`: a short hash (e.g. `sha1sum | cut -c1-8`) of the candidate's exact text —
-  stable identity independent of whether it shipped.
+- `candidate_id`: a short hash of the candidate text after removing only
+  `metadata.minimum-tier`, so a floor-only update has one identity. Existing rows retain
+  their earlier raw-text identifiers. The first retest writes the normalized identifier.
+- `comparison_id`, `incumbent_id`, `incumbent_model_ran`, incumbent scores, and incumbent
+  repeats identify the paired live incumbent evidence on every candidate tier row. Legacy
+  rows remain readable but never authorize acceptance.
 - `tier`: the configured tier `tools/tier-dispatch` attempted for this candidate. The
   artifact's declared minimum tier never filters this list. If the whole model chain is
   unavailable, its line keeps `null` scores instead of a guessed score or missing record.
@@ -149,18 +150,22 @@ tier axis real information:
   A repeat entry is `null`, never `0`, when that specific repeat's dispatch or judge call
   could not produce a grade because the model chain exhausted, the dispatcher failed, or
   the judge returned invalid JSON. A numeric `0` would look like a real rubric failure.
-  `null` entries do not enter the median or `mean_nonholdout`. Any `null` repeat blocks
-  acceptance. It records an incomplete run without pretending that GEPA measured it.
+  `null` entries do not enter the median or `mean_nonholdout`. A `null` repeat inside
+  the selected suffix blocks acceptance. A gap does not exclude a tier when its case median
+  survives. The score ranking selects the suffix before the completeness gate. A tier below
+  that selected floor keeps its gap without blocking acceptance.
 - A `cases.jsonl` case carrying a `files` list still gets those files' content appended to
   the text the dispatched run receives as its system prompt (skill text plus each listed
   file, in order) — the same behavior the harness had before the execution arm existed,
   now applied to what gets DISPATCHED rather than what gets judged as prose.
-- The candidate's full text (not a diff) lands in `evals/frontier/<candidate_id>.md`, so a
-  later Propose step can load a non-incumbent frontier member and mutate from it directly.
+- The normalized candidate text (not a diff) lands in `evals/frontier/<candidate_id>.md`, so
+  a later Propose step can load a non-incumbent frontier member and mutate from it directly.
 - **Pruning**: cap `evals/frontier.jsonl` at the 20 newest unaccepted entries per artifact
   per tier. Accepted entries stay outside this cap. A candidate writes one line for every
-  configured tier, so the cap applies within each `tier` value separately. Keep the newly
-  appended line. When over cap, drop the oldest prior incomplete entry first. Then drop the
+  configured tier, so the cap applies within each `tier` value separately. A comparison with
+  any accepted selected-suffix row stays outside the cap as one complete group, including its
+  excluded lower rows. Keep the newly appended line. When over cap, drop the oldest prior
+  incomplete entry first. Then drop the
   oldest prior *dominated* entry: an entry whose score vector another entry at the same tier
   beats or ties everywhere, with at least one strict win. If needed, drop the oldest prior
   unaccepted entry to enforce the cap. Delete the matching
@@ -173,40 +178,25 @@ tier axis real information:
   structurally just draft variants of the artifact's own already-tracked definition file.
   Neither touches live session content, so there is no sensitive-data reason to exclude it,
   and tracking it means a fresh clone can recompute the frontier.
-- **Marking a candidate accepted, after Decide, without a re-grade.** `run.sh` writes
-  `accepted:false` by default because it can't know the Decide verdict at grading time.
-  When Decide (GEPA loop step 4) later accepts that candidate, flip its line in place
-  instead of re-running `run.sh` (which would re-grade every case just to change one
-  boolean):
-  ```sh
-  jq -se --arg id "<candidate_id>" '
-    any(.[]; .candidate_id == $id) and
-    all(.[] | select(.candidate_id == $id);
-      (.scores_nonholdout | type == "array" and length > 0 and all(.[]; . != null)) and
-      (.scores_holdout | type == "array" and length > 0 and all(.[]; . != null)) and
-      (.repeat_scores_nonholdout | type == "object" and length > 0 and all(.[][]; . != null)) and
-      (.repeat_scores_holdout | type == "object" and length > 0 and all(.[][]; . != null))
-    )' evals/frontier.jsonl >/dev/null && \
-  jq --arg id "<candidate_id>" -c 'if .candidate_id == $id then .accepted = true else . end' \
-    evals/frontier.jsonl > /tmp/frontier.jsonl.$$ && mv /tmp/frontier.jsonl.$$ evals/frontier.jsonl
-  ```
-  The first command refuses to continue if the candidate is missing, incomplete, or has an
-  ungraded repeat. The second command keeps every non-matching line in order and flips all lines
-  for the matching `candidate_id`. Matching on `candidate_id` alone is intentional.
-  Acceptance applies to the candidate text, so all tier lines flip together.
-  If a
-  specific artifact's eval cases start encoding something sensitive, gitignore that one
-  artifact's frontier paths — never a repo-wide default change.
+- **Conditional acceptance.** Run `./run.sh --accept-if-winning <candidate>`. The runner
+  ranks each scorable suffix ending at the highest configured tier by exact candidate
+  non-holdout average, with equal tier weights; an exact tie picks the widest suffix. It then
+  gates only that suffix: numeric scores and repeats for both arms and slices, no new score-zero
+  case, and strict aggregate wins on non-holdout and holdout. It does not retry another suffix.
+  Under the frontier lock it confirms the incumbent is unchanged and writes the submitted
+  winner. It updates only a declared `metadata.minimum-tier` and preserves a deliberate absence. It
+  restores the live definition if frontier persistence fails. Only rows in the selected suffix receive `accepted:true`. Lower excluded
+  rows remain unaccepted and keep `decision:"excluded_below_floor"`. Pruning retains complete
+  paired comparison groups.
 
 ## Holdout gating rule
 
-A candidate replaces the incumbent only when, on the same cases:
-
-1. every configured tier and repeat has a numeric score; any `null` makes the run incomplete
-2. no new case has a catastrophic grade; reject before comparing means
-3. every tier has a higher mean; a tie keeps the incumbent
-4. every tier wins on its holdout slice
-5. when two candidates pass steps 1 through 4, the one with fewer conditions ships
+The runner always executes every configured tier. It scores each tier independently, then every
+contiguous suffix ending at the highest tier from raw per-case medians using exact rational
+comparisons. It selects the candidate's highest non-holdout average, choosing the widest suffix
+on an exact tie. Only selected-tier evidence gates acceptance; excluded lower tiers do not block.
+A selected suffix needs complete numeric paired evidence, no new rubric score-zero case, and
+strict candidate aggregate wins on both slices. There is no fallback suffix.
 
 ## Usage evidence (no logging section to paste)
 

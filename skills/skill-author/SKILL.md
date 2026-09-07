@@ -116,9 +116,9 @@ Copy skills/ai-author/templates/eval-harness.md into `<skill>/evals/`:
   line per case to stdout, summary to stderr; `--holdout` runs the held-out slice. A
   Pi-backed runner disables extension discovery and loads `pi-anthropic-auth` as the bare
   minimum extension.
-- Holdout gating: a candidate replaces the incumbent only when no new catastrophic,
-  higher mean, AND the win holds on the holdout slice. Ties go to the incumbent; two
-  passing candidates tie → the one adding fewer conditions ships.
+- Conditional acceptance: `tools/skill-eval` owns the tier comparison, holdout gate, and
+  selected execution floor. Follow `skills/ai-author/templates/eval-harness.md`; never
+  restate or manually reproduce the selector.
 
 The authored skill's own "## evals" section is 2-4 lines: what run.sh checks, how to
 invoke it.

@@ -151,10 +151,11 @@ Work routes by TIER, never by model name. `config/model-tiers.json` maps each ti
 model, and `docs/routing.md` carries the policy. Never hand-pick a model id in prose, in a
 skill, or in an agent definition.
 
-A skill may declare `metadata.minimum-tier`. Reaching one whose floor sits above the
-session model, say so in the first reply and recommend the switch. The user decides, and
-the work continues either way. A skill cannot change the model by itself. That line is the
-only thing standing between judgment work and a model too small for it.
+A skill may declare `metadata.minimum-tier`. Judgment supplies the initial floor, and a
+complete shared-harness comparison can replace it with the highest-scoring contiguous tier suffix.
+Reaching a skill whose floor sits above the session model, say so in the first reply and
+recommend the switch. The user decides, and the work continues either way. A skill cannot
+change the model by itself.
 
 ## code style
 
