@@ -1,0 +1,13 @@
+version = 1
+rules = ["privacy", "comment-length", "comment-shape", "boolean-name"]
+include = ["**"]
+exclude = ["**/.git/**", "**/node_modules/**", "**/vendor/**", "**/target/**", "**/build/**", "**/dist/**", "**/.cache/**", "**/__pycache__/**", "**/.venv/**"]
+generated = ["**/*.generated.*", "**/*.min.js", "**/*.g.cs"]
+total_ms = 20000
+process_budget_ms = 3000
+
+[rule_ms]
+privacy = 500
+comment-length = 500
+comment-shape = 500
+boolean-name = 500

@@ -91,7 +91,7 @@ platforms = ["macos", "linux"]
 commands = []
 pi_extension = "pi/extensions/comment-shape-guard.ts"
 source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+installer = { command = "cargo", args = ["build", "--release", "--locked", "--manifest-path", "tools/edit-time-check/Cargo.toml"], preview_args = ["metadata", "--no-deps", "--format-version", "1", "--manifest-path", "tools/edit-time-check/Cargo.toml"] }
 
 [[tools]]
 name = "comment-shape-guard-lib"

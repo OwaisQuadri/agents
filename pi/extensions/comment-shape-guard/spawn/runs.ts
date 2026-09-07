@@ -35,16 +35,14 @@ export function writeWorkerVerdict(path: string, result: WorkerVerdictResult): v
 	atomicWrite(path, JSON.stringify(result));
 }
 
-/** Reads + validates a worker's result file. Returns undefined on missing or malformed
- * input — the caller (comment-shape-guard.ts) treats that identically to a timeout:
- * fail open, log to unverified.jsonl. */
+/** Read a completed result; missing or malformed results are not decisions. */
 export function readWorkerVerdict(path: string): WorkerVerdictResult | undefined {
 	if (!existsSync(path)) return undefined;
 	try {
 		const raw = JSON.parse(readFileSync(path, "utf-8")) as unknown;
 		if (!raw || typeof raw !== "object") return undefined;
 		const r = raw as Record<string, unknown>;
-		if (typeof r.shape !== "string" || typeof r.reason !== "string") return undefined;
+		if (Object.keys(r).sort().join(",") !== "reason,shape" || typeof r.shape !== "string" || typeof r.reason !== "string" || !r.reason.trim() || r.reason.length > 2000) return undefined;
 		return { shape: r.shape, reason: r.reason };
 	} catch {
 		return undefined;

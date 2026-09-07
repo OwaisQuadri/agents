@@ -5,8 +5,8 @@
  * versioned package) but the same shape on purpose, so a reader who already knows one
  * recognizes the other.
  */
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { runProcess } from "../process.ts";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,18 +17,8 @@ export const JUDGE_AGENT_EXTENSION_PATH = join(REPO_ROOT, "pi", "extensions", "c
 export const COMMENT_STYLE_DOC_PATH = join(REPO_ROOT, "docs", "comment-style.md");
 const MODEL_TIERS_PATH = join(REPO_ROOT, "config", "model-tiers.json");
 
-/** T2 ("cheap summarization, classification, boilerplate" per docs/routing.md's own
- * tier table) is the judge's tier — resolved from config/model-tiers.json at call time,
- * never hand-picked, per this repo's model-routing rule. Falls back to a fixed model
- * only if the tiers file is missing or malformed (should not happen post-install.sh,
- * but a judge worker must never crash the guard extension over a config read). */
 export function resolveJudgeModel(tiersPath = MODEL_TIERS_PATH): TierEntry {
-	try {
-		const file = parseTierFile(readFileSync(tiersPath, "utf-8"));
-		return file.tiers.T2.pi;
-	} catch {
-		return { model: "anthropic/claude-haiku-4-5", thinking: "medium" };
-	}
+	return parseTierFile(readFileSync(tiersPath, "utf-8")).tiers.T2.pi;
 }
 
 /** Resolve the `pi` entry point (same trick observational-memory uses), falling back to
@@ -38,7 +28,7 @@ export function resolvePiBinary(): { command: string; baseArgs: string[] } {
 	if (entry) {
 		try {
 			const realEntry = realpathSync(entry);
-			if (/\.(?:mjs|cjs|js)$/i.test(realEntry)) {
+			if (realEntry.endsWith("/pi-coding-agent/dist/bundle/cli.js")) {
 				return { command: process.execPath, baseArgs: [realEntry] };
 			}
 		} catch {
@@ -63,30 +53,12 @@ export function buildWorkerEnv(resultPath: string): NodeJS.ProcessEnv {
 
 export type WorkerExit = { code: number | null; signal: NodeJS.Signals | null; stderr: string };
 
-/** Spawn the judge; resolve when it exits or `signal` aborts it (the guard extension's
- * 20-second fail-open timeout). Never rejects — a spawn error resolves with a non-zero
- * code instead, so the caller's single fail-open path handles every failure mode. */
-export function spawnWorker(opts: { argv: string[]; cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal }): Promise<WorkerExit> {
-	const [command, ...rest] = opts.argv;
-	if (!existsSync(opts.cwd)) mkdirSync(opts.cwd, { recursive: true });
-	return new Promise<WorkerExit>((resolvePromise) => {
-		const proc = spawn(command, rest, { cwd: opts.cwd, env: opts.env, stdio: ["ignore", "ignore", "pipe"] });
-		let stderr = "";
-		proc.stderr?.on("data", (d: Buffer) => {
-			stderr += d.toString();
-		});
-		proc.on("error", () => resolvePromise({ code: 1, signal: null, stderr: stderr || "spawn error" }));
-		proc.on("close", (code, signal) => resolvePromise({ code, signal, stderr }));
-
-		if (opts.signal) {
-			const kill = () => {
-				proc.kill("SIGTERM");
-				setTimeout(() => {
-					if (!proc.killed) proc.kill("SIGKILL");
-				}, 3000).unref?.();
-			};
-			if (opts.signal.aborted) kill();
-			else opts.signal.addEventListener("abort", kill, { once: true });
-		}
-	});
+export async function spawnWorker(opts: { argv: string[]; cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal; deadline: number }): Promise<WorkerExit> {
+	const [command, ...args] = opts.argv;
+	try {
+		await runProcess({ command, args, cwd: opts.cwd, env: opts.env, signal: opts.signal, deadline: opts.deadline, input: "" });
+		return { code: 0, signal: null, stderr: "" };
+	} catch {
+		return { code: 1, signal: null, stderr: "Required judgment worker failed." };
+	}
 }

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "shard-router-attached",
+    "commentText": "/// Routes a record key to its owning shard so retries reach the same writer.\n/// Accepts a record key and returns its shard number. Unknown keys return RouteError.",
+    "followingContext": "pub fn route(key: u64) -> Result<u32, RouteError> {\n    lookup(key)\n}",
+    "expectedShape": "docstring on a public API declaration"
+  },
+  {
+    "id": "shard-router-unrelated",
+    "commentText": "/// Routes a record key to its owning shard so retries reach the same writer.\n/// Accepts a record key and returns its shard number. Unknown keys return RouteError.",
+    "followingContext": "pub fn shutdown() {\n    stop_workers();\n}",
+    "expectedShape": "none"
+  },
+  {
+    "id": "snapshot-store-attached",
+    "commentText": "/**\n * Saves a snapshot before publishing its revision so readers cannot observe partial state.\n * @param snapshot - The complete state to save.\n * @returns The published revision number.\n * @throws StorageError if the snapshot cannot be persisted.\n */",
+    "followingContext": "export function publishSnapshot(snapshot: Snapshot): number {\n  return store.commit(snapshot);\n}",
+    "expectedShape": "docstring on a public API declaration"
+  },
+  {
+    "id": "snapshot-store-unrelated",
+    "commentText": "/**\n * Saves a snapshot before publishing its revision so readers cannot observe partial state.\n * @param snapshot - The complete state to save.\n * @returns The published revision number.\n * @throws StorageError if the snapshot cannot be persisted.\n */",
+    "followingContext": "export const DEFAULT_FONT_SIZE = 14;",
+    "expectedShape": "none"
+  }
+]
