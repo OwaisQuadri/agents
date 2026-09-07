@@ -1511,7 +1511,7 @@ impl RunLock {
     fn acquire(state_root: &Path, run_key: &str) -> Result<Self, String> {
         fs::create_dir_all(state_root)
             .map_err(|error| format!("cannot create {}: {error}", state_root.display()))?;
-        let path = state_root.join(format!("{run_key}.lock"));
+        let path = state_root.join("run.lock");
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -1678,6 +1678,11 @@ fn paired_run_key(
         &mut hasher,
         "output-check",
         &scoring_file(&settings.args.eval_dir.join("output-check.sh"))?,
+    );
+    update_key(
+        &mut hasher,
+        "preflight",
+        &scoring_file(&settings.args.eval_dir.join("preflight.sh"))?,
     );
     update_key(
         &mut hasher,
@@ -3742,6 +3747,7 @@ fi
         fs::write(artifact_dir.join("context.txt"), "one").unwrap();
         fs::write(&settings.cases_file, "{\"id\":\"n1\",\"input\":\"plain input\",\"expect\":\"works\",\"holdout\":false,\"files\":[\"context.txt\"]}\n{\"id\":\"h1\",\"input\":\"holdout\",\"expect\":\"works\",\"holdout\":true}\n").unwrap();
         let cases = load_cases(&settings.cases_file).unwrap();
+        write_executable(&eval_dir.join("preflight.sh"), "#!/bin/zsh\nexit 0\n");
         let submitted = fs::read_to_string(&candidate_path).unwrap();
         let candidate = normalize_minimum_tier(&submitted).unwrap();
         let live = fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap();
@@ -3854,6 +3860,21 @@ fi
             .unwrap()
         );
         fs::remove_file(eval_dir.join("output-check.sh")).unwrap();
+        write_executable(&eval_dir.join("preflight.sh"), "#!/bin/zsh\nexit 1\n");
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&eval_dir.join("preflight.sh"), "#!/bin/zsh\nexit 0\n");
         fs::write(&settings.tiers_file, r#"{"tiers":{"T2":{}}}"#).unwrap();
         assert_ne!(
             key,
@@ -3939,7 +3960,13 @@ fi
         let state_root = temp.path.join("state");
         let key = "run";
         let first = RunLock::acquire(&state_root, key).unwrap();
-        assert!(RunLock::acquire(&state_root, key).is_err());
+        assert!(RunLock::acquire(&state_root, "another-run").is_err());
+        assert_eq!(
+            fs::read_dir(&state_root).unwrap().count(),
+            1,
+            "one stable lock file serves every run key"
+        );
+        assert!(state_root.join("run.lock").exists());
         drop(first);
         let (state_dir, _) = initialize_state(&temp.path, key, false).unwrap();
         fs::write(state_dir.join("manifest.json"), "not json").unwrap();
@@ -4071,11 +4098,11 @@ fi
     }
 
     #[test]
-    fn incomplete_paired_run_retains_state_and_restarts_despite_advisory_lock() {
+    fn completed_null_scores_resume_without_retry_and_restart_despite_advisory_lock() {
         let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
         let (temp, mut settings, eval_dir, candidate) = paired_fixture("restart-lock", exhausted);
         let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
-        let run_lock = state_dir.with_extension("lock");
+        let run_lock = eval_dir.join(".skill-eval-state/run.lock");
 
         assert_eq!(run(settings.clone()).unwrap(), 2);
         assert!(state_dir.exists());
@@ -4089,18 +4116,16 @@ fi
             4
         );
 
-        settings.args.is_restart = true;
         assert_eq!(run(settings.clone()).unwrap(), 2);
-        assert!(state_dir.exists());
-        assert!(run_lock.exists());
         assert_eq!(
             fs::read_to_string(temp.path.join("calls"))
                 .unwrap()
                 .lines()
                 .count(),
-            8
+            4
         );
 
+        settings.args.is_restart = true;
         assert_eq!(run(settings).unwrap(), 2);
         assert!(state_dir.exists());
         assert!(run_lock.exists());
@@ -4109,7 +4134,7 @@ fi
                 .unwrap()
                 .lines()
                 .count(),
-            12
+            8
         );
     }
 
