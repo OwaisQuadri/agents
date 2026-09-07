@@ -37,7 +37,7 @@ function commandWithReadOnlySelector(command: string, home: string): string {
 	if (/[^A-Za-z0-9_/.\- \t\n;&]/.test(payload) || /(?<!&)&(?!&)/.test(payload)) return command;
 	const classified = payload.split(/(&&|;|\n)/).map((segment) => {
 		const match = /^\s*(?:(?:\/bin\/)?sh\s+)?(\/[^\s]+\/next-issue\.sh)\s*$/.exec(segment);
-		if (match === null) return segment;
+		if (match === null || match[1] !== resolve(home, ".agents/skills/task-graph/scripts/next-issue.sh")) return segment;
 		try {
 			const installed = realpathSync(resolve(home, ".agents/skills/task-graph/scripts/next-issue.sh"));
 			if (realpathSync(match[1]) !== installed) return segment;

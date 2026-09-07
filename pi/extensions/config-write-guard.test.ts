@@ -55,6 +55,28 @@ function withSelectorFixture(run: (fixture: {
 }
 
 for (const isWrapped of [false, true]) {
+	test(`allows the installed selector without leaving the primary checkout, wrapped=${isWrapped}`, () => {
+		withSelectorFixture(({ script, home: linkedHome, context }) => {
+			for (const payload of [script, `sh ${script}`, `/bin/sh ${script}`]) {
+				const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+				assert.equal(blockedConfigToolCall("bash", { command }, linkedHome, user, { ...context, cwd: context.repositoryRoot }), undefined, command);
+			}
+		});
+	});
+
+	test(`denies selector exceptions for external aliases and primary source paths, wrapped=${isWrapped}`, () => {
+		withSelectorFixture(({ script, source, worktree, home: linkedHome, context }) => {
+			const alias = join(worktree, "next-issue.sh");
+			symlinkSync(script, alias);
+			for (const path of [alias, source, script.replace("/scripts/", "/scripts/./")]) {
+				for (const payload of [path, `sh ${path}`, `/bin/sh ${path}`]) {
+					const command = isWrapped ? `/bin/zsh -lc '${payload}'` : payload;
+					assert.match(blockedConfigToolCall("bash", { command }, linkedHome, user, { ...context, cwd: context.repositoryRoot }) ?? "", /Blocked/, command);
+				}
+			}
+		});
+	});
+
 	test(`selector exceptions preserve write and execution guards, wrapped=${isWrapped}`, () => {
 		withSelectorFixture(({ script, source, home: linkedHome, context }) => {
 			const neighbor = script.replace("next-issue.sh", "unknown.sh");
