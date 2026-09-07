@@ -1,11 +1,10 @@
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -441,6 +440,10 @@ fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<Option<String>, S
     }))
 }
 
+fn output_check_failure_diagnostic(case_id: &str, tier: &str, details: &str) -> String {
+    format!("output check failed for {case_id} on {tier}: {details}")
+}
+
 fn write_wrapper(temp: &TempDir, extension: &Path) -> Result<PathBuf, String> {
     if !extension.exists() {
         return Err(format!(
@@ -643,7 +646,10 @@ fn run_slice(
             let output_check_failure = run_output_check(context.eval_dir, &actual.stdout)?;
             if let Some(details) = &output_check_failure {
                 output_check_failures += 1;
-                eprintln!("output check failed for {} on {tier}: {details}", case.id);
+                eprintln!(
+                    "{}",
+                    output_check_failure_diagnostic(&case.id, tier, details)
+                );
             }
             let prompt = judge_prompt(context.rubric, case, &actual.stdout)?;
             let judged = dispatch(
@@ -1513,7 +1519,7 @@ impl RunLock {
             .truncate(false)
             .open(&path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
-        FileExt::try_lock_exclusive(&file)
+        file.try_lock()
             .map_err(|error| run_lock_error(&path, run_key, error))?;
         Ok(Self { file })
     }
@@ -1521,18 +1527,17 @@ impl RunLock {
 
 impl Drop for RunLock {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 
-fn run_lock_error(path: &Path, run_key: &str, error: io::Error) -> String {
-    if error.kind() == io::ErrorKind::WouldBlock {
-        format!("paired evaluation already runs for {run_key}: {error}")
-    } else {
-        format!(
+fn run_lock_error(path: &Path, run_key: &str, error: TryLockError) -> String {
+    match error {
+        TryLockError::WouldBlock => format!("paired evaluation already runs for {run_key}"),
+        TryLockError::Error(error) => format!(
             "cannot acquire advisory lock {} for {run_key}: {error}",
             path.display()
-        )
+        ),
     }
 }
 
@@ -1772,12 +1777,7 @@ fn ensure_immutable_file(path: &Path, content: &[u8]) -> Result<(), String> {
 }
 
 fn prompt_name(arm: &str, case_id: &str) -> String {
-    let encoded_id: String = case_id
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("{arm}-{encoded_id}.md")
+    format!("{arm}-{:x}.md", Sha1::digest(case_id.as_bytes()))
 }
 
 fn prepare_prompts(
@@ -1895,7 +1895,14 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
             .output_check_lock
             .lock()
             .map_err(|_| "output check lock poisoned".to_string())?;
-        run_output_check(context.eval_dir, &actual.stdout)?
+        let failure = run_output_check(context.eval_dir, &actual.stdout)?;
+        if let Some(details) = &failure {
+            eprintln!(
+                "{}",
+                output_check_failure_diagnostic(&unit.case_id, &unit.tier, details)
+            );
+        }
+        failure
     };
     let judge = dispatch(
         context.settings,
@@ -2945,6 +2952,14 @@ print output-without-attribution
     }
 
     #[test]
+    fn output_check_failure_diagnostic_names_the_paired_case_and_tier() {
+        assert_eq!(
+            output_check_failure_diagnostic("case/with spaces", "T3", "script detail"),
+            "output check failed for case/with spaces on T3: script detail"
+        );
+    }
+
+    #[test]
     fn legacy_frontier_entries_remain_readable() {
         let temp = test_temp("legacy-frontier");
         let path = temp.path.join("frontier.jsonl");
@@ -3678,6 +3693,18 @@ fi
     }
 
     #[test]
+    fn prompt_name_hashes_long_case_ids_to_a_fixed_length() {
+        let case_id = "case-".repeat(10_000);
+        let name = prompt_name("candidate", &case_id);
+        assert_eq!(name.len(), "candidate-".len() + 40 + ".md".len());
+        assert_eq!(
+            name,
+            format!("candidate-{:x}.md", Sha1::digest(case_id.as_bytes()))
+        );
+        assert_ne!(name, prompt_name("candidate", &(case_id + "different")));
+    }
+
+    #[test]
     fn work_units_interleave_arms_for_each_repeat() {
         let cases = vec![
             Case {
@@ -3926,13 +3953,14 @@ fi
     #[test]
     fn run_lock_reports_contention_and_system_errors_separately() {
         let path = Path::new("state/run.lock");
+        assert!(run_lock_error(path, "run", TryLockError::WouldBlock).contains("already runs"));
         assert!(
-            run_lock_error(path, "run", io::Error::from(io::ErrorKind::WouldBlock))
-                .contains("already runs")
-        );
-        assert!(
-            run_lock_error(path, "run", io::Error::other("disk error"))
-                .contains("cannot acquire advisory lock state/run.lock for run: disk error")
+            run_lock_error(
+                path,
+                "run",
+                TryLockError::Error(io::Error::other("disk error"))
+            )
+            .contains("cannot acquire advisory lock state/run.lock for run: disk error")
         );
     }
 
