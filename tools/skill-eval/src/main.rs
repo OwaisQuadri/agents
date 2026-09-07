@@ -3930,11 +3930,11 @@ fi
     fn run_lock_reports_contention_and_system_errors_separately() {
         let path = Path::new("state/run.lock");
         assert!(
-            run_lock_error(&path, "run", io::Error::from(io::ErrorKind::WouldBlock))
+            run_lock_error(path, "run", io::Error::from(io::ErrorKind::WouldBlock))
                 .contains("already runs")
         );
         assert!(
-            run_lock_error(&path, "run", io::Error::other("disk error"))
+            run_lock_error(path, "run", io::Error::other("disk error"))
                 .contains("cannot acquire advisory lock state/run.lock for run: disk error")
         );
     }
