@@ -26,10 +26,8 @@ const INTERPRETER_COMMANDS = new Set([
 	"ruby", "node", "xargs", "eval", "source", ".", "osascript",
 ]);
 
-// Regex-based, no quote tracking — deliberate. A rare misparse falls through to the
-// write default below, never to a false allow.
 function splitTopLevelGroups(command: string): string[] {
-	return command.split(/&&|\|\||;|\n|(?<!\|)&(?!>)/);
+	return command.replace(/\d*>&\s*(?:\d+|-)(?=\s|[|;&]|$)/g, "").split(/&&|\|\||;|\n|(?<!\|)&(?!>)/);
 }
 
 // `|&` is `2>&1 |`, still a pipe — fold it into `|` before splitting, or the leading
