@@ -14,6 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const NON_GIT_ARTIFACT_NAMESPACE_ENV: &str = "SKILL_EVAL_ARTIFACT_NAMESPACE";
+const DEFAULT_REPEATS: usize = 1;
 const MAX_RETAINED_RUNS: usize = 100;
 const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--jobs N] [--restart] [--accept-if-winning] [--resume <comparison-id>] [--resume-from-log <path> --legacy-arm incumbent|candidate] [candidate]\nnon-git artifact identity uses SKILL_EVAL_ARTIFACT_NAMESPACE (default: non-git)";
 const STATE_FORMAT_VERSION: u8 = 1;
@@ -108,6 +109,31 @@ enum DispatchKind {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum UnitOutcome {
+    Scored,
+    Exhausted,
+    TimedOut,
+    Failed,
+    Ungraded,
+}
+
+impl UnitOutcome {
+    fn from_dispatch(kind: &DispatchKind) -> Self {
+        match kind {
+            DispatchKind::Success => Self::Scored,
+            DispatchKind::Exhausted => Self::Exhausted,
+            DispatchKind::TimedOut => Self::TimedOut,
+            DispatchKind::Failed => Self::Failed,
+        }
+    }
+
+    fn is_retryable(self) -> bool {
+        matches!(self, Self::TimedOut | Self::Failed)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct RecordedCase {
     key: String,
@@ -120,6 +146,12 @@ struct RecordedCase {
     output_check_failures: Option<usize>,
     #[serde(default)]
     unit_results: Vec<UnitResult>,
+}
+
+impl RecordedCase {
+    fn is_retryable(&self) -> bool {
+        self.unit_results.iter().any(UnitResult::is_retryable)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -479,11 +511,16 @@ fn positive_env(name: &str, default: usize) -> Result<usize, String> {
     }
 }
 
-fn settings(args: Args) -> Result<Settings, String> {
-    let repeats = env::var("REPEATS")
-        .unwrap_or_else(|_| "3".to_string())
+fn configured_repeats(value: Option<&str>) -> Result<usize, String> {
+    value
+        .map_or_else(|| DEFAULT_REPEATS.to_string(), str::to_string)
         .parse::<usize>()
-        .map_err(|error| format!("REPEATS must be a positive integer: {error}"))?;
+        .map_err(|error| format!("REPEATS must be a positive integer: {error}"))
+}
+
+fn settings(args: Args) -> Result<Settings, String> {
+    let value = env::var("REPEATS").ok();
+    let repeats = configured_repeats(value.as_deref())?;
     if repeats == 0 {
         return Err("REPEATS must be a positive integer".to_string());
     }
@@ -1168,7 +1205,7 @@ fn parse_run(path: &Path, expected: Option<&[String]>) -> Result<ParsedRun, Stri
     let text = fs::read_to_string(path)
         .map_err(|error| format!("cannot read run log {}: {error}", path.display()))?;
     let mut start = None;
-    let mut completed = Vec::new();
+    let mut completed: Vec<RecordedCase> = Vec::new();
     let mut is_complete = false;
     for (index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
@@ -1211,7 +1248,18 @@ fn parse_run(path: &Path, expected: Option<&[String]>) -> Result<ParsedRun, Stri
                         path.display()
                     ));
                 }
-                completed.push(case);
+                if let Some(index) = completed.iter().position(|saved| saved.key == case.key) {
+                    if !completed[index].is_retryable() {
+                        return Err(format!(
+                            "run log {} has a duplicate completed case {}",
+                            path.display(),
+                            case.key
+                        ));
+                    }
+                    completed[index] = case;
+                } else {
+                    completed.push(case);
+                }
                 if let Some(expected) = expected {
                     validate_completed(&completed, expected)?;
                 }
@@ -1596,6 +1644,10 @@ impl RunRecorder {
         Ok(())
     }
 
+    fn prepare_retryable_resume(&mut self) {
+        self.completed.retain(|case| !case.is_retryable());
+    }
+
     fn complete(&self, decision: &str) -> Result<(), String> {
         validate_completed(&self.completed, &self.expected)?;
         if self.completed.len() != self.expected.len() {
@@ -1716,7 +1768,7 @@ fn component_fingerprints(
                 .clone()
                 .unwrap_or_else(|| "none".to_string()),
         ),
-        ("protocol".to_string(), digest("3")),
+        ("protocol".to_string(), digest("4")),
         (
             "tier_dispatch".to_string(),
             digest(run_key_input(&settings.tier_dispatch_bin)?),
@@ -2327,15 +2379,24 @@ struct WorkUnit {
 struct UnitResult {
     unit: WorkUnit,
     score: Option<u8>,
+    outcome: UnitOutcome,
     actual_model: Option<String>,
     is_output_check_failed: bool,
     timing: RepeatTiming,
+}
+
+impl UnitResult {
+    fn is_retryable(&self) -> bool {
+        self.outcome.is_retryable()
+    }
 }
 
 #[derive(Deserialize)]
 struct StoredUnitResult {
     unit: WorkUnit,
     score: Option<u8>,
+    #[serde(default)]
+    outcome: Option<UnitOutcome>,
     actual_model: Option<String>,
     is_output_check_failed: bool,
     #[serde(default)]
@@ -2350,6 +2411,7 @@ impl<'de> Deserialize<'de> for UnitResult {
         let StoredUnitResult {
             unit,
             score,
+            outcome,
             actual_model,
             is_output_check_failed,
             timing,
@@ -2360,6 +2422,13 @@ impl<'de> Deserialize<'de> for UnitResult {
         Ok(Self {
             unit,
             score,
+            outcome: outcome.unwrap_or_else(|| {
+                if score.is_some() {
+                    UnitOutcome::Scored
+                } else {
+                    UnitOutcome::Ungraded
+                }
+            }),
             actual_model,
             is_output_check_failed,
             timing,
@@ -2833,6 +2902,7 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
         return Ok(UnitResult {
             unit: unit.clone(),
             score: None,
+            outcome: UnitOutcome::from_dispatch(&actual.kind),
             actual_model: None,
             is_output_check_failed: false,
             timing,
@@ -2868,9 +2938,17 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
     if output_check_failure.is_some() {
         score = score.map(|value| value.min(4));
     }
+    let outcome = if score.is_some() {
+        UnitOutcome::Scored
+    } else if judge.kind == DispatchKind::Success {
+        UnitOutcome::Failed
+    } else {
+        UnitOutcome::from_dispatch(&judge.kind)
+    };
     Ok(UnitResult {
         unit: unit.clone(),
         score,
+        outcome,
         actual_model: actual.model_ran,
         is_output_check_failed: output_check_failure.is_some(),
         timing,
@@ -3018,9 +3096,15 @@ fn restore_global_units(
                         .unwrap_or(false);
                     timing.is_output_check_failure_count_unknown =
                         recorded.output_check_failures.is_none();
+                    let score = recorded.repeats.get(unit.repeat).copied().flatten();
                     UnitResult {
                         unit: unit.clone(),
-                        score: recorded.repeats.get(unit.repeat).copied().flatten(),
+                        score,
+                        outcome: if score.is_some() {
+                            UnitOutcome::Scored
+                        } else {
+                            UnitOutcome::Ungraded
+                        },
                         actual_model: None,
                         is_output_check_failed,
                         timing,
@@ -3054,6 +3138,29 @@ fn run_work_units(
     expected: &[String],
 ) -> Result<BTreeMap<String, UnitResult>, String> {
     let mut completed = read_completed_units(state_dir, units)?;
+    if is_resumed {
+        if let Some(recorder) = &mut recorder {
+            recorder.prepare_retryable_resume();
+        }
+        let retryable: Vec<String> = completed
+            .iter()
+            .filter(|(_, result)| result.is_retryable())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in &retryable {
+            let result = completed
+                .remove(name)
+                .expect("retryable result remains present");
+            fs::remove_file(unit_path(state_dir, &result.unit)?)
+                .map_err(|error| format!("cannot remove retryable unit {name}: {error}"))?;
+        }
+        if !retryable.is_empty() {
+            eprintln!(
+                "skill-eval: retrying {} timed-out or failed judgments",
+                retryable.len()
+            );
+        }
+    }
     if let Some(recorder) = &mut recorder {
         checkpoint_case(
             recorder,
@@ -3672,7 +3779,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         &worker_context,
         &state_dir,
         &units,
-        is_resumed,
+        is_resumed || settings.args.resume.is_some(),
         recorder.as_mut(),
         &expected,
     )?;
@@ -4969,6 +5076,12 @@ fi
     }
 
     #[test]
+    fn default_run_uses_one_judgment_per_case() {
+        assert_eq!(configured_repeats(None).unwrap(), 1);
+        assert_eq!(configured_repeats(Some("3")).unwrap(), 3);
+    }
+
+    #[test]
     fn normal_run_uses_default_bounded_workers() {
         let args = Args {
             eval_dir: PathBuf::from("evals"),
@@ -5014,6 +5127,7 @@ fi
         let completed = UnitResult {
             unit: units[0].clone(),
             score: None,
+            outcome: UnitOutcome::Exhausted,
             actual_model: None,
             is_output_check_failed: false,
             timing: RepeatTiming::default(),
@@ -5618,6 +5732,7 @@ fi
             let result = UnitResult {
                 unit: unit.clone(),
                 score: Some(8),
+                outcome: UnitOutcome::Scored,
                 actual_model: Some("fake".to_string()),
                 is_output_check_failed: false,
                 timing: RepeatTiming::default(),
@@ -5641,6 +5756,7 @@ fi
         let result = UnitResult {
             unit: units[0].clone(),
             score: Some(8),
+            outcome: UnitOutcome::Scored,
             actual_model: Some("fake".to_string()),
             is_output_check_failed: false,
             timing: RepeatTiming::default(),
@@ -5709,10 +5825,71 @@ fi
             .next()
             .unwrap()
             .unwrap();
-        assert!(
-            fs::read_to_string(unit.path())
+        let persisted = fs::read_to_string(unit.path()).unwrap();
+        assert!(persisted.contains("\"score\":null"));
+        assert!(persisted.contains("\"outcome\":\"timed_out\""));
+    }
+
+    #[test]
+    fn resume_retries_timed_out_and_failed_units_only() {
+        let (temp, settings, eval_dir, candidate) = paired_fixture("retry-errors", FAKE);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
+        let run_key = state_dir.file_name().unwrap().to_str().unwrap();
+        let (state_dir, _) = initialize_state(&eval_dir, run_key, false).unwrap();
+        let artifact_dir = eval_dir.parent().unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let incumbent =
+            normalize_minimum_tier(&fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap())
+                .unwrap();
+        let submitted = fs::read_to_string(candidate).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases).unwrap();
+        let units = make_work_units(&["T1".to_string()], &cases, 1);
+        for (unit, outcome) in units.iter().zip([
+            UnitOutcome::TimedOut,
+            UnitOutcome::Failed,
+            UnitOutcome::Exhausted,
+            UnitOutcome::Scored,
+        ]) {
+            let score = (outcome == UnitOutcome::Scored).then_some(8);
+            let result = UnitResult {
+                unit: unit.clone(),
+                score,
+                outcome,
+                actual_model: score.map(|_| "saved-model".to_string()),
+                is_output_check_failed: false,
+                timing: RepeatTiming::default(),
+            };
+            atomic_write(
+                &unit_path(&state_dir, unit).unwrap(),
+                &serde_json::to_vec(&result).unwrap(),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(run(settings).unwrap(), 2);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
                 .unwrap()
-                .contains("\"score\":null")
+                .lines()
+                .filter(|line| line.starts_with('T'))
+                .count(),
+            4
+        );
+        let completed = read_completed_units(&state_dir, &units).unwrap();
+        assert_eq!(
+            completed
+                .values()
+                .filter(|result| result.outcome == UnitOutcome::Scored)
+                .count(),
+            3
+        );
+        assert_eq!(
+            completed
+                .values()
+                .filter(|result| result.outcome == UnitOutcome::Exhausted)
+                .count(),
+            1
         );
     }
 
@@ -5834,6 +6011,7 @@ fi
                     UnitResult {
                         unit,
                         score: Some(8),
+                        outcome: UnitOutcome::Scored,
                         actual_model: Some("model".to_string()),
                         is_output_check_failed: tier == "T2" && slice == "holdout",
                         timing: RepeatTiming::default(),
@@ -5868,6 +6046,7 @@ fi
                 prompt_name: "prompt".to_string(),
             },
             score: Some(8),
+            outcome: UnitOutcome::Scored,
             actual_model: Some("model".to_string()),
             is_output_check_failed: false,
             timing: RepeatTiming::default(),
@@ -5877,6 +6056,28 @@ fi
             "skill-eval: 3/4 candidate T2 holdout h 1 8"
         );
     }
+
+    #[test]
+    fn legacy_null_unit_stays_intentionally_ungraded() {
+        let result: UnitResult = serde_json::from_value(json!({
+            "unit": {
+                "arm": "candidate",
+                "tier": "T1",
+                "judge_tier": "T1",
+                "slice": "holdout",
+                "case_id": "h",
+                "repeat": 0,
+                "prompt_name": "candidate-h.md"
+            },
+            "score": null,
+            "actual_model": null,
+            "is_output_check_failed": false
+        }))
+        .unwrap();
+        assert_eq!(result.outcome, UnitOutcome::Ungraded);
+        assert!(!result.is_retryable());
+    }
+
     #[test]
     fn resume_arguments_reject_narrow_and_incompatible_modes() {
         let base = [
@@ -5951,12 +6152,83 @@ fi
     }
 
     #[test]
+    fn global_resume_replaces_a_retryable_case_event() {
+        let (_temp, mut settings, _) = fixture("global-retry", FAKE);
+        let expected = vec!["candidate:T1:nonholdout:n1".to_string()];
+        let unit = make_unit("candidate", "T1", "T1", "nonholdout", "n1", 0);
+        let mut recorder = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::new(),
+            "global-retry".to_string(),
+            &expected,
+        )
+        .unwrap();
+        recorder
+            .record(RecordedCase {
+                key: expected[0].clone(),
+                score: None,
+                repeats: vec![None],
+                models: Vec::new(),
+                timing: CaseTiming::default(),
+                output_check_failures: Some(0),
+                unit_results: vec![UnitResult {
+                    unit: unit.clone(),
+                    score: None,
+                    outcome: UnitOutcome::TimedOut,
+                    actual_model: None,
+                    is_output_check_failed: false,
+                    timing: RepeatTiming::default(),
+                }],
+            })
+            .unwrap();
+        let path = recorder.path.clone();
+        drop(recorder);
+
+        settings.args.resume = Some("global-retry".to_string());
+        let mut recorder = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::new(),
+            "global-retry".to_string(),
+            &expected,
+        )
+        .unwrap();
+        recorder.prepare_retryable_resume();
+        recorder
+            .record(RecordedCase {
+                key: expected[0].clone(),
+                score: Some(8.0),
+                repeats: vec![Some(8)],
+                models: vec!["model".to_string()],
+                timing: CaseTiming::default(),
+                output_check_failures: Some(0),
+                unit_results: vec![UnitResult {
+                    unit,
+                    score: Some(8),
+                    outcome: UnitOutcome::Scored,
+                    actual_model: Some("model".to_string()),
+                    is_output_check_failed: false,
+                    timing: RepeatTiming::default(),
+                }],
+            })
+            .unwrap();
+        recorder.complete("accepted").unwrap();
+
+        let parsed = parse_run(&path, Some(&expected)).unwrap();
+        assert!(parsed.is_complete);
+        assert_eq!(parsed.completed.len(), 1);
+        assert_eq!(parsed.completed[0].score, Some(8.0));
+    }
+
+    #[test]
     fn global_record_restores_durable_units_after_local_state_loss() {
         let (_temp, settings, eval_dir) = fixture("global-restore", FAKE);
         let unit = make_unit("incumbent", "T1", "T1", "nonholdout", "n1", 0);
         let result = UnitResult {
             unit: unit.clone(),
             score: Some(8),
+            outcome: UnitOutcome::Scored,
             actual_model: Some("model".to_string()),
             is_output_check_failed: false,
             timing: RepeatTiming::default(),
@@ -6003,6 +6275,7 @@ fi
             let result = UnitResult {
                 unit: unit.clone(),
                 score: Some(8),
+                outcome: UnitOutcome::Scored,
                 actual_model: Some("saved-model".to_string()),
                 is_output_check_failed: false,
                 timing: RepeatTiming::default(),
@@ -6110,6 +6383,96 @@ fi
         assert!(error.contains("resume inputs are stale: rubric"));
         assert_eq!(fs::read(&path).unwrap(), before);
         assert!(!parse_run(&path, Some(&expected)).unwrap().is_complete);
+    }
+
+    #[test]
+    fn retryable_lower_tier_does_not_block_a_complete_selected_suffix() {
+        let fake = r#"#!/bin/zsh
+set -eu
+while (( $# )); do
+  case "$1" in
+    --tier) tier=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+elif [[ "$tier" == T1 ]]; then
+  exit 4
+else
+  print actual
+  print -u2 "model_ran: actual-$tier"
+fi
+"#;
+        let (_temp, mut settings, eval_dir, _candidate) =
+            paired_fixture("lower-tier-timeout", fake);
+        fs::write(
+            &settings.tiers_file,
+            r#"{"tiers":{"T1":{},"T2":{},"T3":{}}}"#,
+        )
+        .unwrap();
+        settings.repeats = 1;
+
+        assert_eq!(run(settings).unwrap(), 0);
+        let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
+        assert!(entries.iter().all(|entry| entry.decision != "incomplete"));
+    }
+
+    #[test]
+    fn global_resume_retries_timeouts_after_local_state_loss() {
+        let fake = r#"#!/bin/zsh
+set -eu
+print call >> "${0:h}/calls"
+while (( $# )); do
+  case "$1" in
+    --tier) tier=$2; shift 2 ;;
+    --input) input=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+elif [[ ! -f "${0:h}/ready" ]]; then
+  exit 4
+else
+  print actual
+  print -u2 "model_ran: actual-$tier"
+fi
+"#;
+        let (temp, mut settings, eval_dir, candidate) = paired_fixture("state-loss-timeout", fake);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
+        let global_state_dir = settings.state_dir.clone();
+
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            4
+        );
+        let run_path = fs::read_dir(global_state_dir.join("runs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl"))
+            .unwrap();
+        let recorded = parse_run(&run_path, None).unwrap();
+        fs::remove_dir_all(state_dir).unwrap();
+        fs::write(temp.path.join("ready"), "ready").unwrap();
+        settings.args.resume = Some(recorded.comparison_id);
+
+        assert_eq!(run(settings).unwrap(), 0);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            12
+        );
+        assert!(parse_run(&run_path, None).unwrap().is_complete);
     }
 
     #[test]
@@ -6587,6 +6950,7 @@ fi
         let candidate_result = UnitResult {
             unit: candidate_unit.clone(),
             score: Some(9),
+            outcome: UnitOutcome::Scored,
             actual_model: Some("candidate-model".to_string()),
             is_output_check_failed: false,
             timing: RepeatTiming::default(),

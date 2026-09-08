@@ -68,13 +68,17 @@ use `--tier <tier>` or `--holdout`.
 Every skill and workflow runner delegates to `tools/skill-eval`. A full baseline run
 evaluates the current artifact. A full candidate run compares the live incumbent and
 candidate together. Both modes execute every configured tier as bounded
-`(arm, tier, slice, case, repeat)` units with four workers by default. Use `--jobs N` or
-`SKILL_EVAL_JOBS` to set one through 16 workers.
+`(arm, tier, slice, case, repeat)` units with four parallel workers by default for a full run.
+
+Each case gets one judgment by default. The `REPEATS` variable increases the judgment count
+for each case. Use `--jobs N` or `SKILL_EVAL_JOBS` to set one through 16 workers.
 
 Full runs save complete units under
-`evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run. A completed
-`null` score remains complete on automatic resume. Use `--restart` to discard only that
-run's saved units and retry unavailable providers.
+`evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run. Automatic resume
+retries each unit whose generation or judge step is missing, timed out, or failed. Numeric,
+provider-exhausted, and intentionally ungraded outcomes stay complete. Saved null units from an
+older runner remain intentionally ungraded. Use `--restart` to discard only that run's saved units
+and retry all units.
 
 The runner writes progress to standard error after each durable unit. It orders records
 by configured tier, non-holdout cases, then holdout cases. A paired run writes incumbent
@@ -108,8 +112,9 @@ model, thinking level, time, and result for every attempt.
 Each run prints its comparison identifier before the first case. It writes append-only events
 under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. Resume an interrupted run
 with the same candidate and `--resume <comparison-id>`. The runner names changed inputs and
-stops before dispatch when the saved inputs are stale. It reruns an interrupted case and skips
-completed cases. A checkpoint cannot update the frontier or live artifact.
+stops before dispatch when the saved inputs are stale. It retries missing or errored judgments.
+It skips scored, provider-exhausted, and intentionally ungraded units. A checkpoint cannot update
+the frontier or live artifact.
 
 The state directory keeps the latest 100 completed runs per artifact. It keeps active runs and
 one resumable run for each exact input set. Set `SKILL_EVAL_STATE_DIR` to isolate tests.
