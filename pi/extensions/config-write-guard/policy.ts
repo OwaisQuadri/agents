@@ -16,6 +16,7 @@ export type AgentToolInput = {
 export type GuardContext = {
 	cwd: string;
 	repositoryRoot: string;
+	sessionStartingDirectory?: string;
 	isRepositoryClean: () => boolean;
 	worktreeRoots: () => string[];
 };
@@ -133,6 +134,22 @@ function shellCommandReferencesPrimaryCheckout(command: string, guard: GuardCont
 	return false;
 }
 
+function managedConfigReferencePattern(command: string, cwd: string, home: string, username: string | undefined): RegExp {
+	const patterns = [pathReferencePattern(home, username).source];
+	for (const segment of (staticZshPayload(command) ?? command).split(/&&|\|\||[;\n|]/)) {
+		const words = segment.match(/"[^"]*"|'[^']*'|[^\s<>]+/g) ?? [];
+		const leading = words[0]?.split("/").pop();
+		for (const word of words.slice(1)) {
+			const path = shellPath(word, cwd, home, username);
+			if (path === undefined || !isProtectedConfigPath(path, home)) continue;
+			const reference = word.replace(/^[12&]*>>?/, "").replace(/^['"]|['"]$/g, "");
+			patterns.push(`${escapeRegExp(reference)}(?=[\\s'"|;&<>]|$)`);
+		}
+		if (leading === "cd" && words[1] !== undefined) cwd = shellPath(words[1], cwd, home, username, true) ?? cwd;
+	}
+	return new RegExp(`(?:${patterns.join("|")})`);
+}
+
 function commandWithoutWorktreeReferences(command: string, guard: GuardContext, home: string, username: string | undefined): string {
 	return guard.worktreeRoots().reduce((remaining, root) => {
 		if (pathsEqual(root, guard.repositoryRoot)) return remaining;
@@ -176,14 +193,21 @@ function blockedMainCheckoutToolCall(
 	username: string | undefined,
 ): string | undefined {
 	const isMainCheckoutCwd = isPrimaryCheckoutPath(guard.cwd, guard.cwd, guard);
+	if (toolName === "Agent") {
+		return isMainCheckoutCwd && blocksChildAgent(input as AgentToolInput)
+			? "Blocked a write-capable child agent in the primary main checkout. Dispatch it with worktree isolation."
+			: undefined;
+	}
+	const isPrimaryOrigin = isMainCheckoutCwd
+		&& guard.sessionStartingDirectory !== undefined
+		&& isPrimaryCheckoutPath(guard.sessionStartingDirectory, guard.cwd, guard);
 	if ((toolName === "edit" || toolName === "write") && isPrimaryCheckoutPath((input as FileToolInput).path, guard.cwd, guard)) {
-		return mainCheckoutBlockReason();
+		return isPrimaryOrigin ? undefined : mainCheckoutBlockReason();
 	}
-	if (toolName === "Agent" && isMainCheckoutCwd && blocksChildAgent(input as AgentToolInput)) {
-		return "Blocked a write-capable child agent in the primary main checkout. Dispatch it with worktree isolation.";
-	}
-	return toolName === "bash"
-		? blockedMainCheckoutShell((input as BashToolInput).command, isMainCheckoutCwd, guard, home, username)
+	if (toolName !== "bash") return undefined;
+	if (!isPrimaryOrigin) return blockedMainCheckoutShell((input as BashToolInput).command, isMainCheckoutCwd, guard, home, username);
+	return classifyCheckoutCommand((input as BashToolInput).command) === "clean-fast-forward-pull" && !guard.isRepositoryClean()
+		? "Blocked `git pull --ff-only` because the primary main checkout is not clean."
 		: undefined;
 }
 
@@ -213,8 +237,12 @@ export function blockedConfigToolCall(
 	if ((toolName === "edit" || toolName === "write") && isProtectedConfigPath((input as FileToolInput).path, home)) {
 		return `Blocked a direct agent-config write to ${(input as FileToolInput).path}. Edit the source in the agents worktree, then run install.sh.`;
 	}
-	if (toolName === "bash" && bashCommandWritesProtectedPath((input as BashToolInput).command, pathReferencePattern(home, username))) {
-		return "Blocked a shell command that writes an agent-config destination. Edit the source in the agents worktree, then run install.sh. Reading it (cat, grep, ls, ...) is fine.";
+	if (toolName === "bash") {
+		const command = (input as BashToolInput).command;
+		const pattern = managedConfigReferencePattern(command, guard?.cwd ?? process.cwd(), home, username);
+		if (bashCommandWritesProtectedPath(command, pattern)) {
+			return "Blocked a shell command that writes an agent-config destination. Edit the source in the agents worktree, then run install.sh. Reading it (cat, grep, ls, ...) is fine.";
+		}
 	}
 	return undefined;
 }

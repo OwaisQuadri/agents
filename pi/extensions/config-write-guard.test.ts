@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { classifyCheckoutCommand } from "./config-write-guard/bash-intent.ts";
 import { isPathInsideRoot, isProtectedConfigPath, protectedConfigRoots } from "./config-write-guard/paths.ts";
 import { blockedConfigToolCall, type GuardContext } from "./config-write-guard/policy.ts";
@@ -16,6 +19,52 @@ function guard(cwd = repositoryRoot, isRepositoryClean = true, worktreeRoots = [
 	return { cwd, repositoryRoot, isRepositoryClean: () => isRepositoryClean, worktreeRoots: () => worktreeRoots };
 }
 
+function guardFromPrimaryCheckout(
+	cwd = repositoryRoot,
+	isRepositoryClean = true,
+	worktreeRoots = [repositoryRoot, worktreeRoot],
+): GuardContext {
+	return { ...guard(cwd, isRepositoryClean, worktreeRoots), sessionStartingDirectory: repositoryRoot };
+}
+
+type ExtensionHandler = (event: unknown, ctx: ExtensionContext) => unknown;
+
+async function loadConfigWriteGuard(): Promise<typeof import("./config-write-guard.ts").default> {
+	const hooks = registerHooks({
+		resolve(specifier, context, nextResolve) {
+			if (specifier === "@earendil-works/pi-coding-agent") return { url: "config-write-guard:test-api", shortCircuit: true };
+			return nextResolve(specifier, context);
+		},
+		load(url, context, nextLoad) {
+			if (url === "config-write-guard:test-api") {
+				return { format: "module", source: "export const isToolCallEventType = (toolName, event) => event.type === 'tool_call' && event.toolName === toolName;", shortCircuit: true };
+			}
+			return nextLoad(url, context);
+		},
+	});
+	try {
+		return (await import("./config-write-guard.ts")).default;
+	} finally {
+		hooks.deregister();
+	}
+}
+
+function createGuardExtensionHarness() {
+	const handlers = new Map<string, ExtensionHandler>();
+	const api = {
+		on(event: string, handler: ExtensionHandler) {
+			handlers.set(event, handler);
+		},
+	} as unknown as ExtensionAPI;
+	return {
+		api,
+		fire(event: string, payload: unknown, cwd: string): unknown {
+			const handler = handlers.get(event);
+			assert.ok(handler, `missing ${event} handler`);
+			return handler(payload, { cwd } as ExtensionContext);
+		},
+	};
+}
 
 for (const isWrapped of [false, true]) {
 	for (const form of ["direct", "sh", "pwd-sh"]) {
@@ -315,6 +364,61 @@ test("recognizes a mixed-case interpreter name", () => {
 	);
 });
 
+test("allows primary-origin file and shell writes while preserving managed config and child-agent protections", () => {
+	const context = guardFromPrimaryCheckout();
+	assert.equal(blockedConfigToolCall("edit", { path: `${repositoryRoot}/skills/x.md` }, home, user, context), undefined);
+	assert.equal(blockedConfigToolCall("write", { path: "skills/x.md" }, home, user, context), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: "touch leaked.md" }, home, user, context), undefined);
+	assert.match(blockedConfigToolCall("write", { path: `${home}/.pi/agent/settings.json` }, home, user, context) ?? "", /agent-config/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.pi/agent/settings.json` }, home, user, context) ?? "", /agent-config/);
+	assert.match(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, context) ?? "", /worktree/);
+});
+
+test("blocks a primary-origin shell write through a repository-local alias to managed config", () => {
+	const fixture = mkdtempSync(join(tmpdir(), `config-write-guard-managed-alias-${process.pid}-`));
+	const root = join(fixture, "primary");
+	const linkedHome = join(fixture, "home");
+	const alias = join(root, "managed-extensions");
+	try {
+		mkdirSync(root);
+		mkdirSync(join(linkedHome, ".pi/agent/extensions"), { recursive: true });
+		symlinkSync(join(linkedHome, ".pi/agent/extensions"), alias);
+		const context: GuardContext = {
+			cwd: root,
+			repositoryRoot: root,
+			sessionStartingDirectory: root,
+			isRepositoryClean: () => true,
+			worktreeRoots: () => [root],
+		};
+		assert.match(blockedConfigToolCall("write", { path: join(alias, "new.ts") }, linkedHome, user, context) ?? "", /agent-config/);
+		assert.match(blockedConfigToolCall("bash", { command: "printf x > managed-extensions/new.ts" }, linkedHome, user, context) ?? "", /agent-config/);
+		assert.equal(blockedConfigToolCall("bash", { command: "printf x > ordinary.ts" }, linkedHome, user, context), undefined);
+	} finally {
+		rmSync(fixture, { recursive: true, force: true });
+	}
+});
+
+test("allows primary-origin Git inspection and fetch but blocks linked-worktree-origin fetch", () => {
+	const context = guardFromPrimaryCheckout();
+	assert.equal(blockedConfigToolCall("bash", { command: "git branch -avv" }, home, user, context), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: "git fetch --prune origin" }, home, user, context), undefined);
+	const linkedWorktreeOrigin = { ...guard(), sessionStartingDirectory: worktreeRoot };
+	assert.match(blockedConfigToolCall("bash", { command: "git fetch --prune origin" }, home, user, linkedWorktreeOrigin) ?? "", /worktree/);
+});
+
+test("blocks primary-checkout writes from a linked-worktree origin", () => {
+	const context = { ...guard(), sessionStartingDirectory: worktreeRoot };
+	assert.match(blockedConfigToolCall("write", { path: `${repositoryRoot}/skills/x.md` }, home, user, context) ?? "", /worktree/);
+	assert.match(blockedConfigToolCall("bash", { command: `touch ${repositoryRoot}/x.md` }, home, user, context) ?? "", /worktree/);
+});
+
+test("blocks primary-checkout writes from a primary origin with a linked-worktree current context", () => {
+	const context = guardFromPrimaryCheckout(worktreeRoot);
+	assert.equal(blockedConfigToolCall("write", { path: "skills/x.md" }, home, user, context), undefined);
+	assert.match(blockedConfigToolCall("write", { path: `${repositoryRoot}/skills/x.md` }, home, user, context) ?? "", /worktree/);
+	assert.match(blockedConfigToolCall("bash", { command: `touch ${repositoryRoot}/x.md` }, home, user, context) ?? "", /worktree/);
+});
+
 test("blocks file tools in the primary checkout and allows a worktree", () => {
 	assert.match(blockedConfigToolCall("edit", { path: `${repositoryRoot}/skills/x.md` }, home, user, guard()) ?? "", /worktree/);
 	assert.match(blockedConfigToolCall("write", { path: "skills/x.md" }, home, user, guard()) ?? "", /worktree/);
@@ -443,6 +547,7 @@ test("allows lookup and reads through a primary-checkout symbolic link but block
 		const context: GuardContext = {
 			cwd: worktree,
 			repositoryRoot: root,
+			sessionStartingDirectory: worktree,
 			isRepositoryClean: () => true,
 			worktreeRoots: () => [root, worktree],
 		};
@@ -537,6 +642,11 @@ test("allows an exact pull only on a clean primary checkout", () => {
 	assert.match(blockedConfigToolCall("bash", { command: "git pull" }, home, user, guard()) ?? "", /worktree/);
 });
 
+test("preserves clean and dirty exact pull handling for a primary origin", () => {
+	assert.equal(blockedConfigToolCall("bash", { command: "git pull --ff-only" }, home, user, guardFromPrimaryCheckout()), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: "git pull --ff-only" }, home, user, guardFromPrimaryCheckout(repositoryRoot, false)) ?? "", /clean/);
+});
+
 test("blocks checkout shell writes and keeps reads usable", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: "git status --short" }, home, user, guard()), undefined);
 	assert.match(blockedConfigToolCall("bash", { command: "touch leaked.md" }, home, user, guard()) ?? "", /worktree/);
@@ -548,6 +658,7 @@ test("blocks absolute, home-variable, tilde, and changed-directory references fr
 	const context: GuardContext = {
 		cwd: worktreeRoot,
 		repositoryRoot: root,
+		sessionStartingDirectory: worktreeRoot,
 		isRepositoryClean: () => true,
 		worktreeRoots: () => [root, worktreeRoot],
 	};
@@ -605,4 +716,60 @@ test("requires worktree isolation for write-capable child agents", () => {
 	assert.match(blockedConfigToolCall("Agent", { subagent_type: "general-purpose", isolation: "off" }, home, user, guard()) ?? "", /worktree/);
 	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer", isolation: "worktree" }, home, user, guard()), undefined);
 	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, guard(worktreeRoot)), undefined);
+});
+
+test("reload lifecycle allows primary-origin fetch and blocks linked-worktree-origin fetch", async () => {
+	const harness = createGuardExtensionHarness();
+	const configWriteGuard = await loadConfigWriteGuard();
+	const extensionRoot = fileURLToPath(new URL("../..", import.meta.url));
+	const linkedWorktreeRoot = join(extensionRoot, ".worktrees", "linked");
+	configWriteGuard(harness.api, (root) => [root, linkedWorktreeRoot]);
+	harness.fire("session_start", { type: "session_start", reason: "reload" }, extensionRoot);
+	assert.equal(
+		await harness.fire("tool_call", { type: "tool_call", toolName: "bash", input: { command: "git fetch --prune origin" } }, extensionRoot),
+		undefined,
+	);
+	harness.fire("session_start", { type: "session_start", reason: "reload" }, linkedWorktreeRoot);
+	assert.match(
+		(await harness.fire("tool_call", { type: "tool_call", toolName: "bash", input: { command: "git fetch --prune origin" } }, extensionRoot) as { reason?: string } | undefined)?.reason ?? "",
+		/worktree/,
+	);
+});
+
+test("recalculates and clears primary-origin authorization for every session lifecycle", async () => {
+	const harness = createGuardExtensionHarness();
+	const configWriteGuard = await loadConfigWriteGuard();
+	const extensionRoot = fileURLToPath(new URL("../..", import.meta.url));
+	const linkedWorktreeRoot = join(extensionRoot, ".worktrees", "linked");
+	configWriteGuard(harness.api, (root) => [root, linkedWorktreeRoot]);
+	const externalDirectory = mkdtempSync(join(tmpdir(), "config-write-guard-external-"));
+	try {
+		for (const reason of ["startup", "new", "resume", "fork", "reload"] as const) {
+			harness.fire("session_start", { type: "session_start", reason }, extensionRoot);
+			assert.equal(
+				await harness.fire("tool_call", { type: "tool_call", toolName: "write", input: { path: join(extensionRoot, `origin-${reason}.md`) } }, extensionRoot),
+				undefined,
+				reason,
+			);
+			assert.match(
+				(await harness.fire("tool_call", { type: "tool_call", toolName: "write", input: { path: join(extensionRoot, `origin-${reason}.md`) } }, linkedWorktreeRoot) as { reason?: string } | undefined)?.reason ?? "",
+				/worktree/,
+				reason,
+			);
+			harness.fire("session_shutdown", { type: "session_shutdown", reason: "quit" }, extensionRoot);
+			assert.match(
+				(await harness.fire("tool_call", { type: "tool_call", toolName: "write", input: { path: join(extensionRoot, `origin-${reason}.md`) } }, extensionRoot) as { reason?: string } | undefined)?.reason ?? "",
+				/worktree/,
+				reason,
+			);
+			harness.fire("session_start", { type: "session_start", reason }, externalDirectory);
+			assert.match(
+				(await harness.fire("tool_call", { type: "tool_call", toolName: "write", input: { path: join(extensionRoot, `origin-${reason}.md`) } }, extensionRoot) as { reason?: string } | undefined)?.reason ?? "",
+				/worktree/,
+				reason,
+			);
+		}
+	} finally {
+		rmSync(externalDirectory, { recursive: true, force: true });
+	}
 });
