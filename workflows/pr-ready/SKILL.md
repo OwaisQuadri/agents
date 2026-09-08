@@ -86,9 +86,7 @@ filters. The calling skill decides what happens to each one with the user.
 
 ## history
 
-- 2026-09-07 founding version, built for the Pillars app repo's `/pr-ready` skill after a
-  fresh-context review of PR #1364 (PIL-3605, the tvOS app) surfaced the need for a
-  repeatable review-then-triage pass that doesn't grade its own homework. T6 (dual-model,
-  code-review-only) added to `config/model-tiers.json` alongside this workflow, documented
-  as a deliberate exception to the single-axis T1-T5 difficulty ladder in
-  `docs/routing.md`.
+- 2026-09-07 founding run: A fresh-context review of PR #1364 (PIL-3605, the tvOS app)
+  showed the need for a repeatable review and triage pass. This workflow does not grade
+  its own work. The same change added the dual-provider T6 to `config/model-tiers.json`.
+  `docs/routing.md` defines T6 as the highest tier and the Turbo target.

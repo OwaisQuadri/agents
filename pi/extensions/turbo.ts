@@ -6,12 +6,13 @@ import { join, resolve } from "node:path";
 
 import {
 	SESSION_MODEL_OVERRIDE_CHANNEL,
+	highestTierPrimaryFrom,
 	latestTurboState,
 	parseModelReference,
-	tierFivePrimaryFrom,
 	turboOverrideFor,
 	type ActiveTurboState,
 	type TierPrimary,
+	type TierSelection,
 } from "./turbo/policy.ts";
 
 function settingsFile(): string {
@@ -19,9 +20,9 @@ function settingsFile(): string {
 	return join(resolve(configured && configured.length > 0 ? configured : join(homedir(), ".pi", "agent")), "settings.json");
 }
 
-function tierFivePrimary(): TierPrimary | undefined {
+function highestTierPrimary(): TierSelection | undefined {
 	try {
-		return tierFivePrimaryFrom(JSON.parse(readFileSync(settingsFile(), "utf8")) as unknown);
+		return highestTierPrimaryFrom(JSON.parse(readFileSync(settingsFile(), "utf8")) as unknown);
 	} catch {
 		return undefined;
 	}
@@ -87,7 +88,7 @@ export default function turboExtension(pi: ExtensionAPI): void {
 
 	const setActive = (state: ActiveTurboState, ctx: ExtensionContext): void => {
 		active = state;
-		ctx.ui.setStatus("turbo", "turbo:T5");
+		ctx.ui.setStatus("turbo", `turbo:${state.tier}`);
 	};
 
 	const restorePersisted = async (state: ActiveTurboState, ctx: ExtensionContext): Promise<void> => {
@@ -95,7 +96,7 @@ export default function turboExtension(pi: ExtensionAPI): void {
 			if (!(await selectModel(pi, ctx, state))) {
 				active = undefined;
 				pi.appendEntry("turbo-state", { isActive: false });
-				ctx.ui.notify("Turbo could not authenticate the persisted T5 model.", "warning");
+				ctx.ui.notify(`Turbo could not authenticate the persisted ${state.tier} model.`, "warning");
 				return;
 			}
 			const error = await requestSessionModelOverride(pi, turboOverrideFor(state));
@@ -160,7 +161,7 @@ export default function turboExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("turbo", {
-		description: "Toggle the current session and new workers on Tier 5",
+		description: "Toggle the current session and new workers on the highest configured tier",
 		handler: async (_args, ctx) => {
 			if (isChanging) {
 				ctx.ui.notify("Turbo is already changing.", "warning");
@@ -179,13 +180,13 @@ export default function turboExtension(pi: ExtensionAPI): void {
 						const overrideError = await requestSessionModelOverride(pi, turboOverrideFor(state));
 						if (overrideError === undefined) {
 							const didRestore = await selectModel(pi, ctx, state);
-							ctx.ui.notify(didRestore ? error : `${error} Pi could not restore the T5 model.`, "warning");
+							ctx.ui.notify(didRestore ? error : `${error} Pi could not restore the ${state.tier} model.`, "warning");
 							return;
 						}
 						const finalClearError = await requestSessionModelOverride(pi, { clear: true });
 						if (finalClearError !== undefined) {
 							const didRestore = await selectModel(pi, ctx, state);
-							const restoreMessage = didRestore ? "" : " Pi could not restore the T5 model.";
+							const restoreMessage = didRestore ? "" : ` Pi could not restore the ${state.tier} model.`;
 							ctx.ui.notify(`${error} Pi could not confirm the worker override state.${restoreMessage}`, "warning");
 							return;
 						}
@@ -201,17 +202,21 @@ export default function turboExtension(pi: ExtensionAPI): void {
 					return;
 				}
 
-				const primary = tierFivePrimary();
+				const primary = highestTierPrimary();
+				if (primary === undefined) {
+					ctx.ui.notify("Turbo could not find a valid highest-tier model.", "warning");
+					return;
+				}
 				const parent = parentModel(pi, ctx);
-				if (primary === undefined || parent === undefined) {
-					ctx.ui.notify("Turbo could not find a valid T5 model and parent session model.", "warning");
+				if (parent === undefined) {
+					ctx.ui.notify("Turbo could not find the parent session model.", "warning");
 					return;
 				}
 				if (!(await selectModel(pi, ctx, primary))) {
-					ctx.ui.notify("Turbo could not authenticate the configured T5 model.", "warning");
+					ctx.ui.notify(`Turbo could not authenticate the configured ${primary.tier} model.`, "warning");
 					return;
 				}
-				const state: ActiveTurboState = { isActive: true, tier: "T5", ...primary, parent };
+				const state: ActiveTurboState = { isActive: true, ...primary, parent };
 				const error = await requestSessionModelOverride(pi, turboOverrideFor(primary));
 				if (error !== undefined) {
 					const rollback = await rollbackActivation(pi, ctx, parent, error);
