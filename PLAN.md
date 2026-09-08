@@ -362,8 +362,8 @@ cutoff instead:
   removed as part of the same sweep. Confirm count and paths at implementation time
   (`find skills agents workflows -name TUNING.md`).
 - `pi/extensions/logpath-guard.ts` + `tools/logpath-check` — retire. Confirm nothing
-  else references `logpath-check`'s binary before removing (check
-  `config/managed-settings.json` wiring and any other extension that might share it).
+  else references `logpath-check`'s binary before removing. Check installer wiring and
+  any other extension that might share it.
 
 ## Reuse
 

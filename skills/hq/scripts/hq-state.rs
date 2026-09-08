@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::env;
@@ -75,6 +75,23 @@ struct Classification {
     anomalies: Vec<Change>,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum EvidenceInput {
+    One(String),
+    Many(Vec<String>),
+}
+
+fn deserialize_evidence<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(match EvidenceInput::deserialize(deserializer)? {
+        EvidenceInput::One(value) => vec![value],
+        EvidenceInput::Many(values) => values,
+    })
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Gate {
@@ -84,6 +101,7 @@ struct Gate {
     kind: String,
     subject: String,
     summary: String,
+    #[serde(deserialize_with = "deserialize_evidence")]
     evidence: Vec<String>,
     urgency: String,
     is_resolved: bool,
@@ -755,21 +773,29 @@ fn mark_triaged() -> Result<(), String> {
 
 fn is_safe_gate_id(id: &str) -> bool {
     !id.is_empty()
-        && id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+        && id.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || character == '-'
+                || character == '_'
+                || character == '.'
+        })
 }
 
 fn parse_triage_output(output: &[u8]) -> Result<TriageOutput, String> {
     let text = std::str::from_utf8(output)
         .map_err(|error| format!("triage output must be UTF-8: {error}"))?;
-    let body = text
-        .trim()
-        .strip_prefix("```json\n")
-        .or_else(|| text.trim().strip_prefix("```\n"))
-        .and_then(|body| body.strip_suffix("\n```"))
-        .ok_or_else(|| "triage output must be one fenced JSON object".to_string())?;
-    serde_json::from_str(body).map_err(|error| format!("triage output must be JSON: {error}"))
+    let (marker, start) = ["```json\n", "```\n"]
+        .into_iter()
+        .filter_map(|marker| text.find(marker).map(|start| (marker, start)))
+        .min_by_key(|(_, start)| *start)
+        .ok_or_else(|| "triage output must contain one fenced JSON object".to_string())?;
+    let body_start = start + marker.len();
+    let body_end = text[body_start..]
+        .find("\n```")
+        .map(|end| body_start + end)
+        .ok_or_else(|| "triage output must contain one fenced JSON object".to_string())?;
+    serde_json::from_str(&text[body_start..body_end])
+        .map_err(|error| format!("triage output must be JSON: {error}"))
 }
 
 fn apply_triage(path: &str) -> Result<(), String> {
@@ -957,12 +983,17 @@ mod tests {
     }
 
     #[test]
-    fn accepts_only_a_fenced_json_triage_response() {
-        let output = br#"```json
-{"digest":"digest","gates":[],"notify":null}
-```"#;
+    fn accepts_a_fenced_json_triage_response_with_model_prose() {
+        let output = br#"Here is the result:
+```json
+{"digest":"digest","gates":[{"id":"com.example.job","createdAt":"now","source":"heartbeat","kind":"launchd_down","subject":"job","summary":"down","evidence":"pid changed","urgency":"normal","isResolved":false,"resolvedAt":null,"resolution":null}],"notify":null}
+```
+Done."#;
 
-        assert!(parse_triage_output(output).is_ok());
+        let triage = parse_triage_output(output).unwrap();
+        assert_eq!(triage.digest, "digest");
+        assert_eq!(triage.gates[0].evidence, ["pid changed"]);
+        assert!(is_safe_gate_id(&triage.gates[0].id));
         assert!(parse_triage_output(br#"{"digest":"digest"}"#).is_err());
         assert!(parse_triage_output(b"```json\nnot json\n```").is_err());
     }

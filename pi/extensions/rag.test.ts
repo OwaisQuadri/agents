@@ -198,6 +198,15 @@ test("automatic recall has a shorter deadline than manual search", async () => {
 	await fixture.waitForExit();
 });
 
+test("bounds automatic recall output", async () => {
+	const { fixture, fire } = await start("large-framed");
+	const result = await fire("input", { type: "input", text: "bounded", source: "interactive" } satisfies InputEvent) as InputEventResult;
+	assert.equal(result.action, "transform");
+	assert.ok(result.action === "transform" && result.text.length < 33_000);
+	await fire("session_shutdown");
+	await fixture.waitForExit();
+});
+
 test("concurrent first searches share one lazy startup and preserve the Pi schema", async () => {
 	const { tool, fixture, fire } = await start("concurrent");
 	assert.deepEqual(tool.parameters.required, ["query"]);
