@@ -8,9 +8,9 @@ import turboExtension from "./turbo.ts";
 import {
 	REVIEW_AGENT_TYPES,
 	SESSION_MODEL_OVERRIDE_CHANNEL,
+	highestTierPrimaryFrom,
 	latestTurboState,
 	parseModelReference,
-	tierFivePrimaryFrom,
 	turboOverrideFor,
 } from "./turbo/policy.ts";
 
@@ -145,10 +145,22 @@ function runtime(entries: unknown[] = [], isInitiallyReady = true) {
 	};
 }
 
-test("tierFivePrimaryFrom accepts one valid installed primary", () => {
-	assert.deepEqual(tierFivePrimaryFrom({ tierPrimaries: { T5: primary } }), primary);
-	assert.equal(tierFivePrimaryFrom({ tierPrimaries: { T5: { model: "astra", thinking: "medium" } } }), undefined);
-	assert.equal(tierFivePrimaryFrom({ tierPrimaries: { T5: { model: primary.model, thinking: "extreme" } } }), undefined);
+test("highestTierPrimaryFrom selects the highest numbered tier", () => {
+	assert.deepEqual(highestTierPrimaryFrom({ tierPrimaries: { T5: parent, T6: primary } }), { tier: "T6", ...primary });
+	assert.deepEqual(highestTierPrimaryFrom({ tierPrimaries: { T6: primary, T5: parent } }), { tier: "T6", ...primary });
+	assert.deepEqual(highestTierPrimaryFrom({ tierPrimaries: { T10: primary, T9: parent } }), { tier: "T10", ...primary });
+	assert.deepEqual(highestTierPrimaryFrom({ tierPrimaries: { T0: primary } }), { tier: "T0", ...primary });
+	assert.equal(highestTierPrimaryFrom({ tierPrimaries: { T5: parent, T07: primary } }), undefined);
+	assert.equal(highestTierPrimaryFrom({ tierPrimaries: { T5: parent, t7: primary } }), undefined);
+	assert.equal(highestTierPrimaryFrom({ tierPrimaries: { T5: parent, " T7": primary } }), undefined);
+	assert.equal(highestTierPrimaryFrom({ tierPrimaries: { T5: primary, custom: parent } }), undefined);
+	assert.equal(highestTierPrimaryFrom({}), undefined);
+	assert.equal(highestTierPrimaryFrom({ tierPrimaries: [] }), undefined);
+	assert.equal(
+		highestTierPrimaryFrom({ tierPrimaries: { T5: primary, T6: { model: "astra", thinking: "medium" } } }),
+		undefined,
+	);
+	assert.equal(highestTierPrimaryFrom({ tierPrimaries: { T6: { model: primary.model, thinking: "extreme" } } }), undefined);
 });
 
 test("parseModelReference preserves the provider and full model id", () => {
@@ -160,12 +172,17 @@ test("parseModelReference preserves the provider and full model id", () => {
 });
 
 test("latestTurboState returns only the newest valid active entry", () => {
-	const active = { isActive: true, tier: "T5", ...primary, parent };
+	const active = { isActive: true, tier: "T6", ...primary, parent };
 	const entries = [
 		{ type: "custom", customType: "turbo-state", data: active },
 		{ type: "custom", customType: "turbo-state", data: { isActive: false } },
 	];
 	assert.deepEqual(latestTurboState(entries.slice(0, 1)), active);
+	assert.deepEqual(
+		latestTurboState([{ type: "custom", customType: "turbo-state", data: { ...active, tier: "T5" } }])?.tier,
+		"T5",
+	);
+	assert.equal(latestTurboState([{ type: "custom", customType: "turbo-state", data: { ...active, tier: "T07" } }]), undefined);
 	assert.equal(latestTurboState(entries), undefined);
 });
 
@@ -189,17 +206,17 @@ function overrideRequest(harness: ReturnType<typeof runtime>, index = 0): Record
 	return payload;
 }
 
-test("/turbo selects the exact T5 model, captures the parent, persists state, and emits the override", async () => {
-	process.env.PI_CODING_AGENT_DIR = settingsRoot({ tierPrimaries: { T5: primary } });
+test("/turbo selects the highest configured tier, captures the parent, persists state, and emits the override", async () => {
+	process.env.PI_CODING_AGENT_DIR = settingsRoot({ tierPrimaries: { T5: parent, T6: primary } });
 	const harness = runtime();
 
 	await harness.commands.get("turbo")!.handler("", harness.ctx);
 
 	assert.deepEqual(harness.selectedModels, [{ provider: "openai-codex", id: "gpt-6-astra" }]);
 	assert.deepEqual(harness.thinkingLevels, ["medium"]);
-	assert.deepEqual(harness.appended, [{ type: "turbo-state", data: { isActive: true, tier: "T5", ...primary, parent } }]);
+	assert.deepEqual(harness.appended, [{ type: "turbo-state", data: { isActive: true, tier: "T6", ...primary, parent } }]);
 	assert.deepEqual(overrideRequest(harness), turboOverrideFor(primary));
-	assert.deepEqual(harness.statuses.at(-1), { key: "turbo", value: "turbo:T5" });
+	assert.deepEqual(harness.statuses.at(-1), { key: "turbo", value: "turbo:T6" });
 });
 
 test("/turbo toggles off, restores the parent, clears the override and status, and persists inactivity", async () => {
@@ -232,6 +249,24 @@ test("/turbo repeats activation and deactivation deterministically", async () =>
 		{ isActive: false },
 		{ isActive: true, tier: "T5", ...primary, parent },
 	]);
+});
+
+test("/turbo reports missing highest-tier and parent models separately", async () => {
+	process.env.PI_CODING_AGENT_DIR = settingsRoot({
+		tierPrimaries: { T5: primary, T6: { model: "invalid", thinking: "medium" } },
+	});
+	const missingTier = runtime();
+	await missingTier.commands.get("turbo")!.handler("", missingTier.ctx);
+	assert.match(missingTier.notifications.at(-1)?.message ?? "", /valid highest-tier model/i);
+	assert.equal(missingTier.selectedModels.length, 0);
+	assert.equal(missingTier.appended.length, 0);
+
+	process.env.PI_CODING_AGENT_DIR = settingsRoot({ tierPrimaries: { T6: primary } });
+	const missingParent = runtime();
+	await missingParent.commands.get("turbo")!.handler("", { ...missingParent.ctx, model: undefined });
+	assert.match(missingParent.notifications.at(-1)?.message ?? "", /parent session model/i);
+	assert.equal(missingParent.selectedModels.length, 0);
+	assert.equal(missingParent.appended.length, 0);
 });
 
 test("/turbo changes nothing when the configured model cannot authenticate", async () => {

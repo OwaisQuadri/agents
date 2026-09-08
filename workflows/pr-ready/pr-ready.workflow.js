@@ -9,9 +9,7 @@ export const meta = {
   ],
 }
 
-// T6 and T5 chains, mirrored by hand from config/model-tiers.json (no fs access at
-// runtime here). T6 is code-review-only, never a generic escalation target, no
-// climbOnExhaustion. Each entry's provider tag drives the triage non-same-provider rule.
+// These chains mirror config/model-tiers.json because workflows cannot read files at runtime.
 const T6_PRIMARY = { model: 'anthropic/claude-fable-5-1', effort: 'high', provider: 'anthropic' }
 const T6_FALLBACK = { model: 'openai-codex/gpt-6-astra', effort: 'high', provider: 'openai-codex' }
 const T5_CHAIN = [
