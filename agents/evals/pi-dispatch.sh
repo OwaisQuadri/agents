@@ -3,10 +3,15 @@
 PI_EVAL_DISPATCH_DIR="${${(%):-%N}:A:h}"
 
 pi_eval_cleanup() {
-  local pi_root=$1 tmp_root=${TMPDIR:-/tmp}
+  local pi_root=$1 tmp_root=${TMPDIR:-/tmp} quarantine before after
   [[ "$tmp_root" == / ]] || tmp_root=${tmp_root%/}
   [[ -d "$pi_root" && ! -L "$pi_root" && "$pi_root" == "$tmp_root"/pi-eval.* ]] || return 1
-  rm -rf -- "$pi_root"
+  quarantine="$tmp_root/pi-eval-retired.$$.$RANDOM"
+  before=$(find "$pi_root" -xdev -print | wc -l | tr -d ' ') || return 1
+  mv -- "$pi_root" "$quarantine" || return 1
+  after=$(find "$quarantine" -xdev -print | wc -l | tr -d ' ') || return 1
+  [[ "$before" == "$after" ]] || return 1
+  rm -rf -- "$quarantine"
 }
 
 pi_eval_requirements() {
