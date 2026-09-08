@@ -30,7 +30,6 @@
 #
 # Reviewed timestamps are machine-local in ~/.pi/agent/state/gepa-due/reviewed.jsonl.
 # A settled session appends its verdict; an open pull request suppresses a duplicate dispatch.
-# repo's own "never rm before a verified move" spirit — nothing here is destructive.
 #
 # A usage-only, ZERO-vote due reason gets a DIFFERENT kickoff than a real Reflect: with
 # no judge signal on file, a live Reflect pass has nothing to act on and — confirmed

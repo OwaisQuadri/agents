@@ -321,6 +321,7 @@ fi
 for tool in ste-check session-stats preferred-cli-guard comment-check edit-time-check gepa-due transcript-directed-video-processor privacy-lint worktree-hygiene autonomous-engineer-state; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
+build_tool "$REPO_TARGET/skills/hq" hq-state
 
 TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
 TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"

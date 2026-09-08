@@ -19,6 +19,7 @@ skills/bro/evals/candidates/
 skills/git-sync/evals/candidates/
 
 tools/*/target/
+skills/hq/target/
 
 .context/
 

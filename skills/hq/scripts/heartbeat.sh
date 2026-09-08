@@ -8,37 +8,39 @@ NOTIFIER=${HQ_NOTIFIER:-/opt/homebrew/bin/terminal-notifier}
 scripts_dir=${0:A:h}
 triage_output=$HQ_STATE/triage-out.json
 
-log() { print -r -- "[$(/bin/date '+%Y-%m-%d %H:%M:%S%z')] $1"; }
+log() { print -r -- "[$(/bin/date '+%Y-%m-%dT%H:%M:%S%z')] $1"; }
+mark_triaged() { HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --mark-triaged; }
 
 HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh"
 [[ -f $HQ_STATE/delta.json ]] || exit 0
 [[ $(HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --triage-due) == due ]] || exit 0
 
-triage_prompt="You are HQ triage. Read only $HQ_STATE/delta.json, $HQ_STATE/registry.json, and the minimum bounded evidence those files identify. Herdr supplies active Pi panes and transcript paths. Never read more than the last 200 lines of a Pi transcript. Do not use git, remotes, session resume, or any write tool. Return exactly one JSON object with keys digest, gates, and notify. digest is markdown with unresolved gates first and a short per-project anomaly rundown. gates is an array of objects with id, createdAt, source, kind, subject, summary, evidence, urgency, isResolved, resolvedAt, and resolution. New gates must use source heartbeat, isResolved false, resolvedAt null, and resolution null. notify is null unless a gate needs immediate notification; then it is one short lowercase sentence."
+triage_model=$(jq -er '.tiers.T2.pi.model' "$HQ_REPO/config/model-tiers.json")
+triage_thinking=$(jq -er '.tiers.T2.pi.thinking' "$HQ_REPO/config/model-tiers.json")
+triage_system_prompt='You are an unattended anomaly triage pass. Use only the read tool. Read only the two state files named in the user prompt. Return exactly one fenced JSON object with digest, gates, and notify. gates is an array. notify is null or one short lowercase sentence. Do not write, run commands, use a session, contact a remote, or make decisions for the user.'
+triage_prompt="Read $HQ_STATE/delta.json and $HQ_STATE/registry.json. Summarize only the anomalies in delta.json. For a human decision, add a gate with id, createdAt, source, kind, subject, summary, evidence, urgency, isResolved, resolvedAt, and resolution. New gates use source heartbeat, isResolved false, resolvedAt null, and resolution null. digest lists unresolved gates first. Do not read any other file."
 
-dispatch_triage() {
-  if [[ -n ${HQ_TIER_DISPATCH_BIN:-} ]]; then
-    "$HQ_TIER_DISPATCH_BIN" "$@"
-  else
-    cargo run --quiet --manifest-path "$HQ_REPO/tools/tier-dispatch/Cargo.toml" -- "$@"
-  fi
-}
-
-if ! dispatch_triage \
-  --tiers-file "$HQ_REPO/config/model-tiers.json" \
-  --tier T2 \
-  --system-prompt-file "$HQ_REPO/skills/hq/SKILL.md" \
-  --dispatch-bin "$HQ_PI_BIN" \
-  --input "$triage_prompt" > "$triage_output"; then
-  log "ERROR: bounded Pi triage through tier-dispatch failed"
+if ! RAG_RECALL=0 "$HQ_PI_BIN" -p \
+  --model "$triage_model" \
+  --thinking "$triage_thinking" \
+  --system-prompt "$triage_system_prompt" \
+  --no-session \
+  --no-skills \
+  --no-extensions \
+  --no-context-files \
+  --tools read \
+  "$triage_prompt" > "$triage_output"; then
+  log "ERROR: bounded Pi triage failed"
+  mark_triaged
   exit 1
 fi
 
 if ! notification=$(HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --apply-triage "$triage_output"); then
   log "ERROR: Pi triage output was invalid"
+  mark_triaged
   exit 1
 fi
-HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --mark-triaged
+mark_triaged
 if [[ -n $notification && -x $NOTIFIER ]]; then
   "$NOTIFIER" -group hq -title HQ -message "${notification#NOTIFY:}" >/dev/null 2>&1 || true
 fi
