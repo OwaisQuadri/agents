@@ -202,7 +202,9 @@ test("bounds automatic recall output", async () => {
 	const { fixture, fire } = await start("large-framed");
 	const result = await fire("input", { type: "input", text: "bounded", source: "interactive" } satisfies InputEvent) as InputEventResult;
 	assert.equal(result.action, "transform");
-	assert.ok(result.action === "transform" && result.text.length < 33_000);
+	assert.ok(result.action === "transform" && result.text.includes(`${"x".repeat(32_000)}\n[recall truncated]\n</persistent-memory-recall>`));
+	assert.equal(result.action === "transform" && result.text.includes("x".repeat(32_001)), false);
+	assert.equal(result.action === "transform" && result.text.isWellFormed(), true);
 	await fire("session_shutdown");
 	await fixture.waitForExit();
 });

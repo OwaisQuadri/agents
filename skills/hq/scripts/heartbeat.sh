@@ -16,7 +16,8 @@ mark_failed() { /bin/date -u '+%Y-%m-%dT%H:%M:%SZ' > "$triage_failure"; }
 HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh"
 [[ -f $HQ_STATE/delta.json ]] || exit 0
 [[ $(HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --triage-due) == due ]] || exit 0
-if [[ -f $triage_failure && $triage_failure -nt $HQ_STATE/delta.json ]] && [[ -n $(/usr/bin/find "$triage_failure" -mmin -360 -print) ]]; then
+if [[ -f $triage_failure && -n $(/usr/bin/find "$triage_failure" -mmin -360 -print) ]]; then
+  log "triage cooldown active after the last failure"
   exit 0
 fi
 

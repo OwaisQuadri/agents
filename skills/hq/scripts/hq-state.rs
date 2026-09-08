@@ -86,9 +86,10 @@ fn deserialize_evidence<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error
 where
     D: Deserializer<'de>,
 {
-    Ok(match EvidenceInput::deserialize(deserializer)? {
-        EvidenceInput::One(value) => vec![value],
-        EvidenceInput::Many(values) => values,
+    Ok(match Option::<EvidenceInput>::deserialize(deserializer)? {
+        Some(EvidenceInput::One(value)) => vec![value],
+        Some(EvidenceInput::Many(values)) => values,
+        None => Vec::new(),
     })
 }
 
@@ -772,7 +773,7 @@ fn mark_triaged() -> Result<(), String> {
 }
 
 fn is_safe_gate_id(id: &str) -> bool {
-    !id.is_empty()
+    id.starts_with(|character: char| character.is_ascii_alphanumeric())
         && id.chars().all(|character| {
             character.is_ascii_alphanumeric()
                 || character == '-'
@@ -784,18 +785,27 @@ fn is_safe_gate_id(id: &str) -> bool {
 fn parse_triage_output(output: &[u8]) -> Result<TriageOutput, String> {
     let text = std::str::from_utf8(output)
         .map_err(|error| format!("triage output must be UTF-8: {error}"))?;
-    let (marker, start) = ["```json\n", "```\n"]
-        .into_iter()
-        .filter_map(|marker| text.find(marker).map(|start| (marker, start)))
-        .min_by_key(|(_, start)| *start)
-        .ok_or_else(|| "triage output must contain one fenced JSON object".to_string())?;
-    let body_start = start + marker.len();
-    let body_end = text[body_start..]
-        .find("\n```")
-        .map(|end| body_start + end)
-        .ok_or_else(|| "triage output must contain one fenced JSON object".to_string())?;
-    serde_json::from_str(&text[body_start..body_end])
-        .map_err(|error| format!("triage output must be JSON: {error}"))
+    let mut remaining = text;
+    while let Some(open) = remaining.find("```") {
+        let after_open = &remaining[open + 3..];
+        let Some(close) = after_open.find("```") else {
+            break;
+        };
+        let fenced = &after_open[..close];
+        let body = fenced
+            .strip_prefix("json")
+            .filter(|body| body.starts_with(char::is_whitespace))
+            .unwrap_or(fenced)
+            .trim();
+        if let Ok(triage) = serde_json::from_str(body) {
+            return Ok(triage);
+        }
+        remaining = &after_open[close + 3..];
+    }
+    Err(
+        "triage output must contain a fenced JSON object with digest, gates, and notify"
+            .to_string(),
+    )
 }
 
 fn apply_triage(path: &str) -> Result<(), String> {
@@ -984,16 +994,20 @@ mod tests {
 
     #[test]
     fn accepts_a_fenced_json_triage_response_with_model_prose() {
-        let output = br#"Here is the result:
+        let output = br#"I read this input:
 ```json
-{"digest":"digest","gates":[{"id":"com.example.job","createdAt":"now","source":"heartbeat","kind":"launchd_down","subject":"job","summary":"down","evidence":"pid changed","urgency":"normal","isResolved":false,"resolvedAt":null,"resolution":null}],"notify":null}
+{"changes":[]}
 ```
-Done."#;
+Here is the result: ```json {"digest":"digest","gates":[{"id":"com.example.job","createdAt":"now","source":"heartbeat","kind":"launchd_down","subject":"job","summary":"down","evidence":"pid changed","urgency":"normal","isResolved":false,"resolvedAt":null,"resolution":null},{"id":"job_two","createdAt":"now","source":"heartbeat","kind":"k","subject":"s","summary":"m","evidence":null,"urgency":"normal","isResolved":false,"resolvedAt":null,"resolution":null}],"notify":null}``` Done."#;
 
         let triage = parse_triage_output(output).unwrap();
         assert_eq!(triage.digest, "digest");
         assert_eq!(triage.gates[0].evidence, ["pid changed"]);
+        assert!(triage.gates[1].evidence.is_empty());
         assert!(is_safe_gate_id(&triage.gates[0].id));
+        assert!(is_safe_gate_id("job_two"));
+        assert!(!is_safe_gate_id(".hidden"));
+        assert!(!is_safe_gate_id(".."));
         assert!(parse_triage_output(br#"{"digest":"digest"}"#).is_err());
         assert!(parse_triage_output(b"```json\nnot json\n```").is_err());
     }
