@@ -22,7 +22,7 @@ if [[ -f $triage_failure && -n $(/usr/bin/find "$triage_failure" -mmin -360 -pri
   exit 0
 fi
 
-/bin/cp "$HQ_STATE/delta.json" "$triage_input"
+HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --snapshot-triage "$triage_input"
 triage_model=$(jq -er '.tiers.T2.pi.model' "$HQ_REPO/config/model-tiers.json")
 triage_thinking=$(jq -er '.tiers.T2.pi.thinking' "$HQ_REPO/config/model-tiers.json")
 triage_system_prompt='You are an unattended anomaly triage pass. Use only the read tool. Read only the two state files named in the user prompt. Return one fenced JSON object with digest, gates, and notify. gates is an array. notify is null or one short lowercase sentence. Do not write, run commands, use a session, contact a remote, or make decisions for the user.'
@@ -48,7 +48,11 @@ if ! notification=$(HQ_STATE=$HQ_STATE "$scripts_dir/scan.sh" --apply-triage "$t
   mark_failed
   exit 1
 fi
-mark_triaged
+if ! mark_triaged; then
+  log "ERROR: could not acknowledge the triage snapshot"
+  mark_failed
+  exit 1
+fi
 if [[ -n $notification && -x $NOTIFIER ]]; then
   "$NOTIFIER" -group hq -title HQ -message "${notification#NOTIFY:}" >/dev/null 2>&1 || true
 fi
