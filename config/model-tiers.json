@@ -61,6 +61,7 @@
     "researcher": "T2",
     "scout": "T2",
     "debugger": "T3",
+    "implementer": "T3",
     "spec-tester": "T3",
     "maestro-tester": "T3",
     "anchor-verifier": "T3",

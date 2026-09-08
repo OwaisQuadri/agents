@@ -6,6 +6,7 @@ use config::TiersFile;
 use registry::{
     ModelOverrides, Registry, unknown_model_overrides, unknown_models, unreferenced_newer,
 };
+use serde_json::json;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -14,9 +15,9 @@ const USAGE: &str = "usage:
   tier-dispatch --verify-registry --tiers-file <path> [--registry-file <path>] [--models-file <path>]
 output:
   stdout: dispatched artifact on success
-  stderr: model_ran: <model id> on dispatch success; diagnostics otherwise
+  stderr: JSON attempt records plus model_ran: <model id> on dispatch success; diagnostics otherwise
 exit:
-  0 success; 1 dispatch or registry failure; 2 invalid input or unavailable provider catalog; 3 tier unavailable
+  0 success; 1 dispatch or registry failure; 2 invalid input or unavailable provider catalog; 3 tier unavailable; 4 tier timeout; 130 interrupted dispatch
 ";
 
 struct Args {
@@ -113,6 +114,26 @@ fn parse_args(raw: &[String]) -> Result<Args, String> {
         models_file,
         models_file_explicit,
     })
+}
+
+fn timeout_attempt_diagnostic(model: &str, thinking: &str, stderr: &str, stdout: &str) -> String {
+    let mut diagnostic = format!("  tried {model} ({thinking}): {}", stderr.trim());
+    if !stdout.is_empty() {
+        diagnostic.push_str(&format!("\n  partial stdout (rejected):\n{stdout}"));
+    }
+    diagnostic
+}
+
+fn report_attempt(attempt: &dispatch::Attempt) {
+    eprintln!(
+        "attempt: {}",
+        json!({
+            "model": attempt.model,
+            "thinking": attempt.thinking,
+            "elapsed_ms": attempt.elapsed_ms,
+            "result": attempt.result,
+        })
+    );
 }
 
 fn verify_registry(args: &Args) -> ExitCode {
@@ -257,6 +278,11 @@ fn main() -> ExitCode {
         }
     };
 
+    if let Err(error) = dispatch::install_signal_forwarder() {
+        eprintln!("tier-dispatch: cannot install signal forwarding: {error}");
+        return ExitCode::FAILURE;
+    }
+
     match dispatch::walk_chain(
         &dispatch_bin,
         &chain,
@@ -266,12 +292,19 @@ fn main() -> ExitCode {
         dispatch::Outcome::Success {
             model_ran,
             artifact,
+            attempts,
         } => {
+            for attempt in &attempts {
+                report_attempt(attempt);
+            }
             println!("{artifact}");
             eprintln!("model_ran: {model_ran}");
             ExitCode::SUCCESS
         }
         dispatch::Outcome::TierExhausted { attempts } => {
+            for attempt in &attempts {
+                report_attempt(attempt);
+            }
             eprintln!(
                 "tier-dispatch: tier {tier} unavailable — every model in its chain failed with a retryable quota or availability error"
             );
@@ -285,11 +318,57 @@ fn main() -> ExitCode {
             }
             ExitCode::from(3)
         }
-        dispatch::Outcome::HardFailure { attempt } => {
+        dispatch::Outcome::TierTimedOut { attempts } => {
+            for attempt in &attempts {
+                report_attempt(attempt);
+            }
+            eprintln!("tier-dispatch: tier {tier} timed out");
+            for attempt in &attempts {
+                eprintln!(
+                    "{}",
+                    timeout_attempt_diagnostic(
+                        &attempt.model,
+                        &attempt.thinking,
+                        &attempt.stderr,
+                        &attempt.stdout
+                    )
+                );
+            }
+            ExitCode::from(4)
+        }
+        dispatch::Outcome::Interrupted { attempts } => {
+            for attempt in &attempts {
+                report_attempt(attempt);
+            }
+            eprintln!("tier-dispatch: interrupted");
+            for attempt in &attempts {
+                eprintln!("  tried {} ({})", attempt.model, attempt.thinking);
+            }
+            ExitCode::from(130)
+        }
+        dispatch::Outcome::HardFailure {
+            attempt,
+            previous_attempts,
+        } => {
+            for previous in &previous_attempts {
+                report_attempt(previous);
+            }
+            report_attempt(&attempt);
             eprintln!(
                 "tier-dispatch: {} failed with an unrelated error, stopping (not trying the rest of tier {tier}'s chain)",
                 attempt.model
             );
+            for previous in &previous_attempts {
+                eprintln!(
+                    "{}",
+                    timeout_attempt_diagnostic(
+                        &previous.model,
+                        &previous.thinking,
+                        &previous.stderr,
+                        &previous.stdout
+                    )
+                );
+            }
             eprintln!("  {}", attempt.stderr.trim());
             ExitCode::FAILURE
         }
@@ -299,6 +378,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeout_diagnostic_labels_partial_stdout_as_rejected() {
+        let diagnostic = timeout_attempt_diagnostic("model", "low", "timed out", "partial");
+        assert!(diagnostic.contains("partial stdout (rejected)"));
+        assert!(diagnostic.contains("partial"));
+    }
 
     #[test]
     fn parses_all_required_flags() {

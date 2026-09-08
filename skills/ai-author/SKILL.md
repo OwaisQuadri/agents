@@ -23,7 +23,7 @@ tree never sanctioned. Route first, and stop at the first match:
 
 - **A destination outside the artifact system.** The discriminator is ALWAYS-ON versus
   TRIGGERED, never the topic. Guidance that should apply without anything firing it belongs in
-  CLAUDE.md, memory, or settings; anything with a trigger, however stylistic its subject, is a
+  repository guidance, memory, or settings; anything with a trigger, however stylistic its subject, is a
   candidate for the tree. "Comments follow the whitelist" exits here. "Before every commit,
   sweep the diff's comments against the whitelist" does not — same topic, and it fires on a
   commit. That is a legitimate terminal state and it exits here. It is
@@ -89,13 +89,11 @@ time and cannot. So before the word skill, agent or workflow is spoken, ask whet
 thing is decidable from files, diffs, and exit codes with no taste involved. Two
 destinations, same test, different trigger:
 
-- **a checker** — an agent invokes it deliberately. Rust, in `tools/`, per AGENTS.md.
-- **something the RUNTIME fires on an event, with no agent remembering to run it** — three
-  actual backends live in this repo: Pi's own event bus (a Pi extension, TypeScript wiring
-  in `pi/extensions/`), the Claude Code/Codex CLI's own hook system (a CLI hook, wired
-  through `config/*.json`'s `"hooks"` key), and git itself (a git hook, bash in `hooks/`,
-  symlinked by `install.sh`). All three can call back into a plain Rust checker rather than
-  reimplement the logic in a second language.
+- **a checker** — an agent invokes it deliberately. Rust, in `tools/`, per the repository guidance.
+- **something the runtime fires on an event, with no agent remembering to run it** —
+  Pi's event bus uses a Pi extension with TypeScript wiring in `pi/extensions/`. Git uses
+  a hook in `hooks/`, symlinked by `install.sh`. Both can call a plain Rust checker rather
+  than reimplement the logic in a second language.
 
 HOW to build any of these four is `tool-author`'s craft, the same way `skill-author` owns
 SKILL.md craft — dispatch there once this branch is picked; nothing type-specific is
@@ -189,7 +187,7 @@ session transcripts at tuning time (see "usage evidence" below), never self-repo
 
 Frontmatter must parse under strict YAML, not just the lenient parser one client happens
 to use. A plain scalar that contains `: ` (colon plus space) is illegal YAML and breaks
-pi's loader even though Claude Code accepts it. Any frontmatter value containing `: ` is
+Pi's loader. Any frontmatter value containing `: ` is
 written as a `>-` block scalar. Check before shipping:
 
 ```sh
@@ -278,9 +276,15 @@ Run per artifact, on demand or once logs/votes accumulate:
    the live artifact, gated by the unchanged rule below.
 3. **Test**: for a skill or workflow that delegates to the shared runner, run
    `evals/run.sh --accept-if-winning <candidate>` once. The runner evaluates
-   the live incumbent and candidate together in memory at every configured tier.
-   It normalizes only `metadata.minimum-tier` from their model prompts and identities, while
-   preflight receives the submitted candidate unchanged. It records all tiers, including
+   the live incumbent and candidate together in memory at every configured tier. Copy the
+   comparison identifier that it prints before the first case. It writes append-only case and
+   timing events under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. If the run
+   stops, continue it with the same candidate and `--resume <comparison-id>`. The runner names
+   stale inputs before dispatch, skips completed cases, and reruns an interrupted case. A
+   checkpoint is not acceptance evidence. Use `--resume-from-log <path> --legacy-arm
+   <incumbent|candidate>` only to import an exact legacy case prefix once. It normalizes only
+   `metadata.minimum-tier` from their model prompts
+   and identities, while preflight receives the submitted candidate unchanged. It records all tiers, including
    unavailable tiers. A plain run is an optional dry comparison, not a prerequisite. Every
    skill or workflow that delegates to the shared runner uses the suffix selector. The runner
    updates a declared floor and preserves a deliberate absence. An artifact with a custom

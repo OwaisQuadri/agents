@@ -1,9 +1,8 @@
 # testing this repo
 
-The one canonical answer to "how do I test this" — read this before improvising a
-command. Every check below is safe to run from a fresh checkout; none of them touch
-your real `~/.claude`, `~/.codex`, `~/.pi`, `~/.local/bin`, or `~/.zshrc` unless you say
-so explicitly.
+This document lists the commands that test this repository. Read it before you improvise a test command.
+Every check below is safe to run from a fresh checkout.
+They do not touch your real `~/.pi`, `~/.local/bin`, or `~/.zshrc` unless you explicitly ask.
 
 ## the one command for "does the install still work"
 
@@ -39,7 +38,9 @@ REPO_TARGET="$PWD" ./install.sh --dry-run
 ```sh
 # Rust tools
 cargo test --manifest-path tools/tool-sync/Cargo.toml
+cargo test --manifest-path tools/tier-dispatch/Cargo.toml
 cargo test --manifest-path tools/skill-eval/Cargo.toml
+tools/skill-eval/timing-test.sh
 cargo build --release --manifest-path tools/tool-wizard/Cargo.toml   # any tools/<name>/Cargo.toml
 
 # Pi extensions (Node test runner)
@@ -58,20 +59,34 @@ hooks/test.sh
 ./skills/<name>/evals/run.sh --tier T3                        # diagnostic single-tier mode
 ```
 
-Every skill and workflow runner delegates to `tools/skill-eval`. A full candidate run
-compares the live incumbent and candidate together. It executes every configured tier and records
-paired evidence. The runner selects the highest-scoring contiguous suffix ending at the highest
-tier. It runs bounded `(arm, tier, slice, case, repeat)` units with four workers by default.
-Use `--jobs N` or `SKILL_EVAL_JOBS` to set one through 16 workers. The full paired modes save
-complete units under `evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run.
-A completed `null` score remains complete on automatic resume. Use `--restart` to retry unavailable
-providers after they recover. `--restart` discards only that run's saved units. The runner writes
-progress to standard error after each durable unit. It writes incumbent records before candidate
-records. Each arm orders records by configured tier, non-holdout cases, then holdout cases. It
-serializes `output-check.sh` while model dispatches run concurrently. The runner uses
-`evals/.skill-eval-state/run.lock` as one stable advisory lock per artifact. The lock permits one
-paired coordinator while its workers remain concurrent. After a completed run writes its frontier
-and live definition, a state cleanup failure is a warning. The completed run keeps its success exit.
+Do not give a full harness an outer timeout. The harness bounds each child process. In Pi,
+the preferred command guard inspects the Bash tool timeout argument. It blocks a
+7,200-second timeout for full skill and workflow runs. It does not inspect a literal external
+`timeout 7200` command or calls that do not use Pi. If a diagnostic run needs an outer timeout,
+use `--tier <tier>` or `--holdout`.
+
+Every skill and workflow runner delegates to `tools/skill-eval`. A full baseline run
+evaluates the current artifact. A full candidate run compares the live incumbent and
+candidate together. Both modes execute every configured tier as bounded
+`(arm, tier, slice, case, repeat)` units with four workers by default. Use `--jobs N` or
+`SKILL_EVAL_JOBS` to set one through 16 workers.
+
+Full runs save complete units under
+`evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run. A completed
+`null` score remains complete on automatic resume. Use `--restart` to discard only that
+run's saved units and retry unavailable providers.
+
+The runner writes progress to standard error after each durable unit. It orders records
+by configured tier, non-holdout cases, then holdout cases. A paired run writes incumbent
+records before candidate records. The runner serializes `output-check.sh` while model
+dispatches run concurrently.
+
+Each run key has an advisory lock at
+`evals/.skill-eval-state/<run-key>.lock`. The lock permits one coordinator for an exact
+run while different run keys can proceed. After a completed run writes its frontier and
+any accepted live definition, a state cleanup failure is a warning. The completed run
+keeps its success exit. A candidate run selects the highest-scoring contiguous suffix
+that ends at the highest tier.
 
 A surviving median keeps a partly ungraded tier in that ranking. The completeness gate then
 rejects a selected suffix with any missing repeat. Tiers below the selected floor remain recorded,
@@ -86,13 +101,31 @@ for the same run also exits 2. Baseline and narrow diagnostic runs otherwise ret
 result behavior. The runner uses `tools/tier-dispatch` for real artifact runs and judge runs. It
 disables extension discovery and loads `pi-anthropic-auth` as the minimum extension.
 
+Each case row reports its total time. Its repeat records report generation and judge times,
+requested tiers, final models, and each fallback attempt. `tools/tier-dispatch` reports the
+model, thinking level, time, and result for every attempt.
+
+Each run prints its comparison identifier before the first case. It writes append-only events
+under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. Resume an interrupted run
+with the same candidate and `--resume <comparison-id>`. The runner names changed inputs and
+stops before dispatch when the saved inputs are stale. It reruns an interrupted case and skips
+completed cases. A checkpoint cannot update the frontier or live artifact.
+
+The state directory keeps the latest 100 completed runs per artifact. It keeps active runs and
+one resumable run for each exact input set. Set `SKILL_EVAL_STATE_DIR` to isolate tests.
+Use `--resume-from-log <path> --legacy-arm <incumbent|candidate>` once to import a legacy mixed
+log that forms an exact case prefix. Imported rows keep unknown time and model fields as null.
+
+Custom agent harnesses use Pi through `tools/tier-dispatch` and write the same timing state.
+Run `tools/skill-eval/timing-test.sh` to test their case records, parallel-run safety, web
+extension preflight, dispatch bound, and retention without a live model.
+
 ## manifest / policy checks
 
 ```sh
 tools/tool-sync/target/release/tool-sync \
   --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check
 
-./install-policy.sh --dry-run
 
 cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
   --verify-registry --tiers-file config/model-tiers.json

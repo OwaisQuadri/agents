@@ -73,7 +73,7 @@ copies of the same finding.
   external input.
 - Tests. Judge coverage of the actual change. Check whether existing tests still prove
   what they claim to prove.
-- Style. Check this repo's own conventions: `AGENTS.md`, `docs/code-style.md`,
+- Style. Check this repo's own conventions: the repository guidance and `docs/code-style.md`,
   `docs/comment-style.md`'s whitelist, and `rust-style`'s baseline for a diff that
   touches a `.rs` file.
 

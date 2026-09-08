@@ -22,7 +22,7 @@ Mastery means he produces and the model attacks.
 a prior file. He usually has already agreed something — merging into it beats a fresh
 plan he'll have to reconcile himself.
 
-Note that the store does NOT cover claude.ai web chats. If the plan is remembered but
+Note that the store does not cover web chats outside Pi. If the plan is remembered but
 absent, say so and ask him to paste it rather than reconstructing it.
 
 Done when: the prior plan is in hand, or its absence has been stated as a fact rather
@@ -146,7 +146,7 @@ Done when: `LADDER.md` exists at the stated path and every section above is pres
 ## evals
 
 `evals/run.sh` grades each case in `cases.jsonl` against `rubric.md` with a fresh
-`claude -p` judge, one JSON line per case. `./run.sh` runs the non-holdout slice;
+Pi-backed judge, one JSON line per case. `./run.sh` runs the non-holdout slice;
 `./run.sh --holdout` runs the held-out slice.
 
 ## changes

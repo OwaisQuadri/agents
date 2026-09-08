@@ -22,6 +22,24 @@ standalone instruction — toggle exactly the ones you want per message.
   by `order`), separated by blank lines.
 - Toggles reset to **all off** after each send and at session start.
 
+## Included snippets
+
+- **Orient, then wait** — orient in the project and wait for the next instruction.
+- **Clarify and verify** — clarify unclear intent and verify critical facts.
+- **Delegate heavy work** — delegate broad exploration and mechanical work.
+- **Diagnose only** — investigate and propose a fix without changing code.
+- **Run unattended** — complete work without routine check-ins; ask only for a true blocker or named final approval.
+
+## Local usage record
+
+When selected snippets transform a sent message, the extension appends one content-free
+JSON Lines record to `prompt-snippets-usage.jsonl` under `PI_CODING_AGENT_DIR` or
+`~/.pi/agent`. Each record contains only `version`, `timestamp`, `sessionId`, and
+ordered `snippetIds`. The extension creates the directory only on the first recorded
+use. The writer rejects symbolic links for the agent directory, its parent, and the
+usage file. Local write failures do not affect the sent message. The input transform does
+not wait for the write, so the audit treats usage counts as a lower bound.
+
 ## Snippet files
 
 Snippets live in `snippets/` next to `index.ts` — one markdown file each,

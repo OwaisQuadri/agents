@@ -1,9 +1,3 @@
-// Shells out to the `ffmpeg` CLI binary rather than linking `ffmpeg-next` (the
-// libav* Rust bindings) — matches this repo's existing external-process pattern
-// (tools/usage-limit-watch, tools/dispatch-baseline both spawn a CLI rather than
-// linking a library), and avoids ffmpeg-next's compile-time dependency on FFmpeg's
-// dev headers, which this repo's other tools don't require of a build machine.
-
 use std::path::Path;
 use std::process::Command;
 

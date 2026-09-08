@@ -1,16 +1,19 @@
 ---
 name: byline
-description: Use when prose is about to ship under the user's name where a stranger reads it. a commit message, PR(Pull Request) body, ticket short or long, README, changelog, release note, or doc. Strips the AI tells (throat-clearing openers, hedges, adverb padding, metronomic rhythm, vague declaratives, meta-commentary) and leaves the facts untouched. Skip for the message the user himself reads, which /mouthpiece owns, and for code comments, which docs/comment-style.md owns.
+description: >-
+  Use when a concrete prose draft is ready to ship under the user's name where a stranger reads it.
+  Edit a commit message, PR(Pull Request) body, ticket, README, changelog, release note, or doc.
+  Skip when no draft or artifact type exists, for user messages, and for code comments.
 metadata:
-  minimum-tier: T4
+  minimum-tier: T5
   short-description: De-slop the prose that ships under his name
 ---
 
 # byline
 
-JOB: return one piece of shipped prose with the AI tells cut and every fact unchanged
-IN:  the draft, plus what it is (commit message, PR body, ticket, README, changelog, doc)
-OUT: the edited prose, plus the `ste-check` result on it
+JOB: edit one concrete prose draft while every fact stays unchanged
+IN:  the concrete draft or selected file span, plus its artifact type
+OUT: the edited prose and its `ste-check` result, or `out-of-trigger: missing <input>`
 
 ## register
 
@@ -21,6 +24,13 @@ below, because this is the only prose a stranger reads.
 `/mouthpiece` shares the base and differs in shape. That register bounds length by the
 facts and ends on a next action. The reader there is the user himself, and he acts on
 it. Reach for it only where he is the reader.
+
+## input gate
+
+1. Confirm that the input contains a concrete draft or a selected file span.
+2. Confirm that the input names its artifact type.
+3. If an input is absent, return `out-of-trigger: missing <input>` and stop.
+4. Do not invent the draft or claim a `ste-check` result.
 
 ## the pass
 

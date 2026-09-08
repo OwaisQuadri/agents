@@ -27,24 +27,19 @@ GOAL:     find the highest-impact levers to pull on this workspace and AI setup 
           reports whichever of the five build-it categories ai-author's "should it
           exist?" type tree actually concludes, not a fixed skill-or-agent bucket.
 FAN OUT:  a plan node designs exactly 3 mining dispatches — skill-evidence-sweep,
-          agent-candidate-scan (both reusing skills/ai-author/SKILL.md's bounded
-          session evidence sweep procedure by reference, with its fixed-count
-          window overridden to "any parent session active in the last 24h"), and
-          correction-mining (greps that same 24h window for user-pushback markers —
-          "no,", "that's wrong", "undo", etc. — and groups them into repeated
-          mistake shapes with 2+ occurrences, feeding GitHub issue #79's
-          deterministic-checker backlog) — run on the default session model (the
-          founding version ran mining on the lighter-weight Explore agent, which two
-          real 2026-08-28 live runs both aborted mid-task against Pi's
-          session-transcript directory, unrelated to content size) in one parallel
-          wave, THEN 1-3 tool-radar dispatches (run on web-research-summarizer,
-          angle/source rotated daily) in a second wave — a genuine barrier, not a
-          fake one: tool-radar is handed mining's actual real-evidence findings as
-          grounding text and its dispatch objective requires naming which specific
-          friction item a candidate addresses (or explicitly grounding fit in this
-          repo's real stack instead), because 2026-08-28 live runs kept surfacing
-          generic "seems useful" tool reasoning with no connection to any measured
-          usage
+          agent-candidate-scan, and correction-mining — for parent sessions active in
+          the last 24 hours. The first two reuse `skills/ai-author/SKILL.md`'s bounded
+          session evidence sweep by reference. One fixed prompt-snippet-audit runs
+          beside all three in the same parallel wave. The audit
+          inspects current prompt snippets, at most 500 direct-use records from the
+          latest 30 days, and grep-first bounded windows across at most 200 parent
+          sessions active in that period for equivalent manual requests. Direct and
+          manual evidence stay distinct; absence is unknown;
+          adds require two parent sessions; merge/removal requires measured co-use,
+          conflict, or existing-skill overlap; weak evidence returns zero candidates.
+          The shared wave THEN feeds 1-3 tool-radar dispatches in a second wave — a
+          genuine barrier because tool-radar receives the complete mining evidence as
+          grounding text.
 MERGE:    plain code collects every dispatch's raw candidate array — no model, zero
           tokens
 VERIFY:   a fresh-context filter agent, never having seen the generating dispatches'
@@ -67,15 +62,22 @@ RULE:     every candidate's evidence is a measured fact (a real repetition count
           repeated human correction) is measured evidence too, since it's a counted
           occurrence, not a guess. A candidate already built or already an open issue
           never survives Filter, regardless of how well-evidenced its rationale is.
-CAP:      3 mining + 3 tool-radar dispatches; digest capped at 10 survivors
-ON FAIL:  any dispatch that returns nothing is named in the report by label, never
-          dropped silently; zero raw candidates is a valid, honestly-reported result
+CAP:      3 planned mining + 1 fixed prompt-snippet audit + 3 tool-radar
+          dispatches; audit reads at most 500 latest-30-day direct-use records and
+          bounded windows from at most 200 latest-30-day parent sessions; digest
+          capped at 10 survivors
+ON FAIL:  any dispatch, including prompt-snippet-audit, that returns nothing is named
+          in expected, returned, and missingLabels accounting; zero raw candidates is
+          a valid, honestly-reported result
 SAVE:     returns the digest text; the caller (the seeded kickoff prompt's Pi session)
           writes it to .context/scheduled-ideation-digest.md — this workflow has no
           filesystem access of its own
 REPORT:   digest markdown (leading with a "Top lever today" section) + candidates
-          array in rank order + expected vs returned counts + missing dispatch
-          labels + raw-vs-survivor counts
+          array in rank order + expected vs returned counts + missing dispatch labels
+          + raw-vs-survivor counts. Audit output contains conclusions and aggregate
+          evidence only: never prompt or response text, raw records, transcript
+          excerpts, session identifiers, or session paths. Audit candidates can reach
+          the private Filter and digest, but never the web-research dispatches.
 ```
 
 Anchors: every mining candidate's evidence traces to a real logged repetition/cost
@@ -101,7 +103,10 @@ Workflow({ scriptPath: "<repo>/workflows/scheduled-ideation/scheduled-ideation.w
 ## output contract
 
 `{ candidates, digest, expected, returned, missingLabels, rawCandidateCount,
-survivorCount }` — `digest` is the final markdown, grouped under "## Skills worth
+survivorCount }` — `expected`, `returned`, and `missingLabels` include the fixed
+`prompt-snippet-audit`; its candidate output excludes prompt and response text, raw
+records, transcript excerpts, session identifiers, and session paths. `digest` is the
+final markdown, grouped under "## Skills worth
 authoring" / "## Agents worth authoring" / "## Workflows worth authoring" /
 "## Checkers/linters worth building" / "## Pi extensions worth building" / "## Tools
 worth trying" headings (a heading is omitted entirely when it has zero survivors).

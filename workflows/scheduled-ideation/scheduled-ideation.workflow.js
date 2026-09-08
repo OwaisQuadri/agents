@@ -72,7 +72,7 @@ Mining dispatch 2 (category "agent", label "agent-candidate-scan"): objective MU
 
 Mining dispatch 3 (category "checker", label "correction-mining"): objective MUST instruct the agent to grep parent session transcripts in the 24-hour window for markers where the human user corrected the agent mid-task — pushback language such as "no,", "that's wrong", "don't", "stop", "undo", "revert", "not what I", "fix this", "why did you" inside role":"user" message blocks — then read a bounded window (offset/limit, never the whole file) around each hit to capture what the agent had just done and what exactly got corrected. Group hits into repeated SHAPES: the same kind of mistake recurring across 2+ independent sessions or tasks (e.g. "claimed a command succeeded without checking its exit code", "reported something done without verifying"). A shape needs 2+ independent occurrences to count; a single isolated correction is not a pattern — note it but do not report it as a candidate. For each surviving shape, report it as a candidate with category "checker" (this feeds GitHub issue #79, which wants deterministic Rust checkers under tools/ for exactly this class of recurring, cited, mechanizable mistake): name the shape, cite each occurrence (session path + a short quote of the correction), and state plainly whether it looks mechanizable (a program can catch it) or requires judgment (drop it — issue #79 explicitly wants only bounded, non-judgment rules). Zero repeated shapes in the window is a valid, honest result. source_guidance: "parent Pi session transcripts active in the last 24 hours only, per the window rule above; the reading-boundedness rule above governs every read."
 
-Tool-radar dispatches (category "tool", 1-${MAX_TOOL_RADAR} of them): each covers a DISTINCT external-discovery angle relevant to this repo's actual stack (Pi/Claude Code and coding-agent tooling, TypeScript/Rust developer tooling, terminal multiplexer/Herdr-adjacent tooling, AI agent orchestration). Rotate which specific sources and angle you pick each run so consecutive daily runs don't repeat the same search — vary among GitHub Trending, Hacker News, package-registry release feeds, vendor/company engineering blogs, and ArXiv for anything genuinely research-adjacent. Each objective must ask the researcher to name concrete, named tools/projects with a URL and a one-paragraph rationale for why THIS repo's owner specifically would want it, not a generic "top N tools" listicle.
+Tool-radar dispatches (category "tool", 1-${MAX_TOOL_RADAR} of them): each covers a DISTINCT external-discovery angle relevant to this repo's actual stack (Pi and coding-agent tooling, TypeScript/Rust developer tooling, terminal multiplexer/Herdr-adjacent tooling, AI agent orchestration). Rotate which specific sources and angle you pick each run so consecutive daily runs don't repeat the same search — vary among GitHub Trending, Hacker News, package-registry release feeds, vendor/company engineering blogs, and ArXiv for anything genuinely research-adjacent. Each objective must ask the researcher to name concrete, named tools/projects with a URL and a one-paragraph rationale for why THIS repo's owner specifically would want it, not a generic "top N tools" listicle.
 
 Fields per dispatch: label (short kebab-case), category (skill|agent|checker|tool), objective (specific enough that "answered" is checkable), boundaries (what's out of scope), source_guidance (files/dirs for mining, or URLs/domains/search venues for tool-radar), recency ("current repo state" for mining, a freshness bound for tool-radar).`,
   {
@@ -86,10 +86,27 @@ Fields per dispatch: label (short kebab-case), category (skill|agent|checker|too
 
 if (!plan || !plan.dispatches || !plan.dispatches.length) return { error: 'plan node returned nothing; no candidate generators dispatched' }
 
-const mining = plan.dispatches.filter(d => d.category === 'skill' || d.category === 'agent' || d.category === 'checker').slice(0, MAX_MINING)
-const toolRadar = plan.dispatches.filter(d => d.category === 'tool').slice(0, MAX_TOOL_RADAR)
+const usedLabels = new Set(['prompt-snippet-audit'])
+const plannedDispatches = plan.dispatches.map((dispatch, index) => {
+  let label = dispatch.label
+  let suffix = index + 1
+  while (usedLabels.has(label)) label = `${dispatch.label}-planned-${suffix++}`
+  usedLabels.add(label)
+  return label === dispatch.label ? dispatch : { ...dispatch, label }
+})
+const mining = plannedDispatches.filter(d => d.category === 'skill' || d.category === 'agent' || d.category === 'checker').slice(0, MAX_MINING)
+const promptSnippetAudit = {
+  label: 'prompt-snippet-audit',
+  category: 'skill',
+  objective: 'Inspect the current snippet files under pi/extensions/prompt-snippets/snippets/. Read at most 500 direct-use records from the latest 30 days in prompt-snippets-usage.jsonl. Search at most 200 parent Pi session transcripts active in the latest 30 days for equivalent manually typed user requests. Use grep to find markers first, then read only the last 200 lines or a bounded offset/limit window around a hit; never read a full transcript. Keep direct-use records and equivalent manual requests as distinct evidence classes. Absence of use is unknown, never removal evidence. An addition needs repeated evidence from at least two parent sessions. A merge or removal needs measured co-use, conflict, or overlap with an existing skill. Weak or insufficient evidence yields zero candidates. Return conclusions and aggregate counts only; do not include prompt text, response text, raw records, transcript excerpts, session identifiers, or session paths.',
+  boundaries: 'Do not change snippet files. Do not infer demand from absence, expose private source data, or propose candidates below the evidence thresholds.',
+  source_guidance: 'Current pi/extensions/prompt-snippets/snippets/ files; $PI_CODING_AGENT_DIR/prompt-snippets-usage.jsonl when PI_CODING_AGENT_DIR is set, otherwise ~/.pi/agent/prompt-snippets-usage.jsonl; parent transcripts under ~/.pi/agent/sessions/; at most 500 latest-30-day direct-use records; at most 200 parent-session transcripts from the latest 30 days, with grep-first bounded reads only.',
+  recency: 'latest 30 days for direct-use records and manual-request evidence; current snippet files',
+}
+mining.push(promptSnippetAudit)
+const toolRadar = plannedDispatches.filter(d => d.category === 'tool').slice(0, MAX_TOOL_RADAR)
 const allDispatches = [...mining, ...toolRadar]
-log(`planned ${mining.length} mining dispatch(es) + ${toolRadar.length} tool-radar dispatch(es): ${allDispatches.map(d => d.label).join(', ')}`)
+log(`planned ${mining.length - 1} mining dispatch(es) + 1 fixed prompt-snippet audit + ${toolRadar.length} tool-radar dispatch(es): ${allDispatches.map(d => d.label).join(', ')}`)
 
 // Mining dispatches (skill/agent) report whatever destination ai-author's own type-tree
 // concludes, not the coarse bucket they were routed under; tool-radar stays fixed at "tool"
@@ -99,8 +116,13 @@ const categoryInstruction = d =>
     ? `category ("tool")`
     : `category (one of skill|agent|workflow|checker|extension — whichever your routing verdict actually concludes; do not force-fit into "${d.category}")`
 
+const sourceInstruction = d =>
+  d.label === 'prompt-snippet-audit'
+    ? 'source (the literal value "aggregate prompt-snippet audit"; never a path or identifier)'
+    : 'source (a file/log path for mining, a URL for tool-radar)'
+
 const dispatchPrompt = (d, extra) =>
-  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}${extra ? `\n\n${extra}` : ''}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (its FIRST SENTENCE must state the actual leverage this buys — time, tokens, dollars, or failures saved, measured or a stated honest estimate flagged as such; the rest of the sentence explains why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), source (a file/log path for mining, a URL for tool-radar).`
+  `objective: ${d.objective}\nboundaries: ${d.boundaries}\nsource_guidance: ${d.source_guidance}\nrecency: ${d.recency}${extra ? `\n\n${extra}` : ''}\n\nReturn a JSON array of candidates you found (may be empty — zero candidates is a valid, honest result). Each candidate needs: name, ${categoryInstruction(d)}, rationale (its FIRST SENTENCE must state the actual leverage this buys — time, tokens, dollars, or failures saved, measured or a stated honest estimate flagged as such; the rest of the sentence explains why this specific repo/owner would want it), evidence (the measured repetition/cost, or the named source finding — never an estimate), ${sourceInstruction(d)}.`
 
 phase('Generate')
 // Mining ran on agentType 'Explore' (Haiku-tier) in the founding version; two real 2026-08-28
@@ -122,9 +144,11 @@ const miningResults = await parallel(mining.map(d => () =>
   agent(dispatchPrompt(d), { label: d.label, phase: 'Generate', schema: { type: 'object', properties: { candidates: { type: 'array', items: CANDIDATE_SCHEMA } }, required: ['candidates'] } })
     .then(r => (r ? { label: d.label, candidates: r.candidates } : null))))
 
-const minedCandidates = miningResults.filter(Boolean).flatMap(r => r.candidates || [])
-const usageGrounding = minedCandidates.length
-  ? `Real recurring friction measured in this repo's own session evidence this run:\n${minedCandidates.map(c => `- [${c.category}] ${c.name}: ${c.evidence}`).join('\n')}\n\nYour rationale for any tool candidate MUST explicitly name which of these it addresses, or state plainly "addresses no measured friction this run" and instead ground the fit in this repo's specific, real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking) rather than a generic "would be useful" claim. A rationale that ignores this entirely will be dropped in filtering.`
+const toolGroundingCandidates = miningResults
+  .filter(result => result && result.label !== 'prompt-snippet-audit')
+  .flatMap(result => result.candidates || [])
+const usageGrounding = toolGroundingCandidates.length
+  ? `Real recurring friction measured in this repo's own session evidence this run:\n${toolGroundingCandidates.map(c => `- [${c.category}] ${c.name}: ${c.evidence}`).join('\n')}\n\nYour rationale for any tool candidate MUST explicitly name which of these it addresses, or state plainly "addresses no measured friction this run" and instead ground the fit in this repo's specific, real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking) rather than a generic "would be useful" claim. A rationale that ignores this entirely will be dropped in filtering.`
   : `Mining found zero measured recurring friction this run (a valid, honest result). Your rationale for any tool candidate must still ground fit in this repo's specific, real stack details (Pi coding-agent CLI, Herdr terminal multiplexer, TypeScript/Rust tooling, GitHub Issues tracking), never a generic "would be useful" claim with no connection to this repo's actual work.`
 
 const toolResults = await parallel(toolRadar.map(d => () =>
