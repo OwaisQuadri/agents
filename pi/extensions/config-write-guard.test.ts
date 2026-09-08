@@ -374,6 +374,30 @@ test("allows primary-origin file and shell writes while preserving managed confi
 	assert.match(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, context) ?? "", /worktree/);
 });
 
+test("blocks a primary-origin shell write through a repository-local alias to managed config", () => {
+	const fixture = mkdtempSync(join(tmpdir(), `config-write-guard-managed-alias-${process.pid}-`));
+	const root = join(fixture, "primary");
+	const linkedHome = join(fixture, "home");
+	const alias = join(root, "managed-extensions");
+	try {
+		mkdirSync(root);
+		mkdirSync(join(linkedHome, ".pi/agent/extensions"), { recursive: true });
+		symlinkSync(join(linkedHome, ".pi/agent/extensions"), alias);
+		const context: GuardContext = {
+			cwd: root,
+			repositoryRoot: root,
+			sessionStartingDirectory: root,
+			isRepositoryClean: () => true,
+			worktreeRoots: () => [root],
+		};
+		assert.match(blockedConfigToolCall("write", { path: join(alias, "new.ts") }, linkedHome, user, context) ?? "", /agent-config/);
+		assert.match(blockedConfigToolCall("bash", { command: "printf x > managed-extensions/new.ts" }, linkedHome, user, context) ?? "", /agent-config/);
+		assert.equal(blockedConfigToolCall("bash", { command: "printf x > ordinary.ts" }, linkedHome, user, context), undefined);
+	} finally {
+		rmSync(fixture, { recursive: true, force: true });
+	}
+});
+
 test("allows primary-origin Git inspection and fetch but blocks linked-worktree-origin fetch", () => {
 	const context = guardFromPrimaryCheckout();
 	assert.equal(blockedConfigToolCall("bash", { command: "git branch -avv" }, home, user, context), undefined);
@@ -692,6 +716,24 @@ test("requires worktree isolation for write-capable child agents", () => {
 	assert.match(blockedConfigToolCall("Agent", { subagent_type: "general-purpose", isolation: "off" }, home, user, guard()) ?? "", /worktree/);
 	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer", isolation: "worktree" }, home, user, guard()), undefined);
 	assert.equal(blockedConfigToolCall("Agent", { subagent_type: "implementer" }, home, user, guard(worktreeRoot)), undefined);
+});
+
+test("reload lifecycle allows primary-origin fetch and blocks linked-worktree-origin fetch", async () => {
+	const harness = createGuardExtensionHarness();
+	const configWriteGuard = await loadConfigWriteGuard();
+	const extensionRoot = fileURLToPath(new URL("../..", import.meta.url));
+	const linkedWorktreeRoot = join(extensionRoot, ".worktrees", "linked");
+	configWriteGuard(harness.api, (root) => [root, linkedWorktreeRoot]);
+	harness.fire("session_start", { type: "session_start", reason: "reload" }, extensionRoot);
+	assert.equal(
+		await harness.fire("tool_call", { type: "tool_call", toolName: "bash", input: { command: "git fetch --prune origin" } }, extensionRoot),
+		undefined,
+	);
+	harness.fire("session_start", { type: "session_start", reason: "reload" }, linkedWorktreeRoot);
+	assert.match(
+		(await harness.fire("tool_call", { type: "tool_call", toolName: "bash", input: { command: "git fetch --prune origin" } }, extensionRoot) as { reason?: string } | undefined)?.reason ?? "",
+		/worktree/,
+	);
 });
 
 test("recalculates and clears primary-origin authorization for every session lifecycle", async () => {

@@ -134,6 +134,22 @@ function shellCommandReferencesPrimaryCheckout(command: string, guard: GuardCont
 	return false;
 }
 
+function managedConfigReferencePattern(command: string, cwd: string, home: string, username: string | undefined): RegExp {
+	const patterns = [pathReferencePattern(home, username).source];
+	for (const segment of (staticZshPayload(command) ?? command).split(/&&|\|\||[;\n|]/)) {
+		const words = segment.match(/"[^"]*"|'[^']*'|[^\s<>]+/g) ?? [];
+		const leading = words[0]?.split("/").pop();
+		for (const word of words.slice(1)) {
+			const path = shellPath(word, cwd, home, username);
+			if (path === undefined || !isProtectedConfigPath(path, home)) continue;
+			const reference = word.replace(/^[12&]*>>?/, "").replace(/^['"]|['"]$/g, "");
+			patterns.push(`${escapeRegExp(reference)}(?=[\\s'"|;&<>]|$)`);
+		}
+		if (leading === "cd" && words[1] !== undefined) cwd = shellPath(words[1], cwd, home, username, true) ?? cwd;
+	}
+	return new RegExp(`(?:${patterns.join("|")})`);
+}
+
 function commandWithoutWorktreeReferences(command: string, guard: GuardContext, home: string, username: string | undefined): string {
 	return guard.worktreeRoots().reduce((remaining, root) => {
 		if (pathsEqual(root, guard.repositoryRoot)) return remaining;
@@ -221,8 +237,12 @@ export function blockedConfigToolCall(
 	if ((toolName === "edit" || toolName === "write") && isProtectedConfigPath((input as FileToolInput).path, home)) {
 		return `Blocked a direct agent-config write to ${(input as FileToolInput).path}. Edit the source in the agents worktree, then run install.sh.`;
 	}
-	if (toolName === "bash" && bashCommandWritesProtectedPath((input as BashToolInput).command, pathReferencePattern(home, username))) {
-		return "Blocked a shell command that writes an agent-config destination. Edit the source in the agents worktree, then run install.sh. Reading it (cat, grep, ls, ...) is fine.";
+	if (toolName === "bash") {
+		const command = (input as BashToolInput).command;
+		const pattern = managedConfigReferencePattern(command, guard?.cwd ?? process.cwd(), home, username);
+		if (bashCommandWritesProtectedPath(command, pattern)) {
+			return "Blocked a shell command that writes an agent-config destination. Edit the source in the agents worktree, then run install.sh. Reading it (cat, grep, ls, ...) is fine.";
+		}
 	}
 	return undefined;
 }
