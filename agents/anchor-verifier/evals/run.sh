@@ -1,10 +1,11 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Eval runner for anchor-verifier, convention per skills/ai-author/templates/eval-harness.md:
-#   ./run.sh                 every non-holdout case against the installed agent
+#   ./run.sh                 every nonholdout case against the installed agent
 #   ./run.sh candidate.md    same slice against a candidate definition
 #   ./run.sh --holdout       the holdout slice (combine with candidate.md as needed)
 # One JSON(JavaScript Object Notation) line per case to stdout, e.g.
-# {"id":"c1","score":10,"failure_mode":null}; summary to stderr. Requires Pi, jq, python3, shasum.
+# {"id":"c1","score":10,"failure_mode":null}; summary to stderr. Requires jq,
+# python3, shasum, and git.
 #
 # Honesty contract — what is mechanical here and what is not. This script grades:
 #   - output SHAPE: the verdict line and its value against each case's expectation
@@ -25,15 +26,15 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/../../../tools/skill-eval/timing.sh"
+DEF="$HERE/../anchor-verifier.md"
 CASES="$HERE/cases.jsonl"
 
 for dep in jq python3 shasum git; do
   command -v "$dep" >/dev/null 2>&1 || { echo "missing dependency: $dep" >&2; exit 1; }
 done
-source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
-pi_eval_requirements
 
-SLICE="non-holdout"
+SLICE="nonholdout"
 CANDIDATE=""
 for arg in "$@"; do
   case "$arg" in
@@ -42,20 +43,18 @@ for arg in "$@"; do
   esac
 done
 
-DEF="$HERE/../anchor-verifier.md"
+AGENT_NAME="anchor-verifier"
 if [ -n "$CANDIDATE" ]; then
   [ -f "$CANDIDATE" ] || { echo "candidate file not found: $CANDIDATE" >&2; exit 1; }
   DEF="$CANDIDATE"
 fi
-AGENT_NAME="anchor-verifier"
+dispatch() { timing_dispatch "$AGENT_NAME" "$DEF" "$PWD" "$1"; }
+timing_preflight || exit $?
+timing_begin "$AGENT_NAME" "$SLICE" "$DEF" || exit $?
 
 FIXROOT="$(mktemp -d /tmp/anchor-verifier-eval.XXXXXX)"
 trap 'rm -rf "$FIXROOT"' EXIT
 OUTDIR="$(mktemp -d /tmp/anchor-verifier-eval-out.XXXXXX)"
-
-dispatch() {
-  pi_eval_dispatch "$AGENT_NAME" "$DEF" "$FIXROOT" "$1"
-}
 
 mkdir -p "$FIXROOT/c1" "$FIXROOT/c2" "$FIXROOT/c4" "$FIXROOT/c5" \
   "$FIXROOT/c6/.map/CPU-0011" "$FIXROOT/c6/docs" "$FIXROOT/c7" "$FIXROOT/c8/scripts" \
@@ -133,7 +132,7 @@ print("CONFIG_TESTS_OK_" + hashlib.sha256(open("config.py", "rb").read()).hexdig
 EOF
 
 cat > "$FIXROOT/bin/ruff" <<'EOF'
-#!/bin/zsh
+#!/usr/bin/env bash
 set -u
 TARGET="${2:-}"
 [ -f "$TARGET" ] || { echo "ruff failed: No such file or directory ($TARGET)" >&2; exit 2; }
@@ -220,7 +219,7 @@ assert page([0, 1, 2, 3, 4], 9, 2) == []
 print("PAGINATE_TESTS_OK_" + hashlib.sha256(open("paginate.py", "rb").read()).hexdigest()[:10])
 EOF
 cat > "$FIXROOT/c8/scripts/release.sh" <<'EOF'
-#!/bin/zsh
+#!/usr/bin/env bash
 echo "release"
 EOF
 git_init "$FIXROOT/c8"
@@ -263,11 +262,13 @@ M_C7="RUFF_OK_$(runtime_hash "$FIXROOT/c7/exporter.py")"
 M_C8="PAGINATE_TESTS_OK_$(runtime_hash "$FIXROOT/c8/paginate.py")"
 
 emit() {
+  local failure_mode
   if [ "$3" = "null" ]; then
-    printf '{"id":"%s","score":%s,"failure_mode":null}\n' "$1" "$2"
+    failure_mode=null
   else
-    printf '{"id":"%s","score":%s,"failure_mode":"%s"}\n' "$1" "$2" "$3"
+    failure_mode="$(jq -Rn --arg value "$3" '$value')"
   fi
+  timing_case "$1" "$2" "$failure_mode" "$case_started"
 }
 
 TOTAL=0
@@ -279,21 +280,24 @@ while IFS= read -r CASE; do
   [ -n "$CASE" ] || continue
   IS_HOLDOUT="$(printf '%s' "$CASE" | jq -r '.holdout')"
   if [ "$SLICE" = "holdout" ] && [ "$IS_HOLDOUT" != "true" ]; then continue; fi
-  if [ "$SLICE" = "non-holdout" ] && [ "$IS_HOLDOUT" = "true" ]; then continue; fi
+  if [ "$SLICE" = "nonholdout" ] && [ "$IS_HOLDOUT" = "true" ]; then continue; fi
 
+  timing_case_begin
+  case_started="$(timing_now_ms)"
   ID="$(printf '%s' "$CASE" | jq -r '.id')"
   INPUT="$(printf '%s' "$CASE" | jq -r '.input' | sed "s|__FIXTURE_ROOT__|$FIXROOT|g")"
 
   BEFORE="$(snapshot)"
   GIT_BEFORE="$(git_state)"
-  if OUT="$(dispatch "$INPUT")"; then
+  OUTFILE="$OUTDIR/$ID.out"
+  if dispatch "$INPUT" > "$OUTFILE"; then
     dispatch_status=0
   else
     dispatch_status=$?
   fi
   AFTER="$(snapshot)"
   GIT_AFTER="$(git_state)"
-  printf '%s\n' "$OUT" > "$OUTDIR/$ID.out"
+  OUT="$(cat "$OUTFILE")"
   if [ "$dispatch_status" -ne 0 ]; then
     emit "$ID" -1 "dispatch-failed:$dispatch_status"
     UNGRADED=$((UNGRADED + 1))
@@ -385,6 +389,7 @@ else
 fi
 echo "slice=$SLICE agent=$AGENT_NAME cases=$TOTAL ungraded=$UNGRADED mean=$MEAN catastrophic=$CATASTROPHIC" >&2
 echo "transcripts for the rubric.md judge (anchor quality is NOT graded above): $OUTDIR" >&2
+timing_complete || exit $?
 [ "$UNGRADED" -eq 0 ] || exit 2
 [ "$TOTAL" -gt 0 ] || exit 1
 [ "$CATASTROPHIC" -eq 0 ] || exit 2

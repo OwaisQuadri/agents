@@ -1,8 +1,7 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Convention (skills/ai-author/templates/eval-harness.md): ./run.sh [candidate-file]
-# runs every non-holdout case against the incumbent definition (or the candidate,
-# staged into a throwaway project and dispatched headlessly via
-# headless Pi through tier-dispatch); --holdout runs the holdout slice. One
+# Runs every nonholdout case against the incumbent definition or candidate.
+# --holdout runs the holdout slice. One
 # JSON(JavaScript Object Notation) line per case to stdout:
 # {"id":"c1","score":8,"failure_mode":"<tag-or-null>"} and a summary to stderr.
 #
@@ -19,9 +18,10 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/../../../tools/skill-eval/timing.sh"
 CASES="$HERE/cases.jsonl"
 DEF="$HERE/../code-reviewer.md"
-SLICE="non-holdout"
+SLICE="nonholdout"
 
 for arg in "$@"; do
   case "$arg" in
@@ -30,12 +30,15 @@ for arg in "$@"; do
   esac
 done
 
-source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
-pi_eval_requirements
+command -v jq >/dev/null 2>&1 || { echo "jq not found on PATH" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found on PATH" >&2; exit 1; }
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
-FIXROOT="$(mktemp -d /tmp/code-reviewer-evals.XXXXXXXX)"
+
+timing_preflight || exit $?
+timing_begin code-reviewer "$SLICE" "$DEF" || exit $?
+
+FIXROOT="/tmp/code-reviewer-evals"
 FIXTURE="$FIXROOT/fixture-repo"
 
 G() { git -C "$FIXTURE" -c user.email=eval@local -c user.name=eval "$@"; }
@@ -262,11 +265,12 @@ fixture_state() {
 
 WORKDIR="$(mktemp -d)"
 REVIEW_EVIDENCE="$WORKDIR/evidence/c6"
-trap 'rm -rf "$FIXROOT" "$WORKDIR"' EXIT
+trap 'rm -rf "$WORKDIR"' EXIT
 
 dispatch() {
-  pi_eval_dispatch "code-reviewer" "$DEF" "$WORKDIR" "$1"
+  timing_dispatch code-reviewer "$DEF" "$WORKDIR" "$1"
 }
+
 section() {
   awk -v h="## $1" '$0==h{f=1;next} /^## /{f=0} f' "$2"
 }
@@ -438,25 +442,39 @@ grade_case() {
 TOTAL=0
 N=0
 CATS=0
+UNGRADED=0
 
 while IFS=$'\t' read -r id input; do
   [ -z "$id" ] && continue
+  timing_case_begin
+  case_started="$(timing_now_ms)"
   setup_case "$id"
   input="${input//__VISUAL_MANIFEST__/$REVIEW_EVIDENCE/manifest.jsonl}"
   PRE="$(fixture_state "$id")"
   OUTFILE="$WORKDIR/out-$id.txt"
-  dispatch "$input" > "$OUTFILE"
+  if dispatch "$input" > "$OUTFILE"; then
+    dispatch_status=0
+  else
+    dispatch_status=$?
+  fi
   POST="$(fixture_state "$id")"
-  if [ "$PRE" != "$POST" ]; then
+  if [ "$dispatch_status" -ne 0 ]; then
+    SCORE=-1
+    FM="$(jq -Rn --arg value "dispatch-failed:$dispatch_status" '$value')"
+  elif [ "$PRE" != "$POST" ]; then
     SCORE=0
     FM='"modified-files"'
   else
     grade_case "$id" "$OUTFILE"
   fi
-  printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$id" "$SCORE" "$FM"
-  N=$((N + 1))
-  TOTAL=$((TOTAL + SCORE))
-  if [ "$SCORE" -eq 0 ]; then CATS=$((CATS + 1)); fi
+  timing_case "$id" "$SCORE" "$FM" "$case_started"
+  if [ "$SCORE" -lt 0 ]; then
+    UNGRADED=$((UNGRADED + 1))
+  else
+    N=$((N + 1))
+    TOTAL=$((TOTAL + SCORE))
+    if [ "$SCORE" -eq 0 ]; then CATS=$((CATS + 1)); fi
+  fi
 done < <(python3 - "$CASES" "$SLICE" <<'PY'
 import json
 import sys
@@ -478,4 +496,6 @@ if [ "$N" -gt 0 ]; then
 else
   MEAN=0
 fi
-echo "slice=$SLICE cases=$N mean=$MEAN catastrophic=$CATS definition=$DEF" >&2
+echo "slice=$SLICE cases=$N ungraded=$UNGRADED mean=$MEAN catastrophic=$CATS definition=$DEF" >&2
+timing_complete || exit $?
+[ "$UNGRADED" -eq 0 ] || exit 2

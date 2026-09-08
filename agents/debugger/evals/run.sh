@@ -1,16 +1,16 @@
-#!/bin/zsh
+#!/bin/bash
 set -u
 
-cd "$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
+source "$HERE/../../../tools/skill-eval/timing.sh"
 
 for bin in jq git python3; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
 
-source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
-pi_eval_requirements
 AGENT_FILE="../debugger.md"
-SLICE="non-holdout"
+SLICE="nonholdout"
 for arg in "$@"; do
   case "$arg" in
     --holdout) SLICE="holdout" ;;
@@ -19,6 +19,8 @@ for arg in "$@"; do
 done
 case "$AGENT_FILE" in /*) ;; *) AGENT_FILE="$PWD/$AGENT_FILE" ;; esac
 [ -f "$AGENT_FILE" ] || { echo "agent file not found: $AGENT_FILE" >&2; exit 1; }
+: "${DEBUGGER_DISPATCH_TIMEOUT_SECONDS:=600}"
+DEBUGGER_TIMEOUT_BIN=$(timing_timeout_bin) || { echo "missing dependency: gtimeout or timeout" >&2; exit 1; }
 
 FILTER='select(.holdout == false)'
 [ "$SLICE" = "holdout" ] && FILTER='select(.holdout == true)'
@@ -35,6 +37,9 @@ if ! python3 -m pytest --version >/dev/null 2>&1; then
   export PATH
   python3 -m pytest --version >/dev/null 2>&1 || { echo "missing dependency: pytest" >&2; exit 1; }
 fi
+
+timing_preflight || exit $?
+timing_begin debugger "$SLICE" "$AGENT_FILE" || exit $?
 
 DIRT_REF=""
 DIRT_PATHS="docs/routing.md pi/extensions/telemetry.ts notes.scratch"
@@ -308,6 +313,8 @@ grade() {
 results=$(mktemp)
 
 while IFS= read -r case_json; do
+  timing_case_begin
+  case_started="$(timing_now_ms)"
   id=$(jq -r '.id' <<<"$case_json")
   input=$(jq -r '.input' <<<"$case_json")
   dir=$(mktemp -d)
@@ -321,14 +328,12 @@ while IFS= read -r case_json; do
 
   out_file=$(mktemp)
   error_file=$(mktemp)
-  # bypassPermissions is deliberate against the ask-first default: the agent runs
-  # inside a throwaway fixture directory this script just created, and a permission
-  # prompt would hang a headless run.
-  pi_eval_dispatch "debugger" "$AGENT_FILE" "$dir" "$input" > "$out_file" 2>"$error_file"
+  timing_dispatch debugger "$AGENT_FILE" "$dir" "$input" "$DEBUGGER_DISPATCH_TIMEOUT_SECONDS" "$DEBUGGER_TIMEOUT_BIN" > "$out_file" 2>"$error_file"
   dispatch_status=$?
   if [[ $dispatch_status -ne 0 ]]; then
     jq -cn --arg id "$id" --arg fm "dispatch-failed:$dispatch_status" \
       '{id: $id, score: -1, failure_mode: $fm}' >> "$results"
+    timing_case "$id" -1 "$(jq -Rn --arg value "dispatch-failed:$dispatch_status" '$value')" "$case_started"
     cat "$error_file" >&2
     rm -rf "$dir" "$out_file" "$error_file" ${DIRT_REF:+"$DIRT_REF"}
     continue
@@ -337,10 +342,15 @@ while IFS= read -r case_json; do
   grade "$id" "$dir" "$out_file" "$seed"
   jq -cn --arg id "$id" --argjson score "$score" --arg fm "$failure" \
     '{id: $id, score: $score, failure_mode: (if $fm == "" then null else $fm end)}' >> "$results"
+  if [ -n "$failure" ]; then
+    failure_mode="$(jq -Rn --arg value "$failure" '$value')"
+  else
+    failure_mode=null
+  fi
+  timing_case "$id" "$score" "$failure_mode" "$case_started"
   rm -rf "$dir" "$out_file" "$error_file" ${DIRT_REF:+"$DIRT_REF"}
 done < <(jq -c "$FILTER" cases.jsonl)
 
-cat "$results"
 summary=$(jq -s --arg slice "$SLICE" --arg agent "$AGENT_FILE" \
   '{slice: $slice, agent: $agent, cases: [.[] | select(.score >= 0)] | length, ungraded: [.[] | select(.score < 0)] | length, mean: ([.[] | select(.score >= 0) | .score] | if length == 0 then 0 else add / length end), catastrophic: [.[] | select(.score == 0)] | length}' \
   "$results")
@@ -348,6 +358,7 @@ printf '%s\n' "$summary" >&2
 ungraded_count=$(jq -r '.ungraded' <<<"$summary")
 catastrophic_count=$(jq -r '.catastrophic' <<<"$summary")
 rm -f "$results"
+timing_complete || exit $?
 
 if [[ $ungraded_count -gt 0 ]]; then
   exit 2

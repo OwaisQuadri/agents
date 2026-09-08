@@ -276,9 +276,15 @@ Run per artifact, on demand or once logs/votes accumulate:
    the live artifact, gated by the unchanged rule below.
 3. **Test**: for a skill or workflow that delegates to the shared runner, run
    `evals/run.sh --accept-if-winning <candidate>` once. The runner evaluates
-   the live incumbent and candidate together in memory at every configured tier.
-   It normalizes only `metadata.minimum-tier` from their model prompts and identities, while
-   preflight receives the submitted candidate unchanged. It records all tiers, including
+   the live incumbent and candidate together in memory at every configured tier. Copy the
+   comparison identifier that it prints before the first case. It writes append-only case and
+   timing events under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. If the run
+   stops, continue it with the same candidate and `--resume <comparison-id>`. The runner names
+   stale inputs before dispatch, skips completed cases, and reruns an interrupted case. A
+   checkpoint is not acceptance evidence. Use `--resume-from-log <path> --legacy-arm
+   <incumbent|candidate>` only to import an exact legacy case prefix once. It normalizes only
+   `metadata.minimum-tier` from their model prompts
+   and identities, while preflight receives the submitted candidate unchanged. It records all tiers, including
    unavailable tiers. A plain run is an optional dry comparison, not a prerequisite. Every
    skill or workflow that delegates to the shared runner uses the suffix selector. The runner
    updates a declared floor and preserves a deliberate absence. An artifact with a custom

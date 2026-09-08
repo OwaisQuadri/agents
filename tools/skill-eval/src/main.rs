@@ -13,7 +13,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--jobs N] [--restart] [--accept-if-winning] [candidate]";
+const NON_GIT_ARTIFACT_NAMESPACE_ENV: &str = "SKILL_EVAL_ARTIFACT_NAMESPACE";
+const MAX_RETAINED_RUNS: usize = 100;
+const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--jobs N] [--restart] [--accept-if-winning] [--resume <comparison-id>] [--resume-from-log <path> --legacy-arm incumbent|candidate] [candidate]\nnon-git artifact identity uses SKILL_EVAL_ARTIFACT_NAMESPACE (default: non-git)";
 const STATE_FORMAT_VERSION: u8 = 1;
 const MAX_JOBS: usize = 16;
 
@@ -26,6 +28,9 @@ struct Args {
     is_accept_if_winning: bool,
     jobs: Option<usize>,
     is_restart: bool,
+    resume: Option<String>,
+    resume_from_log: Option<PathBuf>,
+    legacy_arm: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -53,6 +58,7 @@ struct Settings {
     tier_dispatch_bin: PathBuf,
     auth_extension: PathBuf,
     jobs: usize,
+    state_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -60,6 +66,38 @@ struct DispatchResult {
     kind: DispatchKind,
     stdout: String,
     model_ran: Option<String>,
+    elapsed_ms: u64,
+    attempts: Vec<AttemptRecord>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct AttemptRecord {
+    model: String,
+    thinking: String,
+    elapsed_ms: Option<u64>,
+    result: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct RepeatTiming {
+    generation_ms: Option<u64>,
+    judge_ms: Option<u64>,
+    requested_tier: String,
+    final_model: Option<String>,
+    attempts: Vec<AttemptRecord>,
+    judge_requested_tier: String,
+    judge_final_model: Option<String>,
+    judge_attempts: Vec<AttemptRecord>,
+    #[serde(default)]
+    is_output_check_failure_count_unknown: bool,
+    #[serde(skip)]
+    is_timing_unknown: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct CaseTiming {
+    total_ms: Option<u64>,
+    repeats: Vec<RepeatTiming>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -69,11 +107,75 @@ enum DispatchKind {
     Failed,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RecordedCase {
+    key: String,
+    score: Option<f64>,
+    repeats: Vec<Option<u8>>,
+    models: Vec<String>,
+    #[serde(default)]
+    timing: CaseTiming,
+    #[serde(default)]
+    output_check_failures: Option<usize>,
+    #[serde(default)]
+    unit_results: Vec<UnitResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RunEvent {
+    Start {
+        comparison_id: String,
+        artifact_id: String,
+        components: BTreeMap<String, String>,
+        started_nanos: u64,
+    },
+    Case {
+        comparison_id: String,
+        case: RecordedCase,
+    },
+    Completion {
+        comparison_id: String,
+        finished_nanos: u64,
+        decision: String,
+    },
+}
+
+struct RunRecordLock {
+    path: PathBuf,
+    file: File,
+}
+
+impl RunRecordLock {
+    fn release(&self) -> Result<(), String> {
+        self.file
+            .unlock()
+            .map_err(|error| format!("cannot unlock {}: {error}", self.path.display()))
+    }
+}
+
+impl Drop for RunRecordLock {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
+}
+
+struct RunRecorder {
+    comparison_id: String,
+    artifact_id: String,
+    components: BTreeMap<String, String>,
+    path: PathBuf,
+    expected: Vec<String>,
+    completed: Vec<RecordedCase>,
+    _lock: RunRecordLock,
+}
+
 #[derive(Clone, Debug)]
 struct SliceResult {
     scores: Vec<Option<f64>>,
     repeats: BTreeMap<String, Vec<Option<u8>>>,
     models: BTreeSet<String>,
+    case_timings: BTreeMap<String, CaseTiming>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +205,10 @@ struct FrontierEntry {
     #[serde(default)]
     repeat_scores_holdout: BTreeMap<String, Vec<Option<u8>>>,
     #[serde(default)]
+    case_timings_nonholdout: BTreeMap<String, CaseTiming>,
+    #[serde(default)]
+    case_timings_holdout: BTreeMap<String, CaseTiming>,
+    #[serde(default)]
     mean_nonholdout: Option<f64>,
     #[serde(default, rename = "accepted")]
     is_accepted: bool,
@@ -122,6 +228,10 @@ struct FrontierEntry {
     incumbent_repeat_scores_nonholdout: BTreeMap<String, Vec<Option<u8>>>,
     #[serde(default)]
     incumbent_repeat_scores_holdout: BTreeMap<String, Vec<Option<u8>>>,
+    #[serde(default)]
+    incumbent_case_timings_nonholdout: BTreeMap<String, CaseTiming>,
+    #[serde(default)]
+    incumbent_case_timings_holdout: BTreeMap<String, CaseTiming>,
     #[serde(default)]
     selected_minimum_tier: Option<String>,
     #[serde(default)]
@@ -207,6 +317,14 @@ fn now_nanos() -> u128 {
         .as_nanos()
 }
 
+fn elapsed_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+fn now_u64_nanos() -> u64 {
+    u64::try_from(now_nanos()).unwrap_or(u64::MAX)
+}
+
 fn parse_args(raw: &[OsString]) -> Result<Args, String> {
     let mut eval_dir = None;
     let mut is_holdout_only = false;
@@ -215,6 +333,9 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
     let mut is_accept_if_winning = false;
     let mut jobs = None;
     let mut is_restart = false;
+    let mut resume = None;
+    let mut resume_from_log = None;
+    let mut legacy_arm = None;
     let mut index = 0;
     while index < raw.len() {
         match raw[index].to_str() {
@@ -228,6 +349,35 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
             Some("--holdout") => is_holdout_only = true,
             Some("--accept-if-winning") => is_accept_if_winning = true,
             Some("--restart") => is_restart = true,
+            Some("--resume") => {
+                index += 1;
+                resume = raw
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .map(str::to_owned);
+                if resume.is_none() {
+                    return Err(format!("--resume needs a comparison id\n{USAGE}"));
+                }
+            }
+            Some("--resume-from-log") => {
+                index += 1;
+                resume_from_log = raw.get(index).map(PathBuf::from);
+                if resume_from_log.is_none() {
+                    return Err(format!("--resume-from-log needs a path\n{USAGE}"));
+                }
+            }
+            Some("--legacy-arm") => {
+                index += 1;
+                legacy_arm = raw
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .map(str::to_owned);
+                if !matches!(legacy_arm.as_deref(), Some("incumbent" | "candidate")) {
+                    return Err(format!(
+                        "--legacy-arm needs incumbent or candidate\n{USAGE}"
+                    ));
+                }
+            }
             Some("--jobs") => {
                 index += 1;
                 let value = raw
@@ -259,6 +409,23 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
         }
         index += 1;
     }
+    if resume.is_some() && resume_from_log.is_some() {
+        return Err(format!(
+            "--resume and --resume-from-log cannot be combined\n{USAGE}"
+        ));
+    }
+    if resume_from_log.is_some() != legacy_arm.is_some() {
+        return Err(format!(
+            "--resume-from-log requires --legacy-arm incumbent or candidate\n{USAGE}"
+        ));
+    }
+    if (resume.is_some() || resume_from_log.is_some())
+        && (is_holdout_only || tier.is_some() || candidate.is_none() || is_restart)
+    {
+        return Err(format!(
+            "resume requires one full paired candidate run and cannot use --restart\n{USAGE}"
+        ));
+    }
     if is_accept_if_winning && (is_holdout_only || tier.is_some() || candidate.is_none()) {
         return Err(format!(
             "--accept-if-winning requires one candidate and cannot be combined with --holdout or --tier\n{USAGE}"
@@ -277,6 +444,9 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
         is_accept_if_winning,
         jobs,
         is_restart,
+        resume,
+        resume_from_log,
+        legacy_arm,
     })
 }
 
@@ -336,6 +506,7 @@ fn settings(args: Args) -> Result<Settings, String> {
             "PI_ANTHROPIC_AUTH_EXTENSION",
             home.join(".pi/agent/extensions/pi-anthropic-auth"),
         ),
+        state_dir: env_path("SKILL_EVAL_STATE_DIR", home.join(".local/state/skill-eval")),
         args,
         repeats,
         jobs,
@@ -475,6 +646,7 @@ fn dispatch(
     system_prompt: &Path,
     input: &str,
 ) -> Result<DispatchResult, String> {
+    let started = Instant::now();
     let output = Command::new(&settings.tier_dispatch_bin)
         .arg("--tiers-file")
         .arg(&settings.tiers_file)
@@ -488,6 +660,7 @@ fn dispatch(
         .arg(wrapper)
         .env("PI_ANTHROPIC_AUTH_EXTENSION", &settings.auth_extension)
         .output();
+    let elapsed_ms = elapsed_millis(started.elapsed());
     let output = match output {
         Ok(output) => output,
         Err(error) => {
@@ -496,14 +669,21 @@ fn dispatch(
                 kind: DispatchKind::Failed,
                 stdout: String::new(),
                 model_ran: None,
+                elapsed_ms,
+                attempts: Vec::new(),
             });
         }
     };
-    decode_dispatch(tier, output)
+    decode_dispatch(tier, output, elapsed_ms)
 }
 
-fn decode_dispatch(tier: &str, output: Output) -> Result<DispatchResult, String> {
+fn decode_dispatch(tier: &str, output: Output, elapsed_ms: u64) -> Result<DispatchResult, String> {
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let attempts = stderr
+        .lines()
+        .filter_map(|line| line.strip_prefix("attempt: "))
+        .filter_map(|line| serde_json::from_str::<AttemptRecord>(line).ok())
+        .collect();
     match output.status.code() {
         Some(0) => {
             let model_ran = stderr
@@ -524,6 +704,8 @@ fn decode_dispatch(tier: &str, output: Output) -> Result<DispatchResult, String>
                 },
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 model_ran,
+                elapsed_ms,
+                attempts,
             })
         }
         Some(2) => Err(format!(
@@ -534,6 +716,8 @@ fn decode_dispatch(tier: &str, output: Output) -> Result<DispatchResult, String>
             kind: DispatchKind::Exhausted,
             stdout: String::new(),
             model_ran: None,
+            elapsed_ms,
+            attempts,
         }),
         code => {
             eprintln!(
@@ -545,6 +729,8 @@ fn decode_dispatch(tier: &str, output: Output) -> Result<DispatchResult, String>
                 kind: DispatchKind::Failed,
                 stdout: String::new(),
                 model_ran: None,
+                elapsed_ms,
+                attempts,
             })
         }
     }
@@ -617,9 +803,11 @@ fn run_slice(
         scores: Vec::new(),
         repeats: BTreeMap::new(),
         models: BTreeSet::new(),
+        case_timings: BTreeMap::new(),
     };
     let mut ungraded = 0;
     for case in cases {
+        let case_started = Instant::now();
         let prompt = prompt_for_case(context.candidate, context.artifact_dir, case)?;
         let prompt_path = write_prompt(
             context.temp,
@@ -628,6 +816,7 @@ fn run_slice(
         )?;
         let input = case_input(&case.input)?;
         let mut repeat_scores = Vec::with_capacity(context.settings.repeats);
+        let mut repeat_timings = Vec::with_capacity(context.settings.repeats);
         let mut output_check_failures = 0;
         for _ in 0..context.settings.repeats {
             let actual = dispatch(
@@ -637,12 +826,25 @@ fn run_slice(
                 &prompt_path,
                 &input,
             )?;
+            let mut timing = RepeatTiming {
+                generation_ms: Some(actual.elapsed_ms),
+                judge_ms: None,
+                requested_tier: tier.to_string(),
+                final_model: actual.model_ran.clone(),
+                attempts: actual.attempts.clone(),
+                judge_requested_tier: judge_tier.to_string(),
+                judge_final_model: None,
+                judge_attempts: Vec::new(),
+                is_output_check_failure_count_unknown: false,
+                is_timing_unknown: false,
+            };
             if actual.kind != DispatchKind::Success {
                 repeat_scores.push(None);
+                repeat_timings.push(timing);
                 ungraded += 1;
                 continue;
             }
-            if let Some(model) = actual.model_ran {
+            if let Some(model) = actual.model_ran.clone() {
                 result.models.insert(model);
             }
             let output_check_failure = run_output_check(context.eval_dir, &actual.stdout)?;
@@ -661,6 +863,9 @@ fn run_slice(
                 &empty_prompt,
                 &prompt,
             )?;
+            timing.judge_ms = Some(judged.elapsed_ms);
+            timing.judge_final_model = judged.model_ran.clone();
+            timing.judge_attempts = judged.attempts.clone();
             let mut score = if judged.kind == DispatchKind::Success {
                 parse_score(&judged.stdout)
             } else {
@@ -673,9 +878,14 @@ fn run_slice(
                 ungraded += 1;
             }
             repeat_scores.push(score);
+            repeat_timings.push(timing);
         }
         let graded: Vec<u8> = repeat_scores.iter().flatten().copied().collect();
         let case_median = median(&graded);
+        let timing = CaseTiming {
+            total_ms: Some(elapsed_millis(case_started.elapsed())),
+            repeats: repeat_timings,
+        };
         println!(
             "{}",
             json!({
@@ -683,11 +893,14 @@ fn run_slice(
                 "tier": tier,
                 "repeat_scores": repeat_scores,
                 "median": case_median,
-                "output_check_failures": output_check_failures
+                "output_check_failures": output_check_failures,
+                "total_ms": timing.total_ms,
+                "repeats": timing.repeats,
             })
         );
         result.scores.push(case_median);
         result.repeats.insert(case.id.clone(), repeat_scores);
+        result.case_timings.insert(case.id.clone(), timing);
     }
     let graded: Vec<f64> = result.scores.iter().flatten().copied().collect();
     if graded.is_empty() {
@@ -859,6 +1072,670 @@ fn prune(entries: &mut Vec<FrontierEntry>) {
             }
         }
     }
+}
+
+fn digest(value: impl AsRef<[u8]>) -> String {
+    format!("{:x}", Sha1::digest(value.as_ref()))
+}
+
+fn run_file_name(comparison_id: &str) -> String {
+    format!("{}.jsonl", digest(comparison_id))
+}
+
+fn legacy_arm_from_record(
+    settings: &Settings,
+    comparison_id: &str,
+) -> Result<Option<String>, String> {
+    let path = settings
+        .state_dir
+        .join("runs")
+        .join(run_file_name(comparison_id));
+    let recorded = parse_run(&path, None)?;
+    match recorded.components.get("legacy_arm").map(String::as_str) {
+        None | Some("none") => Ok(None),
+        Some("incumbent" | "candidate") => Ok(recorded.components.get("legacy_arm").cloned()),
+        Some(legacy_arm) => Err(format!("resume log has invalid legacy arm {legacy_arm}")),
+    }
+}
+
+fn changed_components(
+    recorded: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> Vec<String> {
+    recorded
+        .keys()
+        .chain(current.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|name| {
+            if *name == "legacy_arm" {
+                return match (recorded.get(*name), current.get(*name)) {
+                    (None, None) => false,
+                    (Some(recorded), Some(current)) => recorded != current,
+                    (Some(recorded), None) | (None, Some(recorded)) => recorded != "none",
+                };
+            }
+            recorded.get(*name) != current.get(*name)
+        })
+        .cloned()
+        .collect()
+}
+
+fn validate_prefix(completed: &[RecordedCase], expected: &[String]) -> Result<(), String> {
+    if completed.len() > expected.len()
+        || completed
+            .iter()
+            .zip(expected)
+            .any(|(case, expected)| case.key != *expected)
+    {
+        return Err("resume log is not an exact current traversal prefix".to_string());
+    }
+    Ok(())
+}
+
+fn validate_completed(completed: &[RecordedCase], expected: &[String]) -> Result<(), String> {
+    let expected_keys: BTreeSet<_> = expected.iter().collect();
+    let completed_keys: BTreeSet<_> = completed.iter().map(|case| &case.key).collect();
+    if completed.len() != completed_keys.len() {
+        return Err("resume log has duplicate completed cases".to_string());
+    }
+    if !completed_keys.is_subset(&expected_keys) {
+        return Err("resume log has a case outside the current traversal".to_string());
+    }
+    Ok(())
+}
+
+struct ParsedRun {
+    comparison_id: String,
+    artifact_id: String,
+    components: BTreeMap<String, String>,
+    completed: Vec<RecordedCase>,
+    is_complete: bool,
+}
+
+fn parse_run(path: &Path, expected: Option<&[String]>) -> Result<ParsedRun, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read run log {}: {error}", path.display()))?;
+    let mut start = None;
+    let mut completed = Vec::new();
+    let mut is_complete = false;
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            return Err(format!(
+                "run log {} line {} is empty",
+                path.display(),
+                index + 1
+            ));
+        }
+        let event: RunEvent = serde_json::from_str(line)
+            .map_err(|error| format!("run log {} line {}: {error}", path.display(), index + 1))?;
+        match event {
+            RunEvent::Start {
+                comparison_id,
+                artifact_id,
+                components,
+                ..
+            } => {
+                if index != 0 || start.is_some() {
+                    return Err(format!(
+                        "run log {} has a duplicate or misplaced start event",
+                        path.display()
+                    ));
+                }
+                start = Some((comparison_id, artifact_id, components));
+            }
+            RunEvent::Case {
+                comparison_id,
+                case,
+            } => {
+                let Some((started_id, _, _)) = &start else {
+                    return Err(format!(
+                        "run log {} has a case before its start event",
+                        path.display()
+                    ));
+                };
+                if is_complete || comparison_id != *started_id {
+                    return Err(format!(
+                        "run log {} has an invalid case event",
+                        path.display()
+                    ));
+                }
+                completed.push(case);
+                if let Some(expected) = expected {
+                    validate_completed(&completed, expected)?;
+                }
+            }
+            RunEvent::Completion { comparison_id, .. } => {
+                let Some((started_id, _, _)) = &start else {
+                    return Err(format!(
+                        "run log {} has a completion before its start event",
+                        path.display()
+                    ));
+                };
+                if is_complete
+                    || comparison_id != *started_id
+                    || expected.is_some_and(|expected| completed.len() != expected.len())
+                {
+                    return Err(format!(
+                        "run log {} has an invalid completion event",
+                        path.display()
+                    ));
+                }
+                is_complete = true;
+            }
+        }
+    }
+    let Some((comparison_id, artifact_id, components)) = start else {
+        return Err(format!("run log {} has no start event", path.display()));
+    };
+    Ok(ParsedRun {
+        comparison_id,
+        artifact_id,
+        components,
+        completed,
+        is_complete,
+    })
+}
+
+fn run_lock(path: &Path) -> Result<RunRecordLock, String> {
+    let lock_path = path.with_extension("lock");
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| format!("cannot open lock {}: {error}", lock_path.display()))?;
+    file.try_lock().map_err(|error| match error {
+        TryLockError::WouldBlock => format!("run is active: {}", path.display()),
+        TryLockError::Error(error) => {
+            format!("cannot lock {}: {error}", lock_path.display())
+        }
+    })?;
+    Ok(RunRecordLock {
+        path: lock_path,
+        file,
+    })
+}
+
+fn append_event(path: &Path, event: &RunEvent) -> Result<(), String> {
+    let line = format!(
+        "{}\n",
+        serde_json::to_string(event)
+            .map_err(|error| format!("cannot serialize run event: {error}"))?
+    );
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create_new(!path.exists())
+        .open(path)
+        .map_err(|error| format!("cannot append {}: {error}", path.display()))?;
+    file.write_all(line.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("cannot append {}: {error}", path.display()))
+}
+
+fn is_locked(path: &Path) -> bool {
+    let lock_path = path.with_extension("lock");
+    let file = match OpenOptions::new().read(true).write(true).open(&lock_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            let _ = file.unlock();
+            false
+        }
+        Err(_) => true,
+    }
+}
+
+fn remove_run(path: &Path, reason: &str) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            eprintln!(
+                "skill-eval: cannot remove {reason} {}: {error}; continuing",
+                path.display()
+            );
+            return;
+        }
+    }
+    let lock_path = path.with_extension("lock");
+    match fs::remove_file(&lock_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "skill-eval: cannot remove {reason} lock {}: {error}; continuing",
+            lock_path.display()
+        ),
+    }
+}
+
+fn prune_runs(runs: &Path, artifact_id: &str, _components: &BTreeMap<String, String>) {
+    let entries = match fs::read_dir(runs) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!(
+                "skill-eval: cannot read {}: {error}; continuing",
+                runs.display()
+            );
+            return;
+        }
+    };
+    let mut completed = Vec::new();
+    let mut resumable = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                eprintln!("skill-eval: cannot read run entry: {error}; continuing");
+                continue;
+            }
+        };
+        let path = entry.path();
+        let is_file = match entry.file_type() {
+            Ok(file_type) => file_type.is_file(),
+            Err(error) => {
+                eprintln!(
+                    "skill-eval: cannot inspect run entry {}: {error}; continuing",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        if path.extension().and_then(|value| value.to_str()) != Some("jsonl")
+            || !is_file
+            || is_locked(&path)
+        {
+            continue;
+        }
+        let Ok(recorded) = parse_run(&path, None) else {
+            continue;
+        };
+        if recorded.artifact_id != artifact_id {
+            continue;
+        }
+        let modified = fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        if recorded.is_complete {
+            completed.push((modified, path));
+        } else {
+            resumable.push((modified, path, recorded.components));
+        }
+    }
+    completed.sort_by_key(|(modified, _)| *modified);
+    let remove_count = completed.len().saturating_sub(MAX_RETAINED_RUNS);
+    for (_, path) in completed.into_iter().take(remove_count) {
+        remove_run(&path, "retained completed run");
+    }
+    resumable.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let mut retained_components = Vec::new();
+    for (_, path, recorded_components) in resumable.into_iter().rev() {
+        if retained_components
+            .iter()
+            .any(|retained| retained == &recorded_components)
+        {
+            remove_run(&path, "superseded resumable run");
+        } else {
+            retained_components.push(recorded_components);
+        }
+    }
+}
+
+impl RunRecorder {
+    fn open(
+        settings: &Settings,
+        artifact_id: String,
+        components: BTreeMap<String, String>,
+        comparison_id: String,
+        expected: &[String],
+    ) -> Result<Self, String> {
+        let runs = settings.state_dir.join("runs");
+        fs::create_dir_all(&runs)
+            .map_err(|error| format!("cannot create {}: {error}", runs.display()))?;
+        let path = runs.join(run_file_name(&comparison_id));
+        let lock = run_lock(&path)?;
+        if settings.args.resume.is_some() {
+            let mut recorded = parse_run(&path, Some(expected))?;
+            recorded
+                .components
+                .entry("legacy_arm".to_string())
+                .or_insert_with(|| "none".to_string());
+            if recorded.comparison_id != comparison_id || recorded.artifact_id != artifact_id {
+                return Err("resume log does not match this artifact or comparison".to_string());
+            }
+            let changed = changed_components(&recorded.components, &components);
+            if !changed.is_empty() {
+                return Err(format!("resume inputs are stale: {}", changed.join(", ")));
+            }
+            validate_completed(&recorded.completed, expected)?;
+            if recorded.is_complete {
+                return Err("resume log already completed".to_string());
+            }
+            prune_runs(&runs, &artifact_id, &components);
+            return Ok(Self {
+                comparison_id,
+                artifact_id,
+                components,
+                path,
+                expected: expected.to_vec(),
+                completed: recorded.completed,
+                _lock: lock,
+            });
+        }
+        prune_runs(&runs, &artifact_id, &components);
+        if path.exists() {
+            return Err(format!("run record already exists: {}", path.display()));
+        }
+        let recorder = Self {
+            comparison_id,
+            artifact_id,
+            components,
+            path,
+            expected: expected.to_vec(),
+            completed: Vec::new(),
+            _lock: lock,
+        };
+        recorder.append(RunEvent::Start {
+            comparison_id: recorder.comparison_id.clone(),
+            artifact_id: recorder.artifact_id.clone(),
+            components: recorder.components.clone(),
+            started_nanos: now_u64_nanos(),
+        })?;
+        Ok(recorder)
+    }
+
+    fn import_legacy_for_arm(
+        &mut self,
+        path: &Path,
+        expected: &[String],
+        arm: &str,
+    ) -> Result<(), String> {
+        if !self.completed.is_empty() {
+            return Err("legacy import requires an empty run record".to_string());
+        }
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("cannot read legacy log {}: {error}", path.display()))?;
+        for (line_number, line) in text.lines().enumerate() {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let Some(row) = value.as_object() else {
+                continue;
+            };
+            let is_case_like = ["id", "tier", "median", "repeat_scores"]
+                .iter()
+                .any(|field| row.contains_key(*field));
+            if !is_case_like {
+                continue;
+            }
+            let id = row.get("id").and_then(Value::as_str).ok_or_else(|| {
+                format!(
+                    "legacy case row at line {} needs string id",
+                    line_number + 1
+                )
+            })?;
+            let tier = row.get("tier").and_then(Value::as_str).ok_or_else(|| {
+                format!(
+                    "legacy case row at line {} needs string tier",
+                    line_number + 1
+                )
+            })?;
+            let score = match row.get("median") {
+                Some(Value::Null) => None,
+                Some(value) => Some(value.as_f64().ok_or_else(|| {
+                    format!(
+                        "legacy case row at line {} needs numeric median",
+                        line_number + 1
+                    )
+                })?),
+                None => {
+                    return Err(format!(
+                        "legacy case row at line {} needs median",
+                        line_number + 1
+                    ));
+                }
+            };
+            let repeats = row
+                .get("repeat_scores")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    format!(
+                        "legacy case row at line {} needs repeat_scores array",
+                        line_number + 1
+                    )
+                })?
+                .iter()
+                .map(|item| match item {
+                    Value::Null => Ok(None),
+                    value => value
+                        .as_u64()
+                        .and_then(|score| u8::try_from(score).ok())
+                        .map(Some)
+                        .ok_or_else(|| {
+                            format!(
+                                "legacy case row at line {} has invalid repeat score",
+                                line_number + 1
+                            )
+                        }),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let expected_key = expected.get(self.completed.len()).ok_or_else(|| {
+                format!(
+                    "legacy log {} has extra case row at line {}",
+                    path.display(),
+                    line_number + 1
+                )
+            })?;
+            let mut parts = expected_key.splitn(4, ':');
+            let expected_arm = parts.next();
+            let expected_tier = parts.next();
+            let _slice = parts.next();
+            let expected_id = parts.next();
+            if expected_arm != Some(arm) || expected_tier != Some(tier) || expected_id != Some(id) {
+                return Err(format!(
+                    "legacy case row at line {} does not match expected traversal key {expected_key}",
+                    line_number + 1
+                ));
+            }
+            let output_check_failures = match row.get("output_check_failures") {
+                None | Some(Value::Null) => None,
+                Some(value) => Some(
+                    usize::try_from(value.as_u64().ok_or_else(|| {
+                        format!(
+                            "legacy case row at line {} needs numeric output_check_failures",
+                            line_number + 1
+                        )
+                    })?)
+                    .map_err(|_| {
+                        format!(
+                            "legacy case row at line {} has oversized output_check_failures",
+                            line_number + 1
+                        )
+                    })?,
+                ),
+            };
+            self.record(RecordedCase {
+                key: expected_key.clone(),
+                score,
+                repeats,
+                models: Vec::new(),
+                timing: CaseTiming::default(),
+                output_check_failures,
+                unit_results: Vec::new(),
+            })?;
+        }
+        validate_prefix(&self.completed, expected)
+    }
+
+    #[cfg(test)]
+    fn import_legacy(&mut self, path: &Path, expected: &[String]) -> Result<(), String> {
+        self.import_legacy_for_arm(path, expected, "incumbent")
+    }
+
+    fn record(&mut self, case: RecordedCase) -> Result<(), String> {
+        self.append(RunEvent::Case {
+            comparison_id: self.comparison_id.clone(),
+            case: case.clone(),
+        })?;
+        self.completed.push(case);
+        Ok(())
+    }
+
+    fn complete(&self, decision: &str) -> Result<(), String> {
+        validate_completed(&self.completed, &self.expected)?;
+        if self.completed.len() != self.expected.len() {
+            return Err("cannot complete a run before every expected case is recorded".to_string());
+        }
+        self.append(RunEvent::Completion {
+            comparison_id: self.comparison_id.clone(),
+            finished_nanos: now_u64_nanos(),
+            decision: decision.to_string(),
+        })?;
+        if let Err(error) = self._lock.release() {
+            eprintln!("skill-eval: {error}; continuing");
+        }
+        let runs = self.path.parent().expect("run path has parent");
+        prune_runs(runs, &self.artifact_id, &self.components);
+        Ok(())
+    }
+
+    fn append(&self, event: RunEvent) -> Result<(), String> {
+        append_event(&self.path, &event)
+    }
+}
+
+fn normalized_origin_url(origin: &str) -> String {
+    let origin = origin.trim().trim_end_matches('/');
+    let origin = origin.strip_suffix(".git").unwrap_or(origin);
+    let origin = origin
+        .split_once("://")
+        .map_or(origin, |(_, remainder)| remainder);
+    let origin = origin
+        .strip_prefix("git@")
+        .map_or(origin, |remainder| remainder);
+    let origin = origin
+        .split_once('@')
+        .map_or(origin, |(_, remainder)| remainder);
+    origin.replacen(':', "/", 1)
+}
+
+fn git_artifact_identity(artifact_dir: &Path) -> Option<String> {
+    let artifact_dir = fs::canonicalize(artifact_dir).ok()?;
+    let root = Command::new("git")
+        .arg("-C")
+        .arg(&artifact_dir)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !root.status.success() {
+        return None;
+    }
+    let root = PathBuf::from(String::from_utf8_lossy(&root.stdout).trim());
+    let relative = artifact_dir.strip_prefix(root).ok()?;
+    let origin = Command::new("git")
+        .arg("-C")
+        .arg(&artifact_dir)
+        .args(["config", "--get", "remote.origin.url"])
+        .output()
+        .ok()?;
+    if !origin.status.success() {
+        return None;
+    }
+    let origin = normalized_origin_url(&String::from_utf8_lossy(&origin.stdout));
+    (!origin.is_empty()).then(|| format!("git:{origin}:{}", relative.display()))
+}
+
+fn non_git_artifact_namespace() -> String {
+    env::var(NON_GIT_ARTIFACT_NAMESPACE_ENV).unwrap_or_else(|_| "non-git".to_string())
+}
+
+fn non_git_artifact_identity(artifact_dir: &Path, namespace: &str) -> String {
+    let logical_name = artifact_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("artifact");
+    format!("non-git:{namespace}:{logical_name}")
+}
+
+fn artifact_id(artifact_dir: &Path, non_git_namespace: &str) -> String {
+    digest(
+        git_artifact_identity(artifact_dir)
+            .unwrap_or_else(|| non_git_artifact_identity(artifact_dir, non_git_namespace)),
+    )
+}
+
+fn component_fingerprints(
+    settings: &Settings,
+    candidate: &str,
+    incumbent: &str,
+    rubric: &str,
+    cases: &[Case],
+    artifact_dir: &Path,
+    mode: &str,
+) -> Result<(String, BTreeMap<String, String>), String> {
+    let artifact_id = artifact_id(artifact_dir, &non_git_artifact_namespace());
+    let mut components = BTreeMap::from([
+        ("candidate".to_string(), digest(candidate)),
+        ("incumbent".to_string(), digest(incumbent)),
+        (
+            "cases".to_string(),
+            digest(fs::read(&settings.cases_file).map_err(|error| {
+                format!("cannot read {}: {error}", settings.cases_file.display())
+            })?),
+        ),
+        ("rubric".to_string(), digest(rubric)),
+        (
+            "tiers".to_string(),
+            digest(fs::read(&settings.tiers_file).map_err(|error| {
+                format!("cannot read {}: {error}", settings.tiers_file.display())
+            })?),
+        ),
+        ("repeats".to_string(), digest(settings.repeats.to_string())),
+        ("mode".to_string(), digest(mode)),
+        (
+            "legacy_arm".to_string(),
+            settings
+                .args
+                .legacy_arm
+                .clone()
+                .unwrap_or_else(|| "none".to_string()),
+        ),
+        ("protocol".to_string(), digest("3")),
+        (
+            "tier_dispatch".to_string(),
+            digest(run_key_input(&settings.tier_dispatch_bin)?),
+        ),
+        (
+            "auth_extension".to_string(),
+            digest(run_key_input(&settings.auth_extension)?),
+        ),
+    ]);
+    for name in ["preflight.sh", "output-check.sh"] {
+        let path = settings.args.eval_dir.join(name);
+        let content = match fs::read(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => b"missing".to_vec(),
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        };
+        components.insert(name.to_string(), digest(content));
+    }
+    for case in cases {
+        for relative in &case.files {
+            let path = artifact_dir.join(relative);
+            let content = fs::read(&path)
+                .map_err(|error| format!("cannot read case file {}: {error}", path.display()))?;
+            components.insert(
+                format!("case_file:{}", relative.display()),
+                digest([relative.as_os_str().as_encoded_bytes(), &content].concat()),
+            );
+        }
+    }
+    Ok((artifact_id, components))
 }
 
 fn atomic_write(path: &Path, content: &[u8]) -> Result<(), String> {
@@ -1435,12 +2312,48 @@ struct WorkUnit {
     prompt_name: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct UnitResult {
     unit: WorkUnit,
     score: Option<u8>,
     actual_model: Option<String>,
     is_output_check_failed: bool,
+    timing: RepeatTiming,
+}
+
+#[derive(Deserialize)]
+struct StoredUnitResult {
+    unit: WorkUnit,
+    score: Option<u8>,
+    actual_model: Option<String>,
+    is_output_check_failed: bool,
+    #[serde(default)]
+    timing: Option<RepeatTiming>,
+}
+
+impl<'de> Deserialize<'de> for UnitResult {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let StoredUnitResult {
+            unit,
+            score,
+            actual_model,
+            is_output_check_failed,
+            timing,
+        } = StoredUnitResult::deserialize(deserializer)?;
+        let is_timing_unknown = timing.is_none();
+        let mut timing = timing.unwrap_or_default();
+        timing.is_timing_unknown = is_timing_unknown;
+        Ok(Self {
+            unit,
+            score,
+            actual_model,
+            is_output_check_failed,
+            timing,
+        })
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1893,12 +2806,25 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
         &context.prompts_dir.join(&unit.prompt_name),
         &case_input(&case.input)?,
     )?;
+    let mut timing = RepeatTiming {
+        generation_ms: Some(actual.elapsed_ms),
+        judge_ms: None,
+        requested_tier: unit.tier.clone(),
+        final_model: actual.model_ran.clone(),
+        attempts: actual.attempts.clone(),
+        judge_requested_tier: unit.judge_tier.clone(),
+        judge_final_model: None,
+        judge_attempts: Vec::new(),
+        is_output_check_failure_count_unknown: false,
+        is_timing_unknown: false,
+    };
     if actual.kind != DispatchKind::Success {
         return Ok(UnitResult {
             unit: unit.clone(),
             score: None,
             actual_model: None,
             is_output_check_failed: false,
+            timing,
         });
     }
     let output_check_failure = {
@@ -1922,6 +2848,9 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
         context.judge_prompt,
         &judge_prompt(context.rubric, case, &actual.stdout)?,
     )?;
+    timing.judge_ms = Some(judge.elapsed_ms);
+    timing.judge_final_model = judge.model_ran.clone();
+    timing.judge_attempts = judge.attempts.clone();
     let mut score = (judge.kind == DispatchKind::Success)
         .then(|| parse_score(&judge.stdout))
         .flatten();
@@ -1933,6 +2862,7 @@ fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitRes
         score,
         actual_model: actual.model_ran,
         is_output_check_failed: output_check_failure.is_some(),
+        timing,
     })
 }
 
@@ -1977,13 +2907,151 @@ struct WorkQueue {
     is_fatal: bool,
 }
 
+fn checkpoint_case(
+    recorder: &mut RunRecorder,
+    expected: &[String],
+    completed: &BTreeMap<String, UnitResult>,
+    units: &[WorkUnit],
+    repeats: usize,
+) -> Result<(), String> {
+    let recorded: BTreeSet<String> = recorder
+        .completed
+        .iter()
+        .map(|case| case.key.clone())
+        .collect();
+    'cases: for key in expected {
+        if recorded.contains(key) {
+            continue;
+        }
+        let mut parts = key.splitn(4, ':');
+        let arm = parts.next().expect("checkpoint key has arm");
+        let tier = parts.next().expect("checkpoint key has tier");
+        let slice = parts.next().expect("checkpoint key has slice");
+        let case_id = parts.next().expect("checkpoint key has case id");
+        let mut results = Vec::with_capacity(repeats);
+        for repeat in 0..repeats {
+            let unit = units
+                .iter()
+                .find(|unit| {
+                    unit.arm == arm
+                        && unit.tier == tier
+                        && unit.slice == slice
+                        && unit.case_id == case_id
+                        && unit.repeat == repeat
+                })
+                .ok_or_else(|| format!("missing work unit for {key}"))?;
+            let Some(result) = completed.get(&unit_name(unit)?) else {
+                continue 'cases;
+            };
+            results.push(result.clone());
+        }
+        let scores: Vec<Option<u8>> = results.iter().map(|result| result.score).collect();
+        let graded: Vec<u8> = scores.iter().flatten().copied().collect();
+        let models = results
+            .iter()
+            .filter_map(|result| result.actual_model.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let total_ms = (!results.iter().any(|result| result.timing.is_timing_unknown)).then(|| {
+            results.iter().fold(0_u64, |total, result| {
+                total
+                    .saturating_add(result.timing.generation_ms.unwrap_or(0))
+                    .saturating_add(result.timing.judge_ms.unwrap_or(0))
+            })
+        });
+        recorder.record(RecordedCase {
+            key: key.clone(),
+            score: median(&graded),
+            repeats: scores,
+            models,
+            timing: CaseTiming {
+                total_ms,
+                repeats: results.iter().map(|result| result.timing.clone()).collect(),
+            },
+            output_check_failures: Some(
+                results
+                    .iter()
+                    .filter(|result| result.is_output_check_failed)
+                    .count(),
+            ),
+            unit_results: results,
+        })?;
+    }
+    Ok(())
+}
+
+fn restore_global_units(
+    recorder: &RunRecorder,
+    state_dir: &Path,
+    units: &[WorkUnit],
+) -> Result<(), String> {
+    for recorded in &recorder.completed {
+        for unit in units.iter().filter(|unit| {
+            format!("{}:{}:{}:{}", unit.arm, unit.tier, unit.slice, unit.case_id) == recorded.key
+        }) {
+            let result = recorded
+                .unit_results
+                .get(unit.repeat)
+                .cloned()
+                .unwrap_or_else(|| {
+                    let mut timing = recorded
+                        .timing
+                        .repeats
+                        .get(unit.repeat)
+                        .cloned()
+                        .unwrap_or_default();
+                    let is_output_check_failed = recorded
+                        .output_check_failures
+                        .map(|failures| unit.repeat < failures)
+                        .unwrap_or(false);
+                    timing.is_output_check_failure_count_unknown =
+                        recorded.output_check_failures.is_none();
+                    UnitResult {
+                        unit: unit.clone(),
+                        score: recorded.repeats.get(unit.repeat).copied().flatten(),
+                        actual_model: None,
+                        is_output_check_failed,
+                        timing,
+                    }
+                });
+            if result.unit != *unit {
+                return Err(format!(
+                    "run log has a mismatched unit for {}",
+                    recorded.key
+                ));
+            }
+            let path = unit_path(state_dir, unit)?;
+            if !path.exists() {
+                atomic_write(
+                    &path,
+                    &serde_json::to_vec(&result)
+                        .map_err(|error| format!("cannot serialize restored unit: {error}"))?,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_work_units(
     context: &WorkerContext<'_>,
     state_dir: &Path,
     units: &[WorkUnit],
     is_resumed: bool,
+    mut recorder: Option<&mut RunRecorder>,
+    expected: &[String],
 ) -> Result<BTreeMap<String, UnitResult>, String> {
     let mut completed = read_completed_units(state_dir, units)?;
+    if let Some(recorder) = &mut recorder {
+        checkpoint_case(
+            recorder,
+            expected,
+            &completed,
+            units,
+            context.settings.repeats,
+        )?;
+    }
     let missing: Vec<WorkUnit> = units
         .iter()
         .filter(|unit| !completed.contains_key(&unit_name(unit).expect("serializable unit")))
@@ -2043,7 +3111,22 @@ fn run_work_units(
                     Ok(()) => {
                         let name = unit_name(&unit).expect("serializable unit");
                         completed.insert(name, result.clone());
-                        eprintln!("{}", progress_line(completed.len(), units.len(), &result));
+                        let checkpoint_result =
+                            recorder.as_deref_mut().map_or(Ok(()), |recorder| {
+                                checkpoint_case(
+                                    recorder,
+                                    expected,
+                                    &completed,
+                                    units,
+                                    context.settings.repeats,
+                                )
+                            });
+                        if let Err(error) = checkpoint_result {
+                            queue.lock().expect("work queue lock poisoned").is_fatal = true;
+                            worker_error.get_or_insert(error);
+                        } else {
+                            eprintln!("{}", progress_line(completed.len(), units.len(), &result));
+                        }
                     }
                     Err(error) => {
                         queue.lock().expect("work queue lock poisoned").is_fatal = true;
@@ -2110,9 +3193,11 @@ fn slice_from_units(
         scores: Vec::new(),
         repeats: BTreeMap::new(),
         models: BTreeSet::new(),
+        case_timings: BTreeMap::new(),
     };
     for case in cases {
         let mut repeat_scores = Vec::with_capacity(repeats);
+        let mut repeat_timings = Vec::with_capacity(repeats);
         for repeat in 0..repeats {
             let unit = make_unit(arm, tier, judge_tier, slice, &case.id, repeat);
             let unit_result = completed_unit(completed, &unit)?;
@@ -2120,10 +3205,26 @@ fn slice_from_units(
                 result.models.insert(model.clone());
             }
             repeat_scores.push(unit_result.score);
+            repeat_timings.push(unit_result.timing.clone());
         }
         let graded: Vec<u8> = repeat_scores.iter().flatten().copied().collect();
         result.scores.push(median(&graded));
         result.repeats.insert(case.id.clone(), repeat_scores);
+        result.case_timings.insert(
+            case.id.clone(),
+            CaseTiming {
+                total_ms: (!repeat_timings.iter().any(|timing| timing.is_timing_unknown)).then(
+                    || {
+                        repeat_timings.iter().fold(0_u64, |total, timing| {
+                            total
+                                .saturating_add(timing.generation_ms.unwrap_or(0))
+                                .saturating_add(timing.judge_ms.unwrap_or(0))
+                        })
+                    },
+                ),
+                repeats: repeat_timings,
+            },
+        );
     }
     Ok(result)
 }
@@ -2182,14 +3283,26 @@ fn paired_record_values(
             ("holdout", holdout, &paired.results[tier].holdout),
         ] {
             for (case, median_score) in cases.iter().zip(&result.scores) {
-                let mut output_check_failures = 0;
+                let mut output_check_failures = Some(0);
                 for repeat in 0..paired.repeats {
                     let unit = make_unit(arm, tier, judge_tier, slice, &case.id, repeat);
-                    if completed_unit(completed, &unit)?.is_output_check_failed {
-                        output_check_failures += 1;
+                    let unit = completed_unit(completed, &unit)?;
+                    if unit.timing.is_output_check_failure_count_unknown {
+                        output_check_failures = None;
+                        break;
+                    }
+                    if unit.is_output_check_failed {
+                        *output_check_failures
+                            .as_mut()
+                            .expect("known output-check count") += 1;
                     }
                 }
-                records.push(json!({"arm":arm,"id":case.id,"tier":tier,"repeat_scores":result.repeats[&case.id],"median":median_score,"output_check_failures":output_check_failures}));
+                let timing = result
+                    .case_timings
+                    .get(&case.id)
+                    .cloned()
+                    .unwrap_or_default();
+                records.push(json!({"arm":arm,"id":case.id,"tier":tier,"repeat_scores":result.repeats[&case.id],"median":median_score,"output_check_failures":output_check_failures,"total_ms":timing.total_ms,"repeats":timing.repeats}));
             }
         }
     }
@@ -2216,8 +3329,8 @@ fn paired_entries(
     tiers: &[String],
     selection: &Selection,
     tested_against: &str,
+    comparison_id: &str,
 ) -> Vec<FrontierEntry> {
-    let comparison_id = format!("{}-{}", candidate.id, now_nanos());
     let ts = timestamp();
     tiers
         .iter()
@@ -2240,10 +3353,12 @@ fn paired_entries(
                 scores_holdout: result.holdout.scores.clone(),
                 repeat_scores_nonholdout: result.nonholdout.repeats.clone(),
                 repeat_scores_holdout: result.holdout.repeats.clone(),
+                case_timings_nonholdout: result.nonholdout.case_timings.clone(),
+                case_timings_holdout: result.holdout.case_timings.clone(),
                 mean_nonholdout: mean(&result.nonholdout.scores),
                 is_accepted: false,
                 ts: ts.clone(),
-                comparison_id: comparison_id.clone(),
+                comparison_id: comparison_id.to_string(),
                 incumbent_id: incumbent.id.clone(),
                 incumbent_model_ran: current
                     .nonholdout
@@ -2255,6 +3370,8 @@ fn paired_entries(
                 incumbent_scores_holdout: current.holdout.scores.clone(),
                 incumbent_repeat_scores_nonholdout: current.nonholdout.repeats.clone(),
                 incumbent_repeat_scores_holdout: current.holdout.repeats.clone(),
+                incumbent_case_timings_nonholdout: current.nonholdout.case_timings.clone(),
+                incumbent_case_timings_holdout: current.holdout.case_timings.clone(),
                 selected_minimum_tier: selection.start.map(|start| tiers[start].clone()),
                 decision: if selection.start.is_some_and(|start| index < start) {
                     "excluded_below_floor".to_string()
@@ -2356,6 +3473,8 @@ fn normal_entries(
                 scores_holdout: result.holdout.scores.clone(),
                 repeat_scores_nonholdout: result.nonholdout.repeats.clone(),
                 repeat_scores_holdout: result.holdout.repeats.clone(),
+                case_timings_nonholdout: result.nonholdout.case_timings.clone(),
+                case_timings_holdout: result.holdout.case_timings.clone(),
                 mean_nonholdout: mean(&result.nonholdout.scores),
                 is_accepted: false,
                 ts: ts.clone(),
@@ -2366,6 +3485,8 @@ fn normal_entries(
                 incumbent_scores_holdout: Vec::new(),
                 incumbent_repeat_scores_nonholdout: BTreeMap::new(),
                 incumbent_repeat_scores_holdout: BTreeMap::new(),
+                incumbent_case_timings_nonholdout: BTreeMap::new(),
+                incumbent_case_timings_holdout: BTreeMap::new(),
                 selected_minimum_tier: None,
                 decision: String::new(),
                 legacy: Map::new(),
@@ -2451,6 +3572,66 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         artifact_dir,
     )?;
     let _run_lock = RunLock::acquire(&eval_dir, &run_key)?;
+    let mut expected = Vec::new();
+    let mut recorder = if is_paired {
+        if let Some(comparison_id) = settings.args.resume.as_deref() {
+            settings.args.legacy_arm = legacy_arm_from_record(&settings, comparison_id)?;
+        }
+        let (artifact_id, components) = component_fingerprints(
+            &settings,
+            &candidate,
+            &incumbent,
+            &rubric,
+            &cases,
+            artifact_dir,
+            if settings.args.is_accept_if_winning {
+                "accept"
+            } else {
+                "dry"
+            },
+        )?;
+        let comparison_id = settings
+            .args
+            .resume
+            .clone()
+            .unwrap_or_else(|| format!("{}-{}", candidate_id(&candidate), now_nanos()));
+        let arms = if settings.args.resume_from_log.is_some()
+            && settings.args.legacy_arm.as_deref() == Some("candidate")
+        {
+            ["candidate", "incumbent"]
+        } else {
+            ["incumbent", "candidate"]
+        };
+        for arm in arms {
+            for tier in &tiers {
+                for (slice, slice_cases) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
+                    for case in slice_cases {
+                        expected.push(format!("{arm}:{tier}:{slice}:{}", case.id));
+                    }
+                }
+            }
+        }
+        let mut recorder =
+            RunRecorder::open(&settings, artifact_id, components, comparison_id, &expected)?;
+        println!(
+            "{}",
+            json!({"type":"run_start","comparison_id":recorder.comparison_id,"state_path":recorder.path})
+        );
+        if let Some(path) = settings.args.resume_from_log.as_deref() {
+            recorder.import_legacy_for_arm(
+                path,
+                &expected,
+                settings
+                    .args
+                    .legacy_arm
+                    .as_deref()
+                    .expect("argument validation requires a legacy arm"),
+            )?;
+        }
+        Some(recorder)
+    } else {
+        None
+    };
     let (state_dir, is_resumed) = initialize_state(&eval_dir, &run_key, settings.args.is_restart)?;
     prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases)?;
     let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
@@ -2473,7 +3654,17 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     } else {
         make_normal_work_units(&tiers, &cases, settings.repeats)
     };
-    let completed = run_work_units(&worker_context, &state_dir, &units, is_resumed)?;
+    if let Some(recorder) = &recorder {
+        restore_global_units(recorder, &state_dir, &units)?;
+    }
+    let completed = run_work_units(
+        &worker_context,
+        &state_dir,
+        &units,
+        is_resumed,
+        recorder.as_mut(),
+        &expected,
+    )?;
     if !is_paired {
         let candidate = paired_arm_from_units(
             "candidate",
@@ -2506,6 +3697,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         }
         return Ok(0);
     }
+    let recorder = recorder.expect("paired runs create a global recorder");
     let incumbent = paired_arm_from_units(
         "incumbent",
         &incumbent,
@@ -2568,7 +3760,14 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     )?;
     let selection = select_suffix(&candidate, &incumbent, &tiers, &nonholdout, &holdout);
     let tested_against = prompt_version(artifact_dir);
-    let mut evidence = paired_entries(&candidate, &incumbent, &tiers, &selection, &tested_against);
+    let mut evidence = paired_entries(
+        &candidate,
+        &incumbent,
+        &tiers,
+        &selection,
+        &tested_against,
+        &recorder.comparison_id,
+    );
     if settings.args.is_accept_if_winning && selection.is_accepted {
         let _lock = FrontierLock::acquire(&eval_dir)?;
         let locked_live = fs::read_to_string(&artifact_path)
@@ -2650,6 +3849,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     if selection.reason == "incomplete" {
         return Ok(2);
     }
+    recorder.complete(decision)?;
     if let Err(error) = fs::remove_dir_all(&state_dir) {
         eprintln!(
             "skill-eval: warning: cannot remove completed state {}: {error}",
@@ -2713,6 +3913,7 @@ mod tests {
         fs::create_dir(&extension).unwrap();
         fs::write(extension.join("extension.ts"), "extension").unwrap();
         let dispatch = temp.path.join("tier-dispatch");
+        let state_dir = temp.path.join("state");
         write_executable(&dispatch, fake);
         let args = Args {
             eval_dir: eval_dir.clone(),
@@ -2722,6 +3923,9 @@ mod tests {
             is_accept_if_winning: false,
             jobs: None,
             is_restart: false,
+            resume: None,
+            resume_from_log: None,
+            legacy_arm: None,
         };
         (
             temp,
@@ -2733,6 +3937,7 @@ mod tests {
                 tier_dispatch_bin: dispatch,
                 auth_extension: extension,
                 jobs: 4,
+                state_dir,
             },
             eval_dir,
         )
@@ -3151,6 +4356,8 @@ print output-without-attribution
             scores_holdout: vec![Some(score)],
             repeat_scores_nonholdout: BTreeMap::new(),
             repeat_scores_holdout: BTreeMap::new(),
+            case_timings_nonholdout: BTreeMap::new(),
+            case_timings_holdout: BTreeMap::new(),
             mean_nonholdout: Some(score),
             is_accepted: false,
             ts: id.to_string(),
@@ -3161,6 +4368,8 @@ print output-without-attribution
             incumbent_scores_holdout: Vec::new(),
             incumbent_repeat_scores_nonholdout: BTreeMap::new(),
             incumbent_repeat_scores_holdout: BTreeMap::new(),
+            incumbent_case_timings_nonholdout: BTreeMap::new(),
+            incumbent_case_timings_holdout: BTreeMap::new(),
             selected_minimum_tier: None,
             decision: String::new(),
             legacy: Map::new(),
@@ -3399,6 +4608,7 @@ print output-without-attribution
             scores: vec![score],
             repeats: BTreeMap::from([(case_id.to_string(), vec![score.map(|value| value as u8)])]),
             models: BTreeSet::new(),
+            case_timings: BTreeMap::new(),
         }
     }
 
@@ -3522,7 +4732,14 @@ print output-without-attribution
         let temp = test_temp("selected-tier-acceptance");
         let eval_dir = temp.path.join("evals");
         fs::create_dir_all(&eval_dir).unwrap();
-        let evidence = paired_entries(&candidate, &incumbent, &tiers, &selection, "base");
+        let evidence = paired_entries(
+            &candidate,
+            &incumbent,
+            &tiers,
+            &selection,
+            "base",
+            "comparison",
+        );
         let comparison_id = evidence[0].comparison_id.clone();
         update_frontier(&eval_dir, &candidate.text, evidence).unwrap();
         let selected_tiers = BTreeSet::from(["T2".to_string(), "T3".to_string()]);
@@ -3730,6 +4947,9 @@ fi
             is_accept_if_winning: false,
             jobs: None,
             is_restart: false,
+            resume: None,
+            resume_from_log: None,
+            legacy_arm: None,
         };
         assert_eq!(settings(args).unwrap().jobs, 4);
         let (temp, settings, _eval_dir) = fixture("normal-bounded", CONCURRENT_FAKE);
@@ -3765,6 +4985,7 @@ fi
             score: None,
             actual_model: None,
             is_output_check_failed: false,
+            timing: RepeatTiming::default(),
         };
         let (created, _) = initialize_state(
             &eval_dir,
@@ -4368,6 +5589,7 @@ fi
                 score: Some(8),
                 actual_model: Some("fake".to_string()),
                 is_output_check_failed: false,
+                timing: RepeatTiming::default(),
             };
             atomic_write(
                 &unit_path(&state_dir, unit).unwrap(),
@@ -4390,6 +5612,7 @@ fi
             score: Some(8),
             actual_model: Some("fake".to_string()),
             is_output_check_failed: false,
+            timing: RepeatTiming::default(),
         };
         atomic_write(
             &unit_path(&state_dir, &units[0]).unwrap(),
@@ -4564,6 +5787,7 @@ fi
                         score: Some(8),
                         actual_model: Some("model".to_string()),
                         is_output_check_failed: tier == "T2" && slice == "holdout",
+                        timing: RepeatTiming::default(),
                     },
                 );
             }
@@ -4597,10 +5821,769 @@ fi
             score: Some(8),
             actual_model: Some("model".to_string()),
             is_output_check_failed: false,
+            timing: RepeatTiming::default(),
         };
         assert_eq!(
             progress_line(3, 4, &result),
             "skill-eval: 3/4 candidate T2 holdout h 1 8"
         );
+    }
+    #[test]
+    fn resume_arguments_reject_narrow_and_incompatible_modes() {
+        let base = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("candidate.md"),
+        ];
+        let args = parse_args(&[
+            base[0].clone(),
+            base[1].clone(),
+            OsString::from("--resume"),
+            OsString::from("id"),
+            base[2].clone(),
+        ])
+        .unwrap();
+        assert_eq!(args.resume.as_deref(), Some("id"));
+        for raw in [
+            vec![
+                base[0].clone(),
+                base[1].clone(),
+                OsString::from("--resume"),
+                OsString::from("id"),
+                OsString::from("--holdout"),
+                base[2].clone(),
+            ],
+            vec![
+                base[0].clone(),
+                base[1].clone(),
+                OsString::from("--resume"),
+                OsString::from("id"),
+                OsString::from("--restart"),
+                base[2].clone(),
+            ],
+            vec![
+                base[0].clone(),
+                base[1].clone(),
+                OsString::from("--resume"),
+                OsString::from("id"),
+                OsString::from("--resume-from-log"),
+                OsString::from("old.log"),
+                base[2].clone(),
+            ],
+        ] {
+            assert!(parse_args(&raw).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_import_preserves_unknown_timing_models_and_output_checks() {
+        let (temp, settings, _) = fixture("legacy-global", FAKE);
+        let expected = vec!["incumbent:T1:nonholdout:n1".to_string()];
+        let mut recorder = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::new(),
+            "legacy".to_string(),
+            &expected,
+        )
+        .unwrap();
+        let legacy = temp.path.join("legacy.log");
+        fs::write(
+            &legacy,
+            "noise\n{\"id\":\"n1\",\"tier\":\"T1\",\"repeat_scores\":[8,null],\"median\":8}\n",
+        )
+        .unwrap();
+        recorder.import_legacy(&legacy, &expected).unwrap();
+        let case = &recorder.completed[0];
+        assert_eq!(case.output_check_failures, None);
+        assert_eq!(case.timing.total_ms, None);
+        assert!(case.timing.repeats.is_empty());
+        assert!(case.models.is_empty());
+    }
+
+    #[test]
+    fn global_record_restores_durable_units_after_local_state_loss() {
+        let (_temp, settings, eval_dir) = fixture("global-restore", FAKE);
+        let unit = make_unit("incumbent", "T1", "T1", "nonholdout", "n1", 0);
+        let result = UnitResult {
+            unit: unit.clone(),
+            score: Some(8),
+            actual_model: Some("model".to_string()),
+            is_output_check_failed: false,
+            timing: RepeatTiming::default(),
+        };
+        let expected = vec!["incumbent:T1:nonholdout:n1".to_string()];
+        let mut recorder = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::new(),
+            "restore".to_string(),
+            &expected,
+        )
+        .unwrap();
+        recorder
+            .record(RecordedCase {
+                key: expected[0].clone(),
+                score: Some(8.0),
+                repeats: vec![Some(8)],
+                models: vec!["model".to_string()],
+                timing: CaseTiming {
+                    total_ms: Some(0),
+                    repeats: vec![RepeatTiming::default()],
+                },
+                output_check_failures: Some(0),
+                unit_results: vec![result],
+            })
+            .unwrap();
+        let state = eval_dir.join("lost-state");
+        fs::create_dir_all(state.join("units")).unwrap();
+        restore_global_units(&recorder, &state, std::slice::from_ref(&unit)).unwrap();
+        assert!(unit_path(&state, &unit).unwrap().exists());
+    }
+
+    #[test]
+    fn second_run_with_fully_surviving_local_units_records_all_cases_before_completion() {
+        let (temp, settings, eval_dir, candidate_path) =
+            paired_fixture("surviving-local-units", PAIRED_FAKE);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        let run_key = state_dir.file_name().unwrap().to_str().unwrap();
+        let (state_dir, _) = initialize_state(&eval_dir, run_key, false).unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let units = make_work_units(&["T1".to_string()], &cases, settings.repeats);
+        for unit in &units {
+            let result = UnitResult {
+                unit: unit.clone(),
+                score: Some(8),
+                actual_model: Some("saved-model".to_string()),
+                is_output_check_failed: false,
+                timing: RepeatTiming::default(),
+            };
+            atomic_write(
+                &unit_path(&state_dir, unit).unwrap(),
+                &serde_json::to_vec(&result).unwrap(),
+            )
+            .unwrap();
+        }
+        let global_state_dir = settings.state_dir.clone();
+
+        assert_eq!(run(settings).unwrap(), 0);
+        assert!(!temp.path.join("calls").exists());
+        let run_paths: Vec<_> = fs::read_dir(global_state_dir.join("runs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl"))
+            .collect();
+        assert_eq!(run_paths.len(), 1);
+        let events: Vec<RunEvent> = fs::read_to_string(&run_paths[0])
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let expected = [
+            "incumbent:T1:nonholdout:n1",
+            "incumbent:T1:holdout:h1",
+            "candidate:T1:nonholdout:n1",
+            "candidate:T1:holdout:h1",
+        ];
+        let keys: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                RunEvent::Case { case, .. } => Some(case.key.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, expected);
+        assert!(matches!(events.first(), Some(RunEvent::Start { .. })));
+        assert!(matches!(events.last(), Some(RunEvent::Completion { .. })));
+        assert_eq!(events.len(), expected.len() + 2);
+    }
+
+    #[test]
+    fn starting_candidate_b_preserves_candidate_a_inactive_resumable_log() {
+        let (_temp, settings, _) = fixture("candidate-log-retention", FAKE);
+        let expected = vec!["incumbent:T1:nonholdout:n1".to_string()];
+        let candidate_a = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::from([("candidate".to_string(), "a".to_string())]),
+            "candidate-a".to_string(),
+            &expected,
+        )
+        .unwrap();
+        let candidate_a_path = candidate_a.path.clone();
+        drop(candidate_a);
+
+        let candidate_b = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::from([("candidate".to_string(), "b".to_string())]),
+            "candidate-b".to_string(),
+            &expected,
+        )
+        .unwrap();
+
+        assert!(candidate_a_path.exists());
+        assert!(candidate_b.path.exists());
+        assert!(
+            !parse_run(&candidate_a_path, Some(&expected))
+                .unwrap()
+                .is_complete
+        );
+    }
+
+    #[test]
+    fn stale_input_resume_rejects_without_deleting_run_log() {
+        let (_temp, mut settings, _) = fixture("stale-resume-log", FAKE);
+        let expected = vec!["incumbent:T1:nonholdout:n1".to_string()];
+        let recorder = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::from([("rubric".to_string(), "old".to_string())]),
+            "stale-resume".to_string(),
+            &expected,
+        )
+        .unwrap();
+        let path = recorder.path.clone();
+        drop(recorder);
+        let before = fs::read(&path).unwrap();
+        settings.args.resume = Some("stale-resume".to_string());
+
+        let error = RunRecorder::open(
+            &settings,
+            "artifact".to_string(),
+            BTreeMap::from([("rubric".to_string(), "new".to_string())]),
+            "stale-resume".to_string(),
+            &expected,
+        )
+        .err()
+        .unwrap();
+
+        assert!(error.contains("resume inputs are stale: rubric"));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(!parse_run(&path, Some(&expected)).unwrap().is_complete);
+    }
+
+    #[test]
+    fn incomplete_exit_two_has_no_completion_and_remains_resumable() {
+        let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
+        let (temp, mut settings, _eval_dir, _candidate) =
+            paired_fixture("incomplete-global-resume", exhausted);
+        let global_state_dir = settings.state_dir.clone();
+
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        let run_paths: Vec<_> = fs::read_dir(global_state_dir.join("runs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl"))
+            .collect();
+        assert_eq!(run_paths.len(), 1);
+        let recorded = parse_run(&run_paths[0], None).unwrap();
+        assert!(!recorded.is_complete);
+        assert_eq!(recorded.completed.len(), 4);
+        settings.args.resume = Some(recorded.comparison_id);
+
+        assert_eq!(run(settings).unwrap(), 2);
+        assert!(!parse_run(&run_paths[0], None).unwrap().is_complete);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            4
+        );
+    }
+
+    #[test]
+    fn legacy_log_import_requires_explicit_arm_and_records_candidate_rows_to_candidate() {
+        let missing_arm = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--resume-from-log"),
+            OsString::from("old.log"),
+            OsString::from("candidate.md"),
+        ];
+        assert!(
+            parse_args(&missing_arm)
+                .unwrap_err()
+                .contains("--resume-from-log requires --legacy-arm")
+        );
+        let valid = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--resume-from-log"),
+            OsString::from("old.log"),
+            OsString::from("--legacy-arm"),
+            OsString::from("candidate"),
+            OsString::from("candidate.md"),
+        ];
+        assert_eq!(
+            parse_args(&valid).unwrap().legacy_arm.as_deref(),
+            Some("candidate")
+        );
+
+        let (temp, mut settings, _eval_dir, _candidate) =
+            paired_fixture("candidate-legacy-import", PAIRED_FAKE);
+        let legacy = temp.path.join("legacy.log");
+        fs::write(
+            &legacy,
+            "{\"id\":\"n1\",\"tier\":\"T1\",\"repeat_scores\":[9],\"median\":9}\n",
+        )
+        .unwrap();
+        settings.args.resume_from_log = Some(legacy);
+        settings.args.legacy_arm = Some("candidate".to_string());
+        let global_state_dir = settings.state_dir.clone();
+
+        assert_eq!(run(settings).unwrap(), 0);
+        let run_path = fs::read_dir(global_state_dir.join("runs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl"))
+            .unwrap();
+        let recorded = parse_run(&run_path, None).unwrap();
+        let keys: BTreeSet<_> = recorded
+            .completed
+            .iter()
+            .map(|case| case.key.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            BTreeSet::from([
+                "candidate:T1:nonholdout:n1",
+                "candidate:T1:holdout:h1",
+                "incumbent:T1:nonholdout:n1",
+                "incumbent:T1:holdout:h1",
+            ])
+        );
+        assert_eq!(
+            recorded.completed.first().unwrap().key,
+            "candidate:T1:nonholdout:n1"
+        );
+        assert!(recorded.is_complete);
+    }
+
+    #[test]
+    fn advisory_global_record_lock_cannot_be_stolen_during_acquisition() {
+        let temp = test_temp("global-record-lock");
+        let path = temp.path.join("run.jsonl");
+        let owner = run_lock(&path).unwrap();
+        assert!(is_locked(&path));
+        let contender_path = path.clone();
+
+        let error = thread::spawn(move || run_lock(&contender_path).err().unwrap())
+            .join()
+            .unwrap();
+
+        assert!(error.contains("run is active"));
+        assert!(is_locked(&path));
+        drop(owner);
+        assert!(run_lock(&path).is_ok());
+    }
+
+    #[test]
+    fn restored_legacy_output_check_state_stays_unknown_or_keeps_its_count() {
+        let (temp, mut settings, _) = fixture("restored-output-check-state", FAKE);
+        settings.repeats = 2;
+        let expected = vec!["incumbent:T1:nonholdout:n1".to_string()];
+        let tiers = vec!["T1".to_string()];
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let nonholdout = cases.iter().find(|case| !case.is_holdout).unwrap();
+        for (label, output_check_failures) in [("unknown", None), ("known", Some(1_u64))] {
+            let legacy = temp.path.join(format!("legacy-{label}.log"));
+            let output_check_field = output_check_failures.map_or_else(String::new, |count| {
+                format!(",\"output_check_failures\":{count}")
+            });
+            fs::write(
+                &legacy,
+                format!(
+                    "{{\"id\":\"n1\",\"tier\":\"T1\",\"repeat_scores\":[8,7],\"median\":7.5{output_check_field}}}\n"
+                ),
+            )
+            .unwrap();
+            let mut recorder = RunRecorder::open(
+                &settings,
+                "artifact".to_string(),
+                BTreeMap::from([("output-check".to_string(), label.to_string())]),
+                format!("restored-{label}"),
+                &expected,
+            )
+            .unwrap();
+            recorder.import_legacy(&legacy, &expected).unwrap();
+            let state_dir = temp.path.join(format!("restored-{label}"));
+            fs::create_dir(&state_dir).unwrap();
+            fs::create_dir(state_dir.join("units")).unwrap();
+            let units: Vec<_> = (0..2)
+                .map(|repeat| make_unit("incumbent", "T1", "T1", "nonholdout", "n1", repeat))
+                .collect();
+            restore_global_units(&recorder, &state_dir, &units).unwrap();
+            let completed = read_completed_units(&state_dir, &units).unwrap();
+            let restored: Vec<_> = units
+                .iter()
+                .map(|unit| completed.get(&unit_name(unit).unwrap()).unwrap())
+                .collect();
+            let is_unknown = output_check_failures.is_none();
+            assert!(
+                restored
+                    .iter()
+                    .all(|result| result.timing.is_output_check_failure_count_unknown == is_unknown)
+            );
+            assert_eq!(
+                restored
+                    .iter()
+                    .filter(|result| result.is_output_check_failed)
+                    .count(),
+                output_check_failures.unwrap_or(0) as usize
+            );
+            let arm = paired_arm_from_units(
+                "incumbent",
+                "incumbent",
+                &tiers,
+                &[nonholdout],
+                &[],
+                2,
+                &completed,
+            )
+            .unwrap();
+            let rows =
+                paired_record_values("incumbent", &arm, &tiers, &[nonholdout], &[], &completed)
+                    .unwrap();
+            if let Some(count) = output_check_failures {
+                assert_eq!(rows[0]["output_check_failures"], count);
+            } else {
+                assert!(rows[0]["output_check_failures"].is_null());
+            }
+        }
+    }
+
+    #[test]
+    fn pre_timing_unit_json_emits_null_case_timing_in_frontier_evidence() {
+        let (temp, settings, _eval_dir) = fixture("pre-timing-unit", FAKE);
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let nonholdout = cases.iter().find(|case| !case.is_holdout).unwrap();
+        let tiers = vec!["T1".to_string()];
+        let state_dir = temp.path.join("state");
+        fs::create_dir_all(state_dir.join("units")).unwrap();
+        let units: Vec<_> = ["incumbent", "candidate"]
+            .into_iter()
+            .map(|arm| make_unit(arm, "T1", "T1", "nonholdout", &nonholdout.id, 0))
+            .collect();
+        for unit in &units {
+            let path = unit_path(&state_dir, unit).unwrap();
+            atomic_write(
+                &path,
+                &serde_json::to_vec(&json!({
+                    "unit": unit,
+                    "score": 8,
+                    "actual_model": "old-model",
+                    "is_output_check_failed": false
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        let completed = read_completed_units(&state_dir, &units).unwrap();
+        let incumbent = paired_arm_from_units(
+            "incumbent",
+            "incumbent",
+            &tiers,
+            &[nonholdout],
+            &[],
+            1,
+            &completed,
+        )
+        .unwrap();
+        let candidate = paired_arm_from_units(
+            "candidate",
+            "candidate",
+            &tiers,
+            &[nonholdout],
+            &[],
+            1,
+            &completed,
+        )
+        .unwrap();
+        let selection = select_suffix(&candidate, &incumbent, &tiers, &[nonholdout], &[]);
+        let evidence = paired_entries(
+            &candidate,
+            &incumbent,
+            &tiers,
+            &selection,
+            "test",
+            "comparison",
+        );
+        assert!(serde_json::to_value(&evidence[0]).unwrap()["case_timings_nonholdout"]["n1"]
+            ["total_ms"]
+            .is_null());
+    }
+
+    #[test]
+    fn rejected_coordinator_creates_no_global_record() {
+        let (_temp, settings, eval_dir, candidate_path) = paired_fixture("coordinator-lock", FAKE);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        let run_key = state_dir.file_name().unwrap().to_str().unwrap();
+        let _lock = RunLock::acquire(&eval_dir, run_key).unwrap();
+
+        assert!(
+            run(settings.clone())
+                .unwrap_err()
+                .contains("this evaluation already runs")
+        );
+        let runs = settings.state_dir.join("runs");
+        assert!(!runs.exists() || fs::read_dir(runs).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn legacy_arm_components_resume_both_imported_arms() {
+        for arm in ["incumbent", "candidate"] {
+            let (temp, mut settings, eval_dir, candidate_path) =
+                paired_fixture(&format!("resume-legacy-{arm}"), PAIRED_FAKE);
+            settings.args.legacy_arm = Some(arm.to_string());
+            let artifact_dir = eval_dir.parent().unwrap();
+            let submitted = fs::read_to_string(&candidate_path).unwrap();
+            let candidate = normalize_minimum_tier(&submitted).unwrap();
+            let incumbent =
+                normalize_minimum_tier(&fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap())
+                    .unwrap();
+            let cases = load_cases(&settings.cases_file).unwrap();
+            let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+            let (artifact_id, components) = component_fingerprints(
+                &settings,
+                &candidate,
+                &incumbent,
+                &rubric,
+                &cases,
+                artifact_dir,
+                "dry",
+            )
+            .unwrap();
+            let arms = if arm == "candidate" {
+                ["candidate", "incumbent"]
+            } else {
+                ["incumbent", "candidate"]
+            };
+            let mut expected = Vec::new();
+            for expected_arm in arms {
+                for (slice, case) in [("nonholdout", "n1"), ("holdout", "h1")] {
+                    expected.push(format!("{expected_arm}:T1:{slice}:{case}"));
+                }
+            }
+            let comparison_id = format!("resume-{arm}");
+            let mut recorder = RunRecorder::open(
+                &settings,
+                artifact_id,
+                components,
+                comparison_id.clone(),
+                &expected,
+            )
+            .unwrap();
+            let legacy = temp.path.join("legacy.log");
+            fs::write(
+                &legacy,
+                "{\"id\":\"n1\",\"tier\":\"T1\",\"repeat_scores\":[8],\"median\":8}\n",
+            )
+            .unwrap();
+            recorder
+                .import_legacy_for_arm(&legacy, &expected, arm)
+                .unwrap();
+            drop(recorder);
+
+            settings.args.legacy_arm = None;
+            settings.args.resume = Some(comparison_id);
+            assert_eq!(run(settings.clone()).unwrap(), 0);
+            let run_path = settings
+                .state_dir
+                .join("runs")
+                .join(run_file_name(settings.args.resume.as_deref().unwrap()));
+            assert!(parse_run(&run_path, Some(&expected)).unwrap().is_complete);
+        }
+    }
+
+    #[test]
+    fn cross_mode_resume_rejects_before_dispatch_and_preserves_the_record() {
+        let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
+        let (temp, mut settings, _eval_dir, _candidate) =
+            paired_fixture("cross-mode-resume", exhausted);
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        let run_path = fs::read_dir(settings.state_dir.join("runs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("jsonl"))
+            .unwrap();
+        let before = fs::read(&run_path).unwrap();
+        let comparison_id = parse_run(&run_path, None).unwrap().comparison_id;
+        let calls_before = fs::read_to_string(temp.path.join("calls")).unwrap();
+
+        settings.args.is_accept_if_winning = true;
+        settings.args.resume = Some(comparison_id);
+        assert!(
+            run(settings)
+                .unwrap_err()
+                .contains("resume inputs are stale: mode")
+        );
+        assert_eq!(fs::read(&run_path).unwrap(), before);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls")).unwrap(),
+            calls_before
+        );
+    }
+
+    #[test]
+    fn retention_removes_the_sibling_lock_for_each_pruned_run() {
+        let temp = test_temp("run-retention-locks");
+        let runs = temp.path.join("runs");
+        fs::create_dir(&runs).unwrap();
+        for index in 0..=MAX_RETAINED_RUNS {
+            let path = runs.join(format!("{index:03}.jsonl"));
+            let comparison_id = format!("comparison-{index}");
+            let start = RunEvent::Start {
+                comparison_id: comparison_id.clone(),
+                artifact_id: "artifact".to_string(),
+                components: BTreeMap::new(),
+                started_nanos: 0,
+            };
+            let completion = RunEvent::Completion {
+                comparison_id,
+                finished_nanos: 0,
+                decision: "accepted".to_string(),
+            };
+            fs::write(
+                &path,
+                format!(
+                    "{}\n{}\n",
+                    serde_json::to_string(&start).unwrap(),
+                    serde_json::to_string(&completion).unwrap()
+                ),
+            )
+            .unwrap();
+            fs::write(path.with_extension("lock"), "").unwrap();
+        }
+
+        prune_runs(&runs, "artifact", &BTreeMap::new());
+        let retained: Vec<_> = fs::read_dir(&runs)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.extension().and_then(|extension| extension.to_str()) == Some("jsonl")
+            })
+            .collect();
+        assert_eq!(retained.len(), MAX_RETAINED_RUNS);
+        assert!(
+            retained
+                .iter()
+                .all(|path| path.with_extension("lock").exists())
+        );
+        assert_eq!(
+            fs::read_dir(&runs)
+                .unwrap()
+                .filter(|entry| {
+                    entry
+                        .as_ref()
+                        .unwrap()
+                        .path()
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some("lock")
+                })
+                .count(),
+            MAX_RETAINED_RUNS
+        );
+    }
+
+    #[test]
+    fn candidate_first_global_checkpoint_survives_local_state_deletion() {
+        let (temp, mut settings, eval_dir, candidate_path) =
+            paired_fixture("candidate-first-checkpoint", PAIRED_FAKE);
+        let logging_fake = PAIRED_FAKE.replacen("set -eu", "set -eu\nbase=${0:h}", 1)
+            + "\nprint call >> \"$base/calls\"\n";
+        write_executable(&settings.tier_dispatch_bin, &logging_fake);
+        let artifact_dir = eval_dir.parent().unwrap();
+        let submitted = fs::read_to_string(&candidate_path).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let incumbent =
+            normalize_minimum_tier(&fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap())
+                .unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+        let run_key = paired_run_key(
+            &settings,
+            &candidate,
+            &incumbent,
+            &submitted,
+            &cases,
+            &rubric,
+            artifact_dir,
+        )
+        .unwrap();
+        let (artifact_id, components) = component_fingerprints(
+            &settings,
+            &candidate,
+            &incumbent,
+            &rubric,
+            &cases,
+            artifact_dir,
+            "dry",
+        )
+        .unwrap();
+        let expected = vec![
+            "incumbent:T1:nonholdout:n1".to_string(),
+            "incumbent:T1:holdout:h1".to_string(),
+            "candidate:T1:nonholdout:n1".to_string(),
+            "candidate:T1:holdout:h1".to_string(),
+        ];
+        let units = make_work_units(&["T1".to_string()], &cases, 1);
+        let candidate_unit = units
+            .iter()
+            .find(|unit| unit.arm == "candidate" && unit.case_id == "n1")
+            .unwrap()
+            .clone();
+        let candidate_result = UnitResult {
+            unit: candidate_unit.clone(),
+            score: Some(9),
+            actual_model: Some("candidate-model".to_string()),
+            is_output_check_failed: false,
+            timing: RepeatTiming::default(),
+        };
+        let (state_dir, _) = initialize_state(&eval_dir, &run_key, false).unwrap();
+        atomic_write(
+            &unit_path(&state_dir, &candidate_unit).unwrap(),
+            &serde_json::to_vec(&candidate_result).unwrap(),
+        )
+        .unwrap();
+        let mut recorder = RunRecorder::open(
+            &settings,
+            artifact_id,
+            components,
+            "candidate-first".to_string(),
+            &expected,
+        )
+        .unwrap();
+        let mut completed = BTreeMap::new();
+        completed.insert(unit_name(&candidate_unit).unwrap(), candidate_result);
+        checkpoint_case(&mut recorder, &expected, &completed, &units, 1).unwrap();
+        assert_eq!(recorder.completed[0].key, "candidate:T1:nonholdout:n1");
+        drop(recorder);
+        fs::remove_dir_all(&state_dir).unwrap();
+
+        settings.args.resume = Some("candidate-first".to_string());
+        assert_eq!(run(settings).unwrap(), 0);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            6
+        );
+    }
+
+    #[test]
+    fn version_one_parallel_state_remains_readable() {
+        let temp = test_temp("state-v1");
+        let (state, _) = initialize_state(&temp.path, "key", false).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<RunManifest>(&fs::read(state.join("manifest.json")).unwrap())
+                .unwrap()
+                .format_version,
+            1
+        );
+        assert!(initialize_state(&temp.path, "key", false).unwrap().1);
     }
 }

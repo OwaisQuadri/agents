@@ -1,14 +1,17 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
-#   ./run.sh [candidate-file]            grade every non-holdout case
+#   ./run.sh [candidate-file]            grade every nonholdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice
 # One JSON line per case to stdout, summary to stderr.
 #
-# Live harness: each case dispatches the definition headlessly (Pi through tier-dispatch with the candidate body as its system prompt) against a fixture SUT whose reset writes 1, not 0
+# Live harness: each case dispatches its definition against a fixture SUT whose
+# reset writes 1, not 0
 # — the planted defect. SUT integrity is checksummed around every case. Mechanical
 # ceiling is 8/10; 9-10 is judge-only per rubric.md.
 set -euo pipefail
-cd "$(dirname "$0")"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE"
+source "$HERE/../../../tools/skill-eval/timing.sh"
 
 slice=nonholdout
 if [[ "${1:-}" == "--holdout" ]]; then
@@ -17,16 +20,18 @@ if [[ "${1:-}" == "--holdout" ]]; then
 fi
 def="${1:-../spec-tester.md}"
 
-source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
-pi_eval_requirements
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 required" >&2; exit 1; }
+[ -f "$def" ] || { echo "agent definition not found: $def" >&2; exit 1; }
+
+timing_preflight || exit $?
+timing_begin spec-tester "$slice" "$def" || exit $?
 
 FIX=$(mktemp -d /tmp/spec-tester-evals.XXXXXX)
 trap 'rm -rf "$FIX"' EXIT
 mkdir -p "$FIX/sut" "$FIX/scratch"
 cat > "$FIX/sut/counter.sh" <<'EOF'
-#!/bin/zsh
+#!/bin/sh
 set -eu
 f="$1"; cmd="$2"
 case "$cmd" in
@@ -38,7 +43,7 @@ esac
 EOF
 chmod +x "$FIX/sut/counter.sh"
 cat > "$FIX/sut/ui-fixture" <<'EOF'
-#!/bin/zsh
+#!/bin/sh
 set -eu
 root="$(CDPATH= cd -- "$(dirname "$0")/../scratch" && pwd -P)"
 state_file="$root/.ui-state"
@@ -114,6 +119,7 @@ PY
 esac
 EOF
 chmod +x "$FIX/sut/ui-fixture"
+
 sut_sum() { find "$FIX/sut" -type f -exec shasum {} + | shasum; }
 is_path_cited() {
   local logical_path="$1"
@@ -189,6 +195,8 @@ while IFS= read -r line <&3; do
   want=false
   [[ "$slice" == holdout ]] && want=true
   [[ "$is_holdout" == "$want" ]] || continue
+  timing_case_begin
+  case_started="$(timing_now_ms)"
   id=$(jq -r '.id' <<<"$line")
   dispatch=$(jq -r '.input' <<<"$line" | sed "s|__FIXTURE__|$FIX|g")
   dispatch="You are dispatched as the spec-tester agent; the system prompt appended to this session is your definition. This is a live dispatch — execute it and reply per your output contract.
@@ -198,16 +206,19 @@ $dispatch"
   mkdir -p "$FIX/scratch"
   before=$(sut_sum)
   error_file=$(mktemp)
-  if out=$(pi_eval_dispatch "spec-tester" "$def" "$FIX" "$dispatch" 2>"$error_file"); then
+  out_file=$(mktemp)
+  if timing_dispatch spec-tester "$def" "$FIX" "$dispatch" > "$out_file" 2>"$error_file"; then
     dispatch_status=0
   else
     dispatch_status=$?
   fi
+  out=$(cat "$out_file")
+  rm -f "$out_file"
   after=$(sut_sum)
   mkdir -p /tmp/spec-tester-evals-last
   printf '%s\n' "$out" > "/tmp/spec-tester-evals-last/$id.txt"
   if [[ $dispatch_status -ne 0 ]]; then
-    printf '{"id":"%s","score":-1,"failure_mode":"dispatch-failed:%s"}\n' "$id" "$dispatch_status"
+    timing_case "$id" -1 "$(jq -Rn --arg value "dispatch-failed:$dispatch_status" '$value')" "$case_started"
     cat "$error_file" >&2
     rm -f "$error_file"
     ungraded=$((ungraded + 1))
@@ -360,7 +371,7 @@ $dispatch"
         score=-1; fm='"ungraded"' ;;
     esac
   fi
-  printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$id" "$score" "$fm"
+  timing_case "$id" "$score" "$fm" "$case_started"
   if [[ $score -lt 0 ]]; then
     ungraded=$((ungraded + 1))
   else
@@ -377,6 +388,7 @@ elif [[ $ungraded -gt 0 ]]; then
 else
   echo "no cases in $slice slice" >&2
 fi
+timing_complete || exit $?
 
 if [[ $ungraded -gt 0 ]]; then
   exit 2
