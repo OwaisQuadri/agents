@@ -59,7 +59,7 @@ struct Snapshot {
     launchd: Vec<LaunchdJob>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize)]
 struct Change {
     at: String,
     kind: String,
@@ -98,6 +98,13 @@ where
     })
 }
 
+fn deserialize_notify<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Gate {
@@ -120,6 +127,7 @@ struct Gate {
 struct TriageOutput {
     digest: String,
     gates: Vec<Gate>,
+    #[serde(deserialize_with = "deserialize_notify")]
     notify: Option<String>,
 }
 
@@ -759,31 +767,35 @@ fn append(path: &Path, text: &str) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn triage_due() -> Result<bool, String> {
-    let state = state_dir();
-    let delta = state.join("delta.json");
-    let delta_mtime = fs::metadata(delta)
-        .and_then(|metadata| metadata.modified())
-        .map_err(|error| error.to_string())?;
-    let last_triage = read_json(&state.join("state.json")).and_then(|value| {
-        value
-            .get("lastTriageAt")
-            .and_then(Value::as_str)
-            .and_then(parse_iso_epoch)
-    });
-    let delta_epoch = delta_mtime
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_secs() as i64;
-    Ok(last_triage.is_none_or(|last| delta_epoch > last))
+fn read_delta(path: &Path) -> Result<Delta, String> {
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
-fn mark_triaged() -> Result<(), String> {
+fn triage_due() -> Result<bool, String> {
+    Ok(!read_delta(&state_dir().join("delta.json"))?
+        .changes
+        .is_empty())
+}
+
+fn subtract_processed(mut pending: Vec<Change>, processed: Vec<Change>) -> Vec<Change> {
+    for change in processed {
+        if let Some(index) = pending.iter().position(|candidate| *candidate == change) {
+            pending.remove(index);
+        }
+    }
+    pending
+}
+
+fn mark_triaged(processed_path: &str) -> Result<(), String> {
     let state = state_dir();
+    let delta_path = state.join("delta.json");
+    let processed = read_delta(Path::new(processed_path))?;
+    let pending = subtract_processed(read_delta(&delta_path)?.changes, processed.changes);
     let now = now_iso();
     write_json(
-        &state.join("delta.json"),
-        &serde_json::json!({ "at": now, "changes": [] }),
+        &delta_path,
+        &serde_json::json!({ "at": now, "changes": pending }),
     )?;
     update_state(&state, "lastTriageAt", Value::from(now))
 }
@@ -815,10 +827,18 @@ fn parse_triage_output(output: &[u8]) -> Result<TriageOutput, String> {
             break;
         };
         let fenced = &after_open[..close];
-        let body = fenced.strip_prefix("json").unwrap_or(fenced).trim();
-        match serde_json::from_str(body) {
-            Ok(triage) => return Ok(triage),
-            Err(error) => last_error = Some(error),
+        let (body, is_json) = match fenced.strip_prefix("json") {
+            Some(body) => (body.trim(), true),
+            None => {
+                let body = fenced.trim();
+                (body, body.starts_with('{'))
+            }
+        };
+        if is_json {
+            match serde_json::from_str(body) {
+                Ok(triage) => return Ok(triage),
+                Err(error) => last_error = Some(error),
+            }
         }
         remaining = &after_open[close + ticks..];
     }
@@ -854,7 +874,7 @@ fn apply_triage(path: &str) -> Result<(), String> {
 
 fn usage() {
     eprintln!(
-        "usage: hq-state [--classify <previous.json|-> <current.json> | --triage-due | --apply-triage <output.json> | --mark-triaged]"
+        "usage: hq-state [--classify <previous.json|-> <current.json> | --triage-due | --apply-triage <output.json> | --mark-triaged <processed.json>]"
     );
 }
 
@@ -898,7 +918,7 @@ fn main() -> ExitCode {
             }
         }),
         [flag, output] if flag == "--apply-triage" => apply_triage(output),
-        [flag] if flag == "--mark-triaged" => mark_triaged(),
+        [flag, processed] if flag == "--mark-triaged" => mark_triaged(processed),
         _ => {
             usage();
             return ExitCode::from(2);
@@ -1034,6 +1054,28 @@ Here is the result: ````json{"digest":"digest","gates":[{"id":"com.example.job",
         assert!(!is_safe_gate_id(".."));
         assert!(!is_safe_gate_id(&"x".repeat(121)));
         assert!(parse_triage_output(br#"{"digest":"digest"}"#).is_err());
+        assert!(parse_triage_output(b"```json\n{\"digest\":\"d\",\"gates\":[]}\n```").is_err());
         assert!(parse_triage_output(b"```json\nnot json\n```").is_err());
+    }
+
+    #[test]
+    fn removes_only_anomalies_from_the_triage_snapshot() {
+        let first = serde_json::from_value::<Change>(serde_json::json!({
+            "at": "one", "kind": "launchd_down", "subject": "first",
+            "before": null, "after": null, "detail": "first"
+        }))
+        .unwrap();
+        let first_copy =
+            serde_json::from_value::<Change>(serde_json::to_value(&first).unwrap()).unwrap();
+        let second = serde_json::from_value::<Change>(serde_json::json!({
+            "at": "two", "kind": "job_stuck", "subject": "second",
+            "before": null, "after": null, "detail": "second"
+        }))
+        .unwrap();
+
+        let pending = subtract_processed(vec![first, second], vec![first_copy]);
+
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].subject, "second");
     }
 }
