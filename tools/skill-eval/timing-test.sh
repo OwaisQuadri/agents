@@ -154,8 +154,9 @@ if (
 [ "$holdout_status" -eq 0 ]
 holdout_file="$(find "$TMP/implementer-holdout-state/runs" -type f -name 'custom-implementer-*.jsonl' -print)"
 jq -e 'select(.type == "start") | .slice == "holdout"' "$holdout_file" >/dev/null
-[ "$(jq -r 'select(.type == "case") | .id' "$holdout_file")" = i5 ]
-[ "$(jq -s '[.[] | select(.type == "case")] | length' "$holdout_file")" -eq 1 ]
+expected_holdout_ids="$(jq -sc '[.[] | select(.holdout == true) | .id] | sort' "$REPO_ROOT/agents/implementer/evals/cases.jsonl")"
+actual_holdout_ids="$(jq -sc '[.[] | select(.type == "case") | .id] | sort' "$holdout_file")"
+[ "$actual_holdout_ids" = "$expected_holdout_ids" ]
 
 source "$REPO_ROOT/tools/skill-eval/timing.sh"
 cat > "$TMP/read-only-debugger.md" <<'EOF'
@@ -300,23 +301,20 @@ incomplete_files="$(find "$retention_runs" -type f -name 'custom-incomplete-test
 [ -f "$retention_runs/custom-incomplete-test-active.jsonl" ]
 
 timeout_status=0
-timeout_started="$(python3 -c 'import time; print(time.monotonic())')"
-if (
-  cd "$TMP/from-another-cwd"
-  HANG_DISPATCH=1 DEBUGGER_DISPATCH_TIMEOUT_SECONDS=0.1 SKILL_EVAL_STATE_DIR="$TMP/timeout-state" TIER_DISPATCH_BIN="$TMP/bin/tier-dispatch" TIERS_FILE="$REPO_ROOT/config/model-tiers.json" PI_BIN="$TMP/bin/pi" bash "$REPO_ROOT/agents/debugger/evals/run.sh"
-) >"$TMP/timeout.stdout" 2>"$TMP/timeout.stderr"; then :; else timeout_status=$?; fi
-timeout_elapsed="$(python3 - "$timeout_started" <<'PY2'
-import sys, time
-print(time.monotonic() - float(sys.argv[1]))
+timeout_seconds=0.1
+timeout_grace_ms=1000
+timeout_limit_ms="$(python3 - "$timeout_seconds" "$timeout_grace_ms" <<'PY2'
+import sys
+print(float(sys.argv[1]) * 1000 + int(sys.argv[2]))
 PY2
 )"
+if (
+  cd "$TMP/from-another-cwd"
+  HANG_DISPATCH=1 DEBUGGER_DISPATCH_TIMEOUT_SECONDS="$timeout_seconds" SKILL_EVAL_STATE_DIR="$TMP/timeout-state" TIER_DISPATCH_BIN="$TMP/bin/tier-dispatch" TIERS_FILE="$REPO_ROOT/config/model-tiers.json" PI_BIN="$TMP/bin/pi" bash "$REPO_ROOT/agents/debugger/evals/run.sh"
+) >"$TMP/timeout.stdout" 2>"$TMP/timeout.stderr"; then :; else timeout_status=$?; fi
 [ "$timeout_status" -eq 2 ]
-python3 - "$timeout_elapsed" <<'PY2'
-import sys
-raise SystemExit(not float(sys.argv[1]) < 5)
-PY2
 timeout_file="$(find "$TMP/timeout-state/runs" -type f -name 'custom-debugger-*.jsonl' -print)"
 [ "$(jq -s '[.[] | select(.type == "case")] | length' "$timeout_file")" -gt 0 ]
-jq -e 'select(.type == "case") | .generation_ms >= 0 and .requested_tier != null and .final_model == null and .attempts == []' "$timeout_file" >/dev/null
+jq -s -e --argjson timeout_limit_ms "$timeout_limit_ms" '[.[] | select(.type == "case")] | all(.[]; .generation_ms >= 0 and .generation_ms <= $timeout_limit_ms and .requested_tier != null and .final_model == null and .attempts == [])' "$timeout_file" >/dev/null
 
 printf 'timing helper shell test passed\n'

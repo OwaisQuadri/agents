@@ -283,8 +283,9 @@ Run per artifact, on demand or once logs/votes accumulate:
    timing events under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. If the run
    stops, continue it with the same candidate and `--resume <comparison-id>`. The runner names
    stale inputs before dispatch, skips completed cases, and reruns an interrupted case. A
-   checkpoint is not acceptance evidence. Use `--resume-from-log <path>` only to import an exact
-   legacy case prefix once. It normalizes only `metadata.minimum-tier` from their model prompts
+   checkpoint is not acceptance evidence. Use `--resume-from-log <path> --legacy-arm
+   <incumbent|candidate>` only to import an exact legacy case prefix once. It normalizes only
+   `metadata.minimum-tier` from their model prompts
    and identities, while preflight receives the submitted candidate unchanged. It records all tiers, including
    unavailable tiers. A plain run is an optional dry comparison, not a prerequisite. Every
    skill or workflow that delegates to the shared runner uses the suffix selector. The runner

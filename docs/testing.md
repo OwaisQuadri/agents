@@ -98,10 +98,10 @@ with the same candidate and `--resume <comparison-id>`. The runner names changed
 stops before dispatch when the saved inputs are stale. It reruns an interrupted case and skips
 completed cases. A checkpoint cannot update the frontier or live artifact.
 
-The state directory keeps the latest 100 completed runs per artifact. It keeps active and
-resumable runs and removes stale incomplete runs. Set `SKILL_EVAL_STATE_DIR` to isolate tests.
-Use `--resume-from-log <path>` once to import a legacy mixed log that forms an exact case prefix.
-Imported rows keep unknown time and model fields as null.
+The state directory keeps the latest 100 completed runs per artifact. It keeps active runs and
+one resumable run for each exact input set. Set `SKILL_EVAL_STATE_DIR` to isolate tests.
+Use `--resume-from-log <path> --legacy-arm <incumbent|candidate>` once to import a legacy mixed
+log that forms an exact case prefix. Imported rows keep unknown time and model fields as null.
 
 Custom agent harnesses use Pi through `tools/tier-dispatch` and write the same timing state.
 Run `tools/skill-eval/timing-test.sh` to test their case records, parallel-run safety, web

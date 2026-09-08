@@ -50,12 +50,7 @@ while IFS= read -r case_line; do
   if [[ "$expect" == *'out-of-trigger'* ]] && grep -q 'out-of-trigger' <<<"$out"; then score=10; mode='correct-out-of-trigger'; fi
   timing_case "$id" "$score" "$(jq -Rn --arg m "$mode" '$m')" "$case_started"
   rm -rf "$fix"; trap - EXIT
-done < <(if [[ "$slice" == holdout ]]; then jq -c 'select(.id == "i5" and .holdout == true)' cases.jsonl; else jq -c 'select(.holdout == false)' cases.jsonl; fi)
-if [[ "$slice" == holdout ]] && [ "$case_count" -ne 1 ]; then
-  echo "holdout assertion failed: expected only i5, got $case_count cases" >&2
-  timing_complete || exit $?
-  exit 2
-fi
+done < <(if [[ "$slice" == holdout ]]; then jq -c 'select(.holdout == true)' cases.jsonl; else jq -c 'select(.holdout == false)' cases.jsonl; fi)
 printf 'slice=%s cases=%d ungraded=%d\n' "$slice" "$((case_count - ungraded))" "$ungraded" >&2
 timing_complete || exit $?
 [ "$ungraded" -eq 0 ] || exit 2

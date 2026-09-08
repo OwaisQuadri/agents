@@ -111,8 +111,12 @@ evidence and never replace tier execution.
 A full candidate invocation evaluates the live incumbent and candidate as one paired comparison.
 It prepares immutable arm-qualified prompts, runs bounded units, and saves completed units under
 `evals/.skill-eval-state/<run-key>/`. The same command resumes an exact incomplete run,
-including its completed timing records. A completed
-`null` score remains complete on automatic resume. Use `--restart` to retry unavailable providers
+including its completed timing records. The runner also prints a `run_start` record with the
+comparison identifier. It writes append-only case events under
+`${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. Use the same candidate with
+`--resume <comparison-id>` to restore an interrupted run when local state is absent. Use
+`--resume-from-log <path> --legacy-arm <incumbent|candidate>` only for a verified legacy prefix.
+A completed `null` score remains complete on automatic resume. Use `--restart` to retry unavailable providers
 after they recover. `--restart` reruns the current exact key. Use `--jobs N` or `SKILL_EVAL_JOBS`
 to set one through 16 workers. The runner emits incumbent records before candidate records. Each arm
 orders records by configured tier, non-holdout cases, then holdout cases. The runner uses
