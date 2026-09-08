@@ -11,6 +11,7 @@ const protocolVersion = "2025-11-25";
 const defaultTimeouts: Timeouts = { startupMs: 10_000, requestMs: 30_000 };
 const maximumStderrLength = 1024;
 const maximumUnframedStdoutLength = 8 * 1024 * 1024;
+const maximumRecallQueryLength = 2_000;
 
 const searchMemoryParameters = {
 	type: "object",
@@ -264,6 +265,14 @@ function mapSearchResult(value: unknown): { content: McpTextContent[]; details: 
 	return { content, details: { hits } };
 }
 
+function memoryRecall(result: { content: McpTextContent[]; details: { hits: Record<string, unknown>[] } }): string | undefined {
+	if (result.details.hits.length === 0) {
+		return undefined;
+	}
+	const text = result.content.map((item) => item.text).join("\n").trim();
+	return text.length === 0 ? undefined : `<persistent-memory-recall>\n${text}\n</persistent-memory-recall>`;
+}
+
 /**
  * Registers Pi's personal-memory search tool.
  *
@@ -316,6 +325,24 @@ export default function ragExtension(pi: ExtensionAPI, spawnProcess: SpawnProces
 		const activeSession = session;
 		session = undefined;
 		await activeSession?.close();
+	});
+	pi.on("input", async (event) => {
+		if (process.env.RAG_RECALL === "0" || !isMemorySessionActive || event.text.length === 0) {
+			return { action: "continue" };
+		}
+		try {
+			const recall = memoryRecall(await (await startSession()).callSearch({ query: event.text.slice(0, maximumRecallQueryLength), k: 8 }));
+			if (recall === undefined) {
+				return { action: "continue" };
+			}
+			return {
+				action: "transform",
+				text: `${recall}\n\n${event.text}`,
+				...(event.images === undefined ? {} : { images: event.images }),
+			};
+		} catch {
+			return { action: "continue" };
+		}
 	});
 	pi.registerTool({
 		name: "search_memory",
