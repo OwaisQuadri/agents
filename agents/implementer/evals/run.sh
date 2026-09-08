@@ -14,7 +14,7 @@ while IFS= read -r case_line; do
   printf 'package = "acme-sdk"\nversion = "1.2.3"\n' > "$fix/pyproject.toml"
   printf '# fixture\n' > "$fix/src/cache.py"
   input=$(jq -r .input <<<"$case_line" | sed "s|__FIXTURE__|$fix|g")
-  prompt="You are dispatched as the implementer agent. Execute the dispatch and reply in the exact output contract.\n\n$input"
+  prompt=$'You are dispatched as the implementer agent. Execute the dispatch and reply in the exact output contract.\n\n'"$input"
   out=$(pi_eval_dispatch "implementer" "$def" "$fix" "$prompt" 2>/dev/null || true)
   score=0; mode='missing-output'
   if grep -q 'status:' <<<"$out" && grep -q 'version_basis:' <<<"$out" && grep -q 'verification:' <<<"$out"; then

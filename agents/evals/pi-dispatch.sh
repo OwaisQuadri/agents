@@ -1,8 +1,16 @@
 #!/bin/zsh
-set -euo pipefail
+
+PI_EVAL_DISPATCH_DIR="${${(%):-%N}:A:h}"
+
+pi_eval_cleanup() {
+  local pi_root=$1 tmp_root=${TMPDIR:-/tmp}
+  [[ "$tmp_root" == / ]] || tmp_root=${tmp_root%/}
+  [[ -d "$pi_root" && ! -L "$pi_root" && "$pi_root" == "$tmp_root"/pi-eval.* ]] || return 1
+  rm -rf -- "$pi_root"
+}
 
 pi_eval_requirements() {
-  REPO_ROOT=$(git -C "${0:A:h}" rev-parse --show-toplevel)
+  REPO_ROOT=$(git -C "$PI_EVAL_DISPATCH_DIR" rev-parse --show-toplevel) || return 1
   TIER_DISPATCH=${TIER_DISPATCH_BIN:-"$REPO_ROOT/tools/tier-dispatch/target/debug/tier-dispatch"}
   TIER_CONFIG="$REPO_ROOT/config/model-tiers.json"
   PI_LAUNCHER="$REPO_ROOT/agents/evals/pi-launcher.sh"
@@ -21,11 +29,12 @@ pi_eval_dispatch() {
 
   [[ -r "$definition" ]] || { print -u2 "agent definition not found: $definition"; return 1; }
   tier=$(jq -er --arg agent "$agent" '.agents[$agent] // .orchestrator' "$TIER_CONFIG") || return 1
-  pi_root=$(mktemp -d "${TMPDIR:-/tmp}/pi-eval.${agent}.XXXXXXXX") || return 1
-  mkdir -p "$pi_root/agents" "$pi_root/sessions"
-  cp "$definition" "$pi_root/agents/$agent.md"
+  local tmp_root=${TMPDIR:-/tmp}
+  [[ "$tmp_root" == / ]] || tmp_root=${tmp_root%/}
+  pi_root=$(mktemp -d "$tmp_root/pi-eval.${agent}.XXXXXXXX") || return 1
+  mkdir -p "$pi_root/sessions" || { pi_eval_cleanup "$pi_root"; return 1; }
   body="$pi_root/system-prompt.md"
-  awk 'c >= 2 { print } /^---$/ { c += 1 }' "$definition" > "$body"
+  awk 'c >= 2 { print } /^---$/ { c += 1 }' "$definition" > "$body" || { pi_eval_cleanup "$pi_root"; return 1; }
   if PI_EVAL_WORKDIR="$workdir" PI_EVAL_PI_DIR="$pi_root" PI_EVAL_PI_EXECUTABLE="$PI_EXECUTABLE" "$TIER_DISPATCH" \
     --tiers-file "$TIER_CONFIG" \
     --tier "$tier" \
@@ -36,6 +45,6 @@ pi_eval_dispatch() {
   else
     exit_status=$?
   fi
-  rm -rf "$pi_root"
+  pi_eval_cleanup "$pi_root" || return 1
   return "$exit_status"
 }
