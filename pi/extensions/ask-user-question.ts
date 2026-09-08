@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	Editor,
 	type EditorTheme,
@@ -8,9 +8,7 @@ import {
 	truncateToWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-
-import { setHerdrBlocked } from "./herdr-activity/state.ts";
+import { Type, type Static } from "typebox";
 
 interface AskOption {
 	label: string;
@@ -60,6 +58,10 @@ interface AskUserQuestionResultDetails {
 	message?: string;
 }
 
+const RPC_PING_CHANNEL = "ask-user-question:rpc:ping";
+const RPC_ASK_CHANNEL = "ask-user-question:rpc:ask";
+const RPC_VERSION = 1;
+
 const OptionSchema = Type.Object({
 	label: Type.String({
 		description:
@@ -94,6 +96,39 @@ const AskUserQuestionParams = Type.Object({
 		}),
 	),
 });
+
+type AskUserQuestionInput = Static<typeof AskUserQuestionParams>;
+
+function isAskUserQuestionInput(value: unknown): value is AskUserQuestionInput {
+	if (value === null || typeof value !== "object") return false;
+	const input = value as Record<string, unknown>;
+	if (typeof input.question !== "string" || input.question.trim().length === 0) return false;
+	if (input.details !== undefined && typeof input.details !== "string") return false;
+	if (input.multiSelect !== undefined && typeof input.multiSelect !== "boolean") return false;
+	if (input.options === undefined) return true;
+	if (!Array.isArray(input.options)) return false;
+	return input.options.every((option) => {
+		if (option === null || typeof option !== "object") return false;
+		const item = option as Record<string, unknown>;
+		return typeof item.label === "string"
+			&& (item.value === undefined || typeof item.value === "string")
+			&& (item.description === undefined || typeof item.description === "string");
+	});
+}
+
+interface AskUserQuestionRpcRequest {
+	requestId: string;
+	params: AskUserQuestionInput;
+	signal?: AbortSignal;
+}
+
+function isAbortSignal(value: unknown): value is AbortSignal {
+	if (value === null || typeof value !== "object") return false;
+	const signal = value as Record<string, unknown>;
+	return typeof signal.aborted === "boolean"
+		&& typeof signal.addEventListener === "function"
+		&& typeof signal.removeEventListener === "function";
+}
 
 function normalizeOptions(options: Array<{ label: string; value?: string; description?: string }> | undefined): AskOption[] {
 	return (options || [])
@@ -245,15 +280,99 @@ function buildResult(question: string, context: string | undefined, mode: AskUse
 	};
 }
 
+async function askFreeText(
+	ctx: ExtensionContext,
+	question: string,
+	context: string | undefined,
+	signal: AbortSignal | undefined,
+): Promise<string | undefined> {
+	if (ctx.mode === "rpc") {
+		return ctx.ui.editor(context ? `${question}\n\n${context}` : question, "");
+	}
+
+	return ctx.ui.custom<string | undefined>((tui: any, theme: any, _kb: any, done: (result: string | undefined) => void) => {
+		let isDone = false;
+		const finish = (result: string | undefined) => {
+			if (isDone) return;
+			isDone = true;
+			signal?.removeEventListener("abort", onAbort);
+			done(result);
+		};
+		const onAbort = () => finish(undefined);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		if (signal?.aborted) onAbort();
+
+		let cachedLines: string[] | undefined;
+		let cachedWidth = -1;
+		const editor = new Editor(tui, createEditorTheme(theme));
+		editor.onSubmit = finish;
+
+		function refresh() {
+			cachedLines = undefined;
+			tui.requestRender();
+		}
+
+		function render(width: number): string[] {
+			if (cachedLines && cachedWidth === width) return cachedLines;
+
+			const lines: string[] = [];
+			const add = (text: string) => lines.push(truncateToWidth(text, width));
+			add(theme.fg("accent", "─".repeat(width)));
+			addWrapped(lines, theme.fg("text", ` ${question}`), width);
+			if (context) {
+				lines.push("");
+				addWrapped(lines, theme.fg("muted", ` ${context}`), width);
+			}
+			lines.push("");
+			for (const line of editor.render(Math.max(1, width - 2))) add(` ${line}`);
+			lines.push("");
+			add(theme.fg("dim", " Shift+Enter newline • Enter submit • Esc cancel"));
+			add(theme.fg("accent", "─".repeat(width)));
+			cachedLines = lines;
+			cachedWidth = width;
+			return lines;
+		}
+
+		return {
+			render,
+			invalidate: () => {
+				cachedLines = undefined;
+			},
+			handleInput(data: string) {
+				if (matchesKey(data, Key.escape)) {
+					finish(undefined);
+					return;
+				}
+				editor.handleInput(data);
+				refresh();
+			},
+			dispose() {
+				finish(undefined);
+			},
+		};
+	});
+}
+
 async function askSingleChoice(
 	ctx: any,
 	question: string,
 	context: string | undefined,
 	options: AskOption[],
+	signal: AbortSignal | undefined,
 ): Promise<AskAnswer | null> {
 	const allOptions = buildChoiceItems(options);
 
 	return ctx.ui.custom<AskAnswer | null>((tui: any, theme: any, _kb: any, done: (result: AskAnswer | null) => void) => {
+		let isDone = false;
+		const finish = (result: AskAnswer | null) => {
+			if (isDone) return;
+			isDone = true;
+			signal?.removeEventListener("abort", onAbort);
+			done(result);
+		};
+		const onAbort = () => finish(null);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		if (signal?.aborted) onAbort();
 		let optionIndex = 0;
 		let editMode = false;
 		let cachedLines: string[] | undefined;
@@ -263,7 +382,7 @@ async function askSingleChoice(
 		editor.onSubmit = (value) => {
 			const trimmed = value.trim();
 			if (!trimmed) return;
-			done({ type: "other", label: trimmed, value: trimmed });
+			finish({ type: "other", label: trimmed, value: trimmed });
 		};
 
 		function refresh() {
@@ -302,7 +421,7 @@ async function askSingleChoice(
 					refresh();
 					return;
 				}
-				done({
+				finish({
 					type: "option",
 					label: selected.label,
 					value: selected.value,
@@ -311,7 +430,7 @@ async function askSingleChoice(
 				return;
 			}
 			if (matchesKey(data, Key.escape)) {
-				done(null);
+				finish(null);
 			}
 		}
 
@@ -370,6 +489,9 @@ async function askSingleChoice(
 				cachedLines = undefined;
 			},
 			handleInput,
+			dispose() {
+				finish(null);
+			},
 		};
 	});
 }
@@ -379,8 +501,19 @@ async function askMultiChoice(
 	question: string,
 	context: string | undefined,
 	options: AskOption[],
+	signal: AbortSignal | undefined,
 ): Promise<AskAnswer[] | null> {
 	return ctx.ui.custom<AskAnswer[] | null>((tui: any, theme: any, _kb: any, done: (result: AskAnswer[] | null) => void) => {
+		let isDone = false;
+		const finish = (result: AskAnswer[] | null) => {
+			if (isDone) return;
+			isDone = true;
+			signal?.removeEventListener("abort", onAbort);
+			done(result);
+		};
+		const onAbort = () => finish(null);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		if (signal?.aborted) onAbort();
 		let optionIndex = 0;
 		let editMode = false;
 		let editingOtherIndex: number | undefined;
@@ -487,7 +620,7 @@ async function askMultiChoice(
 				if (current.isSubmit) {
 					const answers = [...selected.values(), ...otherAnswers];
 					if (answers.length > 0) {
-						done(sortAnswers(answers));
+						finish(sortAnswers(answers));
 					}
 					return;
 				}
@@ -504,7 +637,7 @@ async function askMultiChoice(
 			}
 
 			if (matchesKey(data, Key.escape)) {
-				done(null);
+				finish(null);
 			}
 		}
 
@@ -596,6 +729,9 @@ async function askMultiChoice(
 				cachedLines = undefined;
 			},
 			handleInput,
+			dispose() {
+				finish(null);
+			},
 		};
 	});
 }
@@ -627,7 +763,109 @@ function withUILock<T>(fn: () => Promise<T>): Promise<T> {
 	return sharedUiLock.withLock(fn);
 }
 
+async function executeQuestion(
+	pi: ExtensionAPI,
+	params: AskUserQuestionInput,
+	signal: AbortSignal | undefined,
+	ctx: ExtensionContext,
+	isContextActive?: () => boolean,
+) {
+	const options = normalizeOptions(params.options);
+	const context = params.details?.trim() || undefined;
+	const mode: AskUserQuestionMode = options.length === 0 ? "text" : params.multiSelect ? "multi-select" : "single-select";
+
+	if (params.question.trim().length === 0) {
+		return invalidResult(params.question, mode, "ask_user_question requires a non-blank question", context);
+	}
+	if (params.options !== undefined && params.options.length > 0 && !hasMinimumChoiceCount(options)) {
+		return invalidResult(
+			params.question,
+			mode,
+			"ask_user_question requires at least two non-blank options when options are supplied",
+			context,
+		);
+	}
+	if (signal?.aborted) return cancelledResult(params.question, mode, context);
+	if (!ctx.hasUI) {
+		return unavailableResult(params.question, mode, "ask_user_question requires interactive mode UI", context);
+	}
+
+	return withUILock(async () => {
+		if (signal?.aborted) return cancelledResult(params.question, mode, context);
+		if (isContextActive && !isContextActive()) {
+			return unavailableResult(params.question, mode, "No active interactive session", context);
+		}
+		pi.events.emit("herdr:blocked", { active: true, label: params.question });
+		try {
+			if (mode === "text") {
+				const answer = await askFreeText(ctx, params.question, context, signal);
+				if (answer === undefined) return cancelledResult(params.question, mode, context);
+				return buildResult(params.question, context, mode, [
+					{ type: "text", label: answer.trim(), value: answer.trim() },
+				]);
+			}
+
+			if (mode === "single-select") {
+				const answer = await askSingleChoice(ctx, params.question, context, options, signal);
+				if (!answer) return cancelledResult(params.question, mode, context);
+				return buildResult(params.question, context, mode, [answer]);
+			}
+
+			const answers = await askMultiChoice(ctx, params.question, context, options, signal);
+			if (!answers) return cancelledResult(params.question, mode, context);
+			return buildResult(params.question, context, mode, answers);
+		} finally {
+			pi.events.emit("herdr:blocked", { active: false });
+		}
+	});
+}
+
 export default function askUserQuestion(pi: ExtensionAPI) {
+	let activeContext: ExtensionContext | undefined;
+	let isRpcOwner = false;
+	pi.on("session_start", (_event, ctx) => {
+		if (ctx.mode === "tui") {
+			activeContext = ctx;
+			isRpcOwner = true;
+		}
+	});
+	pi.on("session_shutdown", () => {
+		activeContext = undefined;
+	});
+	pi.events.on(RPC_PING_CHANNEL, (payload) => {
+		if (!isRpcOwner || payload === null || typeof payload !== "object") return;
+		const { requestId } = payload as { requestId?: unknown };
+		if (typeof requestId !== "string" || requestId.length === 0) return;
+		const replyChannel = `${RPC_PING_CHANNEL}:reply:${requestId}`;
+		if (!activeContext) {
+			pi.events.emit(replyChannel, { success: false, error: "No active interactive session" });
+			return;
+		}
+		pi.events.emit(replyChannel, {
+			success: true,
+			data: { version: RPC_VERSION },
+		});
+	});
+	pi.events.on(RPC_ASK_CHANNEL, async (payload) => {
+		if (!isRpcOwner || payload === null || typeof payload !== "object") return;
+		const request = payload as AskUserQuestionRpcRequest;
+		if (typeof request.requestId !== "string" || request.requestId.length === 0) return;
+		const replyChannel = `${RPC_ASK_CHANNEL}:reply:${request.requestId}`;
+		try {
+			if (!activeContext) throw new Error("No active interactive session");
+			if (!isAskUserQuestionInput(request.params)) throw new Error("Invalid ask_user_question parameters");
+			if (request.signal !== undefined && !isAbortSignal(request.signal)) throw new Error("Invalid ask_user_question abort signal");
+			const context = activeContext;
+			const data = await executeQuestion(pi, request.params, request.signal, context, () => activeContext === context);
+			pi.events.emit(replyChannel, { success: true, data });
+		} catch (error) {
+			pi.events.emit(replyChannel, {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	});
+
 	pi.registerTool({
 		name: "ask_user_question",
 		label: "ask_user_question",
@@ -647,58 +885,7 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 		parameters: AskUserQuestionParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const options = normalizeOptions(params.options);
-			const context = params.details?.trim() || undefined;
-			const mode: AskUserQuestionMode = options.length === 0 ? "text" : params.multiSelect ? "multi-select" : "single-select";
-
-			if (params.options !== undefined && params.options.length > 0 && !hasMinimumChoiceCount(options)) {
-				return invalidResult(
-					params.question,
-					mode,
-					"ask_user_question requires at least two non-blank options when options are supplied",
-					context,
-				);
-			}
-
-			if (signal?.aborted) {
-				return cancelledResult(params.question, mode, context);
-			}
-
-			if (!ctx.hasUI) {
-				return unavailableResult(params.question, mode, "ask_user_question requires interactive mode UI", context);
-			}
-
-			return withUILock(async () => {
-				await setHerdrBlocked(pi, ctx, true);
-				try {
-					if (mode === "text") {
-						const editorTitle = context ? `${params.question}\n\n${context}` : params.question;
-						const answer = await ctx.ui.editor(editorTitle);
-						if (answer === undefined) {
-							return cancelledResult(params.question, mode, context);
-						}
-						return buildResult(params.question, context, mode, [
-							{ type: "text", label: answer.trim(), value: answer.trim() },
-						]);
-					}
-
-					if (mode === "single-select") {
-						const answer = await askSingleChoice(ctx, params.question, context, options);
-						if (!answer) {
-							return cancelledResult(params.question, mode, context);
-						}
-						return buildResult(params.question, context, mode, [answer]);
-					}
-
-					const answers = await askMultiChoice(ctx, params.question, context, options);
-					if (!answers) {
-						return cancelledResult(params.question, mode, context);
-					}
-					return buildResult(params.question, context, mode, answers);
-				} finally {
-					await setHerdrBlocked(pi, ctx, false);
-				}
-			});
+			return executeQuestion(pi, params, signal, ctx);
 		},
 
 		renderCall(args, theme) {

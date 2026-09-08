@@ -115,8 +115,8 @@ Two shapes for where that logic lives, pick by whether AGENTS.md's Rust rule rea
 - **Rust binary behind a thin TS shell-out**, when the logic already exists as a `tools/`
   checker, or is real computation (parsing, a non-trivial scan) that belongs in Rust per
   AGENTS.md — confirmed possible: `pi.exec(binary, args, options)` is a first-class
-  `ExtensionAPI` method, and `observational-memory/src/spawn/launch.ts`, `herdr-activity/
-  state.ts`, and `live-diff.ts` already shell out rather than compute inline:
+  `ExtensionAPI` method, and `observational-memory/src/spawn/launch.ts` and
+  `live-diff.ts` already shell out rather than compute inline:
 
   ```
   tools/<name>/                    # the Rust checker (section 2), exit code carries the verdict
