@@ -22,18 +22,26 @@ Score 0-10. Grade harshly: expect met exactly, or say what's missing.
   - a tool-radar candidate's rationale is generic ("this seems useful") with no
     reference to the real-friction grounding block and no explicit repo-stack
     grounding either, and the Filter node lets it through anyway
+  - the prompt-snippet audit exposes prompt text, response text, raw records,
+    transcript excerpts, session identifiers, or session paths
+  - the prompt-snippet audit treats missing use evidence as removal evidence, proposes
+    an add from fewer than two parent sessions, or proposes a merge/removal without
+    measured co-use, conflict, or overlap with an existing skill
 
 Topology properties graded on every case, per workflow-author:
 
 - no fake edges EXCEPT one real barrier: plan→mining→toolRadar→filter→digest.
   mining→toolRadar is a genuine cross-item dependency (tool-radar's grounding text is
   built from mining's actual candidate content) and is the only place two dispatch
-  waves run sequentially rather than together — mining dispatches run in one parallel
-  wave, tool-radar dispatches run in a second parallel wave, never dispatch-by-dispatch
-  sequential
-- verifier context-isolation: Filter reads the raw candidate list only
-- fan-in guard: `returned` counted against `expected`, gaps named in `missingLabels`
-- CAP present: 2 mining + 3 tool-radar dispatches, 10 digest survivors
+  waves run sequentially rather than together — the three plan-created mining jobs and
+  the fixed prompt-snippet audit run in one parallel wave, then tool-radar dispatches
+  run in a second parallel wave, never dispatch-by-dispatch sequential
+- verifier context-isolation: Filter reads the shared raw candidate list only
+- fan-in guard: the fixed `prompt-snippet-audit` label participates in `expected`,
+  `returned`, and `missingLabels` exactly like every other generate job; any
+  plan-created label collision is renamed before dispatch
+- CAP present: 3 plan-created mining + 1 fixed prompt-snippet audit + 3 tool-radar
+  dispatches, 10 digest survivors
 - mining dispatches reuse `skills/ai-author/SKILL.md`'s bounded session evidence sweep
   by reference, never duplicate its procedure inline — duplication drifts the moment
   the source procedure is tuned by ai-author's own GEPA(Genetic-Pareto prompt
@@ -41,6 +49,20 @@ Topology properties graded on every case, per workflow-author:
 - mining's friction-hunting instruction (grep transcripts for a marker repeating 2+
   times, cite the occurrences as measured evidence) is present verbatim, not softened
   into a vague "look for patterns" note
+- the fixed prompt-snippet audit inspects current files under
+  `pi/extensions/prompt-snippets/snippets/`, caps direct-use reads at 500 records from
+  the latest 30 days at the configured or default agent directory, and uses grep-first
+  bounded reads across at most 200 parent-session transcripts active in that period
+  for equivalent manually typed user requests
+- direct uses and equivalent manual requests stay distinct; absence stays unknown; an
+  add needs repeated evidence from at least two parent sessions; a merge or removal
+  needs measured co-use, conflict, or overlap with an existing skill; weak evidence
+  returns zero candidates
+- prompt-snippet audit outputs contain conclusions and aggregate evidence only, use
+  the literal aggregate source label instead of a path, and never contain prompt or
+  response text, raw records, transcript excerpts, session identifiers, or session
+  paths; audit candidates reach the private filter and digest but never tool-radar
+  web-research dispatches
 - tool-radar dispatches receive the usage-grounding block built from mining's actual
   candidates (or the explicit zero-friction variant), never a static/generic grounding
   note authored ahead of time by the plan node

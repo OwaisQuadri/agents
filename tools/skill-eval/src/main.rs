@@ -431,10 +431,9 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
             "--accept-if-winning requires one candidate and cannot be combined with --holdout or --tier\n{USAGE}"
         ));
     }
-    if (is_restart || jobs.is_some()) && (is_holdout_only || tier.is_some() || candidate.is_none())
-    {
+    if (is_restart || jobs.is_some()) && (is_holdout_only || tier.is_some()) {
         return Err(format!(
-            "--jobs and --restart require one full paired candidate run\n{USAGE}"
+            "--jobs and --restart require one full run without --holdout or --tier\n{USAGE}"
         ));
     }
     Ok(Args {
@@ -487,7 +486,7 @@ fn settings(args: Args) -> Result<Settings, String> {
     if repeats == 0 {
         return Err("REPEATS must be a positive integer".to_string());
     }
-    let jobs = if args.candidate.is_some() && !args.is_holdout_only && args.tier.is_none() {
+    let jobs = if !args.is_holdout_only && args.tier.is_none() {
         match args.jobs {
             Some(jobs) => jobs,
             None => positive_env("SKILL_EVAL_JOBS", 4)?,
@@ -1971,7 +1970,6 @@ fn run_legacy(mut settings: Settings) -> Result<(), String> {
         eval_dir: &eval_dir,
         artifact_dir,
     };
-    let mut results = BTreeMap::new();
     for tier in tiers {
         let index = full_tiers
             .iter()
@@ -1982,68 +1980,9 @@ fn run_legacy(mut settings: Settings) -> Result<(), String> {
             run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
             continue;
         }
-        let nonholdout_result = run_slice(&context, &tier, &judge_tier, &nonholdout, "nonholdout")?;
-        let holdout_result = run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
-        results.insert(
-            tier,
-            TierResult {
-                nonholdout: nonholdout_result,
-                holdout: holdout_result,
-            },
-        );
+        run_slice(&context, &tier, &judge_tier, &nonholdout, "nonholdout")?;
+        run_slice(&context, &tier, &judge_tier, &holdout, "holdout")?;
     }
-    if settings.args.is_holdout_only || settings.args.tier.is_some() {
-        return Ok(());
-    }
-    let id = candidate_id(&candidate);
-    let tested_against = prompt_version(artifact_dir);
-    let ts = timestamp();
-    let entries = results
-        .into_iter()
-        .map(|(tier, result)| {
-            let index = full_tiers
-                .iter()
-                .position(|item| item == &tier)
-                .expect("validated tier");
-            let judge_tier = full_tiers.get(index + 1).unwrap_or(&tier).clone();
-            let models = result
-                .nonholdout
-                .models
-                .union(&result.holdout.models)
-                .cloned()
-                .collect();
-            FrontierEntry {
-                candidate_id: id.clone(),
-                tested_against: tested_against.clone(),
-                tier,
-                judge_tier,
-                model_ran: models,
-                mean_nonholdout: mean(&result.nonholdout.scores),
-                scores_nonholdout: result.nonholdout.scores,
-                scores_holdout: result.holdout.scores,
-                repeat_scores_nonholdout: result.nonholdout.repeats,
-                repeat_scores_holdout: result.holdout.repeats,
-                case_timings_nonholdout: result.nonholdout.case_timings,
-                case_timings_holdout: result.holdout.case_timings,
-                is_accepted: false,
-                ts: ts.clone(),
-                comparison_id: String::new(),
-                incumbent_id: String::new(),
-                incumbent_model_ran: Vec::new(),
-                incumbent_scores_nonholdout: Vec::new(),
-                incumbent_scores_holdout: Vec::new(),
-                incumbent_repeat_scores_nonholdout: BTreeMap::new(),
-                incumbent_repeat_scores_holdout: BTreeMap::new(),
-                incumbent_case_timings_nonholdout: BTreeMap::new(),
-                incumbent_case_timings_holdout: BTreeMap::new(),
-                selected_minimum_tier: None,
-                decision: String::new(),
-                legacy: Map::new(),
-            }
-        })
-        .collect();
-    update_frontier(&eval_dir, &candidate, entries)?;
-    eprintln!("candidate_id: {id}");
     Ok(())
 }
 
@@ -2428,11 +2367,11 @@ struct RunLock {
 }
 
 impl RunLock {
-    fn acquire(eval_dir: &Path) -> Result<Self, String> {
+    fn acquire(eval_dir: &Path, run_key: &str) -> Result<Self, String> {
         let state_root = eval_dir.join(".skill-eval-state");
         fs::create_dir_all(&state_root)
             .map_err(|error| format!("cannot create {}: {error}", state_root.display()))?;
-        let path = state_root.join("run.lock");
+        let path = state_root.join(format!("{run_key}.lock"));
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -2455,7 +2394,7 @@ impl Drop for RunLock {
 fn run_lock_error(eval_dir: &Path, path: &Path, error: TryLockError) -> String {
     match error {
         TryLockError::WouldBlock => {
-            format!("paired evaluation already runs in {}", eval_dir.display())
+            format!("this evaluation already runs in {}", eval_dir.display())
         }
         TryLockError::Error(error) => format!(
             "cannot acquire advisory lock {} in {}: {error}",
@@ -2771,7 +2710,12 @@ fn prepare_prompts(
     ensure_immutable_file(&state_dir.join("prompts").join("judge.md"), b"")
 }
 
-fn make_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<WorkUnit> {
+fn make_work_units_for_arms(
+    arms: &[&str],
+    tiers: &[String],
+    cases: &[Case],
+    repeats: usize,
+) -> Vec<WorkUnit> {
     let nonholdout: Vec<&Case> = cases.iter().filter(|case| !case.is_holdout).collect();
     let holdout: Vec<&Case> = cases.iter().filter(|case| case.is_holdout).collect();
     let mut units = Vec::new();
@@ -2780,7 +2724,7 @@ fn make_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<Work
         for (slice, cases) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
             for case in cases {
                 for repeat in 0..repeats {
-                    for arm in ["incumbent", "candidate"] {
+                    for arm in arms {
                         units.push(WorkUnit {
                             arm: arm.to_string(),
                             tier: tier.clone(),
@@ -2796,6 +2740,14 @@ fn make_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<Work
         }
     }
     units
+}
+
+fn make_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<WorkUnit> {
+    make_work_units_for_arms(&["incumbent", "candidate"], tiers, cases, repeats)
+}
+
+fn make_normal_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<WorkUnit> {
+    make_work_units_for_arms(&["candidate"], tiers, cases, repeats)
 }
 
 fn read_completed_units(
@@ -3087,17 +3039,19 @@ fn run_work_units(
     state_dir: &Path,
     units: &[WorkUnit],
     is_resumed: bool,
-    recorder: &mut RunRecorder,
+    mut recorder: Option<&mut RunRecorder>,
     expected: &[String],
 ) -> Result<BTreeMap<String, UnitResult>, String> {
     let mut completed = read_completed_units(state_dir, units)?;
-    checkpoint_case(
-        recorder,
-        expected,
-        &completed,
-        units,
-        context.settings.repeats,
-    )?;
+    if let Some(recorder) = &mut recorder {
+        checkpoint_case(
+            recorder,
+            expected,
+            &completed,
+            units,
+            context.settings.repeats,
+        )?;
+    }
     let missing: Vec<WorkUnit> = units
         .iter()
         .filter(|unit| !completed.contains_key(&unit_name(unit).expect("serializable unit")))
@@ -3105,7 +3059,7 @@ fn run_work_units(
         .collect();
     let worker_count = context.settings.jobs.min(missing.len());
     eprintln!(
-        "skill-eval: {} paired run: {}/{} units complete, {} workers",
+        "skill-eval: {} run: {}/{} units complete, {} workers",
         if is_resumed { "resumed" } else { "new" },
         completed.len(),
         units.len(),
@@ -3157,13 +3111,17 @@ fn run_work_units(
                     Ok(()) => {
                         let name = unit_name(&unit).expect("serializable unit");
                         completed.insert(name, result.clone());
-                        if let Err(error) = checkpoint_case(
-                            recorder,
-                            expected,
-                            &completed,
-                            units,
-                            context.settings.repeats,
-                        ) {
+                        let checkpoint_result =
+                            recorder.as_deref_mut().map_or(Ok(()), |recorder| {
+                                checkpoint_case(
+                                    recorder,
+                                    expected,
+                                    &completed,
+                                    units,
+                                    context.settings.repeats,
+                                )
+                            });
+                        if let Err(error) = checkpoint_result {
                             queue.lock().expect("work queue lock poisoned").is_fatal = true;
                             worker_error.get_or_insert(error);
                         } else {
@@ -3185,7 +3143,7 @@ fn run_work_units(
         return Err(error);
     }
     if completed.len() != units.len() {
-        return Err("paired evaluation stopped before every unit completed".to_string());
+        return Err("evaluation stopped before every unit completed".to_string());
     }
     Ok(completed)
 }
@@ -3425,14 +3383,124 @@ fn paired_entries(
         })
         .collect()
 }
+fn emit_normal_summary(tier: &str, slice_name: &str, result: &SliceResult) {
+    let graded: Vec<f64> = result.scores.iter().flatten().copied().collect();
+    let ungraded = result
+        .repeats
+        .values()
+        .flatten()
+        .filter(|score| score.is_none())
+        .count();
+    if graded.is_empty() {
+        eprintln!(
+            "tier {tier}: every case ungraded, {ungraded} ungraded repeats ({slice_name} slice)"
+        );
+        return;
+    }
+    let mean = graded.iter().sum::<f64>() / graded.len() as f64;
+    let verdict = if mean >= 5.0 { "PASS" } else { "FAIL" };
+    eprintln!(
+        "tier {tier}: mean {mean:.2} over {} graded cases, {ungraded} ungraded repeats, {verdict} (>= 5 threshold) ({slice_name} slice)",
+        graded.len()
+    );
+}
+
+fn emit_normal_results(
+    results: &BTreeMap<String, TierResult>,
+    tiers: &[String],
+    nonholdout: &[&Case],
+    holdout: &[&Case],
+    repeats: usize,
+    completed: &BTreeMap<String, UnitResult>,
+) {
+    for (index, tier) in tiers.iter().enumerate() {
+        let judge_tier = tiers.get(index + 1).unwrap_or(tier);
+        let result = &results[tier];
+        for (slice, cases, slice_result) in [
+            ("nonholdout", nonholdout, &result.nonholdout),
+            ("holdout", holdout, &result.holdout),
+        ] {
+            for (case, median) in cases.iter().zip(&slice_result.scores) {
+                let output_check_failures = (0..repeats)
+                    .filter(|repeat| {
+                        completed_unit(
+                            completed,
+                            &make_unit("candidate", tier, judge_tier, slice, &case.id, *repeat),
+                        )
+                        .is_ok_and(|unit| unit.is_output_check_failed)
+                    })
+                    .count();
+                println!(
+                    "{}",
+                    json!({
+                        "id": case.id,
+                        "tier": tier,
+                        "repeat_scores": slice_result.repeats[&case.id],
+                        "median": median,
+                        "output_check_failures": output_check_failures,
+                    })
+                );
+            }
+            emit_normal_summary(tier, slice, slice_result);
+        }
+    }
+}
+
+fn normal_entries(
+    candidate: &PairedArm,
+    tiers: &[String],
+    tested_against: &str,
+) -> Vec<FrontierEntry> {
+    let id = candidate.id.clone();
+    let ts = timestamp();
+    tiers
+        .iter()
+        .enumerate()
+        .map(|(index, tier)| {
+            let result = &candidate.results[tier];
+            FrontierEntry {
+                candidate_id: id.clone(),
+                tested_against: tested_against.to_string(),
+                tier: tier.clone(),
+                judge_tier: tiers.get(index + 1).unwrap_or(tier).clone(),
+                model_ran: result
+                    .nonholdout
+                    .models
+                    .union(&result.holdout.models)
+                    .cloned()
+                    .collect(),
+                scores_nonholdout: result.nonholdout.scores.clone(),
+                scores_holdout: result.holdout.scores.clone(),
+                repeat_scores_nonholdout: result.nonholdout.repeats.clone(),
+                repeat_scores_holdout: result.holdout.repeats.clone(),
+                case_timings_nonholdout: result.nonholdout.case_timings.clone(),
+                case_timings_holdout: result.holdout.case_timings.clone(),
+                mean_nonholdout: mean(&result.nonholdout.scores),
+                is_accepted: false,
+                ts: ts.clone(),
+                comparison_id: String::new(),
+                incumbent_id: String::new(),
+                incumbent_model_ran: Vec::new(),
+                incumbent_scores_nonholdout: Vec::new(),
+                incumbent_scores_holdout: Vec::new(),
+                incumbent_repeat_scores_nonholdout: BTreeMap::new(),
+                incumbent_repeat_scores_holdout: BTreeMap::new(),
+                incumbent_case_timings_nonholdout: BTreeMap::new(),
+                incumbent_case_timings_holdout: BTreeMap::new(),
+                selected_minimum_tier: None,
+                decision: String::new(),
+                legacy: Map::new(),
+            }
+        })
+        .collect()
+}
+
 fn run(mut settings: Settings) -> Result<i32, String> {
-    if settings.args.candidate.is_none()
-        || settings.args.is_holdout_only
-        || settings.args.tier.is_some()
-    {
+    if settings.args.is_holdout_only || settings.args.tier.is_some() {
         run_legacy(settings)?;
         return Ok(0);
     }
+    let is_paired = settings.args.candidate.is_some();
     let eval_dir = fs::canonicalize(&settings.args.eval_dir).map_err(|error| {
         format!(
             "cannot resolve {}: {error}",
@@ -3497,68 +3565,73 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     let run_key = paired_run_key(
         &settings,
         &candidate,
-        &incumbent,
+        if is_paired { &incumbent } else { "normal" },
         &submitted,
         &cases,
         &rubric,
         artifact_dir,
     )?;
-    let _run_lock = RunLock::acquire(&eval_dir)?;
-    if let Some(comparison_id) = settings.args.resume.as_deref() {
-        settings.args.legacy_arm = legacy_arm_from_record(&settings, comparison_id)?;
-    }
-    let (artifact_id, components) = component_fingerprints(
-        &settings,
-        &candidate,
-        &incumbent,
-        &rubric,
-        &cases,
-        artifact_dir,
-        if settings.args.is_accept_if_winning {
-            "accept"
-        } else {
-            "dry"
-        },
-    )?;
-    let comparison_id = settings
-        .args
-        .resume
-        .clone()
-        .unwrap_or_else(|| format!("{}-{}", candidate_id(&candidate), now_nanos()));
+    let _run_lock = RunLock::acquire(&eval_dir, &run_key)?;
     let mut expected = Vec::new();
-    let arms = if settings.args.resume_from_log.is_some()
-        && settings.args.legacy_arm.as_deref() == Some("candidate")
-    {
-        ["candidate", "incumbent"]
-    } else {
-        ["incumbent", "candidate"]
-    };
-    for arm in arms {
-        for tier in &tiers {
-            for (slice, slice_cases) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
-                for case in slice_cases {
-                    expected.push(format!("{arm}:{tier}:{slice}:{}", case.id));
+    let mut recorder = if is_paired {
+        if let Some(comparison_id) = settings.args.resume.as_deref() {
+            settings.args.legacy_arm = legacy_arm_from_record(&settings, comparison_id)?;
+        }
+        let (artifact_id, components) = component_fingerprints(
+            &settings,
+            &candidate,
+            &incumbent,
+            &rubric,
+            &cases,
+            artifact_dir,
+            if settings.args.is_accept_if_winning {
+                "accept"
+            } else {
+                "dry"
+            },
+        )?;
+        let comparison_id = settings
+            .args
+            .resume
+            .clone()
+            .unwrap_or_else(|| format!("{}-{}", candidate_id(&candidate), now_nanos()));
+        let arms = if settings.args.resume_from_log.is_some()
+            && settings.args.legacy_arm.as_deref() == Some("candidate")
+        {
+            ["candidate", "incumbent"]
+        } else {
+            ["incumbent", "candidate"]
+        };
+        for arm in arms {
+            for tier in &tiers {
+                for (slice, slice_cases) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
+                    for case in slice_cases {
+                        expected.push(format!("{arm}:{tier}:{slice}:{}", case.id));
+                    }
                 }
             }
         }
-    }
-    let mut recorder =
-        RunRecorder::open(&settings, artifact_id, components, comparison_id, &expected)?;
-    println!(
-        "{}",
-        json!({"type":"run_start","comparison_id":recorder.comparison_id,"state_path":recorder.path})
-    );
-    if let Some(path) = settings.args.resume_from_log.as_deref() {
-        recorder.import_legacy_for_arm(
-            path,
-            &expected,
-            settings
-                .args
-                .legacy_arm
-                .as_deref()
-                .expect("argument validation requires a legacy arm"),
-        )?;
-    }
+        let mut recorder =
+            RunRecorder::open(&settings, artifact_id, components, comparison_id, &expected)?;
+        println!(
+            "{}",
+            json!({"type":"run_start","comparison_id":recorder.comparison_id,"state_path":recorder.path})
+        );
+        if let Some(path) = settings.args.resume_from_log.as_deref() {
+            recorder.import_legacy_for_arm(
+                path,
+                &expected,
+                settings
+                    .args
+                    .legacy_arm
+                    .as_deref()
+                    .expect("argument validation requires a legacy arm"),
+            )?;
+        }
+        Some(recorder)
+    } else {
+        None
+    };
     let (state_dir, is_resumed) = initialize_state(&eval_dir, &run_key, settings.args.is_restart)?;
     prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases)?;
     let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
@@ -3576,16 +3649,55 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         judge_prompt: &judge_prompt,
         output_check_lock: &output_check_lock,
     };
-    let units = make_work_units(&tiers, &cases, settings.repeats);
-    restore_global_units(&recorder, &state_dir, &units)?;
+    let units = if is_paired {
+        make_work_units(&tiers, &cases, settings.repeats)
+    } else {
+        make_normal_work_units(&tiers, &cases, settings.repeats)
+    };
+    if let Some(recorder) = &recorder {
+        restore_global_units(recorder, &state_dir, &units)?;
+    }
     let completed = run_work_units(
         &worker_context,
         &state_dir,
         &units,
         is_resumed,
-        &mut recorder,
+        recorder.as_mut(),
         &expected,
     )?;
+    if !is_paired {
+        let candidate = paired_arm_from_units(
+            "candidate",
+            &candidate,
+            &tiers,
+            &nonholdout,
+            &holdout,
+            settings.repeats,
+            &completed,
+        )?;
+        emit_normal_results(
+            &candidate.results,
+            &tiers,
+            &nonholdout,
+            &holdout,
+            settings.repeats,
+            &completed,
+        );
+        update_frontier(
+            &eval_dir,
+            &candidate.text,
+            normal_entries(&candidate, &tiers, &prompt_version(artifact_dir)),
+        )?;
+        eprintln!("candidate_id: {}", candidate.id);
+        if let Err(error) = fs::remove_dir_all(&state_dir) {
+            eprintln!(
+                "skill-eval: warning: cannot remove completed state {}: {error}",
+                state_dir.display()
+            );
+        }
+        return Ok(0);
+    }
+    let recorder = recorder.expect("paired runs create a global recorder");
     let incumbent = paired_arm_from_units(
         "incumbent",
         &incumbent,
@@ -4059,6 +4171,7 @@ fi
         let (_temp, mut settings, eval_dir) = fixture("late-judge-exhaustion", fake);
         fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{},"T2":{}}}"#).unwrap();
         settings.repeats = 3;
+        settings.jobs = 1;
         run(settings).unwrap();
         let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
         let tier_one = entries.iter().find(|entry| entry.tier == "T1").unwrap();
@@ -4805,6 +4918,121 @@ fi
         eval_dir.join(".skill-eval-state").join(run_key)
     }
 
+    fn normal_state_dir(settings: &Settings, eval_dir: &Path) -> PathBuf {
+        let artifact_dir = eval_dir.parent().unwrap();
+        let submitted = fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+        let run_key = paired_run_key(
+            settings,
+            &candidate,
+            "normal",
+            &submitted,
+            &cases,
+            &rubric,
+            artifact_dir,
+        )
+        .unwrap();
+        eval_dir.join(".skill-eval-state").join(run_key)
+    }
+
+    #[test]
+    fn normal_run_uses_default_bounded_workers() {
+        let args = Args {
+            eval_dir: PathBuf::from("evals"),
+            is_holdout_only: false,
+            tier: None,
+            candidate: None,
+            is_accept_if_winning: false,
+            jobs: None,
+            is_restart: false,
+            resume: None,
+            resume_from_log: None,
+            legacy_arm: None,
+        };
+        assert_eq!(settings(args).unwrap().jobs, 4);
+        let (temp, settings, _eval_dir) = fixture("normal-bounded", CONCURRENT_FAKE);
+        assert_eq!(settings.jobs, 4);
+        run(settings).unwrap();
+        assert_eq!(
+            fs::read_to_string(temp.path.join("max"))
+                .unwrap()
+                .trim()
+                .parse::<usize>()
+                .unwrap(),
+            4
+        );
+    }
+
+    #[test]
+    fn normal_run_resumes_completed_units_and_restart_discards_them() {
+        let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
+        let (temp, mut settings, eval_dir) = fixture("normal-resume", exhausted);
+        settings.repeats = 1;
+        let state_dir = normal_state_dir(&settings, &eval_dir);
+        let artifact_dir = eval_dir.parent().unwrap();
+        let submitted = fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let units = make_normal_work_units(
+            &["T1".to_string(), "T2".to_string(), "T3".to_string()],
+            &cases,
+            1,
+        );
+        let completed = UnitResult {
+            unit: units[0].clone(),
+            score: None,
+            actual_model: None,
+            is_output_check_failed: false,
+            timing: RepeatTiming::default(),
+        };
+        let (created, _) = initialize_state(
+            &eval_dir,
+            state_dir.file_name().unwrap().to_str().unwrap(),
+            false,
+        )
+        .unwrap();
+        prepare_prompts(&created, &candidate, &candidate, artifact_dir, &cases).unwrap();
+        atomic_write(
+            &unit_path(&created, &completed.unit).unwrap(),
+            &serde_json::to_vec(&completed).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(run(settings.clone()).unwrap(), 0);
+        assert!(!state_dir.exists());
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            5
+        );
+
+        let (created, _) = initialize_state(
+            &eval_dir,
+            state_dir.file_name().unwrap().to_str().unwrap(),
+            false,
+        )
+        .unwrap();
+        prepare_prompts(&created, &candidate, &candidate, artifact_dir, &cases).unwrap();
+        atomic_write(
+            &unit_path(&created, &completed.unit).unwrap(),
+            &serde_json::to_vec(&completed).unwrap(),
+        )
+        .unwrap();
+        settings.args.is_restart = true;
+        assert_eq!(run(settings).unwrap(), 0);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            11
+        );
+    }
+
     #[test]
     fn dry_winner_stays_unaccepted_and_apply_inserts_floor() {
         let (_temp, settings, eval_dir, _candidate) = paired_fixture("paired-dry", PAIRED_FAKE);
@@ -4920,7 +5148,7 @@ fi
     }
 
     #[test]
-    fn paired_arguments_validate_jobs_and_restart() {
+    fn full_run_arguments_validate_jobs_and_restart() {
         let base = [
             OsString::from("--eval-dir"),
             OsString::from("evals"),
@@ -4947,7 +5175,7 @@ fi
             OsString::from("evals"),
             OsString::from("--restart"),
         ];
-        assert!(parse_args(&restart).unwrap_err().contains("full paired"));
+        assert!(parse_args(&restart).is_ok());
         let valid = [
             OsString::from("--eval-dir"),
             OsString::from("evals"),
@@ -4959,6 +5187,22 @@ fi
         let args = parse_args(&valid).unwrap();
         assert_eq!(args.jobs, Some(2));
         assert!(args.is_restart);
+        let normal = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--jobs"),
+            OsString::from("2"),
+        ];
+        assert_eq!(parse_args(&normal).unwrap().jobs, Some(2));
+        assert!(
+            parse_args(&[
+                OsString::from("--eval-dir"),
+                OsString::from("evals"),
+                OsString::from("--holdout"),
+                OsString::from("--restart"),
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -5281,14 +5525,12 @@ fi
         fs::create_dir(&eval_dir).unwrap();
         let state_root = eval_dir.join(".skill-eval-state");
         let key = "run";
-        let first = RunLock::acquire(&eval_dir).unwrap();
-        assert!(RunLock::acquire(&eval_dir).is_err());
-        assert_eq!(
-            fs::read_dir(&state_root).unwrap().count(),
-            1,
-            "one stable lock file serves every run key"
-        );
+        let first = RunLock::acquire(&eval_dir, key).unwrap();
+        assert!(RunLock::acquire(&eval_dir, key).is_err());
+        let other = RunLock::acquire(&eval_dir, "other").unwrap();
         assert!(state_root.join("run.lock").exists());
+        assert!(state_root.join("other.lock").exists());
+        drop(other);
         drop(first);
         let (state_dir, _) = initialize_state(&temp.path, key, false).unwrap();
         fs::write(state_dir.join("manifest.json"), "not json").unwrap();
@@ -5304,10 +5546,7 @@ fi
         let eval_dir = Path::new("artifact/evals");
         let path = Path::new("artifact/evals/.skill-eval-state/run.lock");
         let contention = run_lock_error(eval_dir, path, TryLockError::WouldBlock);
-        assert_eq!(
-            contention,
-            "paired evaluation already runs in artifact/evals"
-        );
+        assert_eq!(contention, "this evaluation already runs in artifact/evals");
         assert!(
             run_lock_error(
                 eval_dir,
@@ -5433,7 +5672,10 @@ fi
         let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
         let (temp, mut settings, eval_dir, candidate) = paired_fixture("restart-lock", exhausted);
         let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
-        let run_lock = eval_dir.join(".skill-eval-state/run.lock");
+        let run_key = state_dir.file_name().unwrap().to_str().unwrap();
+        let run_lock = eval_dir
+            .join(".skill-eval-state")
+            .join(format!("{run_key}.lock"));
 
         assert_eq!(run(settings.clone()).unwrap(), 2);
         assert!(state_dir.exists());
@@ -6075,13 +6317,15 @@ fi
 
     #[test]
     fn rejected_coordinator_creates_no_global_record() {
-        let (_temp, settings, eval_dir, _candidate) = paired_fixture("coordinator-lock", FAKE);
-        let _lock = RunLock::acquire(&eval_dir).unwrap();
+        let (_temp, settings, eval_dir, candidate_path) = paired_fixture("coordinator-lock", FAKE);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        let run_key = state_dir.file_name().unwrap().to_str().unwrap();
+        let _lock = RunLock::acquire(&eval_dir, run_key).unwrap();
 
         assert!(
             run(settings.clone())
                 .unwrap_err()
-                .contains("paired evaluation already runs")
+                .contains("this evaluation already runs")
         );
         let runs = settings.state_dir.join("runs");
         assert!(!runs.exists() || fs::read_dir(runs).unwrap().next().is_none());
