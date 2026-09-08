@@ -73,4 +73,4 @@ one sentence, it is cutting another to a fragment and letting one run long.
 
 A new form goes in only after it is observed in a real draft. Record the draft it came from
 in the same commit. An imagined tell is not evidence, per the weakest-claim rule in
-CLAUDE.md.
+the repository guidance.

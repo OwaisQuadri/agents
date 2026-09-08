@@ -1,7 +1,6 @@
 # agents
 
-Skills, subagents, workflows, and config for my coding agents (Claude Code, Codex),
-versioned in one repo with a symlink installer.
+Skills, subagents, workflows, and configuration for Pi, versioned in one repository with a symlink installer.
 
 ## install
 
@@ -15,25 +14,6 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 
 `install.sh` never escalates. It runs from the `post-merge` hook, where a password prompt has no terminal to appear on. It reports policy drift and writes nothing under `/Library`.
 
-### policy file
-
-One separate step pins `env`, `statusLine`, and `hooks` in Claude Code's policy file, which outranks every writer of `~/.claude/settings.json`. Run it by hand after `install.sh`:
-
-```sh
-./install-policy.sh --dry-run   # print the exact file, escalates for nothing
-./install-policy.sh             # prompts for your password before the write
-```
-
-Run it **as yourself, without `sudo`**. It escalates on its own, and prompts once, after it prints the diff and before it writes. `sudo` resets `HOME`. Running it with `sudo` would render every path against `/var/root`, into a root-owned file that needs `sudo` to correct. The script refuses to run as root.
-
-Neither `--dry-run` nor an already-current policy file escalates at all, so neither prompts.
-
-The policy file is the highest-precedence config on the machine. To remove it:
-
-```sh
-sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
-```
-
 ## layout
 
 | path | holds |
@@ -41,14 +21,12 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
-| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; managed settings, including the Plannotator plan-writing instructions |
-| `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, docstring style (the standard generator per language), the executed reset spec, fleet research |
-| `rules/` | Claude Code rules that load only for matching file paths |
+| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; and Pi configuration |
+| `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, and docstring style (the standard generator per language) |
 | `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass; `transcript-directed-video-processor`, which segments a YouTube or local video's transcript into candidate moments and runs a configured vision model over selected frames |
-| `hooks/` | both git hooks and Claude Code hooks. `post-checkout` starts the sandbox build after a branch checkout without copying files between worktrees, and `test.sh` is its regression suite; `rag-recall` is the UserPromptSubmit hook that searches the personal RAG store on every prompt, registered for both Claude Code and Codex |
+| `hooks/` | git hooks. `post-checkout` starts the sandbox build after a branch checkout without copying files between worktrees, and `test.sh` is its regression suite |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
 | `install.sh` | the top-level installer; it builds the local Rust tools, runs `tool-sync`, and runs `mcp-sync` when its live inputs exist |
-| `CLAUDE.md` | global guidance loaded every session; the single instructions source for both tools. `install.sh` links `~/.codex/AGENTS.md` to it, so Codex reads the same file |
 
 ### skills
 
@@ -65,7 +43,7 @@ sudo rm '/Library/Application Support/ClaudeCode/managed-settings.json'
 | `bro` | re-explains the last reply in plain words when it lost you; jargon goes, facts stay verbatim, no length cap |
 | `byline` | de-slops prose that ships under your name: commits, PR bodies, tickets, READMEs; facts stay verbatim |
 | `mouthpiece` | voice rules for end-user-facing replies, scored by `ste-check --register mouthpiece` |
-| `rust-style` | applies the shared Rust baseline in Pi and Codex while Claude Code uses its matching path rule |
+| `rust-style` | applies the shared Rust baseline to Pi Rust work |
 | `task-graph` | work items + deps → statused DAG or ABCD-NNNN tickets, rendered in mermaid |
 | `vocabulary` | precise design and UI terms: exact lookup, near-synonym boundaries, reverse lookup from a vague ramble |
 | `volley` | short-turn mode: every turn ends inside 30 seconds; Volley dispatches longer work and reports it on the next turn |
@@ -116,7 +94,10 @@ cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 REPO_TARGET="$PWD" ./install.sh
 ```
 
-The `config-write-guard` extension blocks Pi `edit` and `write` calls that target managed destinations. It also blocks shell commands that name a managed destination, because a shell command cannot prove that it only reads the path. The guarded paths are `~/.agents/skills`, the managed `~/.claude` and `~/.codex` files, Pi's managed agents, extensions, and settings, `~/.config/herdr/config.toml`, and `~/.config/simslim/main.json`.
+The `config-write-guard` extension blocks Pi `edit` and `write` calls to managed destinations.
+It also blocks shell commands that name a managed destination. Shell commands cannot prove read-only access.
+The guarded paths include `~/.agents/skills`, Pi agents, Pi extensions, and Pi settings.
+They also include `~/.config/herdr/config.toml` and `~/.config/simslim/main.json`.
 
 The source extensions provide `ask_user_question`, the `owais` theme, a custom header, and prompt snippets. Press `Alt+S` or run `/snippets` to choose snippets for the next message.
 
@@ -258,21 +239,8 @@ Run `pr-review-filter set platform=graphite` inside a repository to write its ov
 ## how it works
 
 - `~/.agents/skills` is the canonical root: one symlink per skill into this repo.
-- Each tool root (`~/.claude/skills`, `~/.codex/skills`) is a single directory symlink
-  into it, so a new tool costs one line. `tools/mcp-sync` renders `config/mcp-servers.toml`
-  into `~/.claude.json` and `~/.codex/config.toml` on every install and pull.
-  `mcp-sync adopt` folds the servers that `claude mcp add` or `codex mcp add` created
-  back into the manifest.
-- `install.sh` selects Z shell (`zsh`) for Claude Code and Pi. Codex uses the login
-  shell, and the shared global guidance requires Z shell syntax in every client.
-- Claude Code and the ChatGPT app both write `~/.claude/settings.json`, so nothing in that
-  file is authoritative. `install.sh` prunes the marketplace entries and plugin keys the
-  ChatGPT import leaves behind, and `config/managed-settings.json` pins the settings that
-  must not drift. Preferences stay out of the policy file: a pinned key can no longer be
-  changed from the UI, so `model` and `effortLevel` remain the user file's to own.
-- Claude Code skips the status line and every hook in a directory whose trust dialog was
-  never accepted, and reports nothing when it does. `install.sh` trusts this repo's own
-  worktrees under `$HOME`, and never a checkout under `/tmp`.
+- Pi loads managed skills from the canonical `~/.agents/skills` root.
+- `install.sh` uses Z shell (`zsh`) for Pi commands.
 - Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
   cases from real use; blind judge votes land the same way.
 - The `post-checkout` hook starts the sandbox build after a branch checkout. It does not

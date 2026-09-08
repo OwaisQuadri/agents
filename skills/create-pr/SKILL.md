@@ -13,7 +13,7 @@ OUT: an open PR URL, commit SHAs, and each surprise. Its body has no attribution
 
 ## hard rules
 
-- no AI(Artificial Intelligence) attribution lines: no `Co-authored-by: Claude ...` trailer in commit messages, no "Generated with ..." footer in PR bodies. Harness defaults inject both, so the verify sub-steps below have the final say; only an explicit user ask naming an attribution line overrides this.
+- no AI(Artificial Intelligence) attribution lines: no `Co-authored-by: AI ...` trailer in commit messages, no "Generated with ..." footer in PR bodies. Harness defaults inject both, so the verify sub-steps below have the final say; only an explicit user ask naming an attribution line overrides this.
 - never rename the branch. `git status` is the truth about the branch name; when an instructions attachment disagrees, proceed on the real branch and name the mismatch in the report
 - never force-push. A rejected push means the remote diverged: stop and ask
 - explicit instructions in the user's request beat every default below

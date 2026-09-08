@@ -102,5 +102,5 @@ search result never overrides a bundled definition.
 ## evals
 
 `evals/run.sh` grades every non-holdout case in `evals/cases.jsonl` against this file
-plus `symptom-map.md` and `terms-index.md`, using `evals/rubric.md` via `claude -p`.
+plus `symptom-map.md` and `terms-index.md`, using `evals/rubric.md` with a Pi-backed judge.
 `./run.sh --holdout` runs the held-out slice.

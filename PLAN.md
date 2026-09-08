@@ -275,10 +275,9 @@ today.
    (not `<name>.workflow.js` — that file is machine-executed by `SubagentWorkflow`,
    never agent-"read" the way a skill/agent definition is). `gepa-due` itself has none
    of these (no `evals/`), so it's naturally excluded from this whole effort.
-3. ~~Transcript retention risk~~ — checked: `cleanupPeriodDays` retention is documented
-   only for Claude Code sessions, not Pi. Residual risk (Pi could still prune
-   internally, unconfirmed either way) is accepted, narrowed to the window between
-   evidence accumulating and the next threshold-triggered Reflect pass.
+3. ~~Transcript retention risk~~. `cleanupPeriodDays` does not apply to Pi sessions.
+   Pi could still prune internally. That risk applies only between evidence collection
+   and the next threshold-triggered Reflect pass.
 4. ~~gepa-due's dedup replacement~~ — gitignored local state file +
    live `gh pr view` check in `trigger.sh`, see above.
 
