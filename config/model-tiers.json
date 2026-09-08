@@ -46,6 +46,12 @@
         { "model": "anthropic/claude-fable-5", "thinking": "medium" }
       ],
       "climbOnExhaustion": "T4"
+    },
+    "T6": {
+      "pi": { "model": "anthropic/claude-fable-5-1", "thinking": "high" },
+      "fallbacks": [
+        { "model": "openai-codex/gpt-6-astra", "thinking": "high" }
+      ]
     }
   },
   "orchestrator": "T3",

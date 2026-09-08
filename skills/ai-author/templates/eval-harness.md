@@ -50,9 +50,14 @@ exec "$repo/tools/skill-eval/run.sh" --eval-dir "$here" "$@"
 
 Convention: `./run.sh [candidate-file]` delegates to `tools/skill-eval/run.sh`. It grades
 BOTH slices (non-holdout, then holdout) against the current artifact or candidate with
-rubric.md. The runner emits one JSON line per (case, tier) to stdout. Each row includes the
-score, total case time, and repeat records with generation and judge times, requested tiers,
-final models, and fallback attempts. It writes a mean-per-tier, per-slice summary to stderr.
+rubric.md. A full paired run splits work into `(arm, tier, slice, case, repeat)` units.
+The runner emits stable JSON lines per paired case to stdout with an additive `arm` field
+(`{"arm":"candidate","id":"c1","tier":"T3","repeat_scores":[7,8,7],"median":7}`). Each
+case includes aggregate dispatch time and per-repeat generation and judge timing, requested tiers,
+final models, and fallback attempts. It writes durable-unit progress and per-arm tier summaries to
+stderr. It serializes `output-check.sh`.
+The one final coordinator owns the selection, frontier write, and conditional acceptance after
+all units complete.
 
 Grading both slices in one pass supplies the conditional acceptance rule below. `--holdout`
 is a lighter, frontier-write-free mode for a quick holdout recheck. Use
@@ -103,19 +108,19 @@ executable, or the runner stops with an error. The runner gives `preflight.sh` t
 candidate as its first argument. It exports the absolute `CASES_FILE` path. These checks add
 evidence and never replace tier execution.
 
-A full candidate invocation evaluates the live incumbent and candidate as one paired,
-in-memory comparison. It removes only `metadata.minimum-tier` from model prompts, candidate
-identity, and the frontier snapshot; preflight receives the submitted candidate unchanged.
-
-The runner prints its comparison identifier before the first case. Each completed case appends
-an event under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. Resume with the
-same candidate and `--resume <comparison-id>`. The runner names stale input components before
-it dispatches. It skips completed cases and reruns an interrupted case. A checkpoint never
-authorizes acceptance. The runner keeps the latest 100 completed runs per artifact, active
-runs, and current resumable runs. It removes stale incomplete runs. A one-time
-`--resume-from-log <path>` import accepts only an exact legacy case prefix and records unknown
-time and model values as null.
-
+A full candidate invocation evaluates the live incumbent and candidate as one paired comparison.
+It prepares immutable arm-qualified prompts, runs bounded units, and saves completed units under
+`evals/.skill-eval-state/<run-key>/`. The same command resumes an exact incomplete run,
+including its completed timing records. A completed
+`null` score remains complete on automatic resume. Use `--restart` to retry unavailable providers
+after they recover. `--restart` reruns the current exact key. Use `--jobs N` or `SKILL_EVAL_JOBS`
+to set one through 16 workers. The runner emits incumbent records before candidate records. Each arm
+orders records by configured tier, non-holdout cases, then holdout cases. The runner uses
+`evals/.skill-eval-state/run.lock` as one stable advisory lock per artifact. The lock permits one
+paired coordinator while its workers remain concurrent. Only the final coordinator aggregates complete
+units. After the final coordinator writes the frontier and live definition, a state cleanup failure is
+a warning. The completed run keeps its success exit. It removes only `metadata.minimum-tier` from
+model prompts, candidate identity, and the frontier snapshot; preflight receives the submitted candidate unchanged.
 It appends one row per configured tier even when a tier is unavailable. A dry run records
 its paired evidence only. `--accept-if-winning` applies a winner conditionally: accepted
 is exit 0, a valid rejection is exit 1, and incomplete or execution failure is exit 2.
@@ -137,12 +142,11 @@ tier axis real information:
   `metadata.minimum-tier`, so a floor-only update has one identity. Existing rows retain
   their earlier raw-text identifiers. The first retest writes the normalized identifier.
 - `comparison_id`, `incumbent_id`, `incumbent_model_ran`, incumbent scores, and incumbent
-  repeats identify the paired live incumbent evidence on every candidate tier row. The
-  comparison identifier also names the matching machine-local run record. Legacy rows remain
-  readable but never authorize acceptance.
+  repeats identify the paired live incumbent evidence on every candidate tier row. Legacy
+  rows remain readable but never authorize acceptance.
 - `case_timings_nonholdout` / `case_timings_holdout` and their incumbent counterparts keep
-  total case times and per-repeat generation and judge measurements. Each repeat names the
-  requested tier, final model, and every timed fallback attempt.
+  aggregate case dispatch time and per-repeat generation and judge measurements. Each repeat
+  names the requested tier, final model, and every timed fallback attempt.
 - `tier`: the configured tier `tools/tier-dispatch` attempted for this candidate. The
   artifact's declared minimum tier never filters this list. If the whole model chain is
   unavailable, its line keeps `null` scores instead of a guessed score or missing record.

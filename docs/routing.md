@@ -55,6 +55,7 @@ advisories on standard error. Advisories never change its exit code.
 | T3 | normal engineering: build, test, debug, verify |
 | T4 | hard problems, planning, final review |
 | T5 | project-level synthesis, deep architecture (falls back to T4) |
+| T6 | dual-provider highest-tier review and explicit `/turbo`; no `climbOnExhaustion` |
 
 Each tier's `fallbacks` list crosses provider families on purpose. A provider outage or a
 usage-limit stop then degrades one tier sideways instead of failing the run. The list is
@@ -70,11 +71,11 @@ ordered and each entry names its own model and thinking level.
    the other provider family. Failed tests, a diff outside scope, or two
    turns with no progress count as failures. A disliked answer does not. A direction
    disagreement goes back to the human gate, never to a bigger model.
-3. **Gate fable; never make it the default.** T5 takes decisions with large downstream
-   branching cost. That means architecture for a large migration, synthesis after
-   competing plans, the final coherence review of a long project, or recovery after
-   repeated T4 failure. On outage, limit, or refusal, the T5 fallback takes over
-   automatically. Never use T5 for a rename, a summary, a small test, or a localized fix.
+3. **Gate T6; never make it the default.** T6 handles gated review panels. An explicit
+   `/turbo` user override can also select it. T5 handles other decisions with large
+   downstream branching cost. These decisions include migration architecture, synthesis
+   after competing plans, final project coherence, and recovery after repeated T4 failure.
+   Use T6 for a small task only when the user activates Turbo.
 4. **Cheap workers do the volume, but only bounded verifiable work.** T1/T2 take
    classification, log and doc summarization, boilerplate, and candidate tests. A T0
    check or a T3 reviewer must grade the output cheaply. They never take architecture,
@@ -133,8 +134,9 @@ everything else from it.
   holding none climbs to the next tier in tier-name order until one does. Never edit that
   line by hand.
 - New: `/tiers`, a Pi command (`pi/extensions/tier-settings.ts`) for editing tiers and their
-  models interactively. Browse T1-T5. Drill into a tier's primary and ordered fallbacks.
-  Edit one model or thinking level. Confirm to write the file and re-run install.sh.
+  models interactively. Browse the configured tiers. Drill into a tier's primary and
+  ordered fallbacks. Edit one model or thinking level. Confirm to write the file and run
+  install.sh again.
 
 The anchor-verifier seat runs per builder wave and per break panel, the highest volume of
 any reviewer. It grades on executed evidence, not judgment, so it rides T3. The
@@ -142,11 +144,16 @@ code-reviewer seat gives the final coherence verdict and stays T4.
 
 ## pi session defaults
 
-- `/turbo` toggles a session-local T5 override. Activation switches the parent session and
-  new non-review workers to T5; deactivation restores the model and thinking level captured
-  before activation. It survives resume only while active. New sessions start inactive.
-  `anchor-verifier`, `code-reviewer`, `maestro-tester`, and `spec-tester` keep independent
-  provider routing while Turbo is active.
+- `/turbo` toggles a session-local override for the highest configured tier. Activation
+  switches the parent session and new non-review workers to that tier; deactivation restores
+  the model and thinking level captured before activation. It survives resume only while active.
+  New sessions start inactive. After activation, a session with no prior fallback uses the
+  highest tier's chain. A session already pinned to another fallback chain keeps it. If the
+  active chain has no `climbOnExhaustion`, Turbo waits after the session exhausts that chain.
+  `anchor-verifier`, `code-reviewer`, `maestro-tester`, and `spec-tester` retain their own tier
+  settings instead of inheriting Turbo. When an agent's primary shares the parent provider,
+  its default dispatch stops at the provider guard. The caller must select that tier's
+  cross-provider fallback.
 - The session `defaultModel` follows the `orchestrator` tier (T3). The installer does not
   enforce it, so a deliberate `/model` choice survives a pull. Escalate a session by hand
   at a real escalation point; drop back after.

@@ -179,8 +179,12 @@ test("allows read-only bash access to managed config", () => {
 });
 
 test("allows a static Z shell wrapper reading managed config", () => {
-	const command = `/bin/zsh -lc 'cat ${home}/.pi/agent/settings.json'`;
-	assert.equal(blockedConfigToolCall("bash", { command }, home), undefined);
+	for (const command of [
+		`/bin/zsh -lc 'cat ${home}/.pi/agent/settings.json'`,
+		`/bin/zsh -lc 'cat ${home}/.agents/skills/engineer/SKILL.md 2>&1 | head -150'`,
+	]) {
+		assert.equal(blockedConfigToolCall("bash", { command }, home), undefined, command);
+	}
 });
 
 test("allows a static Z shell wrapper changing to managed config and listing files", () => {
@@ -372,6 +376,10 @@ test("classifies checkout shell reads and static Z shell wrappers", () => {
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status --short'"), "read");
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'rg guard pi/extensions | head -20'"), "read");
 	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'git status 2>/dev/null'"), "read");
+	assert.equal(classifyCheckoutCommand("/bin/zsh -lc 'cat ~/.agents/skills/engineer/SKILL.md 2>&1 | head -150'"), "read");
+	assert.equal(classifyCheckoutCommand("echo warning >&2"), "read");
+	assert.equal(classifyCheckoutCommand("cat README.md 2>&-"), "read");
+	assert.equal(classifyCheckoutCommand("cat README.md 2>& 1"), "read");
 });
 
 test("classifies tmux command-name lookup as a checkout read", () => {
@@ -392,6 +400,16 @@ test("blocks checkout output redirection from command-name lookup", () => {
 	for (const command of [
 		"command -v tmux > leaked.md",
 		"/bin/zsh -lc 'command -v sandbox-exec >> leaked.md'",
+	]) {
+		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
+	}
+});
+
+test("blocks file output redirects alongside file-descriptor duplication", () => {
+	for (const command of [
+		"/bin/zsh -lc 'cat ~/.agents/skills/engineer/SKILL.md > leaked.md | head -150'",
+		"/bin/zsh -lc 'cat ~/.agents/skills/engineer/SKILL.md 2>&1 > leaked.md | head -150'",
+		"/bin/zsh -lc 'echo x 2>&1 > ~/.agents/skills/leaked.md'",
 	]) {
 		assert.equal(classifyCheckoutCommand(command), "write-or-unknown", command);
 	}

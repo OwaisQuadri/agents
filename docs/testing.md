@@ -63,7 +63,17 @@ hooks/test.sh
 Every skill and workflow runner delegates to `tools/skill-eval`. A full candidate run
 compares the live incumbent and candidate together. It executes every configured tier and records
 paired evidence. The runner selects the highest-scoring contiguous suffix ending at the highest
-tier.
+tier. It runs bounded `(arm, tier, slice, case, repeat)` units with four workers by default.
+Use `--jobs N` or `SKILL_EVAL_JOBS` to set one through 16 workers. The full paired modes save
+complete units under `evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run.
+A completed `null` score remains complete on automatic resume. Use `--restart` to retry unavailable
+providers after they recover. `--restart` discards only that run's saved units. The runner writes
+progress to standard error after each durable unit. It writes incumbent records before candidate
+records. Each arm orders records by configured tier, non-holdout cases, then holdout cases. It
+serializes `output-check.sh` while model dispatches run concurrently. The runner uses
+`evals/.skill-eval-state/run.lock` as one stable advisory lock per artifact. The lock permits one
+paired coordinator while its workers remain concurrent. After a completed run writes its frontier
+and live definition, a state cleanup failure is a warning. The completed run keeps its success exit.
 
 A surviving median keeps a partly ungraded tier in that ranking. The completeness gate then
 rejects a selected suffix with any missing repeat. Tiers below the selected floor remain recorded,
@@ -73,10 +83,10 @@ These exit codes apply to the paired candidate forms. A complete dry comparison 
 Conditional acceptance exits 0 when applied and 1 for a valid rejection. Incomplete evidence or
 an execution failure exits 2.
 
-Configuration and usage errors also exit 2 in every mode. Baseline and narrow diagnostic runs
-otherwise retain their earlier result behavior. The runner uses `tools/tier-dispatch` for real
-artifact runs and judge runs. It disables extension discovery and loads `pi-anthropic-auth` as
-the minimum extension.
+Configuration and usage errors also exit 2 in every mode. A corrupt saved run or a second coordinator
+for the same run also exits 2. Baseline and narrow diagnostic runs otherwise retain their earlier
+result behavior. The runner uses `tools/tier-dispatch` for real artifact runs and judge runs. It
+disables extension discovery and loads `pi-anthropic-auth` as the minimum extension.
 
 Each case row reports its total time. Its repeat records report generation and judge times,
 requested tiers, final models, and each fallback attempt. `tools/tier-dispatch` reports the
