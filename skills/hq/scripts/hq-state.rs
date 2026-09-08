@@ -688,6 +688,7 @@ fn update_registry(state: &Path, sessions: &[Session]) -> Result<(), String> {
 }
 
 fn update_state(state: &Path, key: &str, value: Value) -> Result<(), String> {
+    let _lock = lock_file(state, "state.lock")?;
     let path = state.join("state.json");
     let mut value_state = read_json(&path).unwrap_or_else(|| Value::Object(Default::default()));
     let Some(object) = value_state.as_object_mut() else {
@@ -766,16 +767,20 @@ fn read_delta(path: &Path) -> Result<Delta, String> {
     serde_json::from_slice(&bytes).map_err(|error| error.to_string())
 }
 
-fn lock_delta(state: &Path) -> Result<fs::File, String> {
+fn lock_file(state: &Path, name: &str) -> Result<fs::File, String> {
     let file = fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(state.join("delta.lock"))
+        .open(state.join(name))
         .map_err(|error| error.to_string())?;
     file.lock().map_err(|error| error.to_string())?;
     Ok(file)
+}
+
+fn lock_delta(state: &Path) -> Result<fs::File, String> {
+    lock_file(state, "delta.lock")
 }
 
 fn triage_due() -> Result<bool, String> {
