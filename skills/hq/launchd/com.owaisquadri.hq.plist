@@ -6,13 +6,13 @@
     <string>com.owaisquadri.hq</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
+        <string>/bin/zsh</string>
         <string>/Users/owaisquadri/Documents/agents/skills/hq/scripts/heartbeat.sh</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/owaisquadri/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/Users/owaisquadri/.cargo/bin:/Users/owaisquadri/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>/Users/owaisquadri</string>
     </dict>
@@ -21,8 +21,8 @@
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/owaisquadri/.claude/hq/heartbeat.log</string>
+    <string>/Users/owaisquadri/.pi/agent/state/hq/heartbeat.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/owaisquadri/.claude/hq/heartbeat.log</string>
+    <string>/Users/owaisquadri/.pi/agent/state/hq/heartbeat.log</string>
 </dict>
 </plist>

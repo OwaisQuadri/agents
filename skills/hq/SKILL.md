@@ -9,8 +9,8 @@ metadata:
 # hq
 
 JOB: front-door digest and dispatch: surface pending human gates and cross-project activity since last talk, then run the user's request, never signing any gate on his behalf
-IN:  a /hq invoke or a cross-project ask; state at ~/.claude/hq/ (gates/, activity.jsonl, digest.md, registry.json, heartbeat.log); live rosters at ~/.claude/sessions/ and ~/.claude/jobs/
-OUT: a mouthpiece-voice digest (unresolved gates first, each with evidence paths), then exactly one of: a dispatched background worker reported with its target cwd(current working directory), an answer sourced from monitored state with absolute paths cited, or a drill-down (registry record + transcript tail + the direct handle); state advanced
+IN:  a /hq invoke or a cross-project ask; state at ~/.pi/agent/state/hq/ (gates/, activity.jsonl, digest.md, registry.json, heartbeat.log); live Pi panes and transcript paths from `herdr api snapshot`; scheduled-job state at ~/.pi/agent/state/<job>/
+OUT: a mouthpiece-voice digest (unresolved gates first, each with evidence paths), then exactly one of: a dispatched background worker reported with its target cwd(current working directory), an answer sourced from monitored state with absolute paths cited, or a drill-down (registry record + bounded Pi transcript tail + the direct session command); state advanced
 
 ## not the dismissed router
 
@@ -19,8 +19,8 @@ The advisory pipeline struck in docs/reset-spec.md (router / model-selector / pr
 ## hard rules
 
 - gates are never signed on the user's behalf: no plan approval, permission grant, merge, sign-off, or destructive action without his explicit words naming the gate; even then the action runs as its own visible step, and `urgency:"notify_now"` gates escalate via terminal-notifier while everything else waits for the next talk
-- every dispatched worker works in a git worktree, never on a target's main or live checkout: in-session workers via the Agent tool's `isolation: "worktree"`; cross-repo dispatch via `git worktree add <repo>/.claude/worktrees/hq-<slug> -b hq/<slug>` (the harness pre-excludes `**/.claude/worktrees/` in every repo, so nothing lands in git status). Dispatching into an existing Conductor workspace satisfies isolation natively
-- a target directory without a repo gets `git init` and an initial commit first, local only, with `.claude/` appended to `.git/info/exclude` (a fresh init has no harness exclude block yet, so the worktree dir would land in git status)
+- every dispatched worker works in a git worktree, never on a target's main or live checkout: in-session workers via the Agent tool's `isolation: "worktree"`; cross-repo dispatch via `git worktree add <repo>/.herdr/worktrees/hq-<slug> -b hq/<slug>` (the harness pre-excludes `**/.herdr/worktrees/` in every repo, so nothing lands in git status). Dispatching into an existing Herdr workspace satisfies isolation natively
+- a target directory without a repo gets `git init` and an initial commit first, local only, with `.herdr/` appended to `.git/info/exclude` (a fresh init has no harness exclude block yet, so the worktree dir would land in git status)
 - finished work reaches main only through an approved `kind:"merge"` gate carrying the worktree path, branch, and a diff summary; the worktree is cleaned up only after the merge commit is verified on main, never before
 - no `git push` and no `gh repo create` unless the user explicitly says so; an explicitly requested repo is created private; public needs its own explicit words. The headless triage never touches remotes at all
 - honesty: there is no transport into a running interactive session. hq can read any agent's state and transcript, spawn fresh workers in any repo, and queue context for the user — it cannot speak into a live session. "tell <agent> to X" gets one of: that agent's state read back, a fresh worker offered in its workspace, or the direct handle. Never pretend otherwise
@@ -28,7 +28,7 @@ The advisory pipeline struck in docs/reset-spec.md (router / model-selector / pr
 
 ## steps
 
-1. first run only (`~/.claude/hq` missing): run `bash ~/.claude/skills/hq/scripts/scan.sh` to create the state tree, seed `watched-jobs.txt`, and write the baseline snapshot. Then present the heartbeat install as a HUMAN GATE — never run it unasked:
+1. first run only (`~/.pi/agent/state/hq` missing): run `zsh /Users/owaisquadri/Documents/agents/skills/hq/scripts/scan.sh` to create the state tree, seed `watched-jobs.txt`, and write the baseline snapshot from `herdr api snapshot`. Then present the heartbeat install as a HUMAN GATE — never run it unasked:
 
    ```sh
    cp /Users/owaisquadri/Documents/agents/skills/hq/launchd/com.owaisquadri.hq.plist ~/Library/LaunchAgents/
@@ -37,17 +37,18 @@ The advisory pipeline struck in docs/reset-spec.md (router / model-selector / pr
    ```
 
    Uninstall is `launchctl bootout gui/$(id -u)/com.owaisquadri.hq`, and before the plist is ever deleted its XML(Extensible Markup Language) is preserved in `docs/audits/<date>-hq.md`. Done when the state dir exists, a baseline snapshot is written, and the gate has been put to the user.
-2. refresh: run `bash ~/.claude/skills/hq/scripts/scan.sh`. Done when it exits 0, or its stderr is quoted verbatim in the digest.
-3. digest: read unresolved `gates/*.json`, `activity.jsonl` lines newer than `state.json.lastPresentedAt`, `digest.md`, and `tail -5 heartbeat.log` for scan failures. Present gates FIRST, each with its evidence paths, then activity grouped by project; invoke the /mouthpiece skill first and author the digest under it. Advance `lastPresentedAt`. Done when every unresolved gate has been shown and the stamp advanced.
-4. act — exactly one verb per request:
+2. refresh: run `zsh /Users/owaisquadri/Documents/agents/skills/hq/scripts/scan.sh`. It resolves active Pi panes and transcript paths from Herdr, and reads scheduled-job state only from `~/.pi/agent/state/`. Done when it exits 0, or its stderr is quoted verbatim in the digest.
+3. heartbeat triage: when `delta.json` is newer than `state.json.lastTriageAt`, run a bounded T2 headless Pi pass through `tools/tier-dispatch` with `--no-session` supplied by the dispatcher. It reads only `delta.json`, `registry.json`, and at most the final 200 lines of a named Pi transcript. It returns JSON; `hq-state --apply-triage` is the only writer of `digest.md` and gate files.
+4. digest: read unresolved `gates/*.json`, `activity.jsonl` lines newer than `state.json.lastPresentedAt`, `digest.md`, and `tail -5 heartbeat.log` for scan failures. Present gates FIRST, each with its evidence paths, then activity grouped by project; invoke the /mouthpiece skill first and author the digest under it. Advance `lastPresentedAt`. Done when every unresolved gate has been shown and the stamp advanced.
+5. act — exactly one verb per request:
    - route first: hq decides whether the ask is in-project development work — a code change inside one repo, ticketable, with a definition of done. If it is, run it through the /engineer skill rather than a bare dispatch, so it walks the 23-phase spine and gets fresh-context testing instead of a builder grading itself. Cross-project status, dispatch into another project, and drill-down stay hq's own. In a repo with no remote, /engineer's closing phase is a local merge of the work branch into main instead of a pull request — still behind an approved `kind:"merge"` gate, never signed by hq.
    - dispatch: every design or shaping choice belongs to the user, greenfield or not — language, library, engine, architecture, what v1 includes and excludes, defaults he will live with, anything hq would otherwise settle by taste. Put them to him with AskUserQuestion BEFORE spawning anything and carry his answers into the prompt verbatim. The only exceptions are choices he has explicitly delegated ("your call", "pick whatever", a standing preference in CLAUDE.md) and mechanical facts with one correct answer. Shipping a guess is the expensive failure, not the question. Then spawn a background worker whose prompt names the absolute target path from `registry.json`, under the isolation rules above. Report what was spawned, where, and its checkpoint cadence so a planned hop-in is possible. A worker hitting something gate-shaped gets it written to `gates/` with `source:"hq-session"`.
    - answer: from snapshots, registry, activity, and transcripts, always citing absolute paths.
-   - drill down: resolve the name against `registry.json` (session names like `machu-picchu-74`, or repo/workspace fields), show the record, `tail -40` its transcript, summarize, and end with the direct handle — the Conductor workspace for a live session, `claude --resume <sessionId>` run from that cwd for a dead one.
+   - drill down: resolve the name against `registry.json` (a Herdr pane ID, or repo/workspace fields), show the record, `tail -40` its Pi transcript, summarize, and end with the direct handle — the Herdr workspace for a live session, `pi --session <transcript-path>` run from that cwd for a closed one.
    - usher: when the user says he wants to hop in on running work, hq is the usher between them — report the far side in detail, not a summary: what the worker has committed and what is still uncommitted, what it is doing right now, which files it holds open, what it has decided and what it is still deciding, and where it will pause next. Then relay his words to it verbatim and its reply back. Never imply he can attach to a session that does not exist.
    Done when the verb ran and its report names its paths.
-5. gate resolution: only on the user's explicit words naming the gate — set `isResolved`, `resolvedAt`, `resolution`, then mv the file into `gates/resolved/` and confirm it exists there before anything else happens. Done when the gate sits in `gates/resolved/` and the approved action (if any) ran as its own step.
-6. mid-session: at the start of each user turn in an hq conversation, stat `delta.json` and `gates/`; if either is newer than `lastPresentedAt`, lead the reply with a one-line update. This is recipe behavior — never a hook.
+6. gate resolution: only on the user's explicit words naming the gate — set `isResolved`, `resolvedAt`, `resolution`, then mv the file into `gates/resolved/` and confirm it exists there before anything else happens. Done when the gate sits in `gates/resolved/` and the approved action (if any) ran as its own step.
+7. mid-session: at the start of each user turn in an hq conversation, stat `delta.json` and `gates/`; if either is newer than `lastPresentedAt`, lead the reply with a one-line update. This is recipe behavior — never a hook.
 
 ## evals
 
