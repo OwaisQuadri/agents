@@ -58,20 +58,28 @@ hooks/test.sh
 ./skills/<name>/evals/run.sh --tier T3                        # diagnostic single-tier mode
 ```
 
-Every skill and workflow runner delegates to `tools/skill-eval`. A full candidate run
-compares the live incumbent and candidate together. It executes every configured tier and records
-paired evidence. The runner selects the highest-scoring contiguous suffix ending at the highest
-tier. It runs bounded `(arm, tier, slice, case, repeat)` units with four workers by default.
-Use `--jobs N` or `SKILL_EVAL_JOBS` to set one through 16 workers. The full paired modes save
-complete units under `evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run.
-A completed `null` score remains complete on automatic resume. Use `--restart` to retry unavailable
-providers after they recover. `--restart` discards only that run's saved units. The runner writes
-progress to standard error after each durable unit. It writes incumbent records before candidate
-records. Each arm orders records by configured tier, non-holdout cases, then holdout cases. It
-serializes `output-check.sh` while model dispatches run concurrently. The runner uses
-`evals/.skill-eval-state/run.lock` as one stable advisory lock per artifact. The lock permits one
-paired coordinator while its workers remain concurrent. After a completed run writes its frontier
-and live definition, a state cleanup failure is a warning. The completed run keeps its success exit.
+Every skill and workflow runner delegates to `tools/skill-eval`. A full baseline run
+evaluates the current artifact. A full candidate run compares the live incumbent and
+candidate together. Both modes execute every configured tier as bounded
+`(arm, tier, slice, case, repeat)` units with four workers by default. Use `--jobs N` or
+`SKILL_EVAL_JOBS` to set one through 16 workers.
+
+Full runs save complete units under
+`evals/.skill-eval-state/<run-key>/` and resume the exact incomplete run. A completed
+`null` score remains complete on automatic resume. Use `--restart` to discard only that
+run's saved units and retry unavailable providers.
+
+The runner writes progress to standard error after each durable unit. It orders records
+by configured tier, non-holdout cases, then holdout cases. A paired run writes incumbent
+records before candidate records. The runner serializes `output-check.sh` while model
+dispatches run concurrently.
+
+Each run key has an advisory lock at
+`evals/.skill-eval-state/<run-key>.lock`. The lock permits one coordinator for an exact
+run while different run keys can proceed. After a completed run writes its frontier and
+any accepted live definition, a state cleanup failure is a warning. The completed run
+keeps its success exit. A candidate run selects the highest-scoring contiguous suffix
+that ends at the highest tier.
 
 A surviving median keeps a partly ungraded tier in that ranking. The completeness gate then
 rejects a selected suffix with any missing repeat. Tiers below the selected floor remain recorded,

@@ -58,15 +58,15 @@ distinction.
 
 ## logging hygiene (retired)
 
-No agent writes a usage log anymore. `logs/usage.jsonl` and the self-report line this
-section used to describe building safely (`jq -cn --arg`, backtick/quote/`$(...)`
-escaping) are gone — usage evidence is now derived from real Pi session transcripts by
-`tools/gepa-due`, never self-reported. `prompt_version` computation is unaffected and
-still lives in `skills/ai-author/SKILL.md`'s "usage evidence" section — referenced from
-there, not restated here.
+No agent self-reports usage. `logs/usage.jsonl` and the self-report line this section
+used to describe building safely (`jq -cn --arg`, backtick/quote/`$(...)` escaping) are
+gone. `tools/gepa-due` derives artifact usage evidence from real Pi session
+transcripts. A Pi extension can write private, machine-generated records when its own
+contract requires them. Those records are not agent claims and must exclude prompt and
+response content. `prompt_version` computation stays in `skills/ai-author/SKILL.md`'s
+"usage evidence" section and is not restated here.
 
-Historical note, kept for context: the fleet lost 19 self-reported log lines to shell
-interpolation and unexpanded `$(date ...)` before this section existed, and a 2026-08-24
-sweep found 88 `engineer` lines with no reliable way to tell which predated the rules
-being judged. Both failure classes are structurally impossible now — there is no write
-path left for either to corrupt.
+The fleet lost 19 self-reported log lines to shell interpolation and unexpanded
+`$(date ...)` before this section existed. A 2026-08-24 sweep found 88 `engineer` lines
+with no reliable way to tell whether each line came before or after the rules. Removing
+agent self-reporting makes both failure classes impossible.

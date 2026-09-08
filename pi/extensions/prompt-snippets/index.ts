@@ -15,7 +15,7 @@
  * - Toggles reset to all-off after each send and at session start.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -286,8 +286,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		enabled = new Set();
-		snippets = loadSnippets();
-		if (!existsSync(snippetsDir)) mkdirSync(snippetsDir, { recursive: true });
+		snippets = [];
 		updateWidget(ctx);
 	});
 
@@ -303,6 +302,9 @@ export default function (pi: ExtensionAPI) {
 
 		const prependBodies = active.filter((s) => s.placement === "prepend").map((s) => s.body);
 		const appendBodies = active.filter((s) => s.placement === "append").map((s) => s.body);
+		void import("./usage.ts")
+			.then(({ recordSnippetUsage }) => recordSnippetUsage(ctx.sessionManager.getSessionId(), active.map((snippet) => snippet.id)))
+			.catch(() => undefined);
 		return {
 			action: "transform",
 			text: [...prependBodies, event.text, ...appendBodies].join("\n\n"),
