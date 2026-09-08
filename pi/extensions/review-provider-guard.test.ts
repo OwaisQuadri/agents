@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { blockedReviewDispatch, providersForModelRef, type DispatchContext, type ModelEntry } from "./review-provider-guard/policy.ts";
+import {
+	blockedReviewDispatch,
+	eligibleQuotaProvidersFrom,
+	providersForModelRef,
+	type DispatchContext,
+	type ModelEntry,
+} from "./review-provider-guard/policy.ts";
 import { agentDefaultModelFrom, piAgentRoot, readSubagentSettings } from "./review-provider-guard/settings.ts";
 
 const models: ModelEntry[] = [
@@ -33,6 +39,75 @@ test("blocks an explicit same-provider override and quotes both compared models"
 
 test("allows an explicit cross-provider override", () => {
 	assert.equal(blockedReviewDispatch("Agent", { subagent_type: "code-reviewer", model: "anthropic/claude-opus-5" }, context()), undefined);
+});
+
+test("reads eligible providers from a recent quota result", () => {
+	const now = 2_000_000_000;
+	assert.deepEqual(
+		eligibleQuotaProvidersFrom(
+			{
+				checkedAtEpochSeconds: now - 60,
+				providers: { anthropic: { isEligible: false }, "openai-codex": { isEligible: true } },
+			},
+			now,
+		),
+		["openai-codex"],
+	);
+});
+
+test("rejects stale, future, and timestamp-free quota results", () => {
+	const providers = { "openai-codex": { isEligible: true } };
+	assert.equal(eligibleQuotaProvidersFrom({ checkedAtEpochSeconds: 100, providers }, 701), undefined);
+	assert.equal(eligibleQuotaProvidersFrom({ checkedAtEpochSeconds: 702, providers }, 701), undefined);
+	assert.equal(eligibleQuotaProvidersFrom({ providers }, 701), undefined);
+});
+
+test("allows a fresh same-provider reviewer when it is the only provider with quota", () => {
+	const ctx = context({ eligibleQuotaProviders: ["openai-codex"] });
+	assert.equal(
+		blockedReviewDispatch("Agent", { subagent_type: "code-reviewer", model: "openai-codex/gpt-5.6-sol" }, ctx),
+		undefined,
+	);
+});
+
+test("keeps the same-provider block when another provider has quota", () => {
+	const ctx = context({ eligibleQuotaProviders: ["openai-codex", "anthropic"] });
+	assert.match(
+		blockedReviewDispatch("Agent", { subagent_type: "code-reviewer", model: "openai-codex/gpt-5.6-sol" }, ctx) ?? "",
+		/Blocked/,
+	);
+});
+
+test("keeps the same-provider block when quota state is missing or only the other provider has quota", () => {
+	for (const eligibleQuotaProviders of [undefined, [], ["anthropic"]]) {
+		const ctx = context({ eligibleQuotaProviders });
+		assert.match(
+			blockedReviewDispatch("Agent", { subagent_type: "spec-tester", model: "openai-codex/gpt-5.6-sol" }, ctx) ?? "",
+			/Blocked/,
+		);
+	}
+});
+
+test("requires a fresh context for the same-provider quota exception", () => {
+	const ctx = context({ eligibleQuotaProviders: ["openai-codex"] });
+	assert.match(
+		blockedReviewDispatch(
+			"Agent",
+			{ subagent_type: "code-reviewer", model: "openai-codex/gpt-5.6-sol", resume: "reviewer" },
+			ctx,
+		) ?? "",
+		/Blocked/,
+	);
+	for (const inherit_context of [true, "parent", {}]) {
+		assert.match(
+			blockedReviewDispatch(
+				"Agent",
+				{ subagent_type: "code-reviewer", model: "openai-codex/gpt-5.6-sol", inherit_context },
+				ctx,
+			) ?? "",
+			/Blocked/,
+		);
+	}
 });
 
 test("allows a tier default that already routes to another provider", () => {

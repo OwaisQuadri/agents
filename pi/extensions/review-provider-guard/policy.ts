@@ -1,6 +1,6 @@
 export const GUARDED_AGENT_TYPES = ["anchor-verifier", "code-reviewer", "maestro-tester", "spec-tester"] as const;
 
-export type AgentToolInput = { subagent_type: string; model?: string };
+export type AgentToolInput = { subagent_type: string; model?: string; resume?: string; inherit_context?: unknown };
 export type ModelEntry = { id: string; name: string; provider: string };
 
 export type DispatchContext = {
@@ -8,9 +8,25 @@ export type DispatchContext = {
 	sessionModelId: string | undefined;
 	availableModels: readonly ModelEntry[];
 	agentDefaultModel: (agentType: string) => string | undefined;
+	eligibleQuotaProviders?: readonly string[];
 };
 
 const MAX_SUGGESTIONS = 2;
+const MAX_QUOTA_STATE_AGE_SECONDS = 10 * 60;
+
+export function eligibleQuotaProvidersFrom(state: unknown, nowEpochSeconds: number): string[] | undefined {
+	if (typeof state !== "object" || state === null) return undefined;
+	const snapshot = state as { checkedAtEpochSeconds?: unknown; providers?: unknown };
+	if (typeof snapshot.checkedAtEpochSeconds !== "number" || !Number.isFinite(snapshot.checkedAtEpochSeconds)) return undefined;
+	const ageSeconds = nowEpochSeconds - snapshot.checkedAtEpochSeconds;
+	if (ageSeconds < 0 || ageSeconds > MAX_QUOTA_STATE_AGE_SECONDS) return undefined;
+	if (typeof snapshot.providers !== "object" || snapshot.providers === null) return undefined;
+	return Object.entries(snapshot.providers).flatMap(([provider, admission]) =>
+		typeof admission === "object" && admission !== null && (admission as { isEligible?: unknown }).isEligible === true
+			? [provider]
+			: [],
+	);
+}
 
 function normalize(reference: string): string {
 	return reference.toLowerCase().replaceAll(".", "-");
@@ -59,6 +75,12 @@ export function blockedReviewDispatch(toolName: string, input: AgentToolInput, c
 	const candidates = providersForModelRef(effective, context.availableModels);
 	if (candidates.length === 0) return undefined;
 	if (!candidates.every((provider) => provider === context.sessionProvider)) return undefined;
+
+	const eligibleProviders = context.eligibleQuotaProviders;
+	const isOnlySessionProviderEligible = eligibleProviders?.length === 1 && eligibleProviders[0] === context.sessionProvider;
+	const isInherited = input.inherit_context !== undefined && input.inherit_context !== false;
+	const isFreshDispatch = input.resume === undefined && !isInherited;
+	if (isOnlySessionProviderEligible && isFreshDispatch) return undefined;
 
 	const builder = context.sessionModelId === undefined ? context.sessionProvider : `${context.sessionProvider}/${context.sessionModelId}`;
 	const reason = `Blocked a ${agentType} dispatch resolving to "${effective}" on ${builder} — the same provider that built the change.`;

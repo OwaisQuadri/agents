@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -243,14 +246,26 @@ async function captureUnhandled<T>(run: () => Promise<T>): Promise<{ result: T; 
 	}
 }
 
-async function waitForStatusCount(ui: RecordingUi, expected: number): Promise<void> {
+type QuotaState = {
+	provider: Provider;
+	usedPercent: number;
+};
+
+function currentQuotaState(): QuotaState | undefined {
+	return (globalThis as { __owaisQuotaState?: QuotaState }).__owaisQuotaState;
+}
+
+function clearQuotaState(): void {
+	(globalThis as { __owaisQuotaState?: QuotaState }).__owaisQuotaState = undefined;
+}
+
+async function waitForQuotaState(provider: Provider, previous?: QuotaState): Promise<QuotaState> {
 	const timeout = Date.now() + 100;
-	while (ui.statuses.length < expected) {
-		if (Date.now() > timeout) {
-			throw new Error(`timed out waiting for ${expected} status updates`);
-		}
+	while (currentQuotaState()?.provider !== provider || currentQuotaState() === previous) {
+		if (Date.now() > timeout) throw new Error(`timed out waiting for ${provider} quota state`);
 		await sleep(0);
 	}
+	return currentQuotaState() as QuotaState;
 }
 
 function jsonResponse(payload: unknown) {
@@ -275,18 +290,6 @@ function makeOpenAICodexToken(accountId: string): string {
 		"base64url",
 	);
 	return `header.${payload}.signature`;
-}
-
-function extractPercent(line: string): number {
-	const match = line.match(/(\d+)%/);
-	assert.ok(match);
-	return Number.parseInt(match[1] ?? "0", 10);
-}
-
-function extractBarWidth(line: string): number {
-	const match = line.match(/[█░│]+/);
-	assert.ok(match);
-	return match[0].length;
 }
 
 test("TC-01 render() no-ops silently on stale ctx", async () => {
@@ -411,7 +414,8 @@ test("TC-04 setInterval poll tick no-ops after context invalidation", async () =
 	assert.equal(rejections.length, 0);
 });
 
-test("TC-05 Anthropic bar uses half the viewport width", async () => {
+test("TC-05 Anthropic usage updates shared quota state", async () => {
+	clearQuotaState();
 	const restoreColumns = installTerminalColumns(100);
 	const api = createFakeExtensionAPI();
 	const context = createMockContext({ provider: "anthropic" });
@@ -434,20 +438,17 @@ test("TC-05 Anthropic bar uses half the viewport width", async () => {
 	statusline(api.api);
 	await invoke(api.handler("model_select"), context.ctx);
 	releaseFetch();
-	await waitForStatusCount(context.recording, 1);
+	const quota = await waitForQuotaState("anthropic");
 
 	restoreFetch();
 	restoreColumns();
 
 	assert.equal(isCalled, true);
-	assert.equal(context.recording.statuses.length, 1);
-	const status = context.recording.statuses.at(-1);
-	assert.equal(status?.key, "statusline");
-	assert.equal(typeof status?.text, "string");
-	assert.equal(extractBarWidth(status?.text ?? ""), 50);
+	assert.equal(quota.usedPercent, 90);
 });
 
-test("TC-06 Codex primary window renders below 90 percent at half the viewport width", async () => {
+test("TC-06 Codex primary window updates shared quota state", async () => {
+	clearQuotaState();
 	const restoreColumns = installTerminalColumns(100);
 	const api = createFakeExtensionAPI();
 	const context = createMockContext({ provider: "openai-codex" });
@@ -467,19 +468,16 @@ test("TC-06 Codex primary window renders below 90 percent at half the viewport w
 
 	statusline(api.api);
 	await invoke(api.handler("model_select"), context.ctx);
-	await waitForStatusCount(context.recording, 1);
+	const quota = await waitForQuotaState("openai-codex");
 
 	restoreFetch();
 	restoreColumns();
 
-	const status = context.recording.statuses.at(-1);
-	assert.equal(status?.key, "statusline");
-	assert.match(status?.text ?? "", /^5h /);
-	assert.equal(extractPercent(status?.text ?? ""), 30);
-	assert.equal(extractBarWidth(status?.text ?? ""), 50);
+	assert.equal(quota.usedPercent, 30);
 });
 
 test("TC-07 provider switch does not render stale session A usage", async () => {
+	clearQuotaState();
 	const api = createFakeExtensionAPI();
 	const sessionA = createMockContext({ provider: "anthropic" });
 	const sessionB = createMockContext({ provider: "openai-codex" });
@@ -521,24 +519,20 @@ test("TC-07 provider switch does not render stale session A usage", async () => 
 	statusline(api.api);
 	const handler = api.handler("model_select");
 	await invoke(handler, sessionA.ctx);
-	await waitForStatusCount(sessionA.recording, 1);
-
-	const anthropicText = sessionA.recording.statuses.at(-1)?.text;
-	assert.equal(typeof anthropicText, "string");
+	const anthropicQuota = await waitForQuotaState("anthropic");
 
 	sessionA.setActive(false);
 	await invoke(handler, sessionB.ctx);
-	await waitForStatusCount(sessionB.recording, 1);
+	const openaiQuota = await waitForQuotaState("openai-codex", anthropicQuota);
 
 	restoreFetch();
 
-	const openaiText = sessionB.recording.statuses.at(-1)?.text;
-	assert.equal(typeof openaiText, "string");
-	assert.notEqual(openaiText, anthropicText);
-	assert.notEqual(extractPercent(openaiText), extractPercent(anthropicText));
+	assert.equal(anthropicQuota.usedPercent, 95);
+	assert.equal(openaiQuota.usedPercent, 22);
 });
 
-test("TC-08 terminal resize updates the bar to half the new viewport width", async () => {
+test("TC-08 terminal resize rerenders shared quota state", async () => {
+	clearQuotaState();
 	const restoreColumns = installTerminalColumns(80);
 	const api = createFakeExtensionAPI();
 	const context = createMockContext({ provider: "anthropic" });
@@ -552,13 +546,12 @@ test("TC-08 terminal resize updates the bar to half the new viewport width", asy
 
 	statusline(api.api);
 	await invoke(api.handler("session_start"), context.ctx);
-	await waitForStatusCount(context.recording, 1);
-	assert.equal(extractBarWidth(context.recording.statuses.at(-1)?.text ?? ""), 40);
+	const beforeResize = await waitForQuotaState("anthropic");
 
 	Object.defineProperty(process.stdout, "columns", { configurable: true, value: 120 });
 	process.stdout.emit("resize");
-	await waitForStatusCount(context.recording, 2);
-	assert.equal(extractBarWidth(context.recording.statuses.at(-1)?.text ?? ""), 60);
+	const afterResize = await waitForQuotaState("anthropic", beforeResize);
+	assert.deepEqual(afterResize, beforeResize);
 
 	await invoke(api.handler("session_shutdown"), context.ctx);
 	restoreFetch();
@@ -568,6 +561,15 @@ test("TC-08 terminal resize updates the bar to half the new viewport width", asy
 type ToolResult = {
 	content: Array<{ type: string; text: string }>;
 	details: unknown;
+};
+
+type ProviderAdmissionDetails = {
+	isFresh: boolean;
+	usedPercent: number | null;
+	pacePercent: number | null;
+	reset: string | null;
+	isEligible: boolean;
+	isOverridden: boolean;
 };
 
 type RegisteredTool = {
@@ -581,7 +583,7 @@ type RegisteredTool = {
 	) => Promise<ToolResult>;
 };
 
-function createQuotaAdmissionTool(): RegisteredTool {
+function createQuotaAdmissionTool(settingsPath?: string): RegisteredTool {
 	let tool: RegisteredTool | undefined;
 	const pi = {
 		registerTool(value: RegisteredTool) {
@@ -590,10 +592,18 @@ function createQuotaAdmissionTool(): RegisteredTool {
 		on() {},
 	} as unknown as ExtensionAPI;
 
-	statusline(pi);
+	statusline(pi, { settingsPath });
 	assert.ok(tool, "quota_admission must register at startup");
 	assert.equal(tool.name, "quota_admission");
 	return tool;
+}
+
+function withSettings(body: unknown, run: (settingsPath: string) => Promise<void>): Promise<void> {
+	const directory = mkdtempSync(join(tmpdir(), "quota-admission-test-"));
+	const settingsPath = join(directory, "settings.json");
+	if (typeof body === "string") writeFileSync(settingsPath, body, "utf8");
+	else if (body !== undefined) writeFileSync(settingsPath, JSON.stringify(body), "utf8");
+	return run(settingsPath).finally(() => rmSync(directory, { recursive: true, force: true }));
 }
 
 function anthropicUsage(usedPercent: number, resetOffsetSeconds: number) {
@@ -623,12 +633,14 @@ async function executeQuotaAdmission(): Promise<ToolResult> {
 }
 
 function quotaAdmissionDetails(result: ToolResult): {
+	checkedAtEpochSeconds: number;
 	isAdmitted: boolean;
-	providers: Record<Provider, { isFresh: boolean; usedPercent: number | null; pacePercent: number | null; reset: string | null; isEligible: boolean }>;
+	providers: Record<Provider, ProviderAdmissionDetails>;
 } {
 	return result.details as {
+		checkedAtEpochSeconds: number;
 		isAdmitted: boolean;
-		providers: Record<Provider, { isFresh: boolean; usedPercent: number | null; pacePercent: number | null; reset: string | null; isEligible: boolean }>;
+		providers: Record<Provider, ProviderAdmissionDetails>;
 	};
 }
 
@@ -646,6 +658,7 @@ test("quota_admission admits an eligible plan", async () => {
 	const admission = quotaAdmissionDetails(result as ToolResult);
 
 	assert.equal(fetchCalls, 2);
+	assert.ok(Number.isFinite(admission.checkedAtEpochSeconds));
 	assert.equal(admission.providers.anthropic.isEligible, true);
 	assert.equal(admission.providers["openai-codex"].isEligible, false);
 	assert.equal(admission.isAdmitted, true);
@@ -738,9 +751,90 @@ test("quota_admission fails closed when both providers are missing", async () =>
 			pacePercent: null,
 			reset: null,
 			isEligible: false,
+			isOverridden: false,
 		});
 	}
 	assert.equal(admission.isAdmitted, false);
+});
+
+test("quota_admission overrides Anthropic without changing OpenAI Codex measurement", async () => {
+	await withSettings({ quotaAdmission: { overrideProvider: "anthropic" } }, async (settingsPath) => {
+		const restoreFetch = installMockFetch(async (input) =>
+			requestUrl(input).includes("api/oauth/usage")
+				? jsonResponse(anthropicUsage(95, 3_600))
+				: jsonResponse(codexUsage(95, 1_800)),
+		);
+		const context = createMockContext();
+		context.setProviderAuth("anthropic", "sk-ant-oat-test-token");
+		context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-test-id"));
+
+		const result = await createQuotaAdmissionTool(settingsPath).execute("call", {}, undefined, undefined, context.ctx);
+		restoreFetch();
+		const admission = quotaAdmissionDetails(result);
+
+		assert.equal(admission.providers.anthropic.isEligible, true);
+		assert.equal(admission.providers.anthropic.isOverridden, true);
+		assert.equal(admission.providers["openai-codex"].isEligible, false);
+		assert.equal(admission.providers["openai-codex"].isOverridden, false);
+		assert.equal(admission.isAdmitted, true);
+	});
+});
+
+test("quota_admission overrides OpenAI Codex when usage is unavailable", async () => {
+	await withSettings({ quotaAdmission: { overrideProvider: "openai-codex" } }, async (settingsPath) => {
+		const restoreFetch = installMockFetch(async () => ({ ok: false, json: async () => ({}) }));
+		const context = createMockContext();
+
+		const result = await createQuotaAdmissionTool(settingsPath).execute("call", {}, undefined, undefined, context.ctx);
+		restoreFetch();
+		const admission = quotaAdmissionDetails(result);
+
+		assert.equal(admission.providers.anthropic.isEligible, false);
+		assert.equal(admission.providers.anthropic.isOverridden, false);
+		assert.equal(admission.providers["openai-codex"].isEligible, true);
+		assert.equal(admission.providers["openai-codex"].isOverridden, true);
+		assert.equal(admission.isAdmitted, true);
+		assert.equal((globalThis as { __owaisQuotaAdmissionState?: unknown }).__owaisQuotaAdmissionState, result.details);
+	});
+});
+
+for (const [name, body] of [
+	["absent", undefined],
+	["unknown", { quotaAdmission: { overrideProvider: "other" } }],
+	["malformed", "{ not json"],
+] as const) {
+	test(`quota_admission ignores ${name} override settings`, async () => {
+		await withSettings(body, async (settingsPath) => {
+			const restoreFetch = installMockFetch(async () => ({ ok: false, json: async () => ({}) }));
+			const context = createMockContext();
+
+			const result = await createQuotaAdmissionTool(settingsPath).execute("call", {}, undefined, undefined, context.ctx);
+			restoreFetch();
+			const admission = quotaAdmissionDetails(result);
+
+			assert.equal(admission.providers.anthropic.isOverridden, false);
+			assert.equal(admission.providers["openai-codex"].isOverridden, false);
+			assert.equal(admission.isAdmitted, false);
+		});
+	});
+}
+
+test("quota_admission ignores an unreadable settings path", async () => {
+	const directory = mkdtempSync(join(tmpdir(), "quota-admission-directory-"));
+	try {
+		const restoreFetch = installMockFetch(async () => ({ ok: false, json: async () => ({}) }));
+		const context = createMockContext();
+
+		const result = await createQuotaAdmissionTool(directory).execute("call", {}, undefined, undefined, context.ctx);
+		restoreFetch();
+		const admission = quotaAdmissionDetails(result);
+
+		assert.equal(admission.providers.anthropic.isOverridden, false);
+		assert.equal(admission.providers["openai-codex"].isOverridden, false);
+		assert.equal(admission.isAdmitted, false);
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
 });
 
 test("quota_admission redacts tokens, account identifiers, and raw responses", async () => {

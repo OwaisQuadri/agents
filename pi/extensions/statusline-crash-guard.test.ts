@@ -16,6 +16,7 @@ function createFakeExtensionAPI(): { api: ExtensionAPI; handler(event: string): 
 		on(event: string, handler: Handler) {
 			handlers.set(event, handler);
 		},
+		registerTool() {},
 	} as unknown as ExtensionAPI;
 	return {
 		api,
