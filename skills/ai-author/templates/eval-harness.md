@@ -70,9 +70,10 @@ tier scores identically since no tier ever actually runs anything. It dispatches
 run of the artifact via `tools/tier-dispatch`, starting with the tier's primary model.
 When quota limits or availability stop a model, the dispatcher walks that tier's own
 `fallbacks[]` list in `config/model-tiers.json`. The harness then grades
-the ARTIFACT that run produced. `tier-dispatch --tier <T1..T5>` is called once per
-repeat trial (`REPEATS`, default 3 — a single pass or fail is a sample of one) per case
-per tier; the judge for a tier's output runs one tier up (`config/model-tiers.json`'s own
+the ARTIFACT that run produced. By default, the harness calls
+`tier-dispatch --tier <T1..T5>` once per case and tier. The `REPEATS` variable adds repeat
+trials. The judge for a tier's output
+runs one tier up (`config/model-tiers.json`'s own
 ordering), except the top tier, which grades itself since no tier exists above it.
 
 **The runner attempts every configured tier on every full run.** It ignores the artifact's
