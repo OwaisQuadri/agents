@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — config reset installer. symlinks and one cargo build, never rm. see docs/reset-spec.md
-# usage: ./install.sh [--dry-run] [--test]
-# HOME_TARGET sandboxes every write below (default: the real $HOME). Point it at a scratch
-# dir to test a worktree's config end to end without touching the real ~/.pi, ~/.local/bin, or ~/.zshrc — e.g. HOME_TARGET=/tmp/pi-sandbox ./install.sh
-# --test is shorthand for that: it pins HOME_TARGET to a scratch dir inside THIS worktree
-# (.install-test-home, gitignored), so the worktree tests only itself, every run starts
-# from the same state, and nothing leaves the checkout. --test runs the install steps and
-# returns; test/run drops into an interactive pi against the sandbox, and test/build_run
-# chains both.
+# Pi config installer. Usage: ./install.sh [--dry-run] [--test].
+# HOME_TARGET selects a sandbox. --test uses this worktree's clean test home.
 set -euo pipefail
 shopt -s nullglob
 
@@ -204,17 +197,20 @@ for lnk in "$SKILLS_ROOT"/*; do
   (( IS_DRY )) || [[ -L "$PRUNED/$(basename "$lnk")" ]] || { echo "FATAL: prune missing at $PRUNED/$(basename "$lnk")" >&2; exit 1; }
 done
 
-# 4. Pi provider routing and model configuration.
+# 4. Pi agents, provider routing, and model configuration.
+PI_AGENT_ROOT="$HOME_TARGET/.pi/agent"
 TIERS="$REPO_TARGET/config/model-tiers.json"
-PI_SETTINGS_TIERS="$HOME_TARGET/.pi/agent/settings.json"
-PI_MODELS_CONFIG="$HOME_TARGET/.pi/agent/models.json"
+PI_AGENTS="$PI_AGENT_ROOT/agents"
+PI_SETTINGS_TIERS="$PI_AGENT_ROOT/settings.json"
+PI_MODELS_CONFIG="$PI_AGENT_ROOT/models.json"
 PI_MODELS_SOURCE="$REPO_TARGET/config/models.json"
-run mkdir -p "$HOME_TARGET/.pi/agent"
+run mkdir -p "$PI_AGENT_ROOT" "$PI_AGENTS"
+link "$PI_AGENT_ROOT/AGENTS.md" "$REPO_TARGET/AGENTS.md"
 
 if ! command -v jq >/dev/null 2>&1; then
-  echo "warn: jq not found, skipping model overrides and provider routing" >&2
+  echo "warn: jq not found, skipping agent generation, model overrides, and provider routing" >&2
 elif [[ ! -f "$TIERS" ]]; then
-  echo "warn: $TIERS not found, skipping provider routing" >&2
+  echo "warn: $TIERS not found, skipping agent generation and provider routing" >&2
 else
   if [[ ! -f "$PI_MODELS_SOURCE" ]]; then
     echo "warn: $PI_MODELS_SOURCE not found, skipping managed model overrides" >&2
@@ -232,6 +228,48 @@ else
       printf '%s\n' "$UPDATED" > "$PI_MODELS_CONFIG"
     fi
   fi
+
+  # No model line: pi resolves the tier through agentOverrides. An unmapped tool aborts
+  # rather than silently dropping a capability grant.
+  for src in "$REPO_TARGET"/agents/*/*.md; do
+    name="$(basename "$src" .md)"
+    [[ "$(jq -r --arg n "$name" '.agents[$n] // empty' "$TIERS")" != "" ]] || continue
+    dest="$PI_AGENTS/$name.md"
+    gen="$(awk '
+      function map(t) {
+        if (t == "Read") return "read"; if (t == "Write") return "write";
+        if (t == "Edit") return "edit"; if (t == "Bash") return "bash";
+        if (t == "Grep") return "grep"; if (t == "Glob") return "find";
+        if (t == "WebSearch") { is_web = 1; return "ext:pi-extension/web_search\n  - ext:web/fallback_web_search" }
+        if (t == "WebFetch") { is_web = 1; return "ext:pi-extension/web_fetch\n  - ext:pi-extension/web_crawl\n  - ext:web/fetch_content\n  - ext:web/source_check\n  - ext:web/get_search_content" }
+        print "UNMAPPED_TOOL:" t > "/dev/stderr"; exit 3
+      }
+      NR == 1 && $0 == "---" { print; infm = 1; next }
+      infm && /^---$/ { print "tools:"; for (i = 1; i <= n; i++) print "  - " tools[i]; print; infm = 0; next }
+      infm && /^name:/ { sub(/^name: */, ""); printf "name: \"%s\"\n", $0; next }
+      infm && /^description:/ { sub(/^description: */, ""); printf "description: \"%s\"\n", $0; next }
+      infm && /^model:/ { next }
+      infm && /^tools:/ { sub(/^tools: */, ""); n = split($0, a, /, */); for (i = 1; i <= n; i++) tools[i] = map(a[i]); next }
+      infm { next }
+      { print }
+      END {
+        if (is_web) {
+          print "\n## Web tools\n";
+          print "Use DonSeTch web_search, web_fetch, and web_crawl first when available for supported work.";
+          print "Use available fallback_web_search, fetch_content, source_check, or get_search_content only after a relevant failure or for an unsupported capability.";
+          print "Exact raw bodies and saved authentication profiles can go directly to fallback. Keep legacy response identifiers with get_search_content.";
+          print "Judge whether empty or partial results answer the task. Do not call another provider after an adequate success.";
+          print "Report why you used fallback. This rule does not add automatic retries.";
+        }
+      }
+    ' "$src")" || { echo "FATAL: unmapped tool in $src" >&2; exit 1; }
+    if [[ -f "$dest" ]] && [[ "$gen" == "$(cat "$dest")" ]]; then
+      plan "ok   $dest generated from $src"
+    else
+      plan "gen  $dest from $src"
+      (( IS_DRY )) || printf '%s\n' "$gen" > "$dest"
+    fi
+  done
 
   [[ -f "$PI_SETTINGS_TIERS" ]] || { plan "init $PI_SETTINGS_TIERS"; run bash -c "echo '{}' > '$PI_SETTINGS_TIERS'"; }
   # agentOverrides.thinking OVERWRITES an agent's own frontmatter (agents.ts applyOverride),
