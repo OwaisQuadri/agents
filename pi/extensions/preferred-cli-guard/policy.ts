@@ -1,6 +1,6 @@
 export type CheckResult = { blocked: boolean; reason?: string };
-export type Checker = (command: string) => CheckResult;
-export type BashToolInput = { command: string };
+export type Checker = (command: string, timeout?: number) => CheckResult;
+export type BashToolInput = { command: string; timeout?: number };
 
 /**
  * Returns the block reason for a bash tool call the `preferred-cli-guard` Rust checker
@@ -16,6 +16,6 @@ export type BashToolInput = { command: string };
  * @throws Never.
  */
 export function blockedPreferredCliCommand(input: BashToolInput, check: Checker): string | undefined {
-	const result = check(input.command);
+	const result = check(input.command, input.timeout);
 	return result.blocked ? result.reason : undefined;
 }
