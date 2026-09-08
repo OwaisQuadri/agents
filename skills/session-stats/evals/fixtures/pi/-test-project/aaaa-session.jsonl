@@ -1,3 +1,4 @@
 {"type":"message","timestamp":"2026-01-01T10:00:00.000Z","message":{"role":"assistant","model":"pi-test-1","usage":{"input":100,"output":50,"cacheRead":1000,"cacheWrite":200}}}
 {"type":"message","timestamp":"2026-01-01T10:30:00.000Z","message":{"role":"assistant","model":"pi-test-1","usage":{"input":10,"output":40,"cacheRead":5000,"cacheWrite":300}}}
 {"type":"message","timestamp":"2026-01-01T10:31:00.000Z","message":{"role":"user","model":"pi-test-1","usage":{"input":1,"output":1,"cacheRead":1,"cacheWrite":1}}}
+{"type":"message","timestamp":"2026-01-01T10:32:00.000Z","message":{"role":"assistant","model":"<synthetic>","usage":{"input":1,"output":1,"cacheRead":1,"cacheWrite":1}}}

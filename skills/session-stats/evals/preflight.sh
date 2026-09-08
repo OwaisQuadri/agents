@@ -17,5 +17,6 @@ print -r -- "$json" | jq -e '
   .[0].cacheCreate == 500 and
   .[0].firstCtx == 1300 and
   .[0].lastCtx == 5310 and
-  .[0].messages == 2
+  .[0].messages == 2 and
+  all(.[]; (.model | startswith("<") | not))
 ' >/dev/null

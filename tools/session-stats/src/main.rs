@@ -234,6 +234,9 @@ fn scan_pi(dir: &Path, aggs: &mut Rows) {
             let Some(model) = message["model"].as_str() else {
                 return;
             };
+            if model.starts_with('<') {
+                return;
+            }
             add(
                 entry(aggs, "pi", &project, &session, model),
                 tokens(usage, "input"),

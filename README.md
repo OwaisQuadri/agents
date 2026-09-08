@@ -12,7 +12,7 @@ cargo build --release --manifest-path tools/tool-sync/Cargo.toml
 
 A fresh checkout needs the one-time build before its first dry run. The dry run exits with the required build command when the binary is absent.
 
-`install.sh` never escalates. It runs from the `post-merge` hook, where a password prompt has no terminal to appear on. It reports policy drift and writes nothing under `/Library`.
+`install.sh` never escalates. It runs from the `post-merge` hook, where a password prompt has no terminal. It writes nothing under `/Library`.
 
 ## layout
 
