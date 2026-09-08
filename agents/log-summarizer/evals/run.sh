@@ -1,6 +1,6 @@
 #!/bin/bash
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
-#   ./run.sh [candidate-file]            grade every non-holdout case
+#   ./run.sh [candidate-file]            grade every nonholdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice
 # against the incumbent definition (or the candidate, if given). One
 # JSON(JavaScript Object Notation) line per case to stdout —
@@ -9,14 +9,14 @@
 #
 # Honesty bound: mechanical checks stop at what this script can anchor — block
 # shape, verbatim quoting against the fixture, an estimated token bound, and an
-# untouched scratch directory. The read budget (three calls, all against
-# log_path) needs the run transcript, which `claude -p` does not emit, so it is
-# a judge item in rubric.md. The mechanical ceiling here is therefore 6/10.
+# untouched scratch directory. The read budget needs the run transcript, so it
+# is a judge item in rubric.md. The mechanical ceiling here is therefore 6/10.
 # This script never fakes a pass.
 
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+source "$HERE/../../../tools/skill-eval/timing.sh"
 CASES="$HERE/cases.jsonl"
 AGENT_NAME="log-summarizer"
 DEF="$HERE/../log-summarizer.md"
@@ -30,16 +30,22 @@ for arg in "$@"; do
 done
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
-command -v claude >/dev/null 2>&1 || { echo "claude CLI(command-line interface) is required" >&2; exit 1; }
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
 
+timing_preflight || exit $?
+timing_begin "$AGENT_NAME" "$( [ "$WANT_HOLDOUT" = true ] && printf holdout || printf nonholdout )" "$DEF" || exit $?
 total=0
 sum=0
 catastrophic=0
+ungraded=0
 
 emit() {
-  printf '{"id":"%s","score":%s,"failure_mode":%s}\n' "$1" "$2" "$3"
+  timing_case "$1" "$2" "$3" "$case_started"
+  if [ "$2" -lt 0 ]; then
+    ungraded=$((ungraded + 1))
+    return
+  fi
   total=$((total + 1))
   sum=$((sum + $2))
   [ "$2" -eq 0 ] && catastrophic=$((catastrophic + 1))
@@ -81,15 +87,25 @@ while IFS= read -r line; do
   id="$(printf '%s' "$line" | jq -r '.id')"
   input="$(printf '%s' "$line" | jq -r '.input')"
 
+  timing_case_begin
+  case_started="$(timing_now_ms)"
   scratch="$(mktemp -d)"
-  mkdir -p "$scratch/.claude/agents"
-  cp "$DEF" "$scratch/.claude/agents/log-summarizer.md"
   make_fixture "$scratch"
-  before="$(find "$scratch" -type f ! -path "*/.claude/*" | sort)"
-  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
-  # case loop's remaining lines without it
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
-  after="$(find "$scratch" -type f ! -path "*/.claude/*" | sort)"
+  before="$(find "$scratch" -type f | sort)"
+  out_file="$(mktemp)"
+  if timing_dispatch "$AGENT_NAME" "$DEF" "$scratch" "$input" > "$out_file"; then
+    dispatch_status=0
+  else
+    dispatch_status=$?
+  fi
+  out="$(cat "$out_file")"
+  rm -f "$out_file"
+  after="$(find "$scratch" -type f | sort)"
+  if [ "$dispatch_status" -ne 0 ]; then
+    rm -rf "$scratch"
+    emit "$id" -1 "$(jq -Rn --arg value "dispatch-failed:$dispatch_status" '$value')"
+    continue
+  fi
 
   block="$(printf '%s\n' "$out" | awk '/^```log-summary/{f=1; next} /^```/{f=0} f')"
   words=0
@@ -168,7 +184,9 @@ if [ "$total" -gt 0 ]; then
 else
   mean="0"
 fi
-slice="non-holdout"
+slice="nonholdout"
 [ "$WANT_HOLDOUT" = "true" ] && slice="holdout"
-printf 'slice=%s cases=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
-  "$slice" "$total" "$mean" "$catastrophic" >&2
+printf 'slice=%s cases=%d ungraded=%d mean=%s catastrophic=%d (mechanical ceiling 6/10; 7-10 requires the rubric.md judge pass)\n' \
+  "$slice" "$total" "$ungraded" "$mean" "$catastrophic" >&2
+timing_complete || exit $?
+[ "$ungraded" -eq 0 ] || exit 2

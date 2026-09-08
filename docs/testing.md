@@ -39,7 +39,9 @@ REPO_TARGET="$PWD" ./install.sh --dry-run
 ```sh
 # Rust tools
 cargo test --manifest-path tools/tool-sync/Cargo.toml
+cargo test --manifest-path tools/tier-dispatch/Cargo.toml
 cargo test --manifest-path tools/skill-eval/Cargo.toml
+tools/skill-eval/timing-test.sh
 cargo build --release --manifest-path tools/tool-wizard/Cargo.toml   # any tools/<name>/Cargo.toml
 
 # Pi extensions (Node test runner)
@@ -75,6 +77,25 @@ Configuration and usage errors also exit 2 in every mode. Baseline and narrow di
 otherwise retain their earlier result behavior. The runner uses `tools/tier-dispatch` for real
 artifact runs and judge runs. It disables extension discovery and loads `pi-anthropic-auth` as
 the minimum extension.
+
+Each case row reports its total time. Its repeat records report generation and judge times,
+requested tiers, final models, and each fallback attempt. `tools/tier-dispatch` reports the
+model, thinking level, time, and result for every attempt.
+
+Each run prints its comparison identifier before the first case. It writes append-only events
+under `${SKILL_EVAL_STATE_DIR:-$HOME/.local/state/skill-eval}/runs`. Resume an interrupted run
+with the same candidate and `--resume <comparison-id>`. The runner names changed inputs and
+stops before dispatch when the saved inputs are stale. It reruns an interrupted case and skips
+completed cases. A checkpoint cannot update the frontier or live artifact.
+
+The state directory keeps the latest 100 completed runs per artifact. It keeps active and
+resumable runs and removes stale incomplete runs. Set `SKILL_EVAL_STATE_DIR` to isolate tests.
+Use `--resume-from-log <path>` once to import a legacy mixed log that forms an exact case prefix.
+Imported rows keep unknown time and model fields as null.
+
+Custom agent harnesses use Pi through `tools/tier-dispatch` and write the same timing state.
+Run `tools/skill-eval/timing-test.sh` to test their case records, parallel-run safety, web
+extension preflight, dispatch bound, and retention without a live model.
 
 ## manifest / policy checks
 
