@@ -40,27 +40,17 @@ function createFakePi() {
 		on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
 			handlers.set(event, handler);
 		},
+		registerTool() {},
 	} as unknown as ExtensionAPI;
 	return { api, handlers };
 }
 
 function createMockContext() {
 	let isActive = true;
-	const setStatusCalls: Array<{ key: string; text: string | undefined }> = [];
 	const ctx = {
 		get hasUI() {
 			if (!isActive) throw new Error("This extension ctx is stale");
 			return true;
-		},
-		ui: {
-			setStatus(key: string, text: string | undefined) {
-				setStatusCalls.push({ key, text });
-			},
-			theme: {
-				fg(_mode: string, text: string) {
-					return text;
-				},
-			},
 		},
 		model: {
 			provider: "anthropic",
@@ -74,7 +64,6 @@ function createMockContext() {
 
 	return {
 		ctx,
-		setStatusCalls,
 		markStale() {
 			isActive = false;
 		},
@@ -82,6 +71,7 @@ function createMockContext() {
 }
 
 test("TC-06 fallback: two concurrent refresh(true) calls with mid-fetch stale ctx must stay clean", async () => {
+	(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = undefined;
 	const { api, handlers } = createFakePi();
 	statusline(api);
 	const sessionStart = handlers.get("session_start");
@@ -134,10 +124,10 @@ test("TC-06 fallback: two concurrent refresh(true) calls with mid-fetch stale ct
 		await sessionStart({}, context.ctx);
 		await waitFor(() => fetchCalls === 1);
 		fetchBlocks[0].resolve();
-		await waitFor(() => fetchCalls === 1 && context.setStatusCalls.length >= 1);
+		await waitFor(() => (globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState !== undefined);
 		await waitFor(() => intervalCallback !== undefined);
 
-		const statusCountAfterStartup = context.setStatusCalls.length;
+		const quotaStateAfterStartup = (globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState;
 		assert.doesNotThrow(() => {
 			assert.ok(intervalCallback, "expected interval callback captured");
 			intervalCallback?.();
@@ -150,7 +140,7 @@ test("TC-06 fallback: two concurrent refresh(true) calls with mid-fetch stale ct
 		await Promise.all([fetchReturns[1].promise, fetchReturns[2].promise]);
 
 		await new Promise((resolve) => setTimeout(resolve, 10));
-		assert.equal(context.setStatusCalls.length, statusCountAfterStartup);
+		assert.equal((globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState, quotaStateAfterStartup);
 	} finally {
 		globalThis.setInterval = originalSetInterval;
 		globalThis.fetch = originalFetch;

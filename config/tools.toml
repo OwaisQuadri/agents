@@ -141,6 +141,22 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "quota-settings"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/quota-settings.ts"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
+name = "quota-settings-lib"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/quota-settings"
+source = { path = "." }
+installer = { command = "/usr/bin/true", args = [], preview_args = [] }
+
+[[tools]]
 name = "turbo"
 platforms = ["macos", "linux"]
 commands = []

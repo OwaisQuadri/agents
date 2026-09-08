@@ -1,4 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { parseQuotaOverride, type QuotaProvider } from "./quota-settings/model.ts";
 
 type UsageWindow = {
 	usedPercent: number;
@@ -11,7 +16,7 @@ type ProviderUsage = {
 	sevenDay: UsageWindow | null;
 };
 
-type Provider = "anthropic" | "openai-codex";
+type Provider = QuotaProvider;
 
 type ProviderAdmission = {
 	isFresh: boolean;
@@ -19,9 +24,11 @@ type ProviderAdmission = {
 	pacePercent: number | null;
 	reset: string | null;
 	isEligible: boolean;
+	isOverridden: boolean;
 };
 
 type QuotaAdmission = {
+	checkedAtEpochSeconds: number;
 	isAdmitted: boolean;
 	providers: Record<Provider, ProviderAdmission>;
 };
@@ -57,6 +64,20 @@ const QUOTA_ADMISSION_PARAMETERS = {
 	additionalProperties: false,
 	properties: {},
 } as const;
+
+function defaultSettingsPath(): string {
+	const configured = process.env.PI_CODING_AGENT_DIR?.trim();
+	const root = resolve(configured && configured.length > 0 ? configured : join(homedir(), ".pi", "agent"));
+	return join(root, "settings.json");
+}
+
+function quotaOverrideFrom(settingsPath: string): Provider | null {
+	try {
+		return parseQuotaOverride(readFileSync(settingsPath, "utf8"));
+	} catch {
+		return null;
+	}
+}
 
 function isCtxActive(ctx: ExtensionContext): boolean {
 	try {
@@ -223,7 +244,7 @@ function formatCalendarReset(epochSeconds: number): string {
 function quotaAdmissionFor(usage: ProviderUsage | null, nowSeconds: number): ProviderAdmission {
 	const selected = usage ? selectWindow(usage) : null;
 	if (!selected) {
-		return { isFresh: false, usedPercent: null, pacePercent: null, reset: null, isEligible: false };
+		return { isFresh: false, usedPercent: null, pacePercent: null, reset: null, isEligible: false, isOverridden: false };
 	}
 
 	const resetAt = selected.window.resetAtEpochSeconds;
@@ -237,11 +258,13 @@ function quotaAdmissionFor(usage: ProviderUsage | null, nowSeconds: number): Pro
 		pacePercent: pacedPercent,
 		reset: isResetKnown ? (selected.label === "5h" ? formatCalendarReset(resetAt) : `in ${formatReset(diff)}`) : null,
 		isEligible: pacedPercent !== null && usedPercent <= pacedPercent,
+		isOverridden: false,
 	};
 }
 
-export default function statusline(pi: ExtensionAPI) {
+export default function statusline(pi: ExtensionAPI, options: { settingsPath?: string } = {}) {
 	const usageByProvider = new Map<string, ProviderUsage>();
+	const settingsPath = options.settingsPath ?? defaultSettingsPath();
 
 	pi.registerTool({
 		name: "quota_admission",
@@ -260,16 +283,25 @@ export default function statusline(pi: ExtensionAPI) {
 				}),
 			);
 			const nowSeconds = Math.round(Date.now() / 1000);
+			const overrideProvider = quotaOverrideFrom(settingsPath);
 			const providers = Object.fromEntries(
 				fetched.map(([provider, usage]) => {
 					if (usage) usageByProvider.set(provider, usage);
-					return [provider, quotaAdmissionFor(usage, nowSeconds)];
+					const admission = quotaAdmissionFor(usage, nowSeconds);
+					return [
+						provider,
+						overrideProvider === provider ? { ...admission, isEligible: true, isOverridden: true } : admission,
+					];
 				}),
 			) as Record<Provider, ProviderAdmission>;
 			const result: QuotaAdmission = {
-				isAdmitted: PROVIDERS.some((provider) => providers[provider].isFresh && providers[provider].isEligible),
+				checkedAtEpochSeconds: nowSeconds,
+				isAdmitted: PROVIDERS.some(
+					(provider) => providers[provider].isEligible && (providers[provider].isFresh || providers[provider].isOverridden),
+				),
 				providers,
 			};
+			(globalThis as { __owaisQuotaAdmissionState?: QuotaAdmission }).__owaisQuotaAdmissionState = result;
 			return {
 				content: [{ type: "text", text: JSON.stringify(result) }],
 				details: result,
