@@ -25,9 +25,5 @@ tools/*/target/
 .install-test-home/
 .install-test-home.log
 
-config/mcp-sync-state.toml
-config/.mcp-sync-apply.lock
-config/*.pre-sync-*
-
 .memory/
 .map/GH-*/

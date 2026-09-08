@@ -16,6 +16,7 @@ function guard(cwd = repositoryRoot, isRepositoryClean = true, worktreeRoots = [
 	return { cwd, repositoryRoot, isRepositoryClean: () => isRepositoryClean, worktreeRoots: () => worktreeRoots };
 }
 
+
 for (const isWrapped of [false, true]) {
 	for (const form of ["direct", "sh", "pwd-sh"]) {
 		test(`allows the pinned installed selector: ${form}, wrapped=${isWrapped}`, () => {
@@ -107,16 +108,9 @@ for (const isWrapped of [false, true]) {
 		});
 	});
 }
-
-test("protects only managed agent destinations", () => {
+test("protects only Pi-managed destinations", () => {
 	assert.deepEqual(protectedConfigRoots(home), [
 		"/tmp/config-write-guard-home/.agents/skills",
-		"/tmp/config-write-guard-home/.claude/AGENTS.md",
-		"/tmp/config-write-guard-home/.claude/agents",
-		"/tmp/config-write-guard-home/.claude/rules",
-		"/tmp/config-write-guard-home/.claude/skills",
-		"/tmp/config-write-guard-home/.codex/AGENTS.md",
-		"/tmp/config-write-guard-home/.codex/skills",
 		"/tmp/config-write-guard-home/.config/herdr/config.toml",
 		"/tmp/config-write-guard-home/.config/simslim",
 		"/tmp/config-write-guard-home/.pi/agent/agents",
@@ -130,8 +124,7 @@ test("blocks managed files and descendants without blocking siblings", () => {
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/custom-header.ts`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/../extensions/custom-header.ts`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.agents/skills/session-stats/SKILL.md`, home), true);
-	assert.equal(isProtectedConfigPath(`${home}/.claude/AGENTS.md`, home), true);
-	assert.equal(isProtectedConfigPath(`${home}/.codex/AGENTS.md`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/herdr/config.toml`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/main.json`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/feature.json`, home), true);
@@ -145,11 +138,10 @@ test("blocks managed files and descendants without blocking siblings", () => {
 
 test("blocks managed file writes and destination shell commands", () => {
 	assert.match(blockedConfigToolCall("write", { path: `${home}/.pi/agent/extensions/custom-header.ts` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("edit", { path: `${home}/.claude/AGENTS.md` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/extensions/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.equal(blockedConfigToolCall("write", { path: `${home}/.pi/agent/sessions/session.jsonl` }, home), undefined);
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > ~/.pi/agent/settings.json" }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > $HOME/.agents/skills/new/SKILL.md" }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.codex/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/herdr/config.toml` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json && echo done` }, home) ?? "", /Blocked/);
@@ -172,10 +164,10 @@ test("blocks managed file writes and destination shell commands", () => {
 
 test("allows read-only bash access to managed config", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.pi/agent/settings.json` }, home), undefined);
-	assert.equal(blockedConfigToolCall("bash", { command: `less ${home}/.claude/AGENTS.md` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `less ${home}/.pi/agent/extensions/AGENTS.md` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `ls -la ${home}/.pi/agent/extensions` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.pi/agent/settings.json | less` }, home), undefined);
-	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude diff` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions diff` }, home), undefined);
 });
 
 test("allows a static Z shell wrapper reading managed config", () => {
@@ -188,15 +180,15 @@ test("allows a static Z shell wrapper reading managed config", () => {
 });
 
 test("allows a static Z shell wrapper changing to managed config and listing files", () => {
-	const command = `/bin/zsh -lc 'cd ${home}/.claude && ls'`;
+	const command = `/bin/zsh -lc 'cd ${home}/.pi/agent/extensions && ls'`;
 	assert.equal(blockedConfigToolCall("bash", { command }, home), undefined);
 });
 
 for (const [name, command] of [
-	["relative deletion after changing directory", `/bin/zsh -lc 'cd ${home}/.claude && rm -rf x'`],
-	["relative redirect after changing directory", `/bin/zsh -lc 'cd ${home}/.claude; printf x > settings.json'`],
-	["relative deletion in a pipeline", `/bin/zsh -lc 'cd ${home}/.claude | rm x'`],
-	["interpreter after a managed-config read", `/bin/zsh -lc 'cat ${home}/.claude/settings.json && bash'`],
+	["relative deletion after changing directory", `/bin/zsh -lc 'cd ${home}/.pi/agent/extensions && rm -rf x'`],
+	["relative redirect after changing directory", `/bin/zsh -lc 'cd ${home}/.pi/agent/extensions; printf x > settings.json'`],
+	["relative deletion in a pipeline", `/bin/zsh -lc 'cd ${home}/.pi/agent/extensions | rm x'`],
+	["interpreter after a managed-config read", `/bin/zsh -lc 'cat ${home}/.pi/agent/extensions/settings.json && bash'`],
 	["missing closing quote", `/bin/zsh -lc 'cat ${home}/.pi/agent/settings.json`],
 	["dynamic double-quoted payload", `/bin/zsh -lc "cat ${home}/.pi/agent/settings.json $EXTRA"`],
 	["output redirect", `/bin/zsh -lc 'printf x > ${home}/.pi/agent/settings.json'`],
@@ -238,12 +230,12 @@ test("allows read-only navigation and search commands", () => {
 
 test("blocks grep against managed config after its allowlist removal", () => {
 	assert.match(blockedConfigToolCall("bash", { command: `grep -r foo ${home}/.agents/skills` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `grep foo ${home}/.claude/AGENTS.md | head -1` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `grep foo ${home}/.pi/agent/extensions/AGENTS.md | head -1` }, home) ?? "", /Blocked/);
 });
 
 test("allows egrep and fgrep, which the grep removal deliberately left in place", () => {
-	assert.equal(blockedConfigToolCall("bash", { command: `egrep foo ${home}/.claude/AGENTS.md` }, home), undefined);
-	assert.equal(blockedConfigToolCall("bash", { command: `fgrep foo ${home}/.claude/AGENTS.md` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `egrep foo ${home}/.pi/agent/extensions/AGENTS.md` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `fgrep foo ${home}/.pi/agent/extensions/AGENTS.md` }, home), undefined);
 });
 
 test("leaves a pipe stage naming no protected path out of the judgment", () => {
@@ -251,71 +243,71 @@ test("leaves a pipe stage naming no protected path out of the judgment", () => {
 });
 
 test("allows a write whose group carries no protected path, after cd joined the allowlist", () => {
-	assert.equal(blockedConfigToolCall("bash", { command: `cd ${home}/.claude && rm AGENTS.md` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `cd ${home}/.pi/agent/extensions && rm AGENTS.md` }, home), undefined);
 });
 
 test("blocks direct write and delete commands touching managed config", () => {
 	assert.match(blockedConfigToolCall("bash", { command: `rm ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `sed -i s/a/b/ ${home}/.claude/AGENTS.md` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `sed -i s/a/b/ ${home}/.pi/agent/extensions/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `tee ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude checkout -- AGENTS.md` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions checkout -- AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `echo $(rm ${home}/.pi/agent/settings.json)` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `cat file.txt >> ${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `python3 -c "open('${home}/.pi/agent/settings.json','w')"` }, home) ?? "", /Blocked/);
 });
 
 test("blocks a background job from smuggling a write past the leading command", () => {
-	assert.match(blockedConfigToolCall("bash", { command: `echo hi & sed -i s/a/b/ ${home}/.claude/AGENTS.md` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `echo hi & sed -i s/a/b/ ${home}/.pi/agent/extensions/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `true & rm ${home}/.pi/agent/settings.json &` }, home) ?? "", /Blocked/);
 });
 
 test("blocks a git subcommand outside the read allowlist", () => {
-	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude pull` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude merge feature` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude commit -am x` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions pull` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions merge feature` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions commit -am x` }, home) ?? "", /Blocked/);
 });
 
 test("blocks a redirect with no space before the operator", () => {
-	assert.match(blockedConfigToolCall("bash", { command: `cat malicious.md>${home}/.claude/AGENTS.md` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `cat malicious.md>${home}/.pi/agent/extensions/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `echo pwned>${home}/.pi/agent/settings.json` }, home) ?? "", /Blocked/);
 });
 
 test("blocks a protected-path reference laundered through an interpreter pipe", () => {
-	assert.match(blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.claude/AGENTS.md" | bash` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.pi/agent/extensions/AGENTS.md" | bash` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf '%s' "rm ${home}/.pi/agent/settings.json" | sh` }, home) ?? "", /Blocked/);
 });
 
 test("blocks git reflog's destructive actions but allows reflog show", () => {
-	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude reflog expire --expire=now --all` }, home) ?? "", /Blocked/);
-	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude reflog delete HEAD@{0}` }, home) ?? "", /Blocked/);
-	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.claude reflog show` }, home), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions reflog expire --expire=now --all` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions reflog delete HEAD@{0}` }, home) ?? "", /Blocked/);
+	assert.equal(blockedConfigToolCall("bash", { command: `git -C ${home}/.pi/agent/extensions reflog show` }, home), undefined);
 });
 
 test("recognizes ~<username> as the protected home, not ~<other user>", () => {
 	assert.match(
-		blockedConfigToolCall("bash", { command: `sed -i s/a/b/ ~${user}/.claude/AGENTS.md` }, home, user) ?? "",
+		blockedConfigToolCall("bash", { command: `sed -i s/a/b/ ~${user}/.pi/agent/extensions/AGENTS.md` }, home, user) ?? "",
 		/Blocked/,
 	);
-	assert.equal(blockedConfigToolCall("bash", { command: "sed -i s/a/b/ ~other/.claude/AGENTS.md" }, home, user), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: "sed -i s/a/b/ ~other/.pi/agent/extensions/AGENTS.md" }, home, user), undefined);
 });
 
 test("recognizes a doubled slash as the same protected path", () => {
 	assert.match(
-		blockedConfigToolCall("bash", { command: `sed -i s/a/b/ ${home}//.claude/AGENTS.md` }, home, user) ?? "",
+		blockedConfigToolCall("bash", { command: `sed -i s/a/b/ ${home}//.pi/agent/extensions/AGENTS.md` }, home, user) ?? "",
 		/Blocked/,
 	);
 });
 
 test("recognizes |& as a pipe into an interpreter, not a background job", () => {
 	assert.match(
-		blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.claude/AGENTS.md" |& bash` }, home, user) ?? "",
+		blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.pi/agent/extensions/AGENTS.md" |& bash` }, home, user) ?? "",
 		/Blocked/,
 	);
 });
 
 test("recognizes a mixed-case interpreter name", () => {
 	assert.match(
-		blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.claude/AGENTS.md" | BASH` }, home, user) ?? "",
+		blockedConfigToolCall("bash", { command: `echo "sed -i s/a/b/ ${home}/.pi/agent/extensions/AGENTS.md" | BASH` }, home, user) ?? "",
 		/Blocked/,
 	);
 });
@@ -346,8 +338,8 @@ test("a symbolic-link alias into managed config stays protected", () => {
 	const linkedHome = mkdtempSync(join(tmpdir(), "config-write-guard-alias-home-"));
 	const aliasRoot = mkdtempSync(join(tmpdir(), "config-write-guard-alias-root-"));
 	try {
-		mkdirSync(join(linkedHome, ".claude", "skills"), { recursive: true });
-		symlinkSync(join(linkedHome, ".claude", "skills"), join(aliasRoot, "skills-link"));
+		mkdirSync(join(linkedHome, ".pi/agent/extensions", "skills"), { recursive: true });
+		symlinkSync(join(linkedHome, ".pi/agent/extensions", "skills"), join(aliasRoot, "skills-link"));
 		assert.equal(isProtectedConfigPath(join(aliasRoot, "skills-link", "new.md"), linkedHome), true);
 	} finally {
 		rmSync(linkedHome, { recursive: true, force: true });
@@ -581,7 +573,7 @@ test("blocks absolute, home-variable, tilde, and changed-directory references fr
 });
 
 test("keeps a nested feature worktree writable", () => {
-	const nestedWorktree = `${repositoryRoot}/.claude/worktrees/feature`;
+	const nestedWorktree = `${repositoryRoot}/.pi/agent/extensions/worktrees/feature`;
 	const context = guard(nestedWorktree, true, [repositoryRoot, nestedWorktree]);
 	assert.equal(blockedConfigToolCall("write", { path: `${nestedWorktree}/skills/x.md` }, home, user, context), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: "touch note.md" }, home, user, context), undefined);
@@ -590,7 +582,7 @@ test("keeps a nested feature worktree writable", () => {
 
 test("allows shell writes aimed at nested and sibling worktrees", () => {
 	const root = `${home}/Documents/agents`;
-	const nestedWorktree = `${root}/.claude/worktrees/feature`;
+	const nestedWorktree = `${root}/.pi/agent/extensions/worktrees/feature`;
 	const siblingWorktree = `${root}-worktrees/feature`;
 	const context: GuardContext = {
 		cwd: worktreeRoot,

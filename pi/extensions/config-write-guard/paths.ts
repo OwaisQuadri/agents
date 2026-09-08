@@ -4,12 +4,6 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 
 const protectedRelativePaths = [
 	[".agents", "skills"],
-	[".claude", "AGENTS.md"],
-	[".claude", "agents"],
-	[".claude", "rules"],
-	[".claude", "skills"],
-	[".codex", "AGENTS.md"],
-	[".codex", "skills"],
 	[".config", "herdr", "config.toml"],
 	[".config", "simslim"],
 	[".pi", "agent", "agents"],
