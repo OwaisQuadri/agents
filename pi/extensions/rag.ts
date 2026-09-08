@@ -312,6 +312,7 @@ export default function ragExtension(
 	let session: McpSession | undefined;
 	let starting: Promise<McpSession> | undefined;
 	let isMemorySessionActive = false;
+	let pendingRecallQuery: string | undefined;
 
 	const startSession = (): Promise<McpSession> => {
 		if (session?.isAvailable && starting === undefined) {
@@ -345,33 +346,47 @@ export default function ragExtension(
 		return initialization;
 	};
 
+	const recallFor = async (query: string): Promise<string | undefined> => {
+		try {
+			const search = startSession().then((activeSession) => activeSession.callSearch({ query, k: 8 }));
+			return memoryRecall(await withinDeadline(search, recallTimeoutMs));
+		} catch {
+			return undefined;
+		}
+	};
+	const recallMessage = (content: string) => ({ customType: "rag-recall", content, display: false as const });
+
 	pi.on("session_start", () => {
 		isMemorySessionActive = true;
+		pendingRecallQuery = undefined;
 	});
 	pi.on("session_shutdown", async () => {
 		isMemorySessionActive = false;
+		pendingRecallQuery = undefined;
 		const activeSession = session;
 		session = undefined;
 		await activeSession?.close();
 	});
 	pi.on("input", async (event) => {
-		if (event.source !== "interactive" || process.env.RAG_RECALL === "0" || !isMemorySessionActive || event.text.length === 0) {
-			return { action: "continue" };
-		}
-		try {
-			const search = startSession().then((activeSession) => activeSession.callSearch({ query: event.text.slice(0, maximumRecallQueryLength), k: 8 }));
-			const recall = memoryRecall(await withinDeadline(search, recallTimeoutMs));
-			if (recall === undefined) {
-				return { action: "continue" };
+		const isRecallEligible = event.source === "interactive" && process.env.RAG_RECALL !== "0" && isMemorySessionActive && event.text.length > 0;
+		const query = isRecallEligible ? event.text.slice(0, maximumRecallQueryLength) : undefined;
+		if (event.streamingBehavior === undefined) {
+			pendingRecallQuery = query;
+		} else if (query !== undefined) {
+			const recall = await recallFor(query);
+			if (recall !== undefined) {
+				pi.sendMessage(recallMessage(recall), { deliverAs: event.streamingBehavior });
 			}
-			return {
-				action: "transform",
-				text: `${recall}\n\n${event.text}`,
-				...(event.images === undefined ? {} : { images: event.images }),
-			};
-		} catch {
-			return { action: "continue" };
 		}
+		return { action: "continue" };
+	});
+	pi.on("before_agent_start", async () => {
+		const query = pendingRecallQuery;
+		pendingRecallQuery = undefined;
+		if (query === undefined) return;
+		const recall = await recallFor(query);
+		if (recall === undefined) return;
+		return { message: recallMessage(recall) };
 	});
 	pi.registerTool({
 		name: "search_memory",
