@@ -2,7 +2,6 @@
 name = "rag"
 platforms = ["macos", "linux"]
 commands = ["rag"]
-mcp_server = "rag"
 pi_extension = "pi/extensions/rag.ts"
 source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "583d2344a9bf96cb1961991d931870aad62e1b58" }
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }

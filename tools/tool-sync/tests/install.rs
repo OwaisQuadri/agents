@@ -1000,7 +1000,7 @@ fn top_level_installer_preserves_model_overrides_while_adding_managed_compatibil
     fs::create_dir_all(repository.join("config")).expect("config fixture");
     fs::create_dir_all(repository.join("skills/fixture")).expect("skill fixture");
     fs::create_dir_all(home.join(".pi/agent")).expect("Pi home fixture");
-    fs::write(repository.join("CLAUDE.md"), "fixture").expect("instructions fixture");
+    fs::write(repository.join("AGENTS.md"), "fixture").expect("instructions fixture");
     fs::write(
         repository.join("config/model-tiers.json"),
         r#"{"tiers":{"T1":{"pi":{"model":"openrouter/test","thinking":"off"},"fallbacks":[{"model":"openrouter/fallback","thinking":"off"}]}},"agents":{},"orchestrator":"T1"}"#,
@@ -1049,7 +1049,7 @@ fn top_level_installer_dry_run_leaves_an_absent_home_absent() {
     let home = root.join("home");
     fs::create_dir_all(repository.join("skills/fixture")).expect("top-level fixture");
     fs::create_dir(repository.join("agents")).expect("agents fixture");
-    fs::write(repository.join("CLAUDE.md"), "fixture").expect("instructions fixture");
+    fs::write(repository.join("AGENTS.md"), "fixture").expect("instructions fixture");
     let installer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
 
     let output = Command::new("bash")
@@ -1072,7 +1072,7 @@ fn top_level_dry_run_requires_tool_sync_to_be_built() {
     let home = root.join("home");
     fs::create_dir_all(repository.join("skills/fixture")).expect("top-level fixture");
     fs::create_dir_all(repository.join("tools/tool-sync")).expect("tool-sync fixture");
-    fs::write(repository.join("CLAUDE.md"), "fixture").expect("instructions fixture");
+    fs::write(repository.join("AGENTS.md"), "fixture").expect("instructions fixture");
     fs::write(repository.join("tools/tool-sync/Cargo.toml"), "[package]\n").expect("crate fixture");
     let installer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
 

@@ -84,16 +84,6 @@ fn run_one(
     system_prompt_file: &Path,
     input: &str,
 ) -> Attempt {
-    // The child runs with tools ON but its working directory set to a fresh throwaway
-    // sandbox, discarded after the attempt. Tools stay on because the harness grades
-    // what a tier can actually DO, and a dispatch stripped of tools is a different,
-    // easier task whose score stops predicting real capability. The sandbox exists
-    // because a dispatch pointed at the live repo once edited this repository's own
-    // tracked CLAUDE.md for real during a graded run of eval case a1 -- the case's own
-    // EXPECT names CLAUDE.md as the right destination, and the model, given write
-    // access and no signal this was an exercise, made the edit instead of stating the
-    // verdict. Each attempt gets its own sandbox so a fallback model never sees the
-    // primary's leftover writes.
     let sandbox = match make_sandbox() {
         Ok(dir) => dir,
         Err(error) => {
@@ -285,7 +275,7 @@ exit 0
             r#"#!/bin/sh
 model="$3"
 if [ "$model" = "primary-model" ]; then
-  echo "Claude Code does not support this model; version 2.1.251 or newer is required" 1>&2
+  echo "provider does not support this model" 1>&2
   exit 1
 fi
 echo "ran:$model"

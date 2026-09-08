@@ -112,7 +112,7 @@ loop, and a loop is fine.
 ## output format: the GRAPH SPEC block
 
 Author the workflow as a GRAPH SPEC. The executing prompt starts with the word
-"workflow" — that word is what makes Claude build the coordinated fleet instead of a
+"workflow" — that word is what makes Pi build the coordinated fleet instead of a
 line of steps. Full vocabulary; use only the lines a run needs:
 
 ```

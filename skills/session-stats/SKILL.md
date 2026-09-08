@@ -1,13 +1,13 @@
 ---
 name: session-stats
-description: Use when the user asks about his agent token usage, session history, model spend, context growth, or session-over-time comparisons across Claude Code, Pi, Codex, or Cursor. Compile the stats with the session-stats binary and analyze the JSON. Skip when the ask is about one live session's current context, which needs no compiled history.
+description: Use when the user asks about his agent token usage, session history, model spend, context growth, or session-over-time comparisons in Pi. Compile the stats with the session-stats binary and analyze the JSON. Skip when the ask is about one live session's current context, which needs no compiled history.
 metadata:
-  short-description: Compile cross-agent token-usage stats for analysis
+  short-description: Compile Pi token-usage stats for analysis
 ---
 
 # session-stats
 
-JOB: Compile per-session token-usage rows from every local agent store and answer the usage question from them.
+JOB: Compile per-session token-usage rows from the local Pi session store and answer the usage question from them.
 IN: A usage, cost, history, or comparison question. No arguments arrive; the binary reads the local stores itself.
 OUT: The answer, grounded in named rows or aggregates, plus the path of the compiled JSON. A web view only when the user asks to see the graph.
 
@@ -24,17 +24,16 @@ OUT: The answer, grounded in named rows or aggregates, plus the path of the comp
 
 ## row fields
 
-One row per (session, model). `src`: claude | pi | codex | cursor. `project`,
+One row per (session, model). `src`: pi. `project`,
 `session`, `model`: identity. `input`, `output`, `cacheRead`, `cacheCreate`: summed
 tokens. `messages`: assistant-message count. `first`, `last`: ISO 8601 session bounds.
 `firstCtx`, `lastCtx`: context tokens at the first and last message (0 = not recorded).
 
 ## known gaps
 
-- Claude rows start at the retention horizon (`cleanupPeriodDays`); older transcripts are deleted.
-- Cursor rows carry tokens for only a minority of sessions and no context sizes; timelines are complete.
+- Pi rows reflect the local session retention horizon.
 
 ## evals
 
 `evals/run.sh` builds the binary against the fixture store and checks row shape,
-aggregation, and dedup. Run it from `skills/session-stats/`.
+aggregation, and assistant-message filtering. Run it from `skills/session-stats/`.

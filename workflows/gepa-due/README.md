@@ -60,8 +60,8 @@ never silently dropped. Selection when capping favors the highest `usage_count` 
 
 Before selecting, the trigger drops any due artifact whose most recent prior dispatch
 still has an open PR (checked live via `gh pr view` against
-`workflows/gepa-due/state/reviewed.jsonl`, the gitignored, main-checkout-only,
-append-only record this script itself writes after every settled session) — no value
+`~/.pi/agent/state/gepa-due/reviewed.jsonl`, the machine-local, append-only record
+this script writes after every settled session) — no value
 in reviewing the same artifact twice while a prior review sits unmerged.
 
 Each session's worktree needs no evidence copied in for USAGE: real Pi transcripts
@@ -107,7 +107,7 @@ Gated on the session reaching a VERDICT — it settled (idle/done/blocked), not 
 or timed out — never on what that verdict was. "No mutation, nothing worth
 committing" is as much a verdict as a real mutation: the session looked at the real
 evidence and reached a conclusion, so the trigger appends one line to
-`workflows/gepa-due/state/reviewed.jsonl` (gitignored, main-checkout-only) —
+`~/.pi/agent/state/gepa-due/reviewed.jsonl` —
 `{"artifact", "reviewed_through", "pr_number", "branch", "dispatched_at"}` —
 recording that everything up through `reviewed_through` has now been looked at.
 Append-only: never edits or removes a prior line, so the file itself is a full dispatch
@@ -129,14 +129,13 @@ launchctl kickstart gui/$(id -u)/com.owaisquadri.gepa-due
 `StartCalendarInterval` (Hour=15, Minute=0 — same slot as `scheduled-ideation`, two
 independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
 `launchctl bootout gui/$(id -u)/com.owaisquadri.gepa-due`. Trigger log:
-`~/.claude/gepa-due/trigger.log`.
+`~/.pi/agent/state/gepa-due/trigger.log`.
 
 ## deferred
 
-- **No cleanup of `workflows/gepa-due/state/reviewed.jsonl`.** It grows by one line
-  per settled dispatch, forever. Harmless at current volume (gitignored, never pushed,
-  local disk only, tiny per-line footprint) but unbounded. Not worth its own script
-  yet.
+- **No cleanup of `~/.pi/agent/state/gepa-due/reviewed.jsonl`.** It grows by one line
+  per settled dispatch, forever. Harmless at current volume (machine-local, tiny per-line
+  footprint) but unbounded. Not worth its own script yet.
 - **Incidental-read false positives.** A `read` tool_call on an artifact's definition
   file made while merely browsing, authoring, or reviewing it — not actually "using"
   it in the sense GEPA cares about — still counts as a real transcript hit. No
@@ -227,7 +226,7 @@ independent jobs) then fires it daily without a repeat `kickstart`. Uninstall is
   under `~/.pi/agent/sessions/` directly for `read` hits on an artifact's own
   definition file, filtered to strictly after `max(that artifact's last-modification
   commit, its `reviewed_through` in the new gitignored
-  `workflows/gepa-due/state/reviewed.jsonl`)` — a real TIME cutoff, replacing the old
+  `~/.pi/agent/state/gepa-due/reviewed.jsonl`)` — a real TIME cutoff, replacing the old
   `prompt_version` hash-equality filter a transcript hit has no field to match against.
   `vote_count >= 2` was dropped as an independent due-trigger (it would be circular:
   votes now only come from an already-due Reflect's judge protocol); it remains

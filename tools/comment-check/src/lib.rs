@@ -8,8 +8,7 @@
 //!
 //! Three modes:
 //!   comment-check <file>...             ste-check shape: print FAIL lines, exit nonzero
-//!   comment-check                       warnings-check shape: PreToolUse(Bash) hook
-//!                                       payload on stdin, deny travels in JSON, exits 0
+//!   comment-check                       reads a hook payload from stdin and returns JSON
 //!   comment-check --list-json --lang X  reads stdin as source text, prints every
 //!                                       comment span (doc and non-doc) as a JSON
 //!                                       array with its own text. Whitelist-shape and
@@ -833,9 +832,6 @@ fn is_git_commit(command: &str) -> bool {
     is_verb_sequence(&tokens, &["git", "commit"])
 }
 
-/// Anchors on the program name, then walks past its options, so a flag standing
-/// between the program and its subcommand cannot hide the subcommand. Copied from
-/// `tools/warnings-check/src/main.rs`, gating on the same one verb sequence.
 fn is_verb_sequence(tokens: &[&str], verbs: &[&str]) -> bool {
     for (start, token) in tokens.iter().enumerate() {
         if *token != verbs[0] {

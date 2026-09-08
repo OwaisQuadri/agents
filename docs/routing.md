@@ -1,8 +1,7 @@
 # model routing
 
-The one policy for which model gets which work, across Pi, Claude Code, and every
-dispatch. Distilled from research/pi-harness-routing-research-fable-opus.md; that file holds the full
-rationale.
+This policy assigns models to Pi dispatches.
+`research/pi-harness-routing-research-fable-opus.md` contains the full rationale.
 
 Model ids live in ONE file: `config/model-tiers.json`. Prose and skills name tiers, never
 models. To swap a model, edit that file and run install.sh. You can also use `/tiers`.
@@ -128,11 +127,6 @@ everything else from it.
   The installer nests the map by tier. A shared model keeps a distinct next hop in each
   tier. An unmapped tool aborts the install instead of dropping a capability grant in
   silence.
-- Claude Code: no override layer exists, so the frontmatter must carry a model alias. The
-  installer DERIVES that alias instead of reading a declared one. It walks the tier's
-  chain for the first Anthropic model and takes the family word out of the id. A chain
-  holding none climbs to the next tier in tier-name order until one does. Never edit that
-  line by hand.
 - New: `/tiers`, a Pi command (`pi/extensions/tier-settings.ts`) for editing tiers and their
   models interactively. Browse the configured tiers. Drill into a tier's primary and
   ordered fallbacks. Edit one model or thinking level. Confirm to write the file and run
@@ -180,9 +174,9 @@ code-reviewer seat gives the final coherence verdict and stays T4.
 
 ## skill floors
 
-A skill runs on the session model, and it cannot change that. So a skill whose work needs
-capability declares `metadata.minimum-tier`, and AGENTS.md tells the runner to flag a
-session sitting below it.
+A skill runs on the session model. It cannot change that model.
+A skill with work that needs capability declares `metadata.minimum-tier`.
+The repository guidance tells the runner to flag a session below that tier.
 
 A floor goes on only where a cheaper model fails in a way the user cannot cheaply catch.
 That test, not seniority, decides:

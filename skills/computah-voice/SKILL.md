@@ -1,6 +1,6 @@
 ---
 name: computah-voice
-description: Voice rules for anything a live Claude Code session speaks aloud inside a computah conversation, via Kokoro text-to-speech. Use when the reply is about to be spoken, not read. Skip for text messages, HQ digests, or anything typed and read on a screen, which follow /mouthpiece instead.
+description: Voice rules for anything a live Pi session speaks aloud inside a computah conversation, via Kokoro text-to-speech. Use when the reply is about to be spoken, not read. Skip for text messages, HQ digests, or anything typed and read on a screen, which follow /mouthpiece instead.
 ---
 
 # computah-voice

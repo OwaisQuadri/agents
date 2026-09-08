@@ -12,9 +12,12 @@ else
 fi
 [[ -f $skill ]] || { print -u2 "skill not found: $skill"; exit 1; }
 [[ -f $classifier ]] || { print -u2 "classifier not found: $classifier"; exit 1; }
-/bin/bash -n "$classifier"
-[[ ! -f $heartbeat ]] || /bin/bash -n "$heartbeat"
-for needle in '^JOB:' 'cannot speak into' 'reset-spec.md' '^## evals' 'kind:"merge"'; do
+/bin/zsh -n "$classifier"
+[[ ! -f $heartbeat ]] || /bin/zsh -n "$heartbeat"
+cargo test --quiet --manifest-path "$here/../Cargo.toml"
+cargo build --quiet --manifest-path "$here/../Cargo.toml"
+HQ_STATE_BIN="$here/../target/debug/hq-state"
+for needle in '^JOB:' 'cannot speak into' '^## evals' 'kind:"merge"' '~/.pi/agent/state/hq' 'pi --session'; do
   grep -qE "$needle" "$skill" || { print -u2 "SKILL.md missing required section: $needle"; exit 1; }
 done
 
@@ -32,7 +35,7 @@ while IFS= read -r line; do
     prev_arg=$tmp/prev.json
   fi
   print -r -- "$line" | jq -c '.input.curr' > "$tmp/curr.json"
-  out=$(/bin/bash "$classifier" --classify "$prev_arg" "$tmp/curr.json")
+  out=$(HQ_STATE_BIN="$HQ_STATE_BIN" /bin/zsh "$classifier" --classify "$prev_arg" "$tmp/curr.json")
   if [[ -z $out ]]; then
     got_anomalies=
     got_routine=

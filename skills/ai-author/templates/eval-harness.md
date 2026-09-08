@@ -93,7 +93,7 @@ task whose score stops predicting real capability. The sandbox is confirmed nece
 not theoretical: an early version that ran dispatches in the repo's own working directory
 let a real dispatch of ai-author's own case `a1` ("every code comment should follow the
 whitelist... apply it in every session") actually EDIT this repository's own tracked
-`CLAUDE.md`, because the case's EXPECT correctly names CLAUDE.md as the right destination
+the repository guidance, because the case's EXPECT correctly names it as the right destination
 and the model, holding write access to the live repo with no signal this was a graded
 exercise, made the edit rather than stating the verdict. Reverted; the sandbox is the
 fix. A harness whose cases need the dispatch to act on specific fixture files should

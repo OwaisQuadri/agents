@@ -67,10 +67,9 @@ model: sonnet             # compiled from config/model-tiers.json; never hand-pi
   - mechanical transform, extraction, formatting, dedupe → T2.
   - bounded build or research with a checkable pass signal → T3.
   - judgment — adversarial review, ambiguous tradeoffs, taste → T4.
-  Register the agent's tier in the tier file's `agents` map. A pi definition carries NO
-  model line; the installer compiles the tier into settings overrides. A Claude Code
-  definition carries the tier's floating alias, and the installer rewrites that line on
-  drift. Never hand-pick a model id. Cheap tiers on boring nodes, strong tiers where
+  Register the agent's tier in the tier file's `agents` map. A Pi definition carries no
+  model line. The installer compiles the tier into settings overrides. Never hand-pick a
+  model id. Cheap tiers on boring nodes, strong tiers where
   judgment lives. "T4 everywhere" is habit, not a decision.
 
 The body opens with the protocol, three blocks in order:
@@ -81,7 +80,7 @@ The body opens with the protocol, three blocks in order:
 2. output contract — a fixed shape (fenced block or JSON(JavaScript Object Notation)
    schema) the next node consumes without guessing. Schema over free text: free text is
    output only a human can read; a shape violation is rejected and retried. Within the
-   shape, verbose beats terse between agents (CLAUDE.md agent-communication rule).
+   shape, verbose beats terse between agents (repository guidance).
 3. context discipline — the dispatch carries only what this step needs. Name what the
    agent must NOT receive (the worker's chat, prior votes, the session transcript);
    an exclusion you don't write down is one the dispatcher will violate.

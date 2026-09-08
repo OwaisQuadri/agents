@@ -28,27 +28,8 @@
 # votes/votes.jsonl is still gitignored per artifact and needs an explicit copy.
 # `git worktree` carries only committed history, and hooks/post-checkout copies no files.
 #
-# "Since last tune" is now a TIME cutoff (max of the artifact's own last-modification
-# commit and workflows/gepa-due/state/reviewed.jsonl's reviewed_through for it), not a
-# prompt_version hash match — a transcript hit carries no prompt_version field to
-# match against. tools/gepa-due computes that cutoff and reports it as cutoff_iso per
-# due artifact; this script passes it straight into the kickoff prompt so the
-# dispatched session (running in a FRESH worktree that cannot see the gitignored state
-# file the cutoff came from) never has to — and never could — re-derive it itself.
-#
-# Dedup against a still-open PR: before selecting which due artifacts to run this
-# fire, this script reads workflows/gepa-due/state/reviewed.jsonl (main checkout,
-# gitignored, written only by this script) for each due artifact's MOST RECENT prior
-# dispatch, and skips it if that dispatch's PR is still open — no sense opening a
-# second worktree to review the same artifact while a prior review sits unmerged.
-#
-# Every fire whose session reaches a VERDICT (settles: idle/done/blocked) appends one
-# line to workflows/gepa-due/state/reviewed.jsonl — gated on REACHING a verdict, never
-# on what that verdict was (a real mutation, a no-mutation note, or nothing committed
-# at all are all a reviewed conclusion). A session that times out or gets stuck never
-# reaches a verdict and gets NO entry — it stays due for tomorrow, same evidence,
-# same cutoff. Append-only: never edits or deletes a prior line, mirroring this
-# repo's own "never rm before a verified move" spirit — nothing here is destructive.
+# Reviewed timestamps are machine-local in ~/.pi/agent/state/gepa-due/reviewed.jsonl.
+# A settled session appends its verdict; an open pull request suppresses a duplicate dispatch.
 #
 # A usage-only, ZERO-vote due reason gets a DIFFERENT kickoff than a real Reflect: with
 # no judge signal on file, a live Reflect pass has nothing to act on and — confirmed
@@ -77,7 +58,7 @@ JUDGE_SAMPLE_SIZE="${GEPA_DUE_JUDGE_SAMPLE:-5}"
 # build here; command -v finds the symlink once install.sh has run, falling back to
 # the raw build path only for a manual run against a checkout install.sh hasn't touched.
 GEPA_DUE_BIN="$(command -v gepa-due || echo "$REPO/tools/gepa-due/target/release/gepa-due")"
-STATE_FILE="$REPO/workflows/gepa-due/state/reviewed.jsonl"
+STATE_FILE="${GEPA_DUE_STATE_FILE:-$HOME/.pi/agent/state/gepa-due/reviewed.jsonl}"
 PRUNE_AFTER_DAYS=7
 POLL_TAB_TIMEOUT_S=30
 POLL_TAB_INTERVAL_S=2

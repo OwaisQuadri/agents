@@ -26,8 +26,8 @@
         </dict>
     </array>
     <key>StandardOutPath</key>
-    <string>/Users/owaisquadri/.claude/scheduled-ideation/trigger.log</string>
+    <string>/Users/owaisquadri/.pi/agent/state/scheduled-ideation/trigger.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/owaisquadri/.claude/scheduled-ideation/trigger.log</string>
+    <string>/Users/owaisquadri/.pi/agent/state/scheduled-ideation/trigger.log</string>
 </dict>
 </plist>

@@ -4,7 +4,7 @@
 
 // KNOWN GAP, accepted: `cd` on the allowlist lets a group's only protected-path
 // reference sit in a `cd` stage while a later group writes an unqualified path
-// (`cd ~/.claude && rm x`). Both gaps target mistaken usage, not a deliberate bypass.
+// (`cd ~/.pi/agent/extensions && rm x`). Both gaps target mistaken usage, not a deliberate bypass.
 const READ_ONLY_COMMANDS = new Set([
 	"cat", "less", "more", "head", "tail", "egrep", "fgrep", "rg", "cd", "fd", "ls", "stat", "file", "wc",
 	"diff", "cmp", "md5sum", "shasum", "sha1sum", "sha256sum", "realpath", "readlink", "dirname",

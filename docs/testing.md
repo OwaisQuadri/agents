@@ -1,9 +1,8 @@
 # testing this repo
 
-The one canonical answer to "how do I test this" — read this before improvising a
-command. Every check below is safe to run from a fresh checkout; none of them touch
-your real `~/.claude`, `~/.codex`, `~/.pi`, `~/.local/bin`, or `~/.zshrc` unless you say
-so explicitly.
+This document lists the commands that test this repository. Read it before you improvise a test command.
+Every check below is safe to run from a fresh checkout.
+They do not touch your real `~/.pi`, `~/.local/bin`, or `~/.zshrc` unless you explicitly ask.
 
 ## the one command for "does the install still work"
 
@@ -121,7 +120,6 @@ extension preflight, dispatch bound, and retention without a live model.
 tools/tool-sync/target/release/tool-sync \
   --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check
 
-./install-policy.sh --dry-run
 
 cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
   --verify-registry --tiers-file config/model-tiers.json
