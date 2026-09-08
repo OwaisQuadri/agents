@@ -1,3 +1,4 @@
+#!/bin/zsh
 set -euo pipefail
 
 HQ_STATE=${HQ_STATE:-$HOME/.pi/agent/state/hq}

@@ -576,11 +576,10 @@ fn main() -> ExitCode {
                 Err(error) => Err(error),
             }
         }
-        [flag] if flag == "--triage-due" => triage_due().and_then(|is_due| {
+        [flag] if flag == "--triage-due" => triage_due().map(|is_due| {
             if is_due {
                 println!("due");
             }
-            Ok(())
         }),
         [flag, output] if flag == "--apply-triage" => apply_triage(output),
         [flag] if flag == "--mark-triaged" => mark_triaged(),
