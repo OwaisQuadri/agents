@@ -104,6 +104,7 @@ struct CaseTiming {
 enum DispatchKind {
     Success,
     Exhausted,
+    TimedOut,
     Failed,
 }
 
@@ -719,6 +720,16 @@ fn decode_dispatch(tier: &str, output: Output, elapsed_ms: u64) -> Result<Dispat
             elapsed_ms,
             attempts,
         }),
+        Some(4) => {
+            eprintln!("tier-dispatch timed out on tier {tier}: {}", stderr.trim());
+            Ok(DispatchResult {
+                kind: DispatchKind::TimedOut,
+                stdout: String::new(),
+                model_ran: None,
+                elapsed_ms,
+                attempts,
+            })
+        }
         code => {
             eprintln!(
                 "tier-dispatch failed on tier {tier} with exit {}: {}",
@@ -3884,6 +3895,26 @@ mod tests {
         TempDir::create(&env::temp_dir(), name).unwrap()
     }
 
+    fn dispatch_output(code: i32) -> Output {
+        Command::new("sh")
+            .args(["-c", &format!("exit {code}")])
+            .output()
+            .unwrap()
+    }
+
+    #[test]
+    fn decodes_timeout_as_ungraded_while_preserving_other_exit_kinds() {
+        assert_eq!(
+            decode_dispatch("T1", dispatch_output(4), 0).unwrap().kind,
+            DispatchKind::TimedOut
+        );
+        assert_eq!(
+            decode_dispatch("T1", dispatch_output(3), 0).unwrap().kind,
+            DispatchKind::Exhausted
+        );
+        assert!(decode_dispatch("T1", dispatch_output(2), 0).is_err());
+    }
+
     fn write_executable(path: &Path, body: &str) {
         fs::write(path, body).unwrap();
         let mut permissions = fs::metadata(path).unwrap().permissions();
@@ -5665,6 +5696,24 @@ fi
             2
         );
         assert_eq!(fs::read_dir(state_dir.join("units")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn timeout_persists_as_an_ungraded_repeat() {
+        let timed_out = "#!/bin/zsh\nexit 4\n";
+        let (_temp, settings, eval_dir, candidate) = paired_fixture("timeout", timed_out);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
+        assert_eq!(run(settings).unwrap(), 2);
+        let unit = fs::read_dir(state_dir.join("units"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
+        assert!(
+            fs::read_to_string(unit.path())
+                .unwrap()
+                .contains("\"score\":null")
+        );
     }
 
     #[test]

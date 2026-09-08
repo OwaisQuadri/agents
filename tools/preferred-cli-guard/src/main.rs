@@ -1,11 +1,9 @@
-//! PreToolUse(bash) guard for `pi/extensions/preferred-cli-guard.ts`: blocks a bash call
-//! that literally invokes `find` or `grep` and explains the `fd`/`rg` idiom instead of
-//! rewriting the command (fd/rg skip hidden and `.gitignore`d paths by default; a silent
-//! rewrite could quietly change results).
+//! Pi PreToolUse(Bash) guard for `pi/extensions/preferred-cli-guard.ts`.
+//! It checks the Bash tool timeout argument and preferred command swaps.
 //!
-//! `preferred-cli-guard --check <command>` — exit 0 allow (no stdout), exit 1 block
-//! (reason on stdout). Add a swap (e.g. `sed`->`sd`) as one more `RULES` entry.
+//! `preferred-cli-guard --check <command> [--timeout <seconds>]` exits 0 to allow.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 /// One preferred-CLI swap; add an entry here for a new swap.
@@ -372,26 +370,178 @@ fn build_reason(rule: &Rule, kind: MatchKind, pieces: &[Piece]) -> String {
     }
 }
 
-/// The block reason, or `None` to allow. Never panics; malformed input degrades to
-/// allow, never to a false block.
-fn blocked_command(command: &str) -> Option<String> {
+const USAGE: &str =
+    "usage: preferred-cli-guard --check <command> [--timeout <seconds>] [--repository-root <path>]";
+const FULL_RUN_TIMEOUT_SECONDS: f64 = 7_200.0;
+const FULL_RUN_TIMEOUT_REASON: &str =
+    "Blocked full skill-evaluation run with a 7200-second outer timeout — run the full harness without an outer timeout and let the harness own process limits.";
+
+fn is_evaluation_runner_path(word: &str, repository_root: &Path) -> bool {
+    if word.split('/').any(|component| component == "..") {
+        return false;
+    }
+    let is_absolute = word.starts_with('/');
+    if is_absolute && Path::new(word).strip_prefix(repository_root).is_err() {
+        return false;
+    }
+    let components: Vec<_> = word
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    if is_absolute {
+        matches!(
+            components.as_slice(),
+            [.., "skills" | "workflows", _, "evals", "run.sh"]
+                | [.., "tools", "skill-eval", "run.sh"]
+        )
+    } else {
+        matches!(
+            components.as_slice(),
+            ["skills" | "workflows", _, "evals", "run.sh"] | ["tools", "skill-eval", "run.sh"]
+        )
+    }
+}
+
+fn is_zsh(word: &str) -> bool {
+    matches!(word, "zsh" | "/bin/zsh")
+}
+
+fn is_zsh_command_option(word: &str) -> bool {
+    matches!(word, "-c" | "-cl" | "-lc")
+}
+
+fn is_diagnostic_evaluation_run(words: &[&str]) -> bool {
+    words.iter().enumerate().any(|(index, word)| {
+        matches!(*word, "--help" | "--holdout")
+            || (*word == "--tier"
+                && words
+                    .get(index + 1)
+                    .is_some_and(|value| !value.starts_with('-')))
+    })
+}
+
+fn is_full_evaluation_runner_invocation(pieces: &[Piece], repository_root: &Path) -> bool {
+    pieces
+        .split(|piece| matches!(piece, Piece::Sep(_)))
+        .any(|segment| {
+            let words: Vec<_> = segment
+                .iter()
+                .filter_map(|piece| match piece {
+                    Piece::Word(word) => Some(word.as_str()),
+                    Piece::Sep(_) => None,
+                })
+                .collect();
+            let command_index = words.iter().position(|word| !looks_like_assignment(word));
+            let is_runner = command_index.is_some_and(|index| {
+                is_evaluation_runner_path(words[index], repository_root)
+                    || (is_zsh(words[index])
+                        && words.get(index + 1).is_some_and(|script| {
+                            is_evaluation_runner_path(script, repository_root)
+                        }))
+            });
+            is_runner && !is_diagnostic_evaluation_run(&words)
+        })
+}
+
+fn is_full_timeout_runner(
+    pieces: &[Piece],
+    is_nested_command: bool,
+    repository_root: &Path,
+) -> bool {
+    if is_full_evaluation_runner_invocation(pieces, repository_root) {
+        return true;
+    }
+
+    if is_nested_command {
+        return false;
+    }
+
+    pieces
+        .split(|piece| matches!(piece, Piece::Sep(_)))
+        .any(|segment| {
+            let words: Vec<_> = segment
+                .iter()
+                .filter_map(|piece| match piece {
+                    Piece::Word(word) => Some(word.as_str()),
+                    Piece::Sep(_) => None,
+                })
+                .collect();
+            let Some(index) = words.iter().position(|word| !looks_like_assignment(word)) else {
+                return false;
+            };
+            matches!(
+                words.get(index..),
+                Some([shell, option, command, ..])
+                    if is_zsh(shell)
+                        && is_zsh_command_option(option)
+                        && is_full_timeout_runner(&tokenize(command), true, repository_root)
+            )
+        })
+}
+
+fn blocked_command_with_timeout_at_root(
+    command: &str,
+    timeout_seconds: Option<f64>,
+    repository_root: &Path,
+) -> Option<String> {
     let pieces = tokenize(command);
+    if timeout_seconds == Some(FULL_RUN_TIMEOUT_SECONDS)
+        && is_full_timeout_runner(&pieces, false, repository_root)
+    {
+        return Some(FULL_RUN_TIMEOUT_REASON.to_string());
+    }
     let (_, rule, kind) = find_violation(&pieces)?;
     Some(build_reason(rule, kind, &pieces))
+}
+
+#[cfg(test)]
+fn blocked_command_with_timeout(command: &str, timeout_seconds: Option<f64>) -> Option<String> {
+    let repository_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    blocked_command_with_timeout_at_root(command, timeout_seconds, &repository_root)
+}
+
+#[cfg(test)]
+fn blocked_command(command: &str) -> Option<String> {
+    blocked_command_with_timeout(command, None)
 }
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     if args.next().as_deref() != Some("--check") {
-        eprintln!("usage: preferred-cli-guard --check <command>");
+        eprintln!("{USAGE}");
         return ExitCode::FAILURE;
     }
     let Some(command) = args.next() else {
-        eprintln!("usage: preferred-cli-guard --check <command>");
+        eprintln!("{USAGE}");
         return ExitCode::FAILURE;
     };
-
-    match blocked_command(&command) {
+    let mut timeout_seconds = None;
+    let mut repository_root = None;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--timeout" if timeout_seconds.is_none() => {
+                timeout_seconds = args.next().and_then(|value| value.parse().ok());
+                if timeout_seconds.is_none() {
+                    eprintln!("{USAGE}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            "--repository-root" if repository_root.is_none() => {
+                repository_root = args.next().map(PathBuf::from);
+                if repository_root.is_none() {
+                    eprintln!("{USAGE}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            _ => {
+                eprintln!("{USAGE}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let repository_root = repository_root
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    match blocked_command_with_timeout_at_root(&command, timeout_seconds, &repository_root) {
         Some(reason) => {
             println!("{reason}");
             ExitCode::FAILURE
@@ -402,7 +552,11 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::blocked_command;
+    use super::{
+        blocked_command, blocked_command_with_timeout, blocked_command_with_timeout_at_root,
+        FULL_RUN_TIMEOUT_REASON,
+    };
+    use std::path::Path;
 
     #[test]
     fn leading_find_blocks() {
@@ -528,5 +682,155 @@ mod tests {
     #[test]
     fn find_does_not_trigger_pipe_or_xargs_catch() {
         assert!(blocked_command("something | find").is_none());
+    }
+
+    #[test]
+    fn absolute_evaluation_runner_uses_the_supplied_repository_root() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            blocked_command_with_timeout_at_root(
+                "/repo/skills/tool-author/evals/run.sh",
+                Some(7_200.0),
+                root,
+            )
+            .as_deref(),
+            Some(FULL_RUN_TIMEOUT_REASON)
+        );
+        assert!(blocked_command_with_timeout_at_root(
+            "/other/skills/tool-author/evals/run.sh",
+            Some(7_200.0),
+            root,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn full_skill_wrapper_with_outer_timeout_blocks() {
+        let reason =
+            blocked_command_with_timeout("./skills/tool-author/evals/run.sh", Some(7_200.0))
+                .unwrap();
+        assert_eq!(reason, FULL_RUN_TIMEOUT_REASON);
+    }
+
+    #[test]
+    fn full_workflow_wrapper_with_outer_timeout_blocks() {
+        let command = format!(
+            "{}/workflows/research/evals/run.sh candidate --jobs 4 --restart",
+            std::env::current_dir().unwrap().display()
+        );
+        assert_eq!(
+            blocked_command_with_timeout(&command, Some(7_200.0)).as_deref(),
+            Some(FULL_RUN_TIMEOUT_REASON)
+        );
+    }
+
+    #[test]
+    fn shared_runner_with_outer_timeout_blocks_through_zsh() {
+        for option in ["-c", "-cl", "-lc"] {
+            let command = format!(
+                "/bin/zsh {option} '{}/tools/skill-eval/run.sh --accept-if-winning candidate'",
+                std::env::current_dir().unwrap().display()
+            );
+            assert_eq!(
+                blocked_command_with_timeout(&command, Some(7_200.0)).as_deref(),
+                Some(FULL_RUN_TIMEOUT_REASON)
+            );
+        }
+        assert_eq!(
+            blocked_command_with_timeout(
+                &format!(
+                    "zsh {}/tools/skill-eval/run.sh --accept-if-winning candidate",
+                    std::env::current_dir().unwrap().display()
+                ),
+                Some(7_200.0)
+            )
+            .as_deref(),
+            Some(FULL_RUN_TIMEOUT_REASON)
+        );
+    }
+
+    #[test]
+    fn normalized_runner_path_with_outer_timeout_blocks() {
+        assert_eq!(
+            blocked_command_with_timeout("./skills/tool-author/evals/./run.sh", Some(7_200.0))
+                .as_deref(),
+            Some(FULL_RUN_TIMEOUT_REASON)
+        );
+    }
+
+    #[test]
+    fn lexically_escaped_runner_path_with_outer_timeout_is_allowed() {
+        assert!(blocked_command_with_timeout(
+            "skills/tool-author/evals/../other/evals/run.sh",
+            Some(7_200.0)
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn diagnostic_tier_and_holdout_runs_with_outer_timeout_are_allowed() {
+        assert!(blocked_command_with_timeout(
+            "skills/tool-author/evals/run.sh --tier T3",
+            Some(7_200.0)
+        )
+        .is_none());
+        assert!(blocked_command_with_timeout(
+            "workflows/research/evals/run.sh --holdout",
+            Some(7_200.0)
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn bare_tier_flag_does_not_exempt_a_full_run() {
+        assert_eq!(
+            blocked_command_with_timeout("skills/tool-author/evals/run.sh --tier", Some(7_200.0))
+                .as_deref(),
+            Some(FULL_RUN_TIMEOUT_REASON)
+        );
+    }
+
+    #[test]
+    fn a_diagnostic_flag_on_another_command_does_not_exempt_a_full_run() {
+        let command = "skills/tool-author/evals/run.sh && echo --tier";
+        assert_eq!(
+            blocked_command_with_timeout(command, Some(7_200.0)).as_deref(),
+            Some(FULL_RUN_TIMEOUT_REASON)
+        );
+    }
+
+    #[test]
+    fn nearby_timeouts_and_unrelated_runners_are_allowed() {
+        assert!(
+            blocked_command_with_timeout("skills/tool-author/evals/run.sh", Some(7_199.0))
+                .is_none()
+        );
+        assert!(
+            blocked_command_with_timeout("skills/tool-author/evals/run.sh", Some(7_201.0))
+                .is_none()
+        );
+        assert!(blocked_command_with_timeout("scripts/run.sh", Some(7_200.0)).is_none());
+        assert!(blocked_command_with_timeout(
+            "my-notes/workflows/demo/evals/run.sh",
+            Some(7_200.0)
+        )
+        .is_none());
+        assert!(
+            blocked_command_with_timeout("/other/skills/x/evals/run.sh", Some(7_200.0)).is_none()
+        );
+        assert!(
+            blocked_command_with_timeout("echo zsh -c 'skills/x/evals/run.sh'", Some(7_200.0))
+                .is_none()
+        );
+        assert!(blocked_command_with_timeout(
+            "skills/tool-author/evals/run.sh --help",
+            Some(7_200.0)
+        )
+        .is_none());
+        assert!(blocked_command_with_timeout(
+            "echo skills/tool-author/evals/run.sh",
+            Some(7_200.0)
+        )
+        .is_none());
     }
 }

@@ -14,6 +14,13 @@ fallbacks. A quota or model-availability error moves the dispatch to the next mo
 that chain. Model limits and client support can differ, so the dispatch tests every
 configured fallback. Exhaustion makes the complete tier unavailable.
 
+Dispatch mode gives each model attempt a 10-minute hard limit, including output collection
+and process cleanup. The complete same-tier chain stops after 30 minutes. When an attempt
+times out, the dispatcher preserves partial diagnostics and tries the next configured model
+while time remains. Exit 4 means the chain reached its deadline or ended after one or more
+attempt timeouts. Exit 130 means a signal interrupted dispatch. This exit does not prove that
+the chain used its 30-minute budget.
+
 The `--verify-registry` mode checks each configured tier entry against the model records in
 Pi's local registry. It also reports stale overrides for available providers. The tool
 looks for `models.json` beside the supplied tiers file. Use `--models-file` when the check

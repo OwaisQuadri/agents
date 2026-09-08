@@ -4,6 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { preferredCliGuardArguments } from "./preferred-cli-guard/arguments.ts";
 import { blockedPreferredCliCommand, type Checker } from "./preferred-cli-guard/policy.ts";
 
 // Wiring only: detection lives in tools/preferred-cli-guard/src/main.rs, run here as
@@ -13,11 +14,12 @@ export default function preferredCliGuard(pi: ExtensionAPI): void {
 	const repositoryRoot = resolve(dirname(extensionPath), "..", "..");
 	const binary = resolve(repositoryRoot, "tools/preferred-cli-guard/target/release/preferred-cli-guard");
 
-	const check: Checker = (command) => {
+	const check: Checker = (command, timeout) => {
 		// Missing binary (fresh checkout) degrades to allow, same posture every checker
 		// in this file's family takes — never a false block over a missing build.
 		if (!existsSync(binary)) return { blocked: false };
-		const run = spawnSync(binary, ["--check", command], { encoding: "utf8" });
+		const args = preferredCliGuardArguments(command, timeout, repositoryRoot);
+		const run = spawnSync(binary, args, { encoding: "utf8" });
 		if (run.status === 0) return { blocked: false };
 		return {
 			blocked: true,

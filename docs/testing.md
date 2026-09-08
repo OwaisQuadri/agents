@@ -59,6 +59,12 @@ hooks/test.sh
 ./skills/<name>/evals/run.sh --tier T3                        # diagnostic single-tier mode
 ```
 
+Do not give a full harness an outer timeout. The harness bounds each child process. In Pi,
+the preferred command guard inspects the Bash tool timeout argument. It blocks a
+7,200-second timeout for full skill and workflow runs. It does not inspect a literal external
+`timeout 7200` command or calls that do not use Pi. If a diagnostic run needs an outer timeout,
+use `--tier <tier>` or `--holdout`.
+
 Every skill and workflow runner delegates to `tools/skill-eval`. A full baseline run
 evaluates the current artifact. A full candidate run compares the live incumbent and
 candidate together. Both modes execute every configured tier as bounded
