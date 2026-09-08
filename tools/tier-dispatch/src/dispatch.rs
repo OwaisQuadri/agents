@@ -2,6 +2,7 @@ use crate::config::ModelEntry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 const RETRYABLE_MODEL_ERROR_MARKERS: &[&str] = &[
     "rate limit",
@@ -27,15 +28,17 @@ fn is_retryable_model_error(stderr: &str) -> bool {
 pub struct Attempt {
     pub model: String,
     pub thinking: String,
+    pub elapsed_ms: u128,
+    pub result: String,
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
 }
 
 pub enum Outcome {
-    Success { model_ran: String, artifact: String },
+    Success { attempts: Vec<Attempt> },
     TierExhausted { attempts: Vec<Attempt> },
-    HardFailure { attempt: Attempt },
+    HardFailure { attempts: Vec<Attempt> },
 }
 
 pub fn walk_chain(
@@ -47,17 +50,18 @@ pub fn walk_chain(
     let mut attempts = Vec::new();
     for entry in chain {
         let attempt = run_one(dispatch_bin, entry, system_prompt_file, input);
-        let failed = attempt.exit_code != Some(0);
-        if !failed {
-            return Outcome::Success {
-                model_ran: attempt.model.clone(),
-                artifact: attempt.stdout.clone(),
-            };
+        if attempt.exit_code == Some(0) {
+            attempts.push(attempt);
+            return Outcome::Success { attempts };
         }
         if !is_retryable_model_error(&attempt.stderr) {
-            return Outcome::HardFailure { attempt };
+            attempts.push(attempt);
+            return Outcome::HardFailure { attempts };
         }
         attempts.push(attempt);
+    }
+    if let Some(last) = attempts.last_mut() {
+        last.result = "exhausted".to_string();
     }
     Outcome::TierExhausted { attempts }
 }
@@ -96,12 +100,15 @@ fn run_one(
             return Attempt {
                 model: entry.model.clone(),
                 thinking: entry.thinking.clone(),
+                elapsed_ms: 0,
+                result: "hard_failure".to_string(),
                 stdout: String::new(),
                 stderr: format!("failed to create sandbox dir: {error}"),
                 exit_code: None,
             };
         }
     };
+    let started = Instant::now();
     let output = Command::new(dispatch_bin)
         .arg("-p")
         .arg("--model")
@@ -115,16 +122,31 @@ fn run_one(
         .current_dir(&sandbox)
         .output();
     let attempt = match output {
-        Ok(output) => Attempt {
-            model: entry.model.clone(),
-            thinking: entry.thinking.clone(),
-            stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            exit_code: output.status.code(),
-        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let is_success = output.status.success();
+            let is_retryable = !is_success && is_retryable_model_error(&stderr);
+            Attempt {
+                model: entry.model.clone(),
+                thinking: entry.thinking.clone(),
+                elapsed_ms: started.elapsed().as_millis(),
+                result: if is_success {
+                    "success".to_string()
+                } else if is_retryable {
+                    "fallback".to_string()
+                } else {
+                    "hard_failure".to_string()
+                },
+                stdout: String::from_utf8_lossy(&output.stdout).trim().to_string(),
+                stderr,
+                exit_code: output.status.code(),
+            }
+        }
         Err(error) => Attempt {
             model: entry.model.clone(),
             thinking: entry.thinking.clone(),
+            elapsed_ms: started.elapsed().as_millis(),
+            result: "hard_failure".to_string(),
             stdout: String::new(),
             stderr: format!("failed to spawn {dispatch_bin}: {error}"),
             exit_code: None,
@@ -203,12 +225,11 @@ mod tests {
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::Success {
-                model_ran,
-                artifact,
-            } => {
-                assert_eq!(model_ran, "primary-model");
-                assert!(artifact.contains("ran:primary-model"));
+            Outcome::Success { attempts } => {
+                assert_eq!(attempts.len(), 1);
+                assert_eq!(attempts[0].model, "primary-model");
+                assert_eq!(attempts[0].result, "success");
+                assert!(attempts[0].stdout.contains("ran:primary-model"));
             }
             _ => panic!("expected Success"),
         }
@@ -244,12 +265,12 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::Success {
-                model_ran,
-                artifact,
-            } => {
-                assert_eq!(model_ran, "fallback-model");
-                assert!(artifact.contains("ran:fallback-model"));
+            Outcome::Success { attempts } => {
+                assert_eq!(attempts[1].model, "fallback-model");
+                assert!(attempts[1].stdout.contains("ran:fallback-model"));
+                assert_eq!(attempts.len(), 2);
+                assert_eq!(attempts[0].result, "fallback");
+                assert_eq!(attempts[1].result, "success");
             }
             _ => panic!("expected Success on fallback, got a different outcome"),
         }
@@ -284,7 +305,7 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::Success { model_ran, .. } => assert_eq!(model_ran, "fallback-model"),
+            Outcome::Success { attempts } => assert_eq!(attempts[1].model, "fallback-model"),
             _ => panic!("expected Success on fallback, got a different outcome"),
         }
         std::fs::remove_dir_all(&dir).ok();
@@ -310,7 +331,7 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::HardFailure { attempt } => assert_eq!(attempt.model, "mistyped-model"),
+            Outcome::HardFailure { attempts } => assert_eq!(attempts[0].model, "mistyped-model"),
             _ => panic!("expected the invalid model configuration to stop the chain"),
         }
         std::fs::remove_dir_all(&dir).ok();
@@ -356,7 +377,11 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::TierExhausted { attempts } => assert_eq!(attempts.len(), 2),
+            Outcome::TierExhausted { attempts } => {
+                assert_eq!(attempts.len(), 2);
+                assert_eq!(attempts[0].result, "fallback");
+                assert_eq!(attempts[1].result, "exhausted");
+            }
             _ => panic!("expected TierExhausted"),
         }
         std::fs::remove_dir_all(&dir).ok();
@@ -375,7 +400,7 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         let child_cwd = match outcome {
-            Outcome::Success { artifact, .. } => artifact.lines().next().unwrap().to_string(),
+            Outcome::Success { attempts } => attempts[0].stdout.lines().next().unwrap().to_string(),
             _ => panic!("expected Success"),
         };
         let caller_cwd = std::env::current_dir().unwrap();
@@ -409,7 +434,11 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::HardFailure { attempt } => assert_eq!(attempt.model, "primary-model"),
+            Outcome::HardFailure { attempts } => {
+                assert_eq!(attempts[0].model, "primary-model");
+                assert_eq!(attempts[0].result, "hard_failure");
+                assert!(attempts[0].elapsed_ms < 60_000);
+            }
             _ => panic!("expected HardFailure on the primary, never reaching the fallback"),
         }
         std::fs::remove_dir_all(&dir).ok();

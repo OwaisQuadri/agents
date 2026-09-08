@@ -6,6 +6,7 @@ use config::TiersFile;
 use registry::{
     ModelOverrides, Registry, unknown_model_overrides, unknown_models, unreferenced_newer,
 };
+use serde_json::json;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -14,7 +15,7 @@ const USAGE: &str = "usage:
   tier-dispatch --verify-registry --tiers-file <path> [--registry-file <path>] [--models-file <path>]
 output:
   stdout: dispatched artifact on success
-  stderr: model_ran: <model id> on dispatch success; diagnostics otherwise
+  stderr: JSON attempt records plus model_ran: <model id> on dispatch success; diagnostics otherwise
 exit:
   0 success; 1 dispatch or registry failure; 2 invalid input or unavailable provider catalog; 3 tier unavailable
 ";
@@ -257,18 +258,33 @@ fn main() -> ExitCode {
         }
     };
 
-    match dispatch::walk_chain(
+    let outcome = dispatch::walk_chain(
         &dispatch_bin,
         &chain,
         &system_prompt_file,
         args.input.as_ref().unwrap(),
-    ) {
-        dispatch::Outcome::Success {
-            model_ran,
-            artifact,
-        } => {
-            println!("{artifact}");
-            eprintln!("model_ran: {model_ran}");
+    );
+    let attempts = match &outcome {
+        dispatch::Outcome::Success { attempts, .. }
+        | dispatch::Outcome::TierExhausted { attempts }
+        | dispatch::Outcome::HardFailure { attempts } => attempts,
+    };
+    for attempt in attempts {
+        eprintln!(
+            "attempt: {}",
+            json!({
+                "model": attempt.model,
+                "thinking": attempt.thinking,
+                "elapsed_ms": attempt.elapsed_ms,
+                "result": attempt.result,
+            })
+        );
+    }
+    match outcome {
+        dispatch::Outcome::Success { attempts } => {
+            let attempt = attempts.last().expect("success has an attempt");
+            println!("{}", attempt.stdout);
+            eprintln!("model_ran: {}", attempt.model);
             ExitCode::SUCCESS
         }
         dispatch::Outcome::TierExhausted { attempts } => {
@@ -285,7 +301,8 @@ fn main() -> ExitCode {
             }
             ExitCode::from(3)
         }
-        dispatch::Outcome::HardFailure { attempt } => {
+        dispatch::Outcome::HardFailure { attempts } => {
+            let attempt = attempts.last().expect("hard failure has an attempt");
             eprintln!(
                 "tier-dispatch: {} failed with an unrelated error, stopping (not trying the rest of tier {tier}'s chain)",
                 attempt.model
