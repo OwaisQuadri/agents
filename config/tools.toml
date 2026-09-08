@@ -33,7 +33,7 @@ name = "pi-subagents"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
-source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "e20af0be481339efa5236e9bbe5cd0dfc6d13ae8" }
+source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "cc835cfc2163f9567ac47b97e348559947413a17" }
 installer = { command = "/bin/sh", args = ["-c", "npm ci && npm run bundle"], preview_args = ["-c", "npm --version"] }
 
 [[tools]]
@@ -203,14 +203,6 @@ name = "herdr-activity"
 platforms = ["macos", "linux"]
 commands = []
 pi_extension = "pi/extensions/herdr-activity.ts"
-source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
-
-[[tools]]
-name = "herdr-activity-lib"
-platforms = ["macos", "linux"]
-commands = []
-pi_extension = "pi/extensions/herdr-activity"
 source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 

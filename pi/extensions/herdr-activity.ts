@@ -1,12 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import {
-	settleHerdrAgent,
-	startHerdrAgent,
-	startHerdrSession,
-	stopHerdrSession,
-} from "./herdr-activity/state.ts";
-
 type SubagentLifecycleEvent = {
 	id?: unknown;
 };
@@ -32,17 +25,9 @@ export default function herdrActivity(pi: ExtensionAPI): void {
 		pi.events.emit("herdr:busy", { active: false });
 	}
 
-	pi.on("session_start", (_event, ctx) => {
-		clearSubagents();
-		return startHerdrSession(pi, ctx);
-	});
-	pi.on("agent_start", (_event, ctx) => startHerdrAgent(pi, ctx));
-	pi.on("agent_settled", (_event, ctx) => settleHerdrAgent(pi, ctx));
+	pi.on("session_start", clearSubagents);
 	pi.events.on("subagents:started", (payload) => setSubagentActive(payload, true));
 	pi.events.on("subagents:completed", (payload) => setSubagentActive(payload, false));
 	pi.events.on("subagents:failed", (payload) => setSubagentActive(payload, false));
-	pi.on("session_shutdown", (_event, ctx) => {
-		clearSubagents();
-		return stopHerdrSession(pi, ctx);
-	});
+	pi.on("session_shutdown", clearSubagents);
 }

@@ -463,6 +463,7 @@ else
 fi
 
 for obsolete in \
+  "$HOME_TARGET/.pi/agent/extensions/herdr-activity" \
   "$HOME_TARGET/.pi/agent/extensions/pi-chrome-devtools" \
   "$HOME_TARGET/.pi/agent/extensions/pi-voice-stt" \
   "$HOME_TARGET/.pi/agent/extensions/voice.ts" \

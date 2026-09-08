@@ -6,7 +6,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 
 const extensionPath = fileURLToPath(new URL("./ask-user-question.ts", import.meta.url));
-const herdrActivityStatePath = fileURLToPath(new URL("./herdr-activity/state.ts", import.meta.url));
 
 const tuiModule = `
 export const Key = { up: "UP", down: "DOWN", enter: "ENTER", space: "SPACE", backspace: "BACKSPACE", escape: "ESC" };
@@ -19,6 +18,7 @@ export class Editor {
 	setText(text) { this.text = text; }
 	handleInput(data) {
 		if (data === "ENTER") { this.onSubmit?.(this.text); return; }
+		if (data === "SHIFT_ENTER") { this.text += "\\n"; return; }
 		if (data === "BACKSPACE") { this.text = this.text.slice(0, -1); return; }
 		this.text += data;
 	}
@@ -46,19 +46,18 @@ async function writeModule(root: string, name: string, source: string): Promise<
 async function loadPicker(mode = "rpc") {
 	const root = await mkdtemp(join(tmpdir(), "ask-user-question-"));
 	await writeFile(join(root, "ask-user-question.ts"), await readFile(extensionPath));
-	await mkdir(join(root, "herdr-activity"));
-	await writeFile(join(root, "herdr-activity", "state.ts"), await readFile(herdrActivityStatePath));
 	await writeModule(root, "@earendil-works/pi-tui", tuiModule);
 	await writeModule(root, "typebox", typeboxModule);
 	await writeModule(root, "@earendil-works/pi-coding-agent", "");
 
-	const calls: Array<{ command: string; args: string[] }> = [];
+	const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
+	const lifecycleHandlers = new Map<string, (event: unknown, context: unknown) => void>();
+	const emitted: Array<{ channel: string; payload: unknown }> = [];
 	let tool: any;
 	let component: any;
-	let resolveCustom: ((value: unknown) => void) | undefined;
-	const customResult = new Promise((resolve) => {
-		resolveCustom = resolve;
-	});
+	let customCallCount = 0;
+	const editorCalls: Array<{ title: string; prefill: string | undefined }> = [];
+	let resolveEditor: ((value: string | undefined) => void) | undefined;
 	const theme = {
 		fg(_name: string, text: string) {
 			return text;
@@ -72,12 +71,17 @@ async function loadPicker(mode = "rpc") {
 		mode,
 		sessionManager: { getSessionId: () => "session-1" },
 		ui: {
-			async editor() {
-				return "  free text  ";
-			},
 			custom(factory: any) {
-				component = factory({ requestRender() {} }, theme, {}, resolveCustom);
-				return customResult;
+				customCallCount++;
+				return new Promise((resolve) => {
+					component = factory({ requestRender() {} }, theme, {}, resolve);
+				});
+			},
+			editor(title: string, prefill?: string) {
+				editorCalls.push({ title, prefill });
+				return new Promise<string | undefined>((resolve) => {
+					resolveEditor = resolve;
+				});
 			},
 		},
 	};
@@ -85,20 +89,61 @@ async function loadPicker(mode = "rpc") {
 		registerTool(value: unknown) {
 			tool = value;
 		},
-		async exec(command: string, args: string[]) {
-			calls.push({ command, args });
-			return { code: 0, stdout: "", stderr: "" };
+		on(event: string, handler: (event: unknown, context: unknown) => void) {
+			lifecycleHandlers.set(event, handler);
+		},
+		events: {
+			on(channel: string, handler: (payload: unknown) => void) {
+				const handlers = eventHandlers.get(channel) ?? [];
+				eventHandlers.set(channel, [...handlers, handler]);
+				return () => eventHandlers.set(channel, (eventHandlers.get(channel) ?? []).filter((item) => item !== handler));
+			},
+			emit(channel: string, payload: unknown) {
+				emitted.push({ channel, payload });
+				for (const handler of eventHandlers.get(channel) ?? []) handler(payload);
+			},
 		},
 	};
 	const module = await import(`${pathToFileURL(join(root, "ask-user-question.ts")).href}?${Date.now()}-${Math.random()}`);
 	module.default(api);
+	lifecycleHandlers.get("session_start")?.({}, ctx);
 	return {
 		tool,
 		ctx,
-		calls,
+		api,
+		emitted,
+		lifecycleHandlers,
 		component: () => component,
+		customCallCount: () => customCallCount,
+		editorCalls,
+		resolveEditor: (value: string | undefined) => resolveEditor?.(value),
 		dispose: async () => {
 			await rm(root, { recursive: true, force: true });
+		},
+	};
+}
+
+function createTrackedAbortSignal() {
+	let isAborted = false;
+	const listeners = new Set<() => void>();
+	return {
+		signal: {
+			get aborted() {
+				return isAborted;
+			},
+			addEventListener(_type: string, listener: () => void) {
+				listeners.add(listener);
+			},
+			removeEventListener(_type: string, listener: () => void) {
+				listeners.delete(listener);
+			},
+		} as AbortSignal,
+		abort() {
+			isAborted = true;
+			for (const listener of listeners) listener();
+		},
+		listenerCount() {
+			return listeners.size;
 		},
 	};
 }
@@ -114,12 +159,18 @@ async function waitForComponent(getComponent: () => any): Promise<any> {
 	throw new Error("picker did not open");
 }
 
-test("keeps free-text questions and rejects a supplied single option", async () => {
-	const picker = await loadPicker();
+test("submits multiline free-text questions and rejects a supplied single option", async () => {
+	const picker = await loadPicker("tui");
 	try {
-		const textResult = await picker.tool.execute("text", { question: "What?", options: [] }, undefined, undefined, picker.ctx);
-		assert.equal(textResult.details.mode, "text");
-		assert.equal(textResult.details.answers[0].value, "free text");
+		const textResult = picker.tool.execute("text", { question: "What?", options: [] }, undefined, undefined, picker.ctx);
+		const component = await waitForComponent(picker.component);
+		component.handleInput("first line");
+		component.handleInput("SHIFT_ENTER");
+		component.handleInput("second line");
+		component.handleInput("ENTER");
+		const settled = await textResult;
+		assert.equal(settled.details.mode, "text");
+		assert.equal(settled.details.answers[0].value, "first line\nsecond line");
 
 		const invalid = await picker.tool.execute(
 			"invalid",
@@ -135,8 +186,25 @@ test("keeps free-text questions and rejects a supplied single option", async () 
 	}
 });
 
+test("uses the supported editor for direct RPC free-text questions", async () => {
+	const picker = await loadPicker("rpc");
+	try {
+		const result = picker.tool.execute("rpc-text", { question: "What?", details: "Add context" }, undefined, undefined, picker.ctx);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert.equal(picker.editorCalls.length, 1);
+		assert.equal(picker.editorCalls[0]?.title, "What?\n\nAdd context");
+		assert.equal(picker.editorCalls[0]?.prefill, "");
+		assert.equal(picker.customCallCount(), 0);
+		picker.resolveEditor("first line\nsecond line");
+		const settled = await result;
+		assert.equal(settled.details.answers[0].value, "first line\nsecond line");
+	} finally {
+		await picker.dispose();
+	}
+});
+
 test("keeps single-select option answers", async () => {
-	const picker = await loadPicker();
+	const picker = await loadPicker("tui");
 	try {
 		const result = picker.tool.execute(
 			"single",
@@ -155,7 +223,7 @@ test("keeps single-select option answers", async () => {
 });
 
 test("selects the final item from an unbounded option list", async () => {
-	const picker = await loadPicker();
+	const picker = await loadPicker("tui");
 	try {
 		const result = picker.tool.execute(
 			"many",
@@ -185,7 +253,7 @@ test("selects the final item from an unbounded option list", async () => {
 });
 
 test("edits and removes an individual Other answer", async () => {
-	const picker = await loadPicker();
+	const picker = await loadPicker("tui");
 	try {
 		const result = picker.tool.execute(
 			"other",
@@ -232,7 +300,7 @@ test("edits and removes an individual Other answer", async () => {
 });
 
 test("adds a second Other answer from the final Add Other row", async () => {
-	const picker = await loadPicker();
+	const picker = await loadPicker("tui");
 	try {
 		const result = picker.tool.execute(
 			"other",
@@ -273,14 +341,6 @@ test("adds a second Other answer from the final Add Other row", async () => {
 });
 
 test("reports Herdr blocked until picker cancellation", async () => {
-	const previous = {
-		HERDR_ENV: process.env.HERDR_ENV,
-		HERDR_SOCKET_PATH: process.env.HERDR_SOCKET_PATH,
-		HERDR_PANE_ID: process.env.HERDR_PANE_ID,
-	};
-	process.env.HERDR_ENV = "1";
-	process.env.HERDR_SOCKET_PATH = "/tmp/herdr.sock";
-	process.env.HERDR_PANE_ID = "w1:p1";
 	const picker = await loadPicker("tui");
 	try {
 		const result = picker.tool.execute(
@@ -291,19 +351,252 @@ test("reports Herdr blocked until picker cancellation", async () => {
 			picker.ctx,
 		);
 		const component = await waitForComponent(picker.component);
-		assert.equal(picker.calls[0]?.args[8], "blocked");
+		assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), [
+			{ channel: "herdr:blocked", payload: { active: true, label: "Choose" } },
+		]);
 		component.handleInput("ESC");
 		const settled = await result;
 		assert.equal(settled.details.status, "cancelled");
-		assert.equal(picker.calls[1]?.args[8], "idle");
+		assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), [
+			{ channel: "herdr:blocked", payload: { active: true, label: "Choose" } },
+			{ channel: "herdr:blocked", payload: { active: false } },
+		]);
 	} finally {
 		await picker.dispose();
-		for (const [name, value] of Object.entries(previous)) {
-			if (value === undefined) {
-				delete process.env[name];
-			} else {
-				process.env[name] = value;
-			}
+	}
+});
+
+test("bounds RPC requests after the interactive session shuts down", async () => {
+	const picker = await loadPicker("tui");
+	try {
+		picker.lifecycleHandlers.get("session_shutdown")?.({}, { ...picker.ctx });
+		const pingReplies: unknown[] = [];
+		picker.api.events.on("ask-user-question:rpc:ping:reply:ping-0", (payload: unknown) => pingReplies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ping", { requestId: "ping-0" });
+		assert.deepEqual(pingReplies, [{ success: false, error: "No active interactive session" }]);
+
+		const askReplies: any[] = [];
+		picker.api.events.on("ask-user-question:rpc:ask:reply:ask-0", (payload: unknown) => askReplies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ask", { requestId: "ask-0", params: { question: "What?" } });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert.equal(askReplies[0]?.success, false);
+		assert.match(askReplies[0]?.error, /No active interactive session/);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("does not let child extension instances answer root RPC pings", async () => {
+	const picker = await loadPicker("rpc");
+	try {
+		const pingReplies: unknown[] = [];
+		picker.api.events.on("ask-user-question:rpc:ping:reply:child-ping", (payload: unknown) => pingReplies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ping", { requestId: "child-ping" });
+		assert.deepEqual(pingReplies, []);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("rejects malformed RPC question parameters", async () => {
+	const picker = await loadPicker("tui");
+	try {
+		const replies: any[] = [];
+		picker.api.events.on("ask-user-question:rpc:ask:reply:bad-1", (payload: unknown) => replies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ask", { requestId: "bad-1", params: { question: "  " } });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert.equal(replies[0]?.success, false);
+		assert.match(replies[0]?.error, /Invalid ask_user_question parameters/);
+		assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), []);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("rejects an RPC request with a non-AbortSignal signal", async () => {
+	const picker = await loadPicker("tui");
+	try {
+		const replies: any[] = [];
+		picker.api.events.on("ask-user-question:rpc:ask:reply:bad-signal", (payload: unknown) => replies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ask", {
+			requestId: "bad-signal",
+			params: { question: "What?" },
+			signal: {},
+		});
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert.equal(replies[0]?.success, false);
+		assert.match(replies[0]?.error, /Invalid ask_user_question abort signal/);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("aborts custom dialogs and balances Herdr blocked", async () => {
+	for (const params of [
+		{ question: "What?" },
+		{ question: "Choose", options: [{ label: "One" }, { label: "Two" }] },
+		{ question: "Choose", multiSelect: true, options: [{ label: "One" }, { label: "Two" }] },
+	]) {
+		const picker = await loadPicker("tui");
+		try {
+			const controller = createTrackedAbortSignal();
+			const result = picker.tool.execute(
+				"abort-picker",
+				params,
+				controller.signal,
+				undefined,
+				picker.ctx,
+			);
+			await waitForComponent(picker.component);
+			controller.abort();
+			const settled = await result;
+			assert.equal(controller.listenerCount(), 0);
+			assert.equal(settled.details.status, "cancelled");
+			assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), [
+				{ channel: "herdr:blocked", payload: { active: true, label: params.question } },
+				{ channel: "herdr:blocked", payload: { active: false } },
+			]);
+		} finally {
+			await picker.dispose();
 		}
+	}
+});
+
+test("disposing choice pickers cancels, removes listeners, and releases the shared UI lock", async () => {
+	for (const params of [
+		{ question: "Choose", options: [{ label: "One" }, { label: "Two" }] },
+		{ question: "Choose", multiSelect: true, options: [{ label: "One" }, { label: "Two" }] },
+	]) {
+		const picker = await loadPicker("tui");
+		try {
+			const controller = createTrackedAbortSignal();
+			const result = picker.tool.execute("dispose-picker", params, controller.signal, undefined, picker.ctx);
+			const component = await waitForComponent(picker.component);
+			component.dispose();
+			const settled = await result;
+			assert.equal(controller.listenerCount(), 0);
+			assert.equal(settled.details.status, "cancelled");
+
+			const nextResult = picker.tool.execute("next-picker", params, undefined, undefined, picker.ctx);
+			let nextComponent: any;
+			for (let attempt = 0; attempt < 20; attempt++) {
+				nextComponent = picker.component();
+				if (nextComponent !== component) break;
+				await new Promise((resolve) => setTimeout(resolve, 0));
+			}
+			assert.notEqual(nextComponent, component);
+			nextComponent.handleInput("ESC");
+			await nextResult;
+			assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), [
+				{ channel: "herdr:blocked", payload: { active: true, label: "Choose" } },
+				{ channel: "herdr:blocked", payload: { active: false } },
+				{ channel: "herdr:blocked", payload: { active: true, label: "Choose" } },
+				{ channel: "herdr:blocked", payload: { active: false } },
+			]);
+		} finally {
+			await picker.dispose();
+		}
+	}
+});
+
+test("does not emit blocked when the tool cannot open a question", async () => {
+	const picker = await loadPicker();
+	try {
+		picker.ctx.hasUI = false;
+		const unavailable = await picker.tool.execute("headless", { question: "What?" }, undefined, undefined, picker.ctx);
+		assert.equal(unavailable.details.status, "unavailable");
+		const controller = new AbortController();
+		controller.abort();
+		picker.ctx.hasUI = true;
+		const cancelled = await picker.tool.execute("aborted", { question: "What?" }, controller.signal, undefined, picker.ctx);
+		assert.equal(cancelled.details.status, "cancelled");
+		assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), []);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("serializes concurrent RPC prompts and balances each Herdr span", async () => {
+	const picker = await loadPicker("tui");
+	try {
+		picker.api.events.emit("ask-user-question:rpc:ask", { requestId: "ask-a", params: { question: "First?" } });
+		picker.api.events.emit("ask-user-question:rpc:ask", { requestId: "ask-b", params: { question: "Second?" } });
+		const firstComponent = await waitForComponent(picker.component);
+		assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), [
+			{ channel: "herdr:blocked", payload: { active: true, label: "First?" } },
+		]);
+
+		firstComponent.handleInput("first");
+		firstComponent.handleInput("ENTER");
+		let secondComponent: any;
+		for (let attempt = 0; attempt < 20; attempt++) {
+			secondComponent = picker.component();
+			if (secondComponent !== firstComponent) break;
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		assert.notEqual(secondComponent, firstComponent);
+		secondComponent.handleInput("second");
+		secondComponent.handleInput("ENTER");
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		assert.deepEqual(picker.emitted.filter(({ channel }) => channel === "herdr:blocked"), [
+			{ channel: "herdr:blocked", payload: { active: true, label: "First?" } },
+			{ channel: "herdr:blocked", payload: { active: false } },
+			{ channel: "herdr:blocked", payload: { active: true, label: "Second?" } },
+			{ channel: "herdr:blocked", payload: { active: false } },
+		]);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("does not open a queued RPC prompt after the root session shuts down", async () => {
+	const picker = await loadPicker("tui");
+	try {
+		const replies: any[] = [];
+		picker.api.events.on("ask-user-question:rpc:ask:reply:queued", (payload: unknown) => replies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ask", { requestId: "first", params: { question: "First?" } });
+		picker.api.events.emit("ask-user-question:rpc:ask", { requestId: "queued", params: { question: "Queued?" } });
+		const firstComponent = await waitForComponent(picker.component);
+
+		picker.lifecycleHandlers.get("session_shutdown")?.({}, { ...picker.ctx });
+		firstComponent.handleInput("first answer");
+		firstComponent.handleInput("ENTER");
+		for (let attempt = 0; attempt < 20 && replies.length === 0; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+
+		assert.equal(replies[0]?.success, true);
+		assert.equal(replies[0]?.data.details.status, "unavailable");
+		assert.equal(picker.customCallCount(), 1);
+		assert.equal(picker.component(), firstComponent);
+	} finally {
+		await picker.dispose();
+	}
+});
+
+test("serves the same question result over the in-process RPC", async () => {
+	const picker = await loadPicker("tui");
+	try {
+		const pingReplies: unknown[] = [];
+		picker.api.events.on("ask-user-question:rpc:ping:reply:ping-1", (payload: unknown) => pingReplies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ping", { requestId: "ping-1" });
+		assert.deepEqual(pingReplies, [{ success: true, data: { version: 1 } }]);
+
+		const replies: unknown[] = [];
+		picker.api.events.on("ask-user-question:rpc:ask:reply:ask-1", (payload: unknown) => replies.push(payload));
+		picker.api.events.emit("ask-user-question:rpc:ask", {
+			requestId: "ask-1",
+			params: { question: "What?" },
+		});
+		const component = await waitForComponent(picker.component);
+		component.handleInput("free text");
+		component.handleInput("ENTER");
+		for (let attempt = 0; attempt < 20 && replies.length === 0; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 0));
+		}
+		assert.equal((replies[0] as any).success, true);
+		assert.equal((replies[0] as any).data.details.answers[0].value, "free text");
+	} finally {
+		await picker.dispose();
 	}
 });
