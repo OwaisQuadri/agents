@@ -113,6 +113,7 @@ test("protects only Pi-managed destinations", () => {
 		"/tmp/config-write-guard-home/.agents/skills",
 		"/tmp/config-write-guard-home/.config/herdr/config.toml",
 		"/tmp/config-write-guard-home/.config/simslim",
+		"/tmp/config-write-guard-home/.pi/agent/AGENTS.md",
 		"/tmp/config-write-guard-home/.pi/agent/agents",
 		"/tmp/config-write-guard-home/.pi/agent/extensions",
 		"/tmp/config-write-guard-home/.pi/agent/keybindings.json",
@@ -124,6 +125,7 @@ test("blocks managed files and descendants without blocking siblings", () => {
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/custom-header.ts`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/../extensions/custom-header.ts`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.agents/skills/session-stats/SKILL.md`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/herdr/config.toml`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/main.json`, home), true);
@@ -138,6 +140,7 @@ test("blocks managed files and descendants without blocking siblings", () => {
 
 test("blocks managed file writes and destination shell commands", () => {
 	assert.match(blockedConfigToolCall("write", { path: `${home}/.pi/agent/extensions/custom-header.ts` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/extensions/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.equal(blockedConfigToolCall("write", { path: `${home}/.pi/agent/sessions/session.jsonl` }, home), undefined);
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > ~/.pi/agent/settings.json" }, home) ?? "", /Blocked/);

@@ -6,6 +6,7 @@ const protectedRelativePaths = [
 	[".agents", "skills"],
 	[".config", "herdr", "config.toml"],
 	[".config", "simslim"],
+	[".pi", "agent", "AGENTS.md"],
 	[".pi", "agent", "agents"],
 	[".pi", "agent", "extensions"],
 	[".pi", "agent", "keybindings.json"],
