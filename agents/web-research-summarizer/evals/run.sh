@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
 #   ./run.sh [candidate-file]            grade every non-holdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice
@@ -32,7 +32,8 @@ for arg in "$@"; do
 done
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
-command -v claude >/dev/null 2>&1 || { echo "claude CLI(command-line interface) is required" >&2; exit 1; }
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
 
@@ -56,17 +57,9 @@ while IFS= read -r line; do
   id="$(printf '%s' "$line" | jq -r '.id')"
   input="$(printf '%s' "$line" | jq -r '.input')"
 
-  # Fresh scratch project per case: context isolation for the dispatch, and any
-  # file appearing in it after the run is the file-writer catastrophic case from
-  # rubric.md. The definition under test installs into the scratch project's
-  # .claude/agents/ so the dispatch resolves to it, incumbent or candidate alike.
   scratch="$(mktemp -d)"
-  mkdir -p "$scratch/.claude/agents"
-  cp "$DEF" "$scratch/.claude/agents/web-research-summarizer.md"
-  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
-  # case loop's remaining lines without it
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
-  writes="$(find "$scratch" -type f ! -path "*/.claude/*" | wc -l | tr -d ' ')"
+  out="$(pi_eval_dispatch "$AGENT_NAME" "$DEF" "$scratch" "$input" 2>/dev/null)"
+  writes="$(find "$scratch" -type f | wc -l | tr -d ' ')"
   rm -rf "$scratch"
 
   block="$(printf '%s\n' "$out" | awk '/^```findings/{f=1; next} /^```/{f=0} f')"

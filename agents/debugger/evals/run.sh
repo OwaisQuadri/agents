@@ -1,12 +1,14 @@
-#!/bin/bash
+#!/bin/zsh
 set -u
 
 cd "$(dirname "$0")"
 
-for bin in claude jq git python3; do
+for bin in jq git python3; do
   command -v "$bin" >/dev/null || { echo "missing dependency: $bin" >&2; exit 1; }
 done
 
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 AGENT_FILE="../debugger.md"
 SLICE="non-holdout"
 for arg in "$@"; do
@@ -311,8 +313,6 @@ while IFS= read -r case_json; do
   dir=$(mktemp -d)
   DIRT_REF=""
   setup_fixture "$id" "$dir"
-  mkdir -p "$dir/.claude/agents"
-  cp "$AGENT_FILE" "$dir/.claude/agents/debugger.md"
   git -C "$dir" init -q
   git -C "$dir" add -A
   git -C "$dir" -c user.email=eval@local -c user.name=eval commit -qm seed --allow-empty
@@ -324,9 +324,7 @@ while IFS= read -r case_json; do
   # bypassPermissions is deliberate against the ask-first default: the agent runs
   # inside a throwaway fixture directory this script just created, and a permission
   # prompt would hang a headless run.
-  # < /dev/null is load-bearing: claude -p reads piped stdin, and without it the
-  # invocation swallows the remaining case lines from the while-read loop
-  (cd "$dir" && claude --agent debugger -p "$input" --permission-mode bypassPermissions --max-turns 40 < /dev/null) > "$out_file" 2>"$error_file"
+  pi_eval_dispatch "debugger" "$AGENT_FILE" "$dir" "$input" > "$out_file" 2>"$error_file"
   dispatch_status=$?
   if [[ $dispatch_status -ne 0 ]]; then
     jq -cn --arg id "$id" --arg fm "dispatch-failed:$dispatch_status" \

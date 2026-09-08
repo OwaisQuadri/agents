@@ -34,15 +34,6 @@
       <option value="tokPerMin">output tokens / min</option>
     </select>
   </label>
-  <label>source
-    <select id="source">
-      <option value="" selected>all</option>
-      <option value="claude">claude</option>
-      <option value="pi">pi</option>
-      <option value="codex">codex</option>
-      <option value="cursor">cursor</option>
-    </select>
-  </label>
   <label>model contains <input id="modelFilter" placeholder="e.g. sonnet" size="12"></label>
   <label>project contains <input id="projectFilter" placeholder="e.g. agents" size="12"></label>
   <label>from <input id="dateFrom" type="date"></label>
@@ -70,9 +61,9 @@ const svg = document.getElementById("chart");
 const tip = document.getElementById("tip");
 const legend = document.getElementById("legend");
 const count = document.getElementById("count");
-const controls = ["metric","source","modelFilter","projectFilter","dateFrom","dateTo","minElapsed","group","logScale"]
+const controls = ["metric","modelFilter","projectFilter","dateFrom","dateTo","minElapsed","group","logScale"]
   .map(id => document.getElementById(id));
-const [metricEl, sourceEl, modelEl, projectEl, fromEl, toEl, minElapsedEl, groupEl, logEl] = controls;
+const [metricEl, modelEl, projectEl, fromEl, toEl, minElapsedEl, groupEl, logEl] = controls;
 
 for (const row of DATA) {
   row.t = Date.parse(row.first);
@@ -110,7 +101,6 @@ function filtered() {
   const minElapsed = +minElapsedEl.value || 0;
   return DATA.filter(r =>
     modelOn[r.model] &&
-    (!sourceEl.value || r.src === sourceEl.value) &&
     (!modelQ || r.model.toLowerCase().includes(modelQ)) &&
     (!projectQ || r.project.toLowerCase().includes(projectQ)) &&
     r.t >= from && r.t <= to &&

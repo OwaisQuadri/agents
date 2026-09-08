@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
 #   ./run.sh [candidate-file]            grade every non-holdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice
@@ -10,7 +10,7 @@
 # Honesty bound: mechanical checks stop at what this script can anchor — block
 # shape, verbatim quoting against the fixture, an estimated token bound, and an
 # untouched scratch directory. The read budget (three calls, all against
-# log_path) needs the run transcript, which `claude -p` does not emit, so it is
+# log_path) needs the run transcript, which the text response does not emit, so it is
 # a judge item in rubric.md. The mechanical ceiling here is therefore 6/10.
 # This script never fakes a pass.
 
@@ -30,7 +30,8 @@ for arg in "$@"; do
 done
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
-command -v claude >/dev/null 2>&1 || { echo "claude CLI(command-line interface) is required" >&2; exit 1; }
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
 
@@ -82,14 +83,10 @@ while IFS= read -r line; do
   input="$(printf '%s' "$line" | jq -r '.input')"
 
   scratch="$(mktemp -d)"
-  mkdir -p "$scratch/.claude/agents"
-  cp "$DEF" "$scratch/.claude/agents/log-summarizer.md"
   make_fixture "$scratch"
-  before="$(find "$scratch" -type f ! -path "*/.claude/*" | sort)"
-  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
-  # case loop's remaining lines without it
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>/dev/null < /dev/null)"
-  after="$(find "$scratch" -type f ! -path "*/.claude/*" | sort)"
+  before="$(find "$scratch" -type f | sort)"
+  out="$(pi_eval_dispatch "$AGENT_NAME" "$DEF" "$scratch" "$input" 2>/dev/null)"
+  after="$(find "$scratch" -type f | sort)"
 
   block="$(printf '%s\n' "$out" | awk '/^```log-summary/{f=1; next} /^```/{f=0} f')"
   words=0

@@ -1,11 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/zsh
 # Eval runner for anchor-verifier, convention per skills/ai-author/templates/eval-harness.md:
 #   ./run.sh                 every non-holdout case against the installed agent
 #   ./run.sh candidate.md    same slice against a candidate definition
 #   ./run.sh --holdout       the holdout slice (combine with candidate.md as needed)
 # One JSON(JavaScript Object Notation) line per case to stdout, e.g.
-# {"id":"c1","score":10,"failure_mode":null}; summary to stderr. Requires the claude
-# CLI(command-line interface), jq, python3, shasum.
+# {"id":"c1","score":10,"failure_mode":null}; summary to stderr. Requires Pi, jq, python3, shasum.
 #
 # Honesty contract — what is mechanical here and what is not. This script grades:
 #   - output SHAPE: the verdict line and its value against each case's expectation
@@ -28,9 +27,11 @@ set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CASES="$HERE/cases.jsonl"
 
-for dep in claude jq python3 shasum git; do
+for dep in jq python3 shasum git; do
   command -v "$dep" >/dev/null 2>&1 || { echo "missing dependency: $dep" >&2; exit 1; }
 done
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 
 SLICE="non-holdout"
 CANDIDATE=""
@@ -41,32 +42,20 @@ for arg in "$@"; do
   esac
 done
 
+DEF="$HERE/../anchor-verifier.md"
 if [ -n "$CANDIDATE" ]; then
   [ -f "$CANDIDATE" ] || { echo "candidate file not found: $CANDIDATE" >&2; exit 1; }
-  # Candidate loads via the --agents JSON flag (file-provided precedence per the
-  # sub-agents docs, v2.1.219; verify against live docs if the flag errors).
-  # Frontmatter is parsed line-wise: keep candidate frontmatter one line per field.
-  DESC="$(sed -n 's/^description: //p' "$CANDIDATE" | head -1)"
-  TOOLS="$(sed -n 's/^tools: //p' "$CANDIDATE" | head -1)"
-  MODEL="$(sed -n 's/^model: //p' "$CANDIDATE" | head -1)"
-  BODY="$(awk '/^---$/{c++; next} c>=2' "$CANDIDATE")"
-  AGENTS_JSON="$(jq -n --arg d "$DESC" --arg p "$BODY" --arg t "$TOOLS" --arg m "$MODEL" \
-    '{"anchor-verifier-candidate":{description:$d,prompt:$p,tools:($t|split(",")|map(gsub("^ +| +$";""))),model:$m}}')"
-  AGENT_NAME="anchor-verifier-candidate"
-  # < /dev/null in both dispatchers is load-bearing: claude -p reads piped stdin and
-  # would swallow the case loop's remaining lines without it
-  dispatch() { claude --agents "$AGENTS_JSON" --agent "$AGENT_NAME" --allowedTools "Read,Grep,Glob,Bash" -p "$1" 2>/dev/null < /dev/null; }
-else
-  AGENT_NAME="anchor-verifier"
-  dispatch() { claude --agent "$AGENT_NAME" --allowedTools "Read,Grep,Glob,Bash" -p "$1" 2>/dev/null < /dev/null; }
+  DEF="$CANDIDATE"
 fi
-# --allowedTools breadth is a deliberate exception to the minimal-grant rule, eval
-# runs only: headless dispatches must not stall on permission prompts, and the
-# fixtures live in a throwaway temp dir. The agent's real grant stays frontmatter.
+AGENT_NAME="anchor-verifier"
 
 FIXROOT="$(mktemp -d /tmp/anchor-verifier-eval.XXXXXX)"
 trap 'rm -rf "$FIXROOT"' EXIT
 OUTDIR="$(mktemp -d /tmp/anchor-verifier-eval-out.XXXXXX)"
+
+dispatch() {
+  pi_eval_dispatch "$AGENT_NAME" "$DEF" "$FIXROOT" "$1"
+}
 
 mkdir -p "$FIXROOT/c1" "$FIXROOT/c2" "$FIXROOT/c4" "$FIXROOT/c5" \
   "$FIXROOT/c6/.map/CPU-0011" "$FIXROOT/c6/docs" "$FIXROOT/c7" "$FIXROOT/c8/scripts" \
@@ -144,7 +133,7 @@ print("CONFIG_TESTS_OK_" + hashlib.sha256(open("config.py", "rb").read()).hexdig
 EOF
 
 cat > "$FIXROOT/bin/ruff" <<'EOF'
-#!/usr/bin/env bash
+#!/bin/zsh
 set -u
 TARGET="${2:-}"
 [ -f "$TARGET" ] || { echo "ruff failed: No such file or directory ($TARGET)" >&2; exit 2; }
@@ -231,7 +220,7 @@ assert page([0, 1, 2, 3, 4], 9, 2) == []
 print("PAGINATE_TESTS_OK_" + hashlib.sha256(open("paginate.py", "rb").read()).hexdigest()[:10])
 EOF
 cat > "$FIXROOT/c8/scripts/release.sh" <<'EOF'
-#!/usr/bin/env bash
+#!/bin/zsh
 echo "release"
 EOF
 git_init "$FIXROOT/c8"

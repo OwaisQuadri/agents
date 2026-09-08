@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
+#!/bin/zsh
 set -euo pipefail
 cd "$(dirname "$0")"
-command -v claude >/dev/null || { echo 'claude CLI required' >&2; exit 1; }
 def="${1:-../implementer.md}"
-body=$(awk 'c>=2{print} /^---$/{c++}' "$def")
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 while IFS= read -r case_line; do
   [[ -n "$case_line" ]] || continue
   id=$(jq -r .id <<<"$case_line")
@@ -15,7 +15,7 @@ while IFS= read -r case_line; do
   printf '# fixture\n' > "$fix/src/cache.py"
   input=$(jq -r .input <<<"$case_line" | sed "s|__FIXTURE__|$fix|g")
   prompt="You are dispatched as the implementer agent. Execute the dispatch and reply in the exact output contract.\n\n$input"
-  out=$(cd "$fix" && printf '%b' "$prompt" | claude -p --append-system-prompt "$body" --allowedTools 'Bash,Read,Write,Edit,Grep,Glob' 2>/dev/null || true)
+  out=$(pi_eval_dispatch "implementer" "$def" "$fix" "$prompt" 2>/dev/null || true)
   score=0; mode='missing-output'
   if grep -q 'status:' <<<"$out" && grep -q 'version_basis:' <<<"$out" && grep -q 'verification:' <<<"$out"; then
     score=6; mode='shape-present'

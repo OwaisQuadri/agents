@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/zsh
 # Convention (skills/ai-author/templates/eval-harness.md): ./run.sh [candidate-file]
 # runs every non-holdout case against the incumbent definition (or the candidate,
 # staged into a throwaway project and dispatched headlessly via
-# `claude --agent code-reviewer -p`); --holdout runs the holdout slice. One
+# headless Pi through tier-dispatch); --holdout runs the holdout slice. One
 # JSON(JavaScript Object Notation) line per case to stdout:
 # {"id":"c1","score":8,"failure_mode":"<tag-or-null>"} and a summary to stderr.
 #
@@ -30,12 +30,12 @@ for arg in "$@"; do
   esac
 done
 
-command -v claude >/dev/null 2>&1 || { echo "claude CLI(command-line interface) not found on PATH" >&2; exit 1; }
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found on PATH" >&2; exit 1; }
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
-
-FIXROOT="/tmp/code-reviewer-evals"
+FIXROOT="$(mktemp -d /tmp/code-reviewer-evals.XXXXXXXX)"
 FIXTURE="$FIXROOT/fixture-repo"
 
 G() { git -C "$FIXTURE" -c user.email=eval@local -c user.name=eval "$@"; }
@@ -262,16 +262,11 @@ fixture_state() {
 
 WORKDIR="$(mktemp -d)"
 REVIEW_EVIDENCE="$WORKDIR/evidence/c6"
-mkdir -p "$WORKDIR/.claude/agents"
-cp "$DEF" "$WORKDIR/.claude/agents/code-reviewer.md"
-trap 'rm -rf "$WORKDIR"' EXIT
+trap 'rm -rf "$FIXROOT" "$WORKDIR"' EXIT
 
 dispatch() {
-  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
-  # case loop's remaining lines without it
-  ( cd "$WORKDIR" && claude --agent code-reviewer -p "$1" --allowedTools "Read,Grep,Glob,Bash" 2>/dev/null < /dev/null )
+  pi_eval_dispatch "code-reviewer" "$DEF" "$WORKDIR" "$1"
 }
-
 section() {
   awk -v h="## $1" '$0==h{f=1;next} /^## /{f=0} f' "$2"
 }

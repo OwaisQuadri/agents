@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/zsh
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
 #   ./run.sh [candidate-file]            grade every non-holdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice
@@ -30,7 +30,8 @@ for arg in "$@"; do
 done
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
-command -v claude >/dev/null 2>&1 || { echo "claude CLI(command-line interface) is required" >&2; exit 1; }
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 [ -f "$DEF" ] || { echo "agent definition not found: $DEF" >&2; exit 1; }
 [ -f "$CASES" ] || { echo "cases file not found: $CASES" >&2; exit 1; }
 
@@ -87,18 +88,15 @@ while IFS= read -r line; do
 
   scratch="$(mktemp -d)"
   evidence="$scratch/evidence/$id"
-  mkdir -p "$scratch/.claude/agents" "$evidence"
-  cp "$DEF" "$scratch/.claude/agents/maestro-tester.md"
+  mkdir -p "$evidence"
   input="${input//__EVIDENCE__/$evidence}"
   if needs_live "$id"; then
     booted_before="$(xcrun simctl list devices booted | grep -c Booted)"
   else
     booted_before="not-applicable"
   fi
-  # < /dev/null is load-bearing: claude -p reads piped stdin and would swallow the
-  # case loop's remaining lines without it
   error_file="$(mktemp)"
-  out="$(cd "$scratch" && claude --agent "$AGENT_NAME" --permission-mode bypassPermissions -p "$input" 2>"$error_file" < /dev/null)"
+  out="$(pi_eval_dispatch "$AGENT_NAME" "$DEF" "$scratch" "$input" 2>"$error_file")"
   dispatch_status=$?
   if [ "$dispatch_status" -ne 0 ]; then
     emit "$id" -1 "\"dispatch-failed:$dispatch_status\""

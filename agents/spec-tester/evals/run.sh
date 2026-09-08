@@ -1,11 +1,10 @@
-#!/usr/bin/env bash
+#!/bin/zsh
 # Harness contract, shared with the GEPA(Genetic-Pareto prompt evolution) loop:
 #   ./run.sh [candidate-file]            grade every non-holdout case
 #   ./run.sh --holdout [candidate-file]  grade the holdout slice
 # One JSON line per case to stdout, summary to stderr.
 #
-# Live harness: each case dispatches the definition headlessly (claude -p with the
-# body appended as system prompt) against a fixture SUT whose reset writes 1, not 0
+# Live harness: each case dispatches the definition headlessly (Pi through tier-dispatch with the candidate body as its system prompt) against a fixture SUT whose reset writes 1, not 0
 # — the planted defect. SUT integrity is checksummed around every case. Mechanical
 # ceiling is 8/10; 9-10 is judge-only per rubric.md.
 set -euo pipefail
@@ -18,7 +17,8 @@ if [[ "${1:-}" == "--holdout" ]]; then
 fi
 def="${1:-../spec-tester.md}"
 
-command -v claude >/dev/null || { echo "claude CLI required" >&2; exit 1; }
+source "$(git rev-parse --show-toplevel)/agents/evals/pi-dispatch.sh"
+pi_eval_requirements
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 required" >&2; exit 1; }
 
@@ -26,7 +26,7 @@ FIX=$(mktemp -d /tmp/spec-tester-evals.XXXXXX)
 trap 'rm -rf "$FIX"' EXIT
 mkdir -p "$FIX/sut" "$FIX/scratch"
 cat > "$FIX/sut/counter.sh" <<'EOF'
-#!/bin/sh
+#!/bin/zsh
 set -eu
 f="$1"; cmd="$2"
 case "$cmd" in
@@ -38,7 +38,7 @@ esac
 EOF
 chmod +x "$FIX/sut/counter.sh"
 cat > "$FIX/sut/ui-fixture" <<'EOF'
-#!/bin/sh
+#!/bin/zsh
 set -eu
 root="$(CDPATH= cd -- "$(dirname "$0")/../scratch" && pwd -P)"
 state_file="$root/.ui-state"
@@ -114,8 +114,6 @@ PY
 esac
 EOF
 chmod +x "$FIX/sut/ui-fixture"
-
-body=$(awk 'c>=2{print} /^---$/{c++}' "$def")
 sut_sum() { find "$FIX/sut" -type f -exec shasum {} + | shasum; }
 is_path_cited() {
   local logical_path="$1"
@@ -200,7 +198,7 @@ $dispatch"
   mkdir -p "$FIX/scratch"
   before=$(sut_sum)
   error_file=$(mktemp)
-  if out=$( (cd "$FIX" && printf '%s' "$dispatch" | claude -p --append-system-prompt "$body" --allowedTools "Bash,Read,Write,Grep,Glob") 2>"$error_file"); then
+  if out=$(pi_eval_dispatch "spec-tester" "$def" "$FIX" "$dispatch" 2>"$error_file"); then
     dispatch_status=0
   else
     dispatch_status=$?
