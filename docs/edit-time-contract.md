@@ -4,7 +4,7 @@
 
 This contract defines pre-write checks for direct Pi `edit` and `write` calls. It covers privacy, comment length, comment shape, and Boolean naming. One compiled Rust registry evaluates the selected rules. One Pi extension owns enforcement.
 
-Issue #319 covers shell commands. The user deferred that issue. Shell commands remain unchanged and outside this contract's enforcement coverage. Existing commit-time checks remain active. The `no-ai-attribution` rules and invocation remain unchanged.
+Issue #319 covers shell commands. The user deferred that issue. Shell commands remain unchanged and outside this contract's enforcement coverage. Existing commit-time checks remain active.
 
 This document specifies required behavior. It does not certify an implementation or a performance result. The user approved the direct-only release scope for #317 and #318 in pull request #349. Human-only emergency approval remains unavailable because the inspected host transport does not establish human origin. The unfinished authority requirement moves to [#351](https://github.com/OwaisQuadri/agents/issues/351). Missing measurements move to [#352](https://github.com/OwaisQuadri/agents/issues/352); they do not count as passed.
 

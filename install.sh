@@ -318,25 +318,7 @@ if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/pre-commit" "$REPO_TARGET/hooks/pre-commit"
 fi
 
-# 8. the rust tools. these are the artifacts the installer compiles rather than links,
-#    because each one sits in a path that is waited on: ste-check in the reply path,
-#    no-ai-attribution in the PreToolUse path ahead of every commit,
-#    session-stats as an on-demand command the user runs by name,
-#    preferred-cli-guard in the pi/extensions/preferred-cli-guard tool_call path ahead of
-#    every bash call, blocking a literal find/grep invocation in favor of fd/rg,
-#    warnings-check in the PreToolUse path ahead of every commit that stages a .rs file
-#    under tools/, alongside no-ai-attribution on the same hook,
-#    comment-check in the PreToolUse path ahead of every commit that stages a source
-#    file, denying a non-doc comment block over docs/comment-style.md's length budget,
-#    gepa-due in the daily workflows/gepa-due launchd job, which runs with the minimal
-#    PATH set in its plist (no cargo) — it needs the built binary on that PATH already,
-#    not a live `cargo build` attempted inside the launchd environment,
-#    transcript-directed-video-processor as an on-demand command the user runs by name,
-#    privacy-lint in the pre-commit path, blocking staged private network identifiers,
-#    worktree-hygiene in the 5-minute launchd hygiene job — its plist sets a minimal PATH
-#    with no cargo on it, exactly like gepa-due above, so the binary must already be built
-#    and symlinked here rather than compiled inside the launchd environment
-for tool in ste-check no-ai-attribution session-stats preferred-cli-guard warnings-check comment-check edit-time-check gepa-due transcript-directed-video-processor privacy-lint worktree-hygiene autonomous-engineer-state; do
+for tool in ste-check session-stats preferred-cli-guard comment-check edit-time-check gepa-due transcript-directed-video-processor privacy-lint worktree-hygiene autonomous-engineer-state; do
   build_tool "$REPO_TARGET/tools/$tool" "$tool"
 done
 

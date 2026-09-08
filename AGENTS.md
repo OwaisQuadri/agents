@@ -38,8 +38,8 @@ introduce one without its inline expansion. Never guess an unresolved one: when 
 This is persistent memory, not an optional lookup. It covers ~/Documents, agent memories,
 and agent transcripts.
 
-Recall is automatic: the `hooks/rag-recall` UserPromptSubmit hook searches it on every
-prompt and injects the top 8 chunks as `<persistent-memory-recall>`. Read that block before
+Recall is automatic: the Pi RAG extension searches it on every prompt and injects the
+top 8 chunks as `<persistent-memory-recall>`. Read that block before
 answering anything that turns on past work, prior decisions, or personal notes — the
 retrieval already happened, so failing to use it is the only way to miss it.
 

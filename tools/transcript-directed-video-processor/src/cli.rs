@@ -1,6 +1,3 @@
-// Manual `--flag value` argument parsing, matching the repo's existing pattern
-// (tools/dispatch-baseline, tools/mcp-sync) — no `clap` dependency.
-
 use std::collections::HashMap;
 
 pub struct Flags {

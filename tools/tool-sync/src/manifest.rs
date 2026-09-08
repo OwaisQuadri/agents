@@ -717,7 +717,7 @@ installer = { command = "/usr/bin/true", args = [], preview_args = [] }
             .expect("rag tool exists");
         assert_eq!(tool.platforms, [Platform::Macos, Platform::Linux]);
         assert_eq!(tool.commands, [PathBuf::from("rag")]);
-        assert_eq!(tool.mcp_server.as_deref(), Some("rag"));
+        assert!(tool.mcp_server.is_none());
         assert_eq!(
             tool.pi_extension.as_deref(),
             Some(Path::new("pi/extensions/rag.ts"))

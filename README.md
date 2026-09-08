@@ -21,12 +21,12 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 | `skills/` | one `SKILL.md` per skill, loaded on trigger |
 | `agents/` | subagent definitions, each with its own tools and model |
 | `workflows/` | multi-agent graph specs |
-| `config/` | `tools.toml`, the executable-tool manifest; `mcp-servers.toml`, the tracked MCP (Model Context Protocol) server manifest; `mcp-sync-state.toml`, the machine-written, untracked sync state; and Pi configuration |
+| `config/` | `tools.toml`, the executable-tool manifest, and Pi configuration |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, and docstring style (the standard generator per language) |
-| `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `mcp-sync`, which renders the MCP server manifest; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the PRs that start a review pass; `transcript-directed-video-processor`, which segments a YouTube or local video's transcript into candidate moments and runs a configured vision model over selected frames |
+| `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the Pull Requests that start a review pass; `transcript-directed-video-processor`, which finds video moments for visual review |
 | `hooks/` | git hooks. `post-checkout` starts the sandbox build after a branch checkout without copying files between worktrees, and `test.sh` is its regression suite |
 | `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
-| `install.sh` | the top-level installer; it builds the local Rust tools, runs `tool-sync`, and runs `mcp-sync` when its live inputs exist |
+| `install.sh` | the top-level Pi installer; it builds local Rust tools and runs `tool-sync` |
 
 ### skills
 
