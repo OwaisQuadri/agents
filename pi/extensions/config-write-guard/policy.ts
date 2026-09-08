@@ -16,6 +16,7 @@ export type AgentToolInput = {
 export type GuardContext = {
 	cwd: string;
 	repositoryRoot: string;
+	sessionStartingDirectory?: string;
 	isRepositoryClean: () => boolean;
 	worktreeRoots: () => string[];
 };
@@ -176,14 +177,21 @@ function blockedMainCheckoutToolCall(
 	username: string | undefined,
 ): string | undefined {
 	const isMainCheckoutCwd = isPrimaryCheckoutPath(guard.cwd, guard.cwd, guard);
+	if (toolName === "Agent") {
+		return isMainCheckoutCwd && blocksChildAgent(input as AgentToolInput)
+			? "Blocked a write-capable child agent in the primary main checkout. Dispatch it with worktree isolation."
+			: undefined;
+	}
+	const isPrimaryOrigin = isMainCheckoutCwd
+		&& guard.sessionStartingDirectory !== undefined
+		&& isPrimaryCheckoutPath(guard.sessionStartingDirectory, guard.cwd, guard);
 	if ((toolName === "edit" || toolName === "write") && isPrimaryCheckoutPath((input as FileToolInput).path, guard.cwd, guard)) {
-		return mainCheckoutBlockReason();
+		return isPrimaryOrigin ? undefined : mainCheckoutBlockReason();
 	}
-	if (toolName === "Agent" && isMainCheckoutCwd && blocksChildAgent(input as AgentToolInput)) {
-		return "Blocked a write-capable child agent in the primary main checkout. Dispatch it with worktree isolation.";
-	}
-	return toolName === "bash"
-		? blockedMainCheckoutShell((input as BashToolInput).command, isMainCheckoutCwd, guard, home, username)
+	if (toolName !== "bash") return undefined;
+	if (!isPrimaryOrigin) return blockedMainCheckoutShell((input as BashToolInput).command, isMainCheckoutCwd, guard, home, username);
+	return classifyCheckoutCommand((input as BashToolInput).command) === "clean-fast-forward-pull" && !guard.isRepositoryClean()
+		? "Blocked `git pull --ff-only` because the primary main checkout is not clean."
 		: undefined;
 }
 
