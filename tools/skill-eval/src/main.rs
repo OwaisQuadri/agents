@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--jobs N] [--restart] [--accept-if-winning] [candidate]";
 const STATE_FORMAT_VERSION: u8 = 1;
+const MAX_JOBS: usize = 16;
 
 #[derive(Clone, Debug)]
 struct Args {
@@ -233,13 +234,7 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
                     .get(index)
                     .and_then(|value| value.to_str())
                     .ok_or_else(|| format!("--jobs needs a positive integer\n{USAGE}"))?;
-                let parsed = value
-                    .parse::<usize>()
-                    .map_err(|_| format!("--jobs needs a positive integer\n{USAGE}"))?;
-                if parsed == 0 {
-                    return Err(format!("--jobs needs a positive integer\n{USAGE}"));
-                }
-                jobs = Some(parsed);
+                jobs = Some(worker_count(value, "--jobs")?);
             }
             Some("--tier") => {
                 index += 1;
@@ -290,19 +285,27 @@ fn env_path(name: &str, default: PathBuf) -> PathBuf {
     env::var_os(name).map_or(default, PathBuf::from)
 }
 
+fn worker_count(value: &str, name: &str) -> Result<usize, String> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        format!("{name} must be a positive integer no greater than {MAX_JOBS}\n{USAGE}")
+    })?;
+    if parsed == 0 || parsed > MAX_JOBS {
+        return Err(format!(
+            "{name} must be a positive integer no greater than {MAX_JOBS}\n{USAGE}"
+        ));
+    }
+    Ok(parsed)
+}
+
+fn positive_env_value(name: &str, value: &str) -> Result<usize, String> {
+    worker_count(value, name)
+}
+
 fn positive_env(name: &str, default: usize) -> Result<usize, String> {
     match env::var(name) {
-        Ok(value) => {
-            let parsed = value
-                .parse::<usize>()
-                .map_err(|_| format!("{name} must be a positive integer"))?;
-            if parsed == 0 {
-                return Err(format!("{name} must be a positive integer"));
-            }
-            Ok(parsed)
-        }
+        Ok(value) => positive_env_value(name, &value),
         Err(env::VarError::NotPresent) => Ok(default),
-        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8")),
+        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8\n{USAGE}")),
     }
 }
 
@@ -1508,8 +1511,9 @@ struct RunLock {
 }
 
 impl RunLock {
-    fn acquire(state_root: &Path, run_key: &str) -> Result<Self, String> {
-        fs::create_dir_all(state_root)
+    fn acquire(eval_dir: &Path) -> Result<Self, String> {
+        let state_root = eval_dir.join(".skill-eval-state");
+        fs::create_dir_all(&state_root)
             .map_err(|error| format!("cannot create {}: {error}", state_root.display()))?;
         let path = state_root.join("run.lock");
         let file = OpenOptions::new()
@@ -1520,7 +1524,7 @@ impl RunLock {
             .open(&path)
             .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
         file.try_lock()
-            .map_err(|error| run_lock_error(&path, run_key, error))?;
+            .map_err(|error| run_lock_error(eval_dir, &path, error))?;
         Ok(Self { file })
     }
 }
@@ -1531,12 +1535,15 @@ impl Drop for RunLock {
     }
 }
 
-fn run_lock_error(path: &Path, run_key: &str, error: TryLockError) -> String {
+fn run_lock_error(eval_dir: &Path, path: &Path, error: TryLockError) -> String {
     match error {
-        TryLockError::WouldBlock => format!("paired evaluation already runs for {run_key}"),
+        TryLockError::WouldBlock => {
+            format!("paired evaluation already runs in {}", eval_dir.display())
+        }
         TryLockError::Error(error) => format!(
-            "cannot acquire advisory lock {} for {run_key}: {error}",
-            path.display()
+            "cannot acquire advisory lock {} in {}: {error}",
+            path.display(),
+            eval_dir.display()
         ),
     }
 }
@@ -1577,8 +1584,9 @@ fn append_run_key_input(output: &mut Vec<u8>, label: &[u8], value: &[u8]) {
 
 fn run_key_input(path: &Path) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
+    let mut directory_stack = BTreeSet::new();
     append_run_key_input(&mut output, b"root", b"");
-    append_path_to_run_key(path, Path::new(""), &mut output)?;
+    append_path_to_run_key(path, Path::new(""), &mut output, &mut directory_stack)?;
     Ok(output)
 }
 
@@ -1586,6 +1594,7 @@ fn append_path_to_run_key(
     path: &Path,
     relative: &Path,
     output: &mut Vec<u8>,
+    directory_stack: &mut BTreeSet<PathBuf>,
 ) -> Result<(), String> {
     let metadata = if relative.as_os_str().is_empty() {
         fs::metadata(path)
@@ -1598,7 +1607,16 @@ fn append_path_to_run_key(
         let target = fs::read_link(path)
             .map_err(|error| format!("cannot read link {}: {error}", path.display()))?;
         append_run_key_input(output, b"link", target.as_os_str().as_encoded_bytes());
-        return Ok(());
+        let resolved = match fs::canonicalize(path) {
+            Ok(resolved) => resolved,
+            Err(_) => return Ok(()),
+        };
+        if directory_stack.contains(&resolved) {
+            append_run_key_input(output, b"link-cycle", b"");
+            return Ok(());
+        }
+        append_run_key_input(output, b"link-target", b"");
+        return append_path_to_run_key(&resolved, Path::new(""), output, directory_stack);
     }
     append_run_key_input(
         output,
@@ -1616,23 +1634,38 @@ fn append_path_to_run_key(
     if !metadata.is_dir() {
         return Err(format!("{} is not a file or directory", path.display()));
     }
-    append_run_key_input(output, b"directory", b"");
-    let mut entries: Vec<_> = fs::read_dir(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?
-        .collect::<Result<_, _>>()
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    entries.sort_by_key(|entry| entry.file_name());
-    for entry in entries {
-        let is_git_metadata_dir = entry.file_name() == ".git"
-            && entry
-                .file_type()
-                .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?
-                .is_dir();
-        if !is_git_metadata_dir {
-            append_path_to_run_key(&entry.path(), &relative.join(entry.file_name()), output)?;
-        }
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+    if !directory_stack.insert(canonical.clone()) {
+        append_run_key_input(output, b"link-cycle", b"");
+        return Ok(());
     }
-    Ok(())
+    let result = (|| {
+        append_run_key_input(output, b"directory", b"");
+        let mut entries: Vec<_> = fs::read_dir(path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+            .collect::<Result<_, _>>()
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let is_git_metadata_dir = entry.file_name() == ".git"
+                && entry
+                    .file_type()
+                    .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?
+                    .is_dir();
+            if !is_git_metadata_dir {
+                append_path_to_run_key(
+                    &entry.path(),
+                    &relative.join(entry.file_name()),
+                    output,
+                    directory_stack,
+                )?;
+            }
+        }
+        Ok(())
+    })();
+    directory_stack.remove(&canonical);
+    result
 }
 
 fn update_key(hasher: &mut Sha1, label: &str, value: &[u8]) {
@@ -2000,17 +2033,17 @@ fn run_work_units(
         .filter(|unit| !completed.contains_key(&unit_name(unit).expect("serializable unit")))
         .cloned()
         .collect();
+    let worker_count = context.settings.jobs.min(missing.len());
     eprintln!(
         "skill-eval: {} paired run: {}/{} units complete, {} workers",
         if is_resumed { "resumed" } else { "new" },
         completed.len(),
         units.len(),
-        context.settings.jobs
+        worker_count
     );
     if missing.is_empty() {
         return Ok(completed);
     }
-    let missing_count = missing.len();
     let queue = Arc::new(Mutex::new(WorkQueue {
         pending: std::collections::VecDeque::from(missing),
         is_fatal: false,
@@ -2018,8 +2051,7 @@ fn run_work_units(
     let (sender, receiver) = mpsc::channel();
     let mut worker_error = None;
     thread::scope(|scope| {
-        let workers = context.settings.jobs.min(missing_count);
-        for _ in 0..workers {
+        for _ in 0..worker_count {
             let queue = Arc::clone(&queue);
             let sender = sender.clone();
             scope.spawn(move || {
@@ -2356,8 +2388,7 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         &rubric,
         artifact_dir,
     )?;
-    let state_root = eval_dir.join(".skill-eval-state");
-    let _run_lock = RunLock::acquire(&state_root, &run_key)?;
+    let _run_lock = RunLock::acquire(&eval_dir)?;
     let (state_dir, is_resumed) = initialize_state(&eval_dir, &run_key, settings.args.is_restart)?;
     prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases)?;
     let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
@@ -2521,12 +2552,12 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     if selection.reason == "incomplete" {
         return Ok(2);
     }
-    fs::remove_dir_all(&state_dir).map_err(|error| {
-        format!(
-            "cannot remove completed state {}: {error}",
+    if let Err(error) = fs::remove_dir_all(&state_dir) {
+        eprintln!(
+            "skill-eval: warning: cannot remove completed state {}: {error}",
             state_dir.display()
-        )
-    })?;
+        );
+    }
     if settings.args.is_accept_if_winning && !selection.is_accepted {
         Ok(1)
     } else {
@@ -3695,6 +3726,19 @@ fi
             OsString::from("candidate.md"),
         ];
         assert!(parse_args(&base).unwrap_err().contains("positive integer"));
+        let too_many = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--jobs"),
+            OsString::from((MAX_JOBS + 1).to_string()),
+            OsString::from("candidate.md"),
+        ];
+        let error = parse_args(&too_many).unwrap_err();
+        assert!(error.contains("--jobs"));
+        assert!(error.contains(USAGE));
+        let error = positive_env_value("SKILL_EVAL_JOBS", &(MAX_JOBS + 1).to_string()).unwrap_err();
+        assert!(error.contains("SKILL_EVAL_JOBS"));
+        assert!(error.contains(USAGE));
         let restart = [
             OsString::from("--eval-dir"),
             OsString::from("evals"),
@@ -4005,12 +4049,37 @@ fi
     }
 
     #[test]
+    fn nested_auth_extension_link_hashes_target_content() {
+        use std::os::unix::fs::symlink;
+
+        let (_temp, settings, _eval_dir) = fixture("nested-link-content", FAKE);
+        let target = settings.auth_extension.join("target.ts");
+        fs::write(&target, "first target content").unwrap();
+        symlink("target.ts", settings.auth_extension.join("nested-link")).unwrap();
+        let first = run_key_input(&settings.auth_extension).unwrap();
+        fs::write(&target, "second target content").unwrap();
+        assert_ne!(first, run_key_input(&settings.auth_extension).unwrap());
+    }
+
+    #[test]
+    fn nested_auth_extension_link_cycle_does_not_recurse() {
+        use std::os::unix::fs::symlink;
+
+        let (_temp, settings, _eval_dir) = fixture("nested-link-cycle", FAKE);
+        symlink(".", settings.auth_extension.join("nested-link")).unwrap();
+        let first = run_key_input(&settings.auth_extension).unwrap();
+        assert_eq!(first, run_key_input(&settings.auth_extension).unwrap());
+    }
+
+    #[test]
     fn corrupt_state_and_duplicate_coordinator_fail_closed() {
         let temp = test_temp("state-lock");
-        let state_root = temp.path.join("state");
+        let eval_dir = temp.path.join("evals");
+        fs::create_dir(&eval_dir).unwrap();
+        let state_root = eval_dir.join(".skill-eval-state");
         let key = "run";
-        let first = RunLock::acquire(&state_root, key).unwrap();
-        assert!(RunLock::acquire(&state_root, "another-run").is_err());
+        let first = RunLock::acquire(&eval_dir).unwrap();
+        assert!(RunLock::acquire(&eval_dir).is_err());
         assert_eq!(
             fs::read_dir(&state_root).unwrap().count(),
             1,
@@ -4029,15 +4098,22 @@ fi
 
     #[test]
     fn run_lock_reports_contention_and_system_errors_separately() {
-        let path = Path::new("state/run.lock");
-        assert!(run_lock_error(path, "run", TryLockError::WouldBlock).contains("already runs"));
+        let eval_dir = Path::new("artifact/evals");
+        let path = Path::new("artifact/evals/.skill-eval-state/run.lock");
+        let contention = run_lock_error(eval_dir, path, TryLockError::WouldBlock);
+        assert_eq!(
+            contention,
+            "paired evaluation already runs in artifact/evals"
+        );
         assert!(
             run_lock_error(
+                eval_dir,
                 path,
-                "run",
                 TryLockError::Error(io::Error::other("disk error"))
             )
-            .contains("cannot acquire advisory lock state/run.lock for run: disk error")
+            .contains(
+                "cannot acquire advisory lock artifact/evals/.skill-eval-state/run.lock in artifact/evals: disk error"
+            )
         );
     }
 

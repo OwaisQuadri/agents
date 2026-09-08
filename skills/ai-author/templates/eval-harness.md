@@ -110,10 +110,13 @@ It prepares immutable arm-qualified prompts, runs bounded units, and saves compl
 `evals/.skill-eval-state/<run-key>/`. The same command resumes an exact incomplete run. A completed
 `null` score remains complete on automatic resume. Use `--restart` to retry unavailable providers
 after they recover. `--restart` reruns the current exact key. Use `--jobs N` or `SKILL_EVAL_JOBS`
-to set workers. The runner uses `evals/.skill-eval-state/run.lock` as one stable advisory lock per
-artifact. The lock permits one paired coordinator while its workers remain concurrent. Only the final
-coordinator aggregates complete units. It removes only `metadata.minimum-tier` from model prompts,
-candidate identity, and the frontier snapshot; preflight receives the submitted candidate unchanged.
+to set one through 16 workers. The runner emits incumbent records before candidate records. Each arm
+orders records by configured tier, non-holdout cases, then holdout cases. The runner uses
+`evals/.skill-eval-state/run.lock` as one stable advisory lock per artifact. The lock permits one
+paired coordinator while its workers remain concurrent. Only the final coordinator aggregates complete
+units. After the final coordinator writes the frontier and live definition, a state cleanup failure is
+a warning. The completed run keeps its success exit. It removes only `metadata.minimum-tier` from
+model prompts, candidate identity, and the frontier snapshot; preflight receives the submitted candidate unchanged.
 It appends one row per configured tier even when a tier is unavailable. A dry run records
 its paired evidence only. `--accept-if-winning` applies a winner conditionally: accepted
 is exit 0, a valid rejection is exit 1, and incomplete or execution failure is exit 2.
