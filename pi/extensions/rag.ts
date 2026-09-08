@@ -312,7 +312,7 @@ export default function ragExtension(
 	let session: McpSession | undefined;
 	let starting: Promise<McpSession> | undefined;
 	let isMemorySessionActive = false;
-	let pendingRecallQuery: string | undefined;
+	const pendingRecallQueries: Array<string | undefined> = [];
 
 	const startSession = (): Promise<McpSession> => {
 		if (session?.isAvailable && starting === undefined) {
@@ -358,31 +358,22 @@ export default function ragExtension(
 
 	pi.on("session_start", () => {
 		isMemorySessionActive = true;
-		pendingRecallQuery = undefined;
+		pendingRecallQueries.length = 0;
 	});
 	pi.on("session_shutdown", async () => {
 		isMemorySessionActive = false;
-		pendingRecallQuery = undefined;
+		pendingRecallQueries.length = 0;
 		const activeSession = session;
 		session = undefined;
 		await activeSession?.close();
 	});
-	pi.on("input", async (event) => {
+	pi.on("input", (event) => {
 		const isRecallEligible = event.source === "interactive" && process.env.RAG_RECALL !== "0" && isMemorySessionActive && event.text.length > 0;
-		const query = isRecallEligible ? event.text.slice(0, maximumRecallQueryLength) : undefined;
-		if (event.streamingBehavior === undefined) {
-			pendingRecallQuery = query;
-		} else if (query !== undefined) {
-			const recall = await recallFor(query);
-			if (recall !== undefined) {
-				pi.sendMessage(recallMessage(recall), { deliverAs: event.streamingBehavior });
-			}
-		}
+		pendingRecallQueries.push(isRecallEligible ? event.text.slice(0, maximumRecallQueryLength) : undefined);
 		return { action: "continue" };
 	});
 	pi.on("before_agent_start", async () => {
-		const query = pendingRecallQuery;
-		pendingRecallQuery = undefined;
+		const query = pendingRecallQueries.shift();
 		if (query === undefined) return;
 		const recall = await recallFor(query);
 		if (recall === undefined) return;
