@@ -166,7 +166,12 @@ test("protects only Pi-managed destinations", () => {
 		"/tmp/config-write-guard-home/.pi/agent/agents",
 		"/tmp/config-write-guard-home/.pi/agent/extensions",
 		"/tmp/config-write-guard-home/.pi/agent/keybindings.json",
+		"/tmp/config-write-guard-home/.pi/agent/models.json",
+		"/tmp/config-write-guard-home/.pi/agent/pi-transcribe.json",
+		"/tmp/config-write-guard-home/.pi/agent/plannotator.json",
 		"/tmp/config-write-guard-home/.pi/agent/settings.json",
+		"/tmp/config-write-guard-home/.pi/agent/themes/owais.json",
+		"/tmp/config-write-guard-home/.pi/agent/world-clock.json",
 	]);
 });
 
@@ -185,6 +190,15 @@ test("blocks managed files and descendants without blocking siblings", () => {
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions-copy/file.ts`, home), false);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/keybindings.json`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/keybindings.json.backup`, home), false);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/models.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/models.json.backup`, home), false);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/models-store.json`, home), false);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/pi-transcribe.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/plannotator.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/world-clock.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/themes/owais.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/themes/custom.json`, home), false);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/themes-copy/owais.json`, home), false);
 });
 
 test("blocks managed file writes and destination shell commands", () => {
@@ -192,6 +206,12 @@ test("blocks managed file writes and destination shell commands", () => {
 	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/extensions/AGENTS.md` }, home) ?? "", /Blocked/);
 	assert.equal(blockedConfigToolCall("write", { path: `${home}/.pi/agent/sessions/session.jsonl` }, home), undefined);
+	assert.match(blockedConfigToolCall("write", { path: `${home}/.pi/agent/themes/owais.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/plannotator.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/pi-transcribe.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("write", { path: `${home}/.pi/agent/models.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/models.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("edit", { path: `${home}/.pi/agent/world-clock.json` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > ~/.pi/agent/settings.json" }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > $HOME/.agents/skills/new/SKILL.md" }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/herdr/config.toml` }, home) ?? "", /Blocked/);

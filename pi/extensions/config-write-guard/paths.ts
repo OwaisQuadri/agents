@@ -10,7 +10,12 @@ const protectedRelativePaths = [
 	[".pi", "agent", "agents"],
 	[".pi", "agent", "extensions"],
 	[".pi", "agent", "keybindings.json"],
+	[".pi", "agent", "models.json"],
+	[".pi", "agent", "pi-transcribe.json"],
+	[".pi", "agent", "plannotator.json"],
 	[".pi", "agent", "settings.json"],
+	[".pi", "agent", "themes", "owais.json"],
+	[".pi", "agent", "world-clock.json"],
 ] as const;
 
 /**
