@@ -380,26 +380,25 @@ fn is_evaluation_runner_path(word: &str, repository_root: &Path) -> bool {
     if word.split('/').any(|component| component == "..") {
         return false;
     }
-    let is_absolute = word.starts_with('/');
-    if is_absolute && Path::new(word).strip_prefix(repository_root).is_err() {
-        return false;
-    }
-    let components: Vec<_> = word
+    let relative = if word.starts_with('/') {
+        let Ok(relative) = Path::new(word).strip_prefix(repository_root) else {
+            return false;
+        };
+        let Some(relative) = relative.to_str() else {
+            return false;
+        };
+        relative
+    } else {
+        word
+    };
+    let components: Vec<_> = relative
         .split('/')
         .filter(|component| !component.is_empty() && *component != ".")
         .collect();
-    if is_absolute {
-        matches!(
-            components.as_slice(),
-            [.., "skills" | "workflows", _, "evals", "run.sh"]
-                | [.., "tools", "skill-eval", "run.sh"]
-        )
-    } else {
-        matches!(
-            components.as_slice(),
-            ["skills" | "workflows", _, "evals", "run.sh"] | ["tools", "skill-eval", "run.sh"]
-        )
-    }
+    matches!(
+        components.as_slice(),
+        ["skills" | "workflows", _, "evals", "run.sh"] | ["tools", "skill-eval", "run.sh"]
+    )
 }
 
 fn is_zsh(word: &str) -> bool {
@@ -698,6 +697,12 @@ mod tests {
         );
         assert!(blocked_command_with_timeout_at_root(
             "/other/skills/tool-author/evals/run.sh",
+            Some(7_200.0),
+            root,
+        )
+        .is_none());
+        assert!(blocked_command_with_timeout_at_root(
+            "/repo/my-notes/workflows/demo/evals/run.sh",
             Some(7_200.0),
             root,
         )

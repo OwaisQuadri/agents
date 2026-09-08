@@ -770,7 +770,11 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::TierExhausted { attempts } => assert_eq!(attempts.len(), 2),
+            Outcome::TierExhausted { attempts } => {
+                assert_eq!(attempts.len(), 2);
+                assert_eq!(attempts[0].result, "fallback");
+                assert_eq!(attempts[1].result, "exhausted");
+            }
             _ => panic!("expected TierExhausted"),
         }
         std::fs::remove_dir_all(&dir).ok();
@@ -793,7 +797,11 @@ exit 0
         let prompt = write_system_prompt(&dir);
         let outcome = walk_chain(script.to_str().unwrap(), &chain, &prompt, "hello");
         match outcome {
-            Outcome::TierExhausted { attempts } => assert_eq!(attempts.len(), 2),
+            Outcome::TierExhausted { attempts } => {
+                assert_eq!(attempts.len(), 2);
+                assert_eq!(attempts[0].result, "fallback");
+                assert_eq!(attempts[1].result, "exhausted");
+            }
             _ => panic!("expected TierExhausted"),
         }
         std::fs::remove_dir_all(&dir).ok();
