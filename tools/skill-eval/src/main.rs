@@ -4,23 +4,28 @@ use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--accept-if-winning] [candidate]";
+const USAGE: &str = "usage: skill-eval --eval-dir <artifact/evals> [--holdout] [--tier Tn] [--jobs N] [--restart] [--accept-if-winning] [candidate]";
+const STATE_FORMAT_VERSION: u8 = 1;
+const MAX_JOBS: usize = 16;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Args {
     eval_dir: PathBuf,
     is_holdout_only: bool,
     tier: Option<String>,
     candidate: Option<PathBuf>,
     is_accept_if_winning: bool,
+    jobs: Option<usize>,
+    is_restart: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -39,7 +44,7 @@ struct TiersFile {
     tiers: Map<String, Value>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Settings {
     args: Args,
     repeats: usize,
@@ -47,6 +52,7 @@ struct Settings {
     tiers_file: PathBuf,
     tier_dispatch_bin: PathBuf,
     auth_extension: PathBuf,
+    jobs: usize,
 }
 
 #[derive(Debug)]
@@ -207,6 +213,8 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
     let mut tier = None;
     let mut candidate = None;
     let mut is_accept_if_winning = false;
+    let mut jobs = None;
+    let mut is_restart = false;
     let mut index = 0;
     while index < raw.len() {
         match raw[index].to_str() {
@@ -219,6 +227,15 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
             }
             Some("--holdout") => is_holdout_only = true,
             Some("--accept-if-winning") => is_accept_if_winning = true,
+            Some("--restart") => is_restart = true,
+            Some("--jobs") => {
+                index += 1;
+                let value = raw
+                    .get(index)
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| format!("--jobs needs a positive integer\n{USAGE}"))?;
+                jobs = Some(worker_count(value, "--jobs")?);
+            }
             Some("--tier") => {
                 index += 1;
                 tier = raw
@@ -247,17 +264,49 @@ fn parse_args(raw: &[OsString]) -> Result<Args, String> {
             "--accept-if-winning requires one candidate and cannot be combined with --holdout or --tier\n{USAGE}"
         ));
     }
+    if (is_restart || jobs.is_some()) && (is_holdout_only || tier.is_some() || candidate.is_none())
+    {
+        return Err(format!(
+            "--jobs and --restart require one full paired candidate run\n{USAGE}"
+        ));
+    }
     Ok(Args {
         eval_dir: eval_dir.ok_or_else(|| format!("--eval-dir is required\n{USAGE}"))?,
         is_holdout_only,
         tier,
         candidate,
         is_accept_if_winning,
+        jobs,
+        is_restart,
     })
 }
 
 fn env_path(name: &str, default: PathBuf) -> PathBuf {
     env::var_os(name).map_or(default, PathBuf::from)
+}
+
+fn worker_count(value: &str, name: &str) -> Result<usize, String> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        format!("{name} must be a positive integer no greater than {MAX_JOBS}\n{USAGE}")
+    })?;
+    if parsed == 0 || parsed > MAX_JOBS {
+        return Err(format!(
+            "{name} must be a positive integer no greater than {MAX_JOBS}\n{USAGE}"
+        ));
+    }
+    Ok(parsed)
+}
+
+fn positive_env_value(name: &str, value: &str) -> Result<usize, String> {
+    worker_count(value, name)
+}
+
+fn positive_env(name: &str, default: usize) -> Result<usize, String> {
+    match env::var(name) {
+        Ok(value) => positive_env_value(name, &value),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8\n{USAGE}")),
+    }
 }
 
 fn settings(args: Args) -> Result<Settings, String> {
@@ -268,6 +317,14 @@ fn settings(args: Args) -> Result<Settings, String> {
     if repeats == 0 {
         return Err("REPEATS must be a positive integer".to_string());
     }
+    let jobs = if args.candidate.is_some() && !args.is_holdout_only && args.tier.is_none() {
+        match args.jobs {
+            Some(jobs) => jobs,
+            None => positive_env("SKILL_EVAL_JOBS", 4)?,
+        }
+    } else {
+        1
+    };
     let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     Ok(Settings {
         cases_file: env_path("CASES_FILE", args.eval_dir.join("cases.jsonl")),
@@ -282,6 +339,7 @@ fn settings(args: Args) -> Result<Settings, String> {
         ),
         args,
         repeats,
+        jobs,
     })
 }
 
@@ -383,6 +441,10 @@ fn run_output_check(eval_dir: &Path, artifact: &str) -> Result<Option<String>, S
     } else {
         details
     }))
+}
+
+fn output_check_failure_diagnostic(case_id: &str, tier: &str, details: &str) -> String {
+    format!("output check failed for {case_id} on {tier}: {details}")
 }
 
 fn write_wrapper(temp: &TempDir, extension: &Path) -> Result<PathBuf, String> {
@@ -587,7 +649,10 @@ fn run_slice(
             let output_check_failure = run_output_check(context.eval_dir, &actual.stdout)?;
             if let Some(details) = &output_check_failure {
                 output_check_failures += 1;
-                eprintln!("output check failed for {} on {tier}: {details}", case.id);
+                eprintln!(
+                    "{}",
+                    output_check_failure_diagnostic(&case.id, tier, details)
+                );
             }
             let prompt = judge_prompt(context.rubric, case, &actual.stdout)?;
             let judged = dispatch(
@@ -1416,11 +1481,705 @@ fn select_suffix(
         incumbent_holdout,
     }
 }
-fn evaluate_paired_arm(
-    context: &EvalContext<'_>,
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct WorkUnit {
+    arm: String,
+    tier: String,
+    judge_tier: String,
+    slice: String,
+    case_id: String,
+    repeat: usize,
+    prompt_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct UnitResult {
+    unit: WorkUnit,
+    score: Option<u8>,
+    actual_model: Option<String>,
+    is_output_check_failed: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+struct RunManifest {
+    format_version: u8,
+    run_key: String,
+}
+
+struct RunLock {
+    file: File,
+}
+
+impl RunLock {
+    fn acquire(eval_dir: &Path) -> Result<Self, String> {
+        let state_root = eval_dir.join(".skill-eval-state");
+        fs::create_dir_all(&state_root)
+            .map_err(|error| format!("cannot create {}: {error}", state_root.display()))?;
+        let path = state_root.join("run.lock");
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+        file.try_lock()
+            .map_err(|error| run_lock_error(eval_dir, &path, error))?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for RunLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+fn run_lock_error(eval_dir: &Path, path: &Path, error: TryLockError) -> String {
+    match error {
+        TryLockError::WouldBlock => {
+            format!("paired evaluation already runs in {}", eval_dir.display())
+        }
+        TryLockError::Error(error) => format!(
+            "cannot acquire advisory lock {} in {}: {error}",
+            path.display(),
+            eval_dir.display()
+        ),
+    }
+}
+
+struct WorkerContext<'a> {
+    settings: &'a Settings,
+    wrapper: &'a Path,
+    rubric: &'a str,
+    eval_dir: &'a Path,
+    cases: &'a [Case],
+    prompts_dir: &'a Path,
+    judge_prompt: &'a Path,
+    output_check_lock: &'a Mutex<()>,
+}
+
+fn scoring_file(path: &Path) -> Result<Vec<u8>, String> {
+    match fs::read(path) {
+        Ok(content) => {
+            let mode = fs::metadata(path)
+                .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?
+                .permissions()
+                .mode();
+            Ok([format!("mode:{mode:o}\n").into_bytes(), content].concat())
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(b"missing\n".to_vec()),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
+fn append_run_key_input(output: &mut Vec<u8>, label: &[u8], value: &[u8]) {
+    output.extend_from_slice(label);
+    output.push(0);
+    output.extend_from_slice(value.len().to_string().as_bytes());
+    output.push(0);
+    output.extend_from_slice(value);
+    output.push(0);
+}
+
+fn run_key_input(path: &Path) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    let mut directory_stack = BTreeSet::new();
+    append_run_key_input(&mut output, b"root", b"");
+    append_path_to_run_key(path, Path::new(""), &mut output, &mut directory_stack)?;
+    Ok(output)
+}
+
+fn append_path_to_run_key(
+    path: &Path,
+    relative: &Path,
+    output: &mut Vec<u8>,
+    directory_stack: &mut BTreeSet<PathBuf>,
+) -> Result<(), String> {
+    let metadata = if relative.as_os_str().is_empty() {
+        fs::metadata(path)
+    } else {
+        fs::symlink_metadata(path)
+    }
+    .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+    append_run_key_input(output, b"path", relative.as_os_str().as_encoded_bytes());
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path)
+            .map_err(|error| format!("cannot read link {}: {error}", path.display()))?;
+        append_run_key_input(output, b"link", target.as_os_str().as_encoded_bytes());
+        let resolved = match fs::canonicalize(path) {
+            Ok(resolved) => resolved,
+            Err(_) => return Ok(()),
+        };
+        if directory_stack.contains(&resolved) {
+            append_run_key_input(output, b"link-cycle", b"");
+            return Ok(());
+        }
+        append_run_key_input(output, b"link-target", b"");
+        return append_path_to_run_key(&resolved, Path::new(""), output, directory_stack);
+    }
+    append_run_key_input(
+        output,
+        b"mode",
+        format!("{:o}", metadata.permissions().mode()).as_bytes(),
+    );
+    if metadata.is_file() {
+        append_run_key_input(
+            output,
+            b"file",
+            &fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+        );
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(format!("{} is not a file or directory", path.display()));
+    }
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("cannot resolve {}: {error}", path.display()))?;
+    if !directory_stack.insert(canonical.clone()) {
+        append_run_key_input(output, b"link-cycle", b"");
+        return Ok(());
+    }
+    let result = (|| {
+        append_run_key_input(output, b"directory", b"");
+        let mut entries: Vec<_> = fs::read_dir(path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+            .collect::<Result<_, _>>()
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let is_git_metadata_dir = entry.file_name() == ".git"
+                && entry
+                    .file_type()
+                    .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?
+                    .is_dir();
+            if !is_git_metadata_dir {
+                append_path_to_run_key(
+                    &entry.path(),
+                    &relative.join(entry.file_name()),
+                    output,
+                    directory_stack,
+                )?;
+            }
+        }
+        Ok(())
+    })();
+    directory_stack.remove(&canonical);
+    result
+}
+
+fn update_key(hasher: &mut Sha1, label: &str, value: &[u8]) {
+    hasher.update(label.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(value.len().to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(value);
+    hasher.update(b"\0");
+}
+
+fn paired_run_key(
+    settings: &Settings,
+    candidate: &str,
+    incumbent: &str,
+    submitted: &str,
+    cases: &[Case],
+    rubric: &str,
+    artifact_dir: &Path,
+) -> Result<String, String> {
+    let mut hasher = Sha1::new();
+    update_key(&mut hasher, "format", &[STATE_FORMAT_VERSION]);
+    update_key(
+        &mut hasher,
+        "mode",
+        if settings.args.is_accept_if_winning {
+            b"accept"
+        } else {
+            b"dry"
+        },
+    );
+    update_key(&mut hasher, "candidate", candidate.as_bytes());
+    update_key(&mut hasher, "incumbent", incumbent.as_bytes());
+    update_key(&mut hasher, "submitted", submitted.as_bytes());
+    update_key(
+        &mut hasher,
+        "cases",
+        &fs::read(&settings.cases_file)
+            .map_err(|error| format!("cannot read {}: {error}", settings.cases_file.display()))?,
+    );
+    for case in cases {
+        for relative in &case.files {
+            update_key(
+                &mut hasher,
+                "attachment-path",
+                relative.as_os_str().as_encoded_bytes(),
+            );
+            let path = artifact_dir.join(relative);
+            update_key(
+                &mut hasher,
+                "attachment",
+                &fs::read(&path).map_err(|error| {
+                    format!("cannot read case file {}: {error}", path.display())
+                })?,
+            );
+        }
+    }
+    update_key(&mut hasher, "rubric", rubric.as_bytes());
+    update_key(
+        &mut hasher,
+        "output-check",
+        &scoring_file(&settings.args.eval_dir.join("output-check.sh"))?,
+    );
+    update_key(
+        &mut hasher,
+        "preflight",
+        &scoring_file(&settings.args.eval_dir.join("preflight.sh"))?,
+    );
+    update_key(
+        &mut hasher,
+        "tiers",
+        &fs::read(&settings.tiers_file)
+            .map_err(|error| format!("cannot read {}: {error}", settings.tiers_file.display()))?,
+    );
+    update_key(
+        &mut hasher,
+        "tier-dispatch",
+        &run_key_input(&settings.tier_dispatch_bin)?,
+    );
+    update_key(
+        &mut hasher,
+        "auth-extension",
+        &run_key_input(&settings.auth_extension)?,
+    );
+    update_key(
+        &mut hasher,
+        "repeats",
+        settings.repeats.to_string().as_bytes(),
+    );
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn initialize_state(
+    eval_dir: &Path,
+    run_key: &str,
+    is_restart: bool,
+) -> Result<(PathBuf, bool), String> {
+    let state_root = eval_dir.join(".skill-eval-state");
+    fs::create_dir_all(&state_root)
+        .map_err(|error| format!("cannot create {}: {error}", state_root.display()))?;
+    let state_dir = state_root.join(run_key);
+    if is_restart && state_dir.exists() {
+        fs::remove_dir_all(&state_dir)
+            .map_err(|error| format!("cannot restart {}: {error}", state_dir.display()))?;
+    }
+    fs::create_dir_all(&state_dir)
+        .map_err(|error| format!("cannot create {}: {error}", state_dir.display()))?;
+    let manifest_path = state_dir.join("manifest.json");
+    let is_resumed = manifest_path.exists();
+    if is_resumed {
+        let manifest: RunManifest = serde_json::from_slice(
+            &fs::read(&manifest_path)
+                .map_err(|error| format!("cannot read {}: {error}", manifest_path.display()))?,
+        )
+        .map_err(|error| format!("corrupt state {}: {error}", manifest_path.display()))?;
+        if manifest.format_version != STATE_FORMAT_VERSION || manifest.run_key != run_key {
+            return Err(format!("corrupt state {}", manifest_path.display()));
+        }
+    } else {
+        for entry in fs::read_dir(&state_dir)
+            .map_err(|error| format!("cannot read {}: {error}", state_dir.display()))?
+        {
+            let entry =
+                entry.map_err(|error| format!("cannot read {}: {error}", state_dir.display()))?;
+            if !entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".skill-eval-write-")
+            {
+                return Err(format!("corrupt state {}", state_dir.display()));
+            }
+        }
+        let manifest = serde_json::to_vec(&RunManifest {
+            format_version: STATE_FORMAT_VERSION,
+            run_key: run_key.to_string(),
+        })
+        .map_err(|error| format!("cannot serialize run manifest: {error}"))?;
+        atomic_write(&manifest_path, &manifest)?;
+    }
+    fs::create_dir_all(state_dir.join("units"))
+        .map_err(|error| format!("cannot create state units: {error}"))?;
+    fs::create_dir_all(state_dir.join("prompts"))
+        .map_err(|error| format!("cannot create state prompts: {error}"))?;
+    Ok((state_dir, is_resumed))
+}
+
+fn unit_name(unit: &WorkUnit) -> Result<String, String> {
+    let bytes =
+        serde_json::to_vec(unit).map_err(|error| format!("cannot serialize unit: {error}"))?;
+    Ok(format!("{:x}.json", Sha1::digest(bytes)))
+}
+
+fn unit_path(state_dir: &Path, unit: &WorkUnit) -> Result<PathBuf, String> {
+    Ok(state_dir.join("units").join(unit_name(unit)?))
+}
+
+fn ensure_immutable_file(path: &Path, content: &[u8]) -> Result<(), String> {
+    match fs::read(path) {
+        Ok(existing) if existing == content => Ok(()),
+        Ok(_) => Err(format!("corrupt state prompt {}", path.display())),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => atomic_write(path, content),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
+fn prompt_name(arm: &str, case_id: &str) -> String {
+    format!("{arm}-{:x}.md", Sha1::digest(case_id.as_bytes()))
+}
+
+fn prepare_prompts(
+    state_dir: &Path,
+    incumbent: &str,
+    candidate: &str,
+    artifact_dir: &Path,
+    cases: &[Case],
+) -> Result<(), String> {
+    for (arm, text) in [("incumbent", incumbent), ("candidate", candidate)] {
+        for case in cases {
+            let name = prompt_name(arm, &case.id);
+            ensure_immutable_file(
+                &state_dir.join("prompts").join(name),
+                prompt_for_case(text, artifact_dir, case)?.as_bytes(),
+            )?;
+        }
+    }
+    ensure_immutable_file(&state_dir.join("prompts").join("judge.md"), b"")
+}
+
+fn make_work_units(tiers: &[String], cases: &[Case], repeats: usize) -> Vec<WorkUnit> {
+    let nonholdout: Vec<&Case> = cases.iter().filter(|case| !case.is_holdout).collect();
+    let holdout: Vec<&Case> = cases.iter().filter(|case| case.is_holdout).collect();
+    let mut units = Vec::new();
+    for (index, tier) in tiers.iter().enumerate() {
+        let judge_tier = tiers.get(index + 1).unwrap_or(tier);
+        for (slice, cases) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
+            for case in cases {
+                for repeat in 0..repeats {
+                    for arm in ["incumbent", "candidate"] {
+                        units.push(WorkUnit {
+                            arm: arm.to_string(),
+                            tier: tier.clone(),
+                            judge_tier: judge_tier.clone(),
+                            slice: slice.to_string(),
+                            case_id: case.id.clone(),
+                            repeat,
+                            prompt_name: prompt_name(arm, &case.id),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    units
+}
+
+fn read_completed_units(
+    state_dir: &Path,
+    units: &[WorkUnit],
+) -> Result<BTreeMap<String, UnitResult>, String> {
+    let expected: BTreeSet<String> = units.iter().map(unit_name).collect::<Result<_, _>>()?;
+    let units_dir = state_dir.join("units");
+    for entry in fs::read_dir(&units_dir)
+        .map_err(|error| format!("cannot read {}: {error}", units_dir.display()))?
+    {
+        let path = entry
+            .map_err(|error| format!("cannot read state unit: {error}"))?
+            .path();
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        if name.starts_with(".skill-eval-write-") {
+            continue;
+        }
+        if !expected.contains(name) {
+            return Err(format!("corrupt state unit {}", path.display()));
+        }
+    }
+    let mut completed = BTreeMap::new();
+    for unit in units {
+        let name = unit_name(unit)?;
+        let path = units_dir.join(&name);
+        match fs::read(&path) {
+            Ok(content) => {
+                let result: UnitResult = serde_json::from_slice(&content)
+                    .map_err(|error| format!("corrupt state unit {}: {error}", path.display()))?;
+                if result.unit != *unit {
+                    return Err(format!("corrupt state unit {}", path.display()));
+                }
+                completed.insert(name, result);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        }
+    }
+    Ok(completed)
+}
+
+fn run_work_unit(context: &WorkerContext<'_>, unit: &WorkUnit) -> Result<UnitResult, String> {
+    let case = context
+        .cases
+        .iter()
+        .find(|case| case.id == unit.case_id)
+        .ok_or_else(|| format!("missing case {}", unit.case_id))?;
+    let actual = dispatch(
+        context.settings,
+        context.wrapper,
+        &unit.tier,
+        &context.prompts_dir.join(&unit.prompt_name),
+        &case_input(&case.input)?,
+    )?;
+    if actual.kind != DispatchKind::Success {
+        return Ok(UnitResult {
+            unit: unit.clone(),
+            score: None,
+            actual_model: None,
+            is_output_check_failed: false,
+        });
+    }
+    let output_check_failure = {
+        let _output_check = context
+            .output_check_lock
+            .lock()
+            .map_err(|_| "output check lock poisoned".to_string())?;
+        let failure = run_output_check(context.eval_dir, &actual.stdout)?;
+        if let Some(details) = &failure {
+            eprintln!(
+                "{}",
+                output_check_failure_diagnostic(&unit.case_id, &unit.tier, details)
+            );
+        }
+        failure
+    };
+    let judge = dispatch(
+        context.settings,
+        context.wrapper,
+        &unit.judge_tier,
+        context.judge_prompt,
+        &judge_prompt(context.rubric, case, &actual.stdout)?,
+    )?;
+    let mut score = (judge.kind == DispatchKind::Success)
+        .then(|| parse_score(&judge.stdout))
+        .flatten();
+    if output_check_failure.is_some() {
+        score = score.map(|value| value.min(4));
+    }
+    Ok(UnitResult {
+        unit: unit.clone(),
+        score,
+        actual_model: actual.model_ran,
+        is_output_check_failed: output_check_failure.is_some(),
+    })
+}
+
+fn progress_line(completed: usize, total: usize, result: &UnitResult) -> String {
+    format!(
+        "skill-eval: {completed}/{total} {} {} {} {} {} {}",
+        result.unit.arm,
+        result.unit.tier,
+        result.unit.slice,
+        result.unit.case_id,
+        result.unit.repeat,
+        result
+            .score
+            .map_or("ungraded".to_string(), |score| score.to_string())
+    )
+}
+
+fn emit_paired_summary(arm: &str, tier: &str, slice_name: &str, result: &SliceResult) {
+    let graded: Vec<f64> = result.scores.iter().flatten().copied().collect();
+    let ungraded = result
+        .repeats
+        .values()
+        .flatten()
+        .filter(|score| score.is_none())
+        .count();
+    if graded.is_empty() {
+        eprintln!(
+            "{arm} tier {tier}: every case ungraded, {ungraded} ungraded repeats ({slice_name} slice)"
+        );
+        return;
+    }
+    let mean = graded.iter().sum::<f64>() / graded.len() as f64;
+    let verdict = if mean >= 5.0 { "PASS" } else { "FAIL" };
+    eprintln!(
+        "{arm} tier {tier}: mean {mean:.2} over {} graded cases, {ungraded} ungraded repeats, {verdict} (>= 5 threshold) ({slice_name} slice)",
+        graded.len()
+    );
+}
+
+struct WorkQueue {
+    pending: std::collections::VecDeque<WorkUnit>,
+    is_fatal: bool,
+}
+
+fn run_work_units(
+    context: &WorkerContext<'_>,
+    state_dir: &Path,
+    units: &[WorkUnit],
+    is_resumed: bool,
+) -> Result<BTreeMap<String, UnitResult>, String> {
+    let mut completed = read_completed_units(state_dir, units)?;
+    let missing: Vec<WorkUnit> = units
+        .iter()
+        .filter(|unit| !completed.contains_key(&unit_name(unit).expect("serializable unit")))
+        .cloned()
+        .collect();
+    let worker_count = context.settings.jobs.min(missing.len());
+    eprintln!(
+        "skill-eval: {} paired run: {}/{} units complete, {} workers",
+        if is_resumed { "resumed" } else { "new" },
+        completed.len(),
+        units.len(),
+        worker_count
+    );
+    if missing.is_empty() {
+        return Ok(completed);
+    }
+    let queue = Arc::new(Mutex::new(WorkQueue {
+        pending: std::collections::VecDeque::from(missing),
+        is_fatal: false,
+    }));
+    let (sender, receiver) = mpsc::channel();
+    let mut worker_error = None;
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            let queue = Arc::clone(&queue);
+            let sender = sender.clone();
+            scope.spawn(move || {
+                loop {
+                    let unit = {
+                        let mut queue = queue.lock().expect("work queue lock poisoned");
+                        if queue.is_fatal {
+                            return;
+                        }
+                        queue.pending.pop_front()
+                    };
+                    let Some(unit) = unit else {
+                        return;
+                    };
+                    let result = run_work_unit(context, &unit);
+                    if result.is_err() {
+                        queue.lock().expect("work queue lock poisoned").is_fatal = true;
+                    }
+                    if sender.send((unit, result)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        drop(sender);
+        while let Ok((unit, result)) = receiver.recv() {
+            match result {
+                Ok(result) => match unit_path(state_dir, &unit).and_then(|path| {
+                    let bytes = serde_json::to_vec(&result)
+                        .map_err(|error| format!("cannot serialize unit: {error}"))?;
+                    atomic_write(&path, &bytes)
+                }) {
+                    Ok(()) => {
+                        let name = unit_name(&unit).expect("serializable unit");
+                        completed.insert(name, result.clone());
+                        eprintln!("{}", progress_line(completed.len(), units.len(), &result));
+                    }
+                    Err(error) => {
+                        queue.lock().expect("work queue lock poisoned").is_fatal = true;
+                        worker_error.get_or_insert(error);
+                    }
+                },
+                Err(error) => {
+                    worker_error.get_or_insert(error);
+                }
+            }
+        }
+    });
+    if let Some(error) = worker_error {
+        return Err(error);
+    }
+    if completed.len() != units.len() {
+        return Err("paired evaluation stopped before every unit completed".to_string());
+    }
+    Ok(completed)
+}
+
+fn completed_unit<'a>(
+    completed: &'a BTreeMap<String, UnitResult>,
+    unit: &WorkUnit,
+) -> Result<&'a UnitResult, String> {
+    let name = unit_name(unit)?;
+    completed.get(&name).ok_or_else(|| {
+        format!(
+            "incomplete unit {} {} {} {} {}",
+            unit.arm, unit.tier, unit.slice, unit.case_id, unit.repeat
+        )
+    })
+}
+
+fn make_unit(
+    arm: &str,
+    tier: &str,
+    judge_tier: &str,
+    slice: &str,
+    case_id: &str,
+    repeat: usize,
+) -> WorkUnit {
+    WorkUnit {
+        arm: arm.to_string(),
+        tier: tier.to_string(),
+        judge_tier: judge_tier.to_string(),
+        slice: slice.to_string(),
+        case_id: case_id.to_string(),
+        repeat,
+        prompt_name: prompt_name(arm, case_id),
+    }
+}
+
+fn slice_from_units(
+    arm: &str,
+    tier: &str,
+    judge_tier: &str,
+    slice: &str,
+    cases: &[&Case],
+    repeats: usize,
+    completed: &BTreeMap<String, UnitResult>,
+) -> Result<SliceResult, String> {
+    let mut result = SliceResult {
+        scores: Vec::new(),
+        repeats: BTreeMap::new(),
+        models: BTreeSet::new(),
+    };
+    for case in cases {
+        let mut repeat_scores = Vec::with_capacity(repeats);
+        for repeat in 0..repeats {
+            let unit = make_unit(arm, tier, judge_tier, slice, &case.id, repeat);
+            let unit_result = completed_unit(completed, &unit)?;
+            if let Some(model) = &unit_result.actual_model {
+                result.models.insert(model.clone());
+            }
+            repeat_scores.push(unit_result.score);
+        }
+        let graded: Vec<u8> = repeat_scores.iter().flatten().copied().collect();
+        result.scores.push(median(&graded));
+        result.repeats.insert(case.id.clone(), repeat_scores);
+    }
+    Ok(result)
+}
+
+fn paired_arm_from_units(
+    arm: &str,
+    text: &str,
     tiers: &[String],
     nonholdout: &[&Case],
     holdout: &[&Case],
+    repeats: usize,
+    completed: &BTreeMap<String, UnitResult>,
 ) -> Result<PairedArm, String> {
     let mut results = BTreeMap::new();
     for (index, tier) in tiers.iter().enumerate() {
@@ -1428,18 +2187,73 @@ fn evaluate_paired_arm(
         results.insert(
             tier.clone(),
             TierResult {
-                nonholdout: run_slice(context, tier, judge_tier, nonholdout, "nonholdout")?,
-                holdout: run_slice(context, tier, judge_tier, holdout, "holdout")?,
+                nonholdout: slice_from_units(
+                    arm,
+                    tier,
+                    judge_tier,
+                    "nonholdout",
+                    nonholdout,
+                    repeats,
+                    completed,
+                )?,
+                holdout: slice_from_units(
+                    arm, tier, judge_tier, "holdout", holdout, repeats, completed,
+                )?,
             },
         );
     }
     Ok(PairedArm {
-        text: context.candidate.to_string(),
-        id: candidate_id(context.candidate),
-        repeats: context.settings.repeats,
+        text: text.to_string(),
+        id: candidate_id(text),
+        repeats,
         results,
     })
 }
+
+fn paired_record_values(
+    arm: &str,
+    paired: &PairedArm,
+    tiers: &[String],
+    nonholdout: &[&Case],
+    holdout: &[&Case],
+    completed: &BTreeMap<String, UnitResult>,
+) -> Result<Vec<Value>, String> {
+    let mut records = Vec::new();
+    for (index, tier) in tiers.iter().enumerate() {
+        let judge_tier = tiers.get(index + 1).unwrap_or(tier);
+        for (slice, cases, result) in [
+            ("nonholdout", nonholdout, &paired.results[tier].nonholdout),
+            ("holdout", holdout, &paired.results[tier].holdout),
+        ] {
+            for (case, median_score) in cases.iter().zip(&result.scores) {
+                let mut output_check_failures = 0;
+                for repeat in 0..paired.repeats {
+                    let unit = make_unit(arm, tier, judge_tier, slice, &case.id, repeat);
+                    if completed_unit(completed, &unit)?.is_output_check_failed {
+                        output_check_failures += 1;
+                    }
+                }
+                records.push(json!({"arm":arm,"id":case.id,"tier":tier,"repeat_scores":result.repeats[&case.id],"median":median_score,"output_check_failures":output_check_failures}));
+            }
+        }
+    }
+    Ok(records)
+}
+
+fn emit_paired_records(
+    arm: &str,
+    paired: &PairedArm,
+    tiers: &[String],
+    nonholdout: &[&Case],
+    holdout: &[&Case],
+    completed: &BTreeMap<String, UnitResult>,
+) -> Result<(), String> {
+    for record in paired_record_values(arm, paired, tiers, nonholdout, holdout, completed)? {
+        println!("{record}");
+    }
+    Ok(())
+}
+
 fn paired_entries(
     candidate: &PairedArm,
     incumbent: &PairedArm,
@@ -1554,9 +2368,6 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     }
     let nonholdout: Vec<&Case> = cases.iter().filter(|case| !case.is_holdout).collect();
     let holdout: Vec<&Case> = cases.iter().filter(|case| case.is_holdout).collect();
-    if nonholdout.is_empty() || holdout.is_empty() {
-        return Err("cases require non-holdout and holdout slices".to_string());
-    }
     let tiers = load_tiers(&settings.tiers_file)?;
     if settings.args.is_accept_if_winning && is_floor_declared {
         for tier in &tiers {
@@ -1565,31 +2376,98 @@ fn run(mut settings: Settings) -> Result<i32, String> {
     }
     let rubric = fs::read_to_string(eval_dir.join("rubric.md"))
         .map_err(|error| format!("cannot read rubric.md: {error}"))?;
-    let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
-    let wrapper = write_wrapper(&temp, &settings.auth_extension)?;
     let artifact_dir = eval_dir
         .parent()
         .ok_or_else(|| format!("{} has no parent", eval_dir.display()))?;
-    let incumbent_context = EvalContext {
+    let run_key = paired_run_key(
+        &settings,
+        &candidate,
+        &incumbent,
+        &submitted,
+        &cases,
+        &rubric,
+        artifact_dir,
+    )?;
+    let _run_lock = RunLock::acquire(&eval_dir)?;
+    let (state_dir, is_resumed) = initialize_state(&eval_dir, &run_key, settings.args.is_restart)?;
+    prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases)?;
+    let temp = TempDir::create(&env::temp_dir(), "skill-eval")?;
+    let wrapper = write_wrapper(&temp, &settings.auth_extension)?;
+    let prompts_dir = state_dir.join("prompts");
+    let judge_prompt = prompts_dir.join("judge.md");
+    let output_check_lock = Mutex::new(());
+    let worker_context = WorkerContext {
         settings: &settings,
         wrapper: &wrapper,
-        temp: &temp,
-        candidate: &incumbent,
         rubric: &rubric,
         eval_dir: &eval_dir,
-        artifact_dir,
+        cases: &cases,
+        prompts_dir: &prompts_dir,
+        judge_prompt: &judge_prompt,
+        output_check_lock: &output_check_lock,
     };
-    let candidate_context = EvalContext {
-        settings: &settings,
-        wrapper: &wrapper,
-        temp: &temp,
-        candidate: &candidate,
-        rubric: &rubric,
-        eval_dir: &eval_dir,
-        artifact_dir,
-    };
-    let incumbent = evaluate_paired_arm(&incumbent_context, &tiers, &nonholdout, &holdout)?;
-    let candidate = evaluate_paired_arm(&candidate_context, &tiers, &nonholdout, &holdout)?;
+    let units = make_work_units(&tiers, &cases, settings.repeats);
+    let completed = run_work_units(&worker_context, &state_dir, &units, is_resumed)?;
+    let incumbent = paired_arm_from_units(
+        "incumbent",
+        &incumbent,
+        &tiers,
+        &nonholdout,
+        &holdout,
+        settings.repeats,
+        &completed,
+    )?;
+    let candidate = paired_arm_from_units(
+        "candidate",
+        &candidate,
+        &tiers,
+        &nonholdout,
+        &holdout,
+        settings.repeats,
+        &completed,
+    )?;
+    for tier in &tiers {
+        emit_paired_summary(
+            "incumbent",
+            tier,
+            "nonholdout",
+            &incumbent.results[tier].nonholdout,
+        );
+        emit_paired_summary(
+            "incumbent",
+            tier,
+            "holdout",
+            &incumbent.results[tier].holdout,
+        );
+        emit_paired_summary(
+            "candidate",
+            tier,
+            "nonholdout",
+            &candidate.results[tier].nonholdout,
+        );
+        emit_paired_summary(
+            "candidate",
+            tier,
+            "holdout",
+            &candidate.results[tier].holdout,
+        );
+    }
+    emit_paired_records(
+        "incumbent",
+        &incumbent,
+        &tiers,
+        &nonholdout,
+        &holdout,
+        &completed,
+    )?;
+    emit_paired_records(
+        "candidate",
+        &candidate,
+        &tiers,
+        &nonholdout,
+        &holdout,
+        &completed,
+    )?;
     let selection = select_suffix(&candidate, &incumbent, &tiers, &nonholdout, &holdout);
     let tested_against = prompt_version(artifact_dir);
     let mut evidence = paired_entries(&candidate, &incumbent, &tiers, &selection, &tested_against);
@@ -1672,8 +2550,15 @@ fn run(mut settings: Settings) -> Result<i32, String> {
         json!({"type":"decision","candidate_id":candidate.id,"incumbent_id":incumbent.id,"selected_minimum_tier":selected_minimum_tier,"decision":decision,"candidate_nonholdout":selection.candidate_nonholdout.map(Ratio::as_f64),"incumbent_nonholdout":selection.incumbent_nonholdout.map(Ratio::as_f64),"candidate_holdout":selection.candidate_holdout.map(Ratio::as_f64),"incumbent_holdout":selection.incumbent_holdout.map(Ratio::as_f64)})
     );
     if selection.reason == "incomplete" {
-        Ok(2)
-    } else if settings.args.is_accept_if_winning && !selection.is_accepted {
+        return Ok(2);
+    }
+    if let Err(error) = fs::remove_dir_all(&state_dir) {
+        eprintln!(
+            "skill-eval: warning: cannot remove completed state {}: {error}",
+            state_dir.display()
+        );
+    }
+    if settings.args.is_accept_if_winning && !selection.is_accepted {
         Ok(1)
     } else {
         Ok(0)
@@ -1726,8 +2611,9 @@ mod tests {
         .unwrap();
         let tiers_file = temp.path.join("tiers.json");
         fs::write(&tiers_file, r#"{"tiers":{"T1":{},"T2":{},"T3":{}}}"#).unwrap();
-        let extension = temp.path.join("auth.ts");
-        fs::write(&extension, "extension").unwrap();
+        let extension = temp.path.join("auth");
+        fs::create_dir(&extension).unwrap();
+        fs::write(extension.join("extension.ts"), "extension").unwrap();
         let dispatch = temp.path.join("tier-dispatch");
         write_executable(&dispatch, fake);
         let args = Args {
@@ -1736,6 +2622,8 @@ mod tests {
             tier: None,
             candidate: None,
             is_accept_if_winning: false,
+            jobs: None,
+            is_restart: false,
         };
         (
             temp,
@@ -1746,6 +2634,7 @@ mod tests {
                 tiers_file,
                 tier_dispatch_bin: dispatch,
                 auth_extension: extension,
+                jobs: 4,
             },
             eval_dir,
         )
@@ -2113,6 +3002,14 @@ print output-without-attribution
         let entries = read_frontier(&eval_dir.join("frontier.jsonl")).unwrap();
         assert_eq!(entries[0].repeat_scores_nonholdout["n1"], vec![Some(4)]);
         assert_eq!(entries[0].repeat_scores_holdout["h1"], vec![Some(4)]);
+    }
+
+    #[test]
+    fn output_check_failure_diagnostic_names_the_paired_case_and_tier() {
+        assert_eq!(
+            output_check_failure_diagnostic("case/with spaces", "T3", "script detail"),
+            "output check failed for case/with spaces on T3: script detail"
+        );
     }
 
     #[test]
@@ -2599,6 +3496,76 @@ else
 fi
 "#;
 
+    const FATAL_CONCURRENT_FAKE: &str = r#"#!/bin/zsh
+set -eu
+base=${0:h}
+while (( $# )); do
+  case "$1" in
+    --input) input=$2; shift 2 ;;
+    --system-prompt-file) prompt=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  print 'start judge' >> "$base/events"
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+  exit 0
+fi
+if [[ "$(<"$prompt")" == *'winning candidate'* ]]; then
+  while [[ ! -f "$base/incumbent-start" ]]; do sleep 0.001; done
+  print 'start actual candidate' >> "$base/events"
+  print -u2 bad-config
+  exit 2
+fi
+print 'start actual incumbent' >> "$base/events"
+touch "$base/incumbent-start"
+sleep 0.05
+print output
+print -u2 'model_ran: actual-model'
+"#;
+
+    const CONCURRENT_FAKE: &str = r#"#!/bin/zsh
+set -eu
+base=${0:h}
+while (( $# )); do
+  case "$1" in
+    --input) input=$2; shift 2 ;;
+    --system-prompt-file) prompt=$2; shift 2 ;;
+    *) shift 2 ;;
+  esac
+done
+if [[ "$input" == 'Grade the actual output'* ]]; then
+  arm=judge
+else
+  if [[ "$(<"$prompt")" == *'winning candidate'* ]]; then arm=candidate; else arm=incumbent; fi
+fi
+while ! mkdir "$base/mutex" 2>/dev/null; do sleep 0.001; done
+active=0
+[[ -f "$base/active" ]] && active=$(<"$base/active")
+active=$((active + 1))
+print "$active" > "$base/active"
+max=0
+[[ -f "$base/max" ]] && max=$(<"$base/max")
+if (( active > max )); then print "$active" > "$base/max"; fi
+print "start $arm" >> "$base/events"
+rmdir "$base/mutex"
+sleep 0.05
+while ! mkdir "$base/mutex" 2>/dev/null; do sleep 0.001; done
+active=$(<"$base/active")
+active=$((active - 1))
+print "$active" > "$base/active"
+print "end $arm" >> "$base/events"
+rmdir "$base/mutex"
+if [[ "$arm" == judge ]]; then
+  print '{"score":8,"failure_mode":null}'
+  print -u2 'model_ran: judge-model'
+else
+  print output
+  print -u2 'model_ran: actual-model'
+fi
+"#;
+
     fn paired_fixture(name: &str, fake: &str) -> (TempDir, Settings, PathBuf, PathBuf) {
         let (temp, mut settings, eval_dir) = fixture(name, fake);
         fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{}}}"#).unwrap();
@@ -2611,6 +3578,28 @@ fi
         .unwrap();
         settings.args.candidate = Some(candidate.clone());
         (temp, settings, eval_dir, candidate)
+    }
+
+    fn paired_state_dir(settings: &Settings, eval_dir: &Path, candidate_path: &Path) -> PathBuf {
+        let artifact_dir = eval_dir.parent().unwrap();
+        let submitted = fs::read_to_string(candidate_path).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let incumbent =
+            normalize_minimum_tier(&fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap())
+                .unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+        let run_key = paired_run_key(
+            settings,
+            &candidate,
+            &incumbent,
+            &submitted,
+            &cases,
+            &rubric,
+            artifact_dir,
+        )
+        .unwrap();
+        eval_dir.join(".skill-eval-state").join(run_key)
     }
 
     #[test]
@@ -2725,5 +3714,669 @@ fi
         entries[1].candidate_id = entries[0].candidate_id.clone();
         prune(&mut entries);
         assert_eq!(entries.len(), 20);
+    }
+
+    #[test]
+    fn paired_arguments_validate_jobs_and_restart() {
+        let base = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--jobs"),
+            OsString::from("0"),
+            OsString::from("candidate.md"),
+        ];
+        assert!(parse_args(&base).unwrap_err().contains("positive integer"));
+        let too_many = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--jobs"),
+            OsString::from((MAX_JOBS + 1).to_string()),
+            OsString::from("candidate.md"),
+        ];
+        let error = parse_args(&too_many).unwrap_err();
+        assert!(error.contains("--jobs"));
+        assert!(error.contains(USAGE));
+        let error = positive_env_value("SKILL_EVAL_JOBS", &(MAX_JOBS + 1).to_string()).unwrap_err();
+        assert!(error.contains("SKILL_EVAL_JOBS"));
+        assert!(error.contains(USAGE));
+        let restart = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--restart"),
+        ];
+        assert!(parse_args(&restart).unwrap_err().contains("full paired"));
+        let valid = [
+            OsString::from("--eval-dir"),
+            OsString::from("evals"),
+            OsString::from("--jobs"),
+            OsString::from("2"),
+            OsString::from("--restart"),
+            OsString::from("candidate.md"),
+        ];
+        let args = parse_args(&valid).unwrap();
+        assert_eq!(args.jobs, Some(2));
+        assert!(args.is_restart);
+    }
+
+    #[test]
+    fn prompt_name_hashes_long_case_ids_to_a_fixed_length() {
+        let case_id = "case-".repeat(10_000);
+        let name = prompt_name("candidate", &case_id);
+        assert_eq!(name.len(), "candidate-".len() + 40 + ".md".len());
+        assert_eq!(
+            name,
+            format!("candidate-{:x}.md", Sha1::digest(case_id.as_bytes()))
+        );
+        assert_ne!(name, prompt_name("candidate", &(case_id + "different")));
+    }
+
+    #[test]
+    fn work_units_interleave_arms_for_each_repeat() {
+        let cases = vec![
+            Case {
+                id: "n".to_string(),
+                input: Value::Null,
+                expect: String::new(),
+                is_holdout: false,
+                files: Vec::new(),
+            },
+            Case {
+                id: "h".to_string(),
+                input: Value::Null,
+                expect: String::new(),
+                is_holdout: true,
+                files: Vec::new(),
+            },
+        ];
+        let units = make_work_units(&["T1".to_string()], &cases, 2);
+        assert_eq!(units.len(), 8);
+        for pair in units.chunks_exact(2) {
+            assert_eq!(pair[0].arm, "incumbent");
+            assert_eq!(pair[1].arm, "candidate");
+            assert_eq!(pair[0].tier, pair[1].tier);
+            assert_eq!(pair[0].slice, pair[1].slice);
+            assert_eq!(pair[0].case_id, pair[1].case_id);
+            assert_eq!(pair[0].repeat, pair[1].repeat);
+        }
+    }
+
+    #[test]
+    fn run_key_covers_each_scoring_input() {
+        let (temp, mut settings, eval_dir, candidate_path) =
+            paired_fixture("key-inputs", PAIRED_FAKE);
+        let artifact_dir = eval_dir.parent().unwrap();
+        fs::write(artifact_dir.join("context.txt"), "one").unwrap();
+        fs::write(&settings.cases_file, "{\"id\":\"n1\",\"input\":\"plain input\",\"expect\":\"works\",\"holdout\":false,\"files\":[\"context.txt\"]}\n{\"id\":\"h1\",\"input\":\"holdout\",\"expect\":\"works\",\"holdout\":true}\n").unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        write_executable(&eval_dir.join("preflight.sh"), "#!/bin/zsh\nexit 0\n");
+        let submitted = fs::read_to_string(&candidate_path).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let live = fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap();
+        let incumbent = normalize_minimum_tier(&live).unwrap();
+        let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+        let key = paired_run_key(
+            &settings,
+            &candidate,
+            &incumbent,
+            &submitted,
+            &cases,
+            &rubric,
+            artifact_dir,
+        )
+        .unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                "changed",
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                "changed",
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                "changed",
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        fs::write(&settings.cases_file, "{\"id\":\"n1\",\"input\":\"plain input\",\"expect\":\"changed\",\"holdout\":false,\"files\":[\"context.txt\"]}\n{\"id\":\"h1\",\"input\":\"holdout\",\"expect\":\"works\",\"holdout\":true}\n").unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        fs::write(&settings.cases_file, "{\"id\":\"n1\",\"input\":\"plain input\",\"expect\":\"works\",\"holdout\":false,\"files\":[\"context.txt\"]}\n{\"id\":\"h1\",\"input\":\"holdout\",\"expect\":\"works\",\"holdout\":true}\n").unwrap();
+        fs::write(artifact_dir.join("context.txt"), "two").unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        fs::write(artifact_dir.join("context.txt"), "one").unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                "changed",
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&eval_dir.join("output-check.sh"), "#!/bin/zsh\nexit 0\n");
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        fs::remove_file(eval_dir.join("output-check.sh")).unwrap();
+        write_executable(&eval_dir.join("preflight.sh"), "#!/bin/zsh\nexit 1\n");
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&eval_dir.join("preflight.sh"), "#!/bin/zsh\nexit 0\n");
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T2":{}}}"#).unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        fs::write(&settings.tiers_file, r#"{"tiers":{"T1":{}}}"#).unwrap();
+        settings.repeats = 2;
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        settings.repeats = 1;
+        assert_eq!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&settings.tier_dispatch_bin, "#!/bin/zsh\nexit 0\n");
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        write_executable(&settings.tier_dispatch_bin, PAIRED_FAKE);
+        fs::write(
+            settings.auth_extension.join("extension.ts"),
+            "changed extension",
+        )
+        .unwrap();
+        assert_ne!(
+            key,
+            paired_run_key(
+                &settings,
+                &candidate,
+                &incumbent,
+                &submitted,
+                &cases,
+                &rubric,
+                artifact_dir
+            )
+            .unwrap()
+        );
+        assert!(temp.path.exists());
+    }
+
+    #[test]
+    fn auth_extension_git_metadata_does_not_change_the_paired_run_key() {
+        let (_temp, settings, eval_dir, candidate_path) =
+            paired_fixture("git-metadata", PAIRED_FAKE);
+        let before = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        let git_dir = settings.auth_extension.join(".git");
+        fs::create_dir(&git_dir).unwrap();
+        fs::write(git_dir.join("FETCH_HEAD"), "first fetch").unwrap();
+        let after_first_fetch = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        fs::write(git_dir.join("FETCH_HEAD"), "second fetch").unwrap();
+        let after_second_fetch = paired_state_dir(&settings, &eval_dir, &candidate_path);
+        assert_eq!(before, after_first_fetch);
+        assert_eq!(before, after_second_fetch);
+    }
+
+    #[test]
+    fn broken_nested_auth_extension_link_hashes_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let (temp, mut settings, _eval_dir) = fixture("broken-nested-link", FAKE);
+        let extension = settings.auth_extension.clone();
+        let configured_link = temp.path.join("configured-auth");
+        symlink(&extension, &configured_link).unwrap();
+        settings.auth_extension = configured_link;
+        let nested_link = extension.join("missing-nested-link");
+        symlink("missing-first", &nested_link).unwrap();
+        let first = run_key_input(&settings.auth_extension).unwrap();
+        assert_eq!(first, run_key_input(&extension).unwrap());
+        fs::remove_file(&nested_link).unwrap();
+        symlink("missing-second", &nested_link).unwrap();
+        assert_ne!(first, run_key_input(&settings.auth_extension).unwrap());
+    }
+
+    #[test]
+    fn nested_auth_extension_link_hashes_target_content() {
+        use std::os::unix::fs::symlink;
+
+        let (_temp, settings, _eval_dir) = fixture("nested-link-content", FAKE);
+        let target = settings.auth_extension.join("target.ts");
+        fs::write(&target, "first target content").unwrap();
+        symlink("target.ts", settings.auth_extension.join("nested-link")).unwrap();
+        let first = run_key_input(&settings.auth_extension).unwrap();
+        fs::write(&target, "second target content").unwrap();
+        assert_ne!(first, run_key_input(&settings.auth_extension).unwrap());
+    }
+
+    #[test]
+    fn nested_auth_extension_link_cycle_does_not_recurse() {
+        use std::os::unix::fs::symlink;
+
+        let (_temp, settings, _eval_dir) = fixture("nested-link-cycle", FAKE);
+        symlink(".", settings.auth_extension.join("nested-link")).unwrap();
+        let first = run_key_input(&settings.auth_extension).unwrap();
+        assert_eq!(first, run_key_input(&settings.auth_extension).unwrap());
+    }
+
+    #[test]
+    fn corrupt_state_and_duplicate_coordinator_fail_closed() {
+        let temp = test_temp("state-lock");
+        let eval_dir = temp.path.join("evals");
+        fs::create_dir(&eval_dir).unwrap();
+        let state_root = eval_dir.join(".skill-eval-state");
+        let key = "run";
+        let first = RunLock::acquire(&eval_dir).unwrap();
+        assert!(RunLock::acquire(&eval_dir).is_err());
+        assert_eq!(
+            fs::read_dir(&state_root).unwrap().count(),
+            1,
+            "one stable lock file serves every run key"
+        );
+        assert!(state_root.join("run.lock").exists());
+        drop(first);
+        let (state_dir, _) = initialize_state(&temp.path, key, false).unwrap();
+        fs::write(state_dir.join("manifest.json"), "not json").unwrap();
+        assert!(
+            initialize_state(&temp.path, key, false)
+                .unwrap_err()
+                .contains("corrupt state")
+        );
+    }
+
+    #[test]
+    fn run_lock_reports_contention_and_system_errors_separately() {
+        let eval_dir = Path::new("artifact/evals");
+        let path = Path::new("artifact/evals/.skill-eval-state/run.lock");
+        let contention = run_lock_error(eval_dir, path, TryLockError::WouldBlock);
+        assert_eq!(
+            contention,
+            "paired evaluation already runs in artifact/evals"
+        );
+        assert!(
+            run_lock_error(
+                eval_dir,
+                path,
+                TryLockError::Error(io::Error::other("disk error"))
+            )
+            .contains(
+                "cannot acquire advisory lock artifact/evals/.skill-eval-state/run.lock in artifact/evals: disk error"
+            )
+        );
+    }
+
+    #[test]
+    fn restart_discards_existing_units_and_resume_dispatches_only_missing_unit() {
+        let (temp, mut settings, eval_dir, candidate_path) = paired_fixture("resume", FAKE);
+        let artifact_dir = eval_dir.parent().unwrap();
+        let submitted = fs::read_to_string(&candidate_path).unwrap();
+        let candidate = normalize_minimum_tier(&submitted).unwrap();
+        let incumbent =
+            normalize_minimum_tier(&fs::read_to_string(artifact_dir.join("SKILL.md")).unwrap())
+                .unwrap();
+        let cases = load_cases(&settings.cases_file).unwrap();
+        let rubric = fs::read_to_string(eval_dir.join("rubric.md")).unwrap();
+        let key = paired_run_key(
+            &settings,
+            &candidate,
+            &incumbent,
+            &submitted,
+            &cases,
+            &rubric,
+            artifact_dir,
+        )
+        .unwrap();
+        let (state_dir, _) = initialize_state(&eval_dir, &key, false).unwrap();
+        prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases).unwrap();
+        let units = make_work_units(&["T1".to_string()], &cases, 1);
+        for unit in &units[..units.len() - 1] {
+            let result = UnitResult {
+                unit: unit.clone(),
+                score: Some(8),
+                actual_model: Some("fake".to_string()),
+                is_output_check_failed: false,
+            };
+            atomic_write(
+                &unit_path(&state_dir, unit).unwrap(),
+                &serde_json::to_vec(&result).unwrap(),
+            )
+            .unwrap();
+        }
+        run(settings.clone()).unwrap();
+        let calls = fs::read_to_string(temp.path.join("calls")).unwrap();
+        assert_eq!(
+            calls.lines().filter(|line| line.starts_with('T')).count(),
+            2
+        );
+        assert!(!state_dir.exists());
+
+        let (state_dir, _) = initialize_state(&eval_dir, &key, false).unwrap();
+        prepare_prompts(&state_dir, &incumbent, &candidate, artifact_dir, &cases).unwrap();
+        let result = UnitResult {
+            unit: units[0].clone(),
+            score: Some(8),
+            actual_model: Some("fake".to_string()),
+            is_output_check_failed: false,
+        };
+        atomic_write(
+            &unit_path(&state_dir, &units[0]).unwrap(),
+            &serde_json::to_vec(&result).unwrap(),
+        )
+        .unwrap();
+        settings.args.is_restart = true;
+        fs::remove_file(temp.path.join("calls")).unwrap();
+        run(settings).unwrap();
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with('T'))
+                .count(),
+            8
+        );
+    }
+
+    #[test]
+    fn failed_partial_paired_run_writes_no_frontier_or_live_definition() {
+        let fatal = "#!/bin/zsh\nprint -u2 bad-config\nexit 2\n";
+        let (_temp, settings, eval_dir, _candidate) = paired_fixture("partial", fatal);
+        let live = fs::read_to_string(eval_dir.join("../SKILL.md")).unwrap();
+        assert!(run(settings).unwrap_err().contains("config or usage error"));
+        assert!(!eval_dir.join("frontier.jsonl").exists());
+        assert_eq!(
+            fs::read_to_string(eval_dir.join("../SKILL.md")).unwrap(),
+            live
+        );
+        assert!(eval_dir.join(".skill-eval-state").exists());
+    }
+
+    #[test]
+    fn fatal_worker_stops_new_units_after_running_unit_finishes() {
+        let (temp, mut settings, eval_dir, candidate) =
+            paired_fixture("fatal-worker", FATAL_CONCURRENT_FAKE);
+        settings.jobs = 2;
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
+        assert!(run(settings).unwrap_err().contains("config or usage error"));
+        let events = fs::read_to_string(temp.path.join("events")).unwrap();
+        assert!(events.contains("start actual incumbent"));
+        assert!(events.contains("start actual candidate"));
+        assert!(events.contains("start judge"));
+        assert_eq!(
+            events
+                .lines()
+                .filter(|event| event.starts_with("start actual"))
+                .count(),
+            2
+        );
+        assert_eq!(fs::read_dir(state_dir.join("units")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn completed_null_scores_resume_without_retry_and_restart_despite_advisory_lock() {
+        let exhausted = "#!/bin/zsh\nprint call >> \"${0:h}/calls\"\nexit 3\n";
+        let (temp, mut settings, eval_dir, candidate) = paired_fixture("restart-lock", exhausted);
+        let state_dir = paired_state_dir(&settings, &eval_dir, &candidate);
+        let run_lock = eval_dir.join(".skill-eval-state/run.lock");
+
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        assert!(state_dir.exists());
+        assert!(run_lock.exists());
+        assert_eq!(fs::metadata(&run_lock).unwrap().len(), 0);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            4
+        );
+
+        assert_eq!(run(settings.clone()).unwrap(), 2);
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            4
+        );
+
+        settings.args.is_restart = true;
+        assert_eq!(run(settings).unwrap(), 2);
+        assert!(state_dir.exists());
+        assert!(run_lock.exists());
+        assert_eq!(
+            fs::read_to_string(temp.path.join("calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            8
+        );
+    }
+
+    #[test]
+    fn fake_dispatches_stay_bounded_and_start_both_arms_before_completion() {
+        let (temp, mut settings, eval_dir, _candidate) = paired_fixture("bounded", CONCURRENT_FAKE);
+        settings.jobs = 2;
+        write_executable(
+            &eval_dir.join("output-check.sh"),
+            "#!/bin/zsh\nset -eu\nwhile ! mkdir \"$PWD/check-mutex\" 2>/dev/null; do sleep 0.001; done\nactive=0\n[[ -f \"$PWD/check-active\" ]] && active=$(<\"$PWD/check-active\")\nactive=$((active + 1))\nprint \"$active\" > \"$PWD/check-active\"\nmax=0\n[[ -f \"$PWD/check-max\" ]] && max=$(<\"$PWD/check-max\")\nif (( active > max )); then print \"$active\" > \"$PWD/check-max\"; fi\nrmdir \"$PWD/check-mutex\"\nsleep 0.05\nwhile ! mkdir \"$PWD/check-mutex\" 2>/dev/null; do sleep 0.001; done\nactive=$(<\"$PWD/check-active\")\nprint \"$((active - 1))\" > \"$PWD/check-active\"\nrmdir \"$PWD/check-mutex\"\n",
+        );
+        run(settings).unwrap();
+        let max_dispatches = fs::read_to_string(temp.path.join("max"))
+            .unwrap()
+            .trim()
+            .parse::<usize>()
+            .unwrap();
+        assert_eq!(max_dispatches, 2);
+        assert_eq!(
+            fs::read_to_string(eval_dir.join("check-max"))
+                .unwrap()
+                .trim(),
+            "1"
+        );
+        let events: Vec<_> = fs::read_to_string(temp.path.join("events"))
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let first_end = events
+            .iter()
+            .position(|event| event.starts_with("end "))
+            .unwrap();
+        assert!(
+            events[..first_end]
+                .iter()
+                .any(|event| event == "start incumbent")
+        );
+        assert!(
+            events[..first_end]
+                .iter()
+                .any(|event| event == "start candidate")
+        );
+    }
+
+    #[test]
+    fn paired_records_and_progress_have_a_stable_shape() {
+        let tiers = ["T1", "T2"].map(str::to_string);
+        let arm = scored_arm(
+            "candidate",
+            &tiers,
+            &[(Some(8.0), Some(7.0)), (Some(9.0), Some(8.0))],
+        );
+        let (nonholdout, holdout) = selection_cases();
+        assert!(
+            paired_record_values(
+                "candidate",
+                &arm,
+                &tiers,
+                &[&nonholdout],
+                &[&holdout],
+                &BTreeMap::new(),
+            )
+            .unwrap_err()
+            .contains("incomplete unit candidate T1 nonholdout n 0")
+        );
+
+        let mut completed = BTreeMap::new();
+        for (index, tier) in tiers.iter().enumerate() {
+            let judge_tier = tiers.get(index + 1).unwrap_or(tier);
+            for (slice, case) in [("nonholdout", &nonholdout), ("holdout", &holdout)] {
+                let unit = make_unit("candidate", tier, judge_tier, slice, &case.id, 0);
+                completed.insert(
+                    unit_name(&unit).unwrap(),
+                    UnitResult {
+                        unit,
+                        score: Some(8),
+                        actual_model: Some("model".to_string()),
+                        is_output_check_failed: tier == "T2" && slice == "holdout",
+                    },
+                );
+            }
+        }
+        let records = paired_record_values(
+            "candidate",
+            &arm,
+            &tiers,
+            &[&nonholdout],
+            &[&holdout],
+            &completed,
+        )
+        .unwrap();
+        assert_eq!(records.len(), 4);
+        assert_eq!(records[0]["arm"], "candidate");
+        assert_eq!(records[0]["tier"], "T1");
+        assert_eq!(records[0]["id"], "n");
+        assert_eq!(records[1]["id"], "h");
+        assert_eq!(records[2]["tier"], "T2");
+        assert_eq!(records[3]["output_check_failures"], 1);
+        let result = UnitResult {
+            unit: WorkUnit {
+                arm: "candidate".to_string(),
+                tier: "T2".to_string(),
+                judge_tier: "T2".to_string(),
+                slice: "holdout".to_string(),
+                case_id: "h".to_string(),
+                repeat: 1,
+                prompt_name: "prompt".to_string(),
+            },
+            score: Some(8),
+            actual_model: Some("model".to_string()),
+            is_output_check_failed: false,
+        };
+        assert_eq!(
+            progress_line(3, 4, &result),
+            "skill-eval: 3/4 candidate T2 holdout h 1 8"
+        );
     }
 }
