@@ -141,11 +141,13 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
 
     fn run(&self, home: &Path, manifest: &Path, platform: &str, is_dry_run: bool) -> Output {
         let record = self.root.join("installer-invocations");
+        let home_record = self.root.join("installer-homes");
         let home = canonical_path(home);
         let repository = self.repository_root();
         let mut command = Command::new(env!("CARGO_BIN_EXE_tool-sync"));
         command
             .env("TOOL_SYNC_RECORD", record)
+            .env("TOOL_SYNC_HOME_RECORD", home_record)
             .args(["--home", path_text(&home)])
             .args(["--manifest", path_text(manifest)])
             .args(["--repository-root", path_text(&repository)])
@@ -162,6 +164,10 @@ installer = {{ command = "./install.sh", args = ["apply"], preview_args = ["prev
 
     fn record(&self) -> PathBuf {
         self.root.join("installer-invocations")
+    }
+
+    fn home_record(&self) -> PathBuf {
+        self.root.join("installer-homes")
     }
 }
 
@@ -431,6 +437,46 @@ fn previews_a_pinned_checkout_with_package_skills_and_agents_without_writing_hom
     assert_lines_in_order(&report, &expected);
     assert!(!fixture.record().exists());
     assert_eq!(tree_snapshot(&home), before);
+}
+
+#[test]
+fn installer_receives_selected_home_in_apply_and_preview_modes() {
+    let fixture = Fixture::new();
+    let home = fixture.home("selected-home");
+    fs::create_dir_all(&home).expect("home directory");
+    let manifest = fixture.manifest(&fixture.first_revision, "\"linux\"");
+    let home = canonical_path(&home);
+    let expected_prefix = format!(
+        "{}|{}|{}|",
+        home.display(),
+        home.join(".cargo").display(),
+        home.join(".rustup").display(),
+    );
+    let assert_record = |phase: &str| {
+        let record = fs::read_to_string(fixture.home_record()).expect("installer home record");
+        assert!(record.starts_with(&expected_prefix), "{phase}: {record}");
+        let cargo = record
+            .trim()
+            .rsplit('|')
+            .next()
+            .expect("recorded cargo path");
+        assert!(Path::new(cargo).is_file(), "{phase}: cargo path {cargo}");
+        assert!(
+            !Path::new(cargo).starts_with(&home),
+            "{phase}: cargo came from the isolated empty home"
+        );
+    };
+
+    let applied = fixture.run(&home, &manifest, "linux", false);
+
+    assert!(applied.status.success(), "{}", error_text(&applied));
+    assert_record("apply");
+
+    fs::write(fixture.home_record(), "").expect("clear home record");
+    let previewed = fixture.run(&home, &manifest, "linux", true);
+
+    assert!(previewed.status.success(), "{}", error_text(&previewed));
+    assert_record("preview");
 }
 
 #[test]
