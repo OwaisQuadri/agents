@@ -105,8 +105,11 @@ The apply run replaces an existing managed symlink when its target changes. It r
 For a focused manifest check, build and run `tool-sync` directly:
 
 ```sh
-cargo run --quiet --manifest-path tools/tool-sync/Cargo.toml -- \
-  --repository-root "$PWD" \
+binary="$(cargo build --release --quiet --message-format=json \
+  --manifest-path tools/tool-sync/Cargo.toml \
+  | jq -r 'select(.reason == "compiler-artifact" and .target.name == "tool-sync" and .executable != null) | .executable' \
+  | tail -n 1)"
+"$binary" --repository-root "$PWD" \
   --manifest config/tools.toml \
   --home "$HOME" \
   --dry-run

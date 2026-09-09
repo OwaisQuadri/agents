@@ -14,6 +14,8 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 
 `install.sh` never escalates. It runs from the `post-merge` hook, where a password prompt has no terminal. It writes nothing under `/Library`.
 
+A per-home lock serializes concurrent installer calls. The installer skips unchanged binary copies. It puts changed local Rust binaries in `~/.local/lib/agents-tools/`. Their commands in `~/.local/bin/` link to those stable copies.
+
 ## layout
 
 | path | holds |
@@ -24,8 +26,8 @@ A fresh checkout needs the one-time build before its first dry run. The dry run 
 | `config/` | `tools.toml`, the executable-tool manifest, and Pi configuration |
 | `docs/` | prose style (the ASD-STE100 rules every register runs on), code style, comment style, and docstring style (the standard generator per language) |
 | `tools/` | `tool-sync`, which installs executable tools; `ste-check`, which grades prose; `tool-wizard`, which writes and updates `tools.toml` entries; `pr-review-filter`, which lists the Pull Requests that start a review pass; `transcript-directed-video-processor`, which finds video moments for visual review |
-| `hooks/` | git hooks. `post-checkout` starts the sandbox build after a branch checkout without copying files between worktrees, and `test.sh` is its regression suite |
-| `.conductor/` | repo settings for Conductor; its setup script runs `hooks/post-checkout` in every new workspace |
+| `hooks/` | git hooks. `post-checkout` is inert, and `test.sh` verifies that checkout does not build or copy worktree files |
+| `.conductor/` | repo settings for Conductor; new workspaces perform no automatic build |
 | `install.sh` | the top-level Pi installer; it builds local Rust tools and runs `tool-sync` |
 
 ### skills
@@ -155,7 +157,7 @@ test "$(readlink "$HOME/.agents/skills/grilling")" = "$HOME/.cache/tool-sync/mat
 for source in agents/*/*.md; do
   test -f "$HOME/.pi/agent/agents/$(basename "$source")"
 done
-tools/tool-sync/target/release/tool-sync \
+"$HOME/.local/bin/tool-sync" \
   --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check >/dev/null
 
 cargo test --manifest-path tools/tool-sync/Cargo.toml
@@ -243,8 +245,8 @@ Run `pr-review-filter set platform=graphite` inside a repository to write its ov
 - `install.sh` uses Z shell (`zsh`) for Pi commands.
 - Skills log usage to `skills/<name>/logs/` (local, gitignored) and grow their eval
   cases from real use; blind judge votes land the same way.
-- The `post-checkout` hook starts the sandbox build after a branch checkout. It does not
-  copy tracked or untracked files between worktrees.
+- The `post-checkout` hook performs no build and copies no worktree files.
+- Run `test/build` when a branch needs a complete sandbox rebuild.
 
 ## live diffs
 

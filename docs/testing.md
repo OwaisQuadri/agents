@@ -20,6 +20,13 @@ returns to the shell. Use `./test/build` for the same build-only behavior. Use
 `./test/run` to open the existing sandbox, or use `./test/build_run` to rebuild it and
 open an interactive Pi session.
 
+A checkout does not start this build. The installer locks each destination home, so
+parallel calls cannot build or replace its tools at the same time. Cargo reuses each
+crate's target directory and recompiles only changed build inputs.
+
+Local Rust commands link to stable copies under `.local/lib/agents-tools/` in the
+selected home. Repeated command calls execute those files directly.
+
 ## the env var is `REPO_TARGET`, not `REPO_ROOT`
 
 `install.sh` reads `REPO_TARGET` (default: the script's own directory). `REPO_ROOT` is
@@ -48,8 +55,9 @@ node --test pi/extensions/telemetry.test.ts pi/extensions/telemetry.security.tes
 # telemetry loads its store lazily: a corrupt telemetry.jsonl no longer aborts pi
 # startup; it surfaces as an extension_error on the first lifecycle event instead
 
-# git hooks
+# git hooks and installer runtime
 hooks/test.sh
+test/install-runtime.zsh
 
 # a skill or workflow's eval harness (per-artifact contract, see skill-author/SKILL.md)
 ./skills/<name>/evals/run.sh                                  # incumbent baseline, all tiers and slices
@@ -128,12 +136,17 @@ extension preflight, dispatch bound, and retention without a live model.
 ## manifest / policy checks
 
 ```sh
-tools/tool-sync/target/release/tool-sync \
-  --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check
+tool_sync="$(cargo build --release --quiet --message-format=json \
+  --manifest-path tools/tool-sync/Cargo.toml \
+  | jq -r 'select(.reason == "compiler-artifact" and .target.name == "tool-sync" and .executable != null) | .executable' \
+  | tail -n 1)"
+"$tool_sync" --repository-root "$PWD" --manifest config/tools.toml --home "$HOME" --check
 
-
-cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
-  --verify-registry --tiers-file config/model-tiers.json
+binary="$(cargo build --release --quiet --message-format=json \
+  --manifest-path tools/tier-dispatch/Cargo.toml \
+  | jq -r 'select(.reason == "compiler-artifact" and .target.name == "tier-dispatch" and .executable != null) | .executable' \
+  | tail -n 1)"
+"$binary" --verify-registry --tiers-file config/model-tiers.json
 ```
 
 The registry check finds Pi's registry from `HOME`; do not put its home-directory path on
