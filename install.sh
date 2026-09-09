@@ -463,6 +463,9 @@ else
 fi
 
 for obsolete in \
+  "$HOME_TARGET/.pi/extensions/managed-config-guard.ts" \
+  "$HOME_TARGET/.pi/extensions/managed-config-guard.test.ts" \
+  "$HOME_TARGET/.pi/extensions/managed-config-guard" \
   "$HOME_TARGET/.pi/agent/extensions/herdr-activity" \
   "$HOME_TARGET/.pi/agent/extensions/pi-chrome-devtools" \
   "$HOME_TARGET/.pi/agent/extensions/pi-voice-stt" \
