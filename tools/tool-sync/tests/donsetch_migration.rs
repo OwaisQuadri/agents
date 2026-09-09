@@ -39,6 +39,21 @@ fn helper(source: &str, name: &str) -> String {
     format!("{name}() {{{body}\n}}\n")
 }
 
+fn obsolete_loop_script(source: &str) -> String {
+    let obsolete = source
+        .split_once("for obsolete in \\\n")
+        .expect("obsolete loop")
+        .1
+        .split_once("\ndone")
+        .expect("obsolete loop end")
+        .0;
+    format!(
+        "set -euo pipefail\nsetopt NULL_GLOB\nIS_DRY=0\nSTAMP=fixture\nplan() {{ :; }}\n{}{}for obsolete in \\\n{obsolete}\ndone\n",
+        helper(source, "run"),
+        helper(source, "retire_pi_extension")
+    )
+}
+
 fn run_script(home: &Path, script: &str) -> String {
     let output = Command::new("/bin/zsh")
         .args(["-fc", script])
@@ -206,6 +221,112 @@ fn clean_config_enables_distinct_fallback_and_disables_curator() {
 }
 
 #[test]
+fn obsolete_loop_retires_legacy_home_project_extensions() {
+    let root = fixture_root();
+    let extensions = root.join(".pi/extensions");
+    let companion = extensions.join("managed-config-guard");
+    let managed = root.join(".pi/agent/extensions");
+    let managed_source = root.join("managed-source");
+    fs::create_dir_all(&companion).expect("legacy companion directory");
+    fs::create_dir_all(&managed).expect("managed extensions directory");
+    fs::create_dir_all(managed_source.join("config-write-guard"))
+        .expect("managed source directory");
+    fs::write(
+        extensions.join("managed-config-guard.ts"),
+        "export default function guard() {}\n",
+    )
+    .expect("legacy extension");
+    fs::write(
+        extensions.join("keep-me.ts"),
+        "export default function keepMe() {}\n",
+    )
+    .expect("unrelated extension");
+    fs::write(
+        extensions.join("managed-config-guard.test.ts"),
+        "export const test = true;\n",
+    )
+    .expect("legacy extension test");
+    fs::write(companion.join("policy.ts"), "export const policy = true;\n")
+        .expect("legacy extension policy");
+    fs::write(
+        managed_source.join("config-write-guard.ts"),
+        "export default function guard() {}\n",
+    )
+    .expect("managed extension source");
+    fs::write(
+        managed_source.join("config-write-guard/policy.ts"),
+        "export const managed = true;\n",
+    )
+    .expect("managed extension policy source");
+    symlink(
+        managed_source.join("config-write-guard.ts"),
+        managed.join("config-write-guard.ts"),
+    )
+    .expect("managed extension link");
+    symlink(
+        managed_source.join("config-write-guard"),
+        managed.join("config-write-guard"),
+    )
+    .expect("managed companion link");
+    let script = obsolete_loop_script(&installer());
+
+    run_script(&root, &script);
+    run_script(&root, &script);
+
+    assert!(!extensions.join("managed-config-guard.ts").exists());
+    assert!(!extensions.join("managed-config-guard.test.ts").exists());
+    assert!(!companion.exists());
+    assert_eq!(
+        fs::read(extensions.join("keep-me.ts")).expect("retained unrelated extension"),
+        b"export default function keepMe() {}\n"
+    );
+    let retired = root.join(".pi/agent/retired-extensions");
+    assert_eq!(
+        fs::read(retired.join("managed-config-guard.ts.retired-fixture"))
+            .expect("retired extension"),
+        b"export default function guard() {}\n"
+    );
+    assert_eq!(
+        fs::read(retired.join("managed-config-guard.test.ts.retired-fixture"))
+            .expect("retired extension test"),
+        b"export const test = true;\n"
+    );
+    assert_eq!(
+        fs::read(
+            retired
+                .join("managed-config-guard.retired-fixture")
+                .join("policy.ts")
+        )
+        .expect("retired extension policy"),
+        b"export const policy = true;\n"
+    );
+    assert_eq!(
+        fs::read_link(managed.join("config-write-guard.ts")).expect("retained managed extension"),
+        managed_source.join("config-write-guard.ts")
+    );
+    assert_eq!(
+        fs::read_link(managed.join("config-write-guard")).expect("retained managed companion"),
+        managed_source.join("config-write-guard")
+    );
+    assert_eq!(
+        fs::read(managed_source.join("config-write-guard.ts"))
+            .expect("retained managed extension source"),
+        b"export default function guard() {}\n"
+    );
+    assert_eq!(
+        fs::read(managed_source.join("config-write-guard/policy.ts"))
+            .expect("retained managed extension policy source"),
+        b"export const managed = true;\n"
+    );
+    assert_eq!(
+        fs::read_dir(retired)
+            .expect("retired extension directory")
+            .count(),
+        3
+    );
+}
+
+#[test]
 fn obsolete_loop_does_not_retire_either_web_link() {
     let root = fixture_root();
     let extensions = root.join(".pi/agent/extensions");
@@ -219,15 +340,7 @@ fn obsolete_loop_does_not_retire_either_web_link() {
         let identity = fs::symlink_metadata(extensions.join(name)).expect("link identity");
         identities.push((identity.dev(), identity.ino()));
     }
-    let source = installer();
-    let obsolete = source
-        .split_once("for obsolete in \\\n")
-        .expect("obsolete loop")
-        .1
-        .split_once("\ndone")
-        .expect("obsolete loop end")
-        .0;
-    let script = format!("set -euo pipefail\nsetopt NULL_GLOB\nIS_DRY=0\nSTAMP=fixture\nplan() {{ :; }}\n{}{}for obsolete in \\\n{obsolete}\ndone\n", helper(&source, "run"), helper(&source, "retire_pi_extension"));
+    let script = obsolete_loop_script(&installer());
     run_script(&root, &script);
     run_script(&root, &script);
     for (name, identity) in ["web", "npm"].into_iter().zip(identities) {
