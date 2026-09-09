@@ -1,19 +1,32 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { statSync } from "node:fs";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { createConnection, type Socket } from "node:net";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type SearchMemoryInput = { query: string; k?: number; source_filter?: string };
-type SpawnProcess = (command: string, args: string[]) => ChildProcessWithoutNullStreams;
+type SocketConnector = (path: string) => Socket;
+type DaemonSpawn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 type McpTextContent = { type: "text"; text: string };
 type Timeouts = { startupMs: number; requestMs: number };
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; cleanup(): void };
+type RagDependencies = {
+	connectSocket?: SocketConnector;
+	spawnDaemon?: DaemonSpawn;
+	socketPath?: string;
+	timeouts?: Timeouts;
+	recallTimeoutMs?: number;
+};
 
 const protocolVersion = "2025-11-25";
 const defaultTimeouts: Timeouts = { startupMs: 10_000, requestMs: 30_000 };
-const maximumStderrLength = 1024;
 const maximumUnframedStdoutLength = 8 * 1024 * 1024;
 const maximumRecallQueryLength = 2_000;
 const maximumRecallResultLength = 32_000;
 const defaultRecallTimeoutMs = 6_000;
+const retryDelayMs = 25;
+const daemonExitGraceMs = 250;
 
 const searchMemoryParameters = {
 	type: "object",
@@ -34,34 +47,48 @@ function isTextContent(value: unknown): value is McpTextContent {
 	return isRecord(value) && value.type === "text" && typeof value.text === "string";
 }
 
-function serverError(stderr: string): Error {
-	const diagnostics = stderr.trim();
-	return new Error(diagnostics ? `rag server exited: ${diagnostics}` : "rag server exited");
+function socketError(): Error {
+	return new Error("rag server is unavailable");
+}
+
+function daemonError(error: unknown): Error {
+	return isRecord(error) && error.code === "ENOENT" ? new Error("rag command was not found") : new Error("rag daemon failed to start");
+}
+
+function isPermanentSocketError(error: Error): boolean {
+	return error.message === "rag socket has unsafe ownership or permissions";
+}
+
+function validateSocketPath(path: string): void {
+	const owner = process.getuid?.();
+	const directory = statSync(dirname(path));
+	const socket = statSync(path);
+	if ((owner !== undefined && (directory.uid !== owner || socket.uid !== owner)) || (directory.mode & 0o022) !== 0 || (socket.mode & 0o077) !== 0 || !socket.isSocket()) {
+		throw new Error("rag socket has unsafe ownership or permissions");
+	}
+}
+
+function defaultSocketPath(): string {
+	return process.env.RAG_SOCKET_PATH ?? join(homedir(), ".local", "state", "rag", "serve.sock");
 }
 
 class McpSession {
 	private readonly pending = new Map<number, Pending>();
 	private nextId = 1;
-	private stderr = "";
 	private stdout = "";
 	private isClosed = false;
-	private readonly child: ChildProcessWithoutNullStreams;
+	private readonly socket: Socket;
 	private readonly onClosed: () => void;
 	private readonly timeouts: Timeouts;
 
-	constructor(spawnProcess: SpawnProcess, onClosed: () => void, timeouts: Timeouts) {
+	constructor(socket: Socket, onClosed: () => void, timeouts: Timeouts) {
+		this.socket = socket;
 		this.onClosed = onClosed;
 		this.timeouts = timeouts;
-		this.child = spawnProcess("rag", ["serve"]);
-		this.child.stdout.setEncoding("utf8");
-		this.child.stderr.setEncoding("utf8");
-		this.child.stdout.on("data", this.handleStdout);
-		this.child.stdout.on("error", this.handleStdoutError);
-		this.child.stderr.on("data", this.handleStderr);
-		this.child.stderr.on("error", this.handleStderrError);
-		this.child.stdin.on("error", this.handleStdinError);
-		this.child.on("error", this.handleChildError);
-		this.child.on("exit", this.handleChildExit);
+		this.socket.setEncoding("utf8");
+		this.socket.on("data", this.handleStdout);
+		this.socket.on("error", this.handleSocketError);
+		this.socket.on("close", this.handleSocketClose);
 	}
 
 	get isAvailable(): boolean {
@@ -135,7 +162,7 @@ class McpSession {
 				return;
 			}
 			try {
-				this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) })}\n`);
+				this.socket.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) })}\n`);
 			} catch (error) {
 				rejectRequest(error instanceof Error ? error : new Error(String(error)));
 			}
@@ -146,7 +173,7 @@ class McpSession {
 		if (this.isClosed) {
 			throw new Error("rag server is not available");
 		}
-		this.child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method })}\n`);
+		this.socket.write(`${JSON.stringify({ jsonrpc: "2.0", method })}\n`);
 	}
 
 	private handleStdout = (chunk: string): void => {
@@ -198,31 +225,12 @@ class McpSession {
 		}
 	};
 
-	private handleStderr = (chunk: string): void => {
-		this.stderr = `${this.stderr}${chunk}`.slice(-maximumStderrLength);
+	private handleSocketError = (): void => {
+		this.failProtocol(socketError());
 	};
 
-	private handleStdoutError = (): void => {
-		this.failProtocol(serverError(this.stderr));
-	};
-
-	private handleStderrError = (): void => {
-		this.failProtocol(serverError(this.stderr));
-	};
-
-	private handleStdinError = (): void => {
-		this.failProtocol(serverError(this.stderr));
-	};
-
-	private handleChildError = (error: Error): void => {
-		const isMissingCommand = (error as NodeJS.ErrnoException).code === "ENOENT";
-		this.failProtocol(isMissingCommand ? new Error("rag command was not found") : serverError(this.stderr));
-	};
-
-	private handleChildExit = (): void => {
-		if (!this.isClosed) {
-			this.failProtocol(serverError(this.stderr));
-		}
+	private handleSocketClose = (): void => {
+		this.failProtocol(socketError());
 	};
 
 	private failProtocol(error: Error): void {
@@ -240,12 +248,8 @@ class McpSession {
 		}
 		this.pending.clear();
 		this.stdout = "";
-		this.child.stdout.off("data", this.handleStdout);
-		this.child.stderr.off("data", this.handleStderr);
-		this.child.stdin.end();
-		if (!this.child.killed) {
-			this.child.kill();
-		}
+		this.socket.off("data", this.handleStdout);
+		this.socket.destroy();
 	}
 }
 
@@ -296,59 +300,181 @@ async function withinDeadline<T>(promise: Promise<T>, timeoutMs: number): Promis
 	}
 }
 
+function delay(timeoutMs: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, timeoutMs));
+}
+
+function connectSocket(connector: SocketConnector, path: string, timeoutMs: number): Promise<Socket> {
+	const socket = connector(path);
+	return new Promise((resolve, reject) => {
+		let timeout: ReturnType<typeof setTimeout>;
+		const complete = (error?: Error) => {
+			clearTimeout(timeout);
+			socket.off("connect", onConnect);
+			socket.off("error", onError);
+			if (error === undefined) {
+				try {
+					validateSocketPath(path);
+					resolve(socket);
+				} catch (validationError) {
+					socket.destroy();
+					reject(validationError instanceof Error ? validationError : new Error(String(validationError)));
+				}
+			} else {
+				socket.destroy();
+				reject(error);
+			}
+		};
+		const onConnect = () => complete();
+		const onError = () => complete(socketError());
+		timeout = setTimeout(() => complete(new Error("rag startup timed out")), timeoutMs);
+		socket.once("connect", onConnect);
+		socket.once("error", onError);
+	});
+}
+
+let activeExtensionSessions = 0;
+let sharedSession: McpSession | undefined;
+let sharedStartup: Promise<McpSession> | undefined;
+let sharedSocketPath: string | undefined;
+
+async function openSharedSession(dependencies: Required<Pick<RagDependencies, "connectSocket" | "spawnDaemon" | "socketPath" | "timeouts">>): Promise<McpSession> {
+	if (sharedSocketPath !== undefined && sharedSocketPath !== dependencies.socketPath) {
+		throw new Error("rag socket path changed while a shared session is active");
+	}
+	if (sharedSession?.isAvailable && sharedStartup === undefined) {
+		return sharedSession;
+	}
+	if (sharedStartup !== undefined) {
+		return sharedStartup;
+	}
+	sharedSocketPath = dependencies.socketPath;
+	const deadline = Date.now() + dependencies.timeouts.startupMs;
+	let isDaemonStarted = false;
+	let daemonStartupError: Error | undefined;
+	let daemonExitError: Error | undefined;
+	let daemonExitDeadline = Number.POSITIVE_INFINITY;
+	let lastError: Error | undefined;
+	let retryMs = retryDelayMs;
+	let startup!: Promise<McpSession>;
+	startup = (async () => {
+		for (;;) {
+			if (daemonStartupError !== undefined) {
+				throw daemonStartupError;
+			}
+			if (daemonExitError !== undefined && Date.now() >= daemonExitDeadline) {
+				throw daemonExitError;
+			}
+			const remainingMs = deadline - Date.now();
+			if (remainingMs <= 0) {
+				throw daemonExitError ?? lastError ?? new Error("rag startup timed out");
+			}
+			let socket: Socket;
+			try {
+				socket = await connectSocket(dependencies.connectSocket, dependencies.socketPath, remainingMs);
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				if (isPermanentSocketError(lastError)) {
+					throw lastError;
+				}
+				if (!isDaemonStarted) {
+					try {
+						const daemon = dependencies.spawnDaemon("rag", ["daemon"], { detached: true, stdio: "ignore" });
+						daemon.once("error", (error: NodeJS.ErrnoException) => {
+							daemonStartupError = daemonError(error);
+						});
+						daemon.once("exit", (code, signal) => {
+							if (code !== 0 || signal !== null) {
+								daemonExitError = new Error("rag daemon exited before its socket became available");
+								daemonExitDeadline = Date.now() + daemonExitGraceMs;
+							}
+						});
+						daemon.unref();
+					} catch (spawnError) {
+						throw daemonError(spawnError);
+					}
+					isDaemonStarted = true;
+				}
+				await delay(Math.min(retryMs, Math.max(1, deadline - Date.now())));
+				retryMs = Math.min(retryMs * 2, 250);
+				continue;
+			}
+			const session = new McpSession(socket, () => {
+				if (sharedSession === session) {
+					sharedSession = undefined;
+				}
+			}, { ...dependencies.timeouts, startupMs: Math.max(1, deadline - Date.now()) });
+			sharedSession = session;
+			try {
+				await session.initialize();
+				return session;
+			} catch (error) {
+				await session.close();
+				if (error instanceof Error && error.message === "rag server is unavailable") {
+					lastError = error;
+					await delay(Math.min(retryMs, Math.max(1, deadline - Date.now())));
+					continue;
+				}
+				throw error;
+			}
+		}
+	})();
+	sharedStartup = startup;
+	try {
+		return await startup;
+	} finally {
+		if (sharedStartup === startup) {
+			sharedStartup = undefined;
+			if (sharedSession === undefined) {
+				sharedSocketPath = undefined;
+			}
+		}
+	}
+}
+
+async function closeSharedSession(): Promise<void> {
+	if (activeExtensionSessions !== 0) {
+		return;
+	}
+	const session = sharedSession;
+	sharedSession = undefined;
+	await session?.close();
+	const startup = sharedStartup;
+	if (startup === undefined) {
+		sharedSocketPath = undefined;
+		return;
+	}
+	void startup.then(async (activeSession) => {
+		if (activeExtensionSessions === 0) {
+			await activeSession.close();
+			sharedSocketPath = undefined;
+		}
+	}).catch(() => {
+		if (activeExtensionSessions === 0) sharedSocketPath = undefined;
+	});
+}
+
 /**
- * Registers Pi's personal-memory search tool.
+ * Registers Pi personal-memory search on a shared local RAG socket.
  *
- * @param pi - The Pi ExtensionAPI that registers the tool and lifecycle handlers.
+ * @param pi - The Pi ExtensionAPI that registers tools and lifecycle handlers.
+ * @param dependencies - Optional socket, daemon, path, and timeout dependencies.
  * @returns Nothing.
- * @throws {Error} If Pi rejects tool or lifecycle registration.
+ * @throws {Error} If Pi rejects registration or the RAG service is unavailable.
  */
-export default function ragExtension(
-	pi: ExtensionAPI,
-	spawnProcess: SpawnProcess = spawn,
-	timeouts: Timeouts = defaultTimeouts,
-	recallTimeoutMs = defaultRecallTimeoutMs,
-): void {
-	let session: McpSession | undefined;
-	let starting: Promise<McpSession> | undefined;
+export default function ragExtension(pi: ExtensionAPI, dependencies: RagDependencies = {}): void {
+	const connect = dependencies.connectSocket ?? ((path) => createConnection({ path }));
+	const spawnDaemon = dependencies.spawnDaemon ?? ((command, args, options) => spawn(command, args, options));
+	const socketPath = dependencies.socketPath ?? defaultSocketPath();
+	const timeouts = dependencies.timeouts ?? defaultTimeouts;
+	const recallTimeoutMs = dependencies.recallTimeoutMs ?? defaultRecallTimeoutMs;
 	let isMemorySessionActive = false;
 	const pendingRecallQueries: Array<string | undefined> = [];
 
-	const startSession = (): Promise<McpSession> => {
-		if (session?.isAvailable && starting === undefined) {
-			return Promise.resolve(session);
-		}
-		if (starting !== undefined) {
-			return starting;
-		}
-		let nextSession: McpSession;
-		nextSession = new McpSession(spawnProcess, () => {
-			if (session === nextSession) {
-				session = undefined;
-			}
-		}, timeouts);
-		session = nextSession;
-		let initialization!: Promise<McpSession>;
-		initialization = (async () => {
-			try {
-				await nextSession.initialize();
-				return nextSession;
-			} catch (error) {
-				await nextSession.close();
-				throw error;
-			} finally {
-				if (starting === initialization) {
-					starting = undefined;
-				}
-			}
-		})();
-		starting = initialization;
-		return initialization;
-	};
-
+	const startSession = () => openSharedSession({ connectSocket: connect, spawnDaemon, socketPath, timeouts });
 	const recallFor = async (query: string): Promise<string | undefined> => {
 		try {
-			const search = startSession().then((activeSession) => activeSession.callSearch({ query, k: 8 }));
+			const search = startSession().then((session) => session.callSearch({ query, k: 8 }));
 			return memoryRecall(await withinDeadline(search, recallTimeoutMs));
 		} catch {
 			return undefined;
@@ -357,15 +483,19 @@ export default function ragExtension(
 	const recallMessage = (content: string) => ({ customType: "rag-recall", content, display: false as const });
 
 	pi.on("session_start", () => {
-		isMemorySessionActive = true;
+		if (!isMemorySessionActive) {
+			activeExtensionSessions += 1;
+			isMemorySessionActive = true;
+		}
 		pendingRecallQueries.length = 0;
 	});
 	pi.on("session_shutdown", async () => {
-		isMemorySessionActive = false;
+		if (isMemorySessionActive) {
+			isMemorySessionActive = false;
+			activeExtensionSessions -= 1;
+		}
 		pendingRecallQueries.length = 0;
-		const activeSession = session;
-		session = undefined;
-		await activeSession?.close();
+		await closeSharedSession();
 	});
 	pi.on("input", (event) => {
 		const isRecallEligible = event.source === "interactive" && process.env.RAG_RECALL !== "0" && isMemorySessionActive && event.text.length > 0;

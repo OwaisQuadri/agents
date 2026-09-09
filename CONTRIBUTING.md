@@ -122,11 +122,11 @@ Use `--check` when you only want plan validation and rendering. That mode does n
 The tracked manifest installs `rag` on macOS and Linux. Its source uses this pinned revision:
 
 ```text
-583d2344a9bf96cb1961991d931870aad62e1b58
+6635b55b7e42ba3bb27cab314bd8e8a6f5b6ddac
 ```
 
 The entry links the `rag` command into `$HOME/.local/bin/rag`. It also links `pi/extensions/rag.ts` into Pi's extension directory.
 
-The Pi extension registers `search_memory`. It starts `rag serve` on the first search, reuses the Model Context Protocol session, and returns search hits.
+The Pi extension registers `search_memory`. It connects to the private Unix socket at `$HOME/.local/state/rag/serve.sock`. The extension starts `rag daemon` when the socket is absent. All Pi processes share one daemon, which exits after its final client disconnects. The client requires a socket directory that only its owner can write and mode `0600` on the socket.
 
 `search_memory` requires `query`. It accepts `k`, which defaults to `8`, and an optional `source_filter`.

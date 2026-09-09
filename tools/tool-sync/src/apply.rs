@@ -1,6 +1,8 @@
+use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::manifest::Platform;
@@ -114,7 +116,7 @@ fn platform_name(platform: Platform) -> &'static str {
 ///
 /// Returns `SyncError` at the first stale state, collision, filesystem failure, Git failure,
 /// installer launch failure, or unsuccessful installer exit.
-pub fn run(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
+pub fn run(plan: &Plan, is_dry_run: bool, home: &Path) -> Result<(), SyncError> {
     check_stale_state(plan, is_dry_run)?;
 
     for action in &plan.actions {
@@ -128,13 +130,13 @@ pub fn run(plan: &Plan, is_dry_run: bool) -> Result<(), SyncError> {
             } = action
             {
                 if !is_unfetched_git_source(plan, working_directory) {
-                    run_installer(tool, working_directory, command, preview_args)?;
+                    run_installer(tool, working_directory, command, preview_args, home)?;
                 }
             }
             continue;
         }
 
-        apply_action(action)?;
+        apply_action(action, home)?;
     }
     Ok(())
 }
@@ -259,7 +261,7 @@ fn check_link_destination(destination: &Path) -> Result<(), SyncError> {
     }
 }
 
-fn apply_action(action: &Action) -> Result<(), SyncError> {
+fn apply_action(action: &Action, home: &Path) -> Result<(), SyncError> {
     match action {
         Action::CreateDirectory { path } => {
             fs::create_dir_all(path).map_err(|error| SyncError::Io(path.clone(), error))
@@ -286,7 +288,7 @@ fn apply_action(action: &Action) -> Result<(), SyncError> {
             command,
             args,
             ..
-        } => run_installer(tool, working_directory, command, args),
+        } => run_installer(tool, working_directory, command, args, home),
         Action::LinkPiExtension {
             source,
             source_root,
@@ -392,21 +394,50 @@ fn run_git(repository: &Path, args: &[std::ffi::OsString]) -> Result<(), SyncErr
     }
 }
 
+fn rust_toolchain_path(rustup: &OsStr, working_directory: &Path) -> Option<OsString> {
+    let output = Command::new(rustup)
+        .current_dir(working_directory)
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .args(["which", "cargo"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let cargo = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
+    let toolchain = cargo.parent()?;
+    let mut paths = vec![toolchain.to_path_buf()];
+    paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+    env::join_paths(paths).ok()
+}
+
+fn active_rust_toolchain_path(working_directory: &Path) -> Option<OsString> {
+    rust_toolchain_path(OsStr::new("rustup"), working_directory)
+}
+
 fn run_installer(
     tool: &str,
     working_directory: &Path,
     command: &str,
     args: &[String],
+    home: &Path,
 ) -> Result<(), SyncError> {
-    let status = Command::new(command)
+    let mut process = Command::new(command);
+    process
         .current_dir(working_directory)
-        .args(args)
-        .status()
-        .map_err(|error| SyncError::ProcessStart {
-            program: command.to_owned(),
-            working_directory: working_directory.to_path_buf(),
-            error,
-        })?;
+        .env("HOME", home)
+        .env("CARGO_HOME", home.join(".cargo"))
+        .env("RUSTUP_HOME", home.join(".rustup"))
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .args(args);
+    if let Some(path) = active_rust_toolchain_path(working_directory) {
+        process.env("PATH", path);
+    }
+    let status = process.status().map_err(|error| SyncError::ProcessStart {
+        program: command.to_owned(),
+        working_directory: working_directory.to_path_buf(),
+        error,
+    })?;
     if status.success() {
         Ok(())
     } else {
@@ -722,9 +753,62 @@ mod tests {
             ],
         };
 
-        run(&plan, true).expect("preview succeeds");
+        run(&plan, true, Path::new("/test-home")).expect("preview succeeds");
 
         assert!(!uncreated.exists());
+    }
+
+    #[test]
+    fn installer_receives_selected_home_in_apply_and_preview_modes() {
+        let fixture = Fixture::new();
+        let script = fixture.0.join("home.sh");
+        fs::write(&script, "#!/bin/sh\nprintf '%s' \"$HOME\" > \"$1\"\n").expect("script");
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("executable");
+        let selected_home = fixture.0.join("selected-home");
+
+        for is_dry_run in [false, true] {
+            let record = fixture.0.join(format!("home-{is_dry_run}"));
+            let plan = Plan {
+                actions: vec![Action::RunInstaller {
+                    tool: "fixture".into(),
+                    working_directory: fixture.0.clone(),
+                    command: script.to_string_lossy().into_owned(),
+                    args: vec![record.to_string_lossy().into_owned()],
+                    preview_args: vec![record.to_string_lossy().into_owned()],
+                }],
+            };
+
+            run(&plan, is_dry_run, &selected_home).expect("installer succeeds");
+
+            assert_eq!(
+                fs::read_to_string(record).expect("recorded home"),
+                selected_home.to_string_lossy()
+            );
+        }
+    }
+
+    #[test]
+    fn rust_toolchain_resolution_runs_inside_the_installer_checkout() {
+        let fixture = Fixture::new();
+        let checkout = fixture.0.join("checkout");
+        let rustup = fixture.0.join("rustup");
+        fs::create_dir_all(&checkout).expect("checkout");
+        fs::write(
+            &rustup,
+            "#!/bin/sh\ntest \"$RUSTUP_AUTO_INSTALL\" = 0\nprintf '%s/pinned/bin/cargo\\n' \"$PWD\"\n",
+        )
+        .expect("rustup fixture");
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&rustup, fs::Permissions::from_mode(0o755)).expect("executable");
+
+        let path = rust_toolchain_path(rustup.as_os_str(), &checkout).expect("toolchain path");
+        let first = env::split_paths(&path).next().expect("first path entry");
+
+        assert_eq!(
+            first,
+            fs::canonicalize(&checkout).unwrap().join("pinned/bin")
+        );
     }
 
     #[test]
@@ -758,7 +842,7 @@ mod tests {
             ],
         };
 
-        run(&plan, true).expect("missing fresh source is only rendered");
+        run(&plan, true, Path::new("/test-home")).expect("missing fresh source is only rendered");
 
         assert!(!marker.exists(), "installer child was invoked");
         assert!(!fixture.0.join("cache").exists(), "dry run wrote cache");
@@ -778,7 +862,7 @@ mod tests {
             }],
         };
 
-        run(&plan, false).expect("retire succeeds");
+        run(&plan, false, Path::new("/test-home")).expect("retire succeeds");
 
         assert_eq!(
             fs::read_to_string(aside.join("revision")).expect("retired file"),
@@ -802,7 +886,8 @@ mod tests {
             }],
         };
 
-        let error = run(&plan, false).expect_err("occupied aside must fail");
+        let error =
+            run(&plan, false, Path::new("/test-home")).expect_err("occupied aside must fail");
 
         assert!(matches!(error, SyncError::StaleState(_, _)));
         assert_eq!(
@@ -851,7 +936,7 @@ mod tests {
             ],
         };
 
-        run(&plan, true).expect("a retiring plan is only rendered");
+        run(&plan, true, Path::new("/test-home")).expect("a retiring plan is only rendered");
 
         assert_eq!(
             fs::read_to_string(checkout.join("revision")).expect("untouched foreign file"),
@@ -887,7 +972,7 @@ mod tests {
             ],
         };
 
-        run(&plan, true).expect("dry run succeeds");
+        run(&plan, true, Path::new("/test-home")).expect("dry run succeeds");
 
         assert!(!fixture.0.join("home/.pi/agent/extensions").exists());
         assert!(!fixture.0.join("home/.agents/skills").exists());
@@ -918,7 +1003,8 @@ mod tests {
             ],
         };
 
-        let error = run(&plan, false).expect_err("escaping source must fail");
+        let error =
+            run(&plan, false, Path::new("/test-home")).expect_err("escaping source must fail");
 
         assert!(error.to_string().contains("source resolves outside"));
         assert!(!destination.exists());
@@ -944,7 +1030,7 @@ mod tests {
             }],
         };
 
-        run(&plan, false).expect("takeover succeeds");
+        run(&plan, false, Path::new("/test-home")).expect("takeover succeeds");
 
         assert_eq!(
             fs::read_to_string(pi_extension_backup(&destination)).unwrap(),
@@ -992,7 +1078,7 @@ mod tests {
         };
 
         assert!(matches!(
-            run(&plan, false),
+            run(&plan, false, Path::new("/test-home")),
             Err(SyncError::DestinationCollision(_))
         ));
         assert!(!uncreated.exists());
@@ -1041,7 +1127,7 @@ mod tests {
                 revision: pinned.clone(),
             }],
         };
-        run(&plan, false).expect("checkout succeeds");
+        run(&plan, false, Path::new("/test-home")).expect("checkout succeeds");
 
         let actual_output = git(&["rev-parse", "HEAD"]);
         assert!(actual_output.status.success());
@@ -1075,7 +1161,7 @@ mod tests {
         };
 
         assert!(matches!(
-            run(&plan, false),
+            run(&plan, false, Path::new("/test-home")),
             Err(SyncError::DestinationCollision(_))
         ));
         assert!(!uncreated.exists());
@@ -1098,7 +1184,7 @@ mod tests {
             ],
         };
 
-        run(&plan, false).expect("apply succeeds");
+        run(&plan, false, Path::new("/test-home")).expect("apply succeeds");
 
         assert_eq!(fs::read_link(destination).expect("link target"), source);
     }
@@ -1133,7 +1219,7 @@ mod tests {
             ],
         };
 
-        run(&plan, false).expect("apply succeeds");
+        run(&plan, false, Path::new("/test-home")).expect("apply succeeds");
 
         assert_eq!(
             fs::read_link(package_destination).expect("package link"),

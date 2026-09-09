@@ -3,7 +3,7 @@ name = "rag"
 platforms = ["macos", "linux"]
 commands = ["rag"]
 pi_extension = "pi/extensions/rag.ts"
-source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "583d2344a9bf96cb1961991d931870aad62e1b58" }
+source = { url = "https://github.com/OwaisQuadri/rag.git", revision = "6635b55b7e42ba3bb27cab314bd8e8a6f5b6ddac" }
 installer = { command = "./install.sh", args = [], preview_args = ["--dry-run"] }
 
 [[tools]]

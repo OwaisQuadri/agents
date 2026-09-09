@@ -36,16 +36,17 @@ fn home() -> Result<PathBuf, SyncError> {
 
 fn run(cli: Cli) -> Result<String, SyncError> {
     let manifest = manifest::load(&cli.manifest_path)?;
+    let home_root = cli.home_root;
     let context = Context {
         repository_root: cli.repository_root,
-        cache_root: cli.home_root.join(".cache/tool-sync"),
-        home_root: cli.home_root,
+        cache_root: home_root.join(".cache/tool-sync"),
+        home_root: home_root.clone(),
         platform: cli.platform,
     };
     let plan = planner::build(&manifest, &context)?;
     let report = apply::render(&plan, cli.is_dry_run);
     if cli.mode == Mode::Apply {
-        apply::run(&plan, cli.is_dry_run)?;
+        apply::run(&plan, cli.is_dry_run, &home_root)?;
     }
     Ok(report)
 }
