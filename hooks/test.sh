@@ -11,6 +11,18 @@ check() {
   if "$@"; then echo "PASS $label"; else echo "FAIL $label"; FAILS=$((FAILS+1)); fi
 }
 
+stays_absent() {
+  local path="$1"
+  for _ in $(seq 1 100); do
+    [[ ! -e "$path" ]] || return 1
+    sleep 0.01
+  done
+}
+
+check "T0 hook exists" test -x "$HOOK"
+hook_commands="$(awk 'NF && $0 !~ /^[[:space:]]*#/' "$HOOK")"
+check "T0 hook is inert" test "$hook_commands" = "exit 0"
+
 setup() {
   mkdir -p "$T/live"; cd "$T/live" || exit 1
   git init -qb main . && git config user.email t@t && git config user.name t
@@ -36,6 +48,17 @@ reset_fixture() {
   mkdir -p "$T"
   setup
 }
+
+echo "=== T0 Git executes the linked checkout hook"
+reset_fixture
+cat > hooks/post-checkout <<'HOOK'
+#!/usr/bin/env bash
+root="$(git rev-parse --show-toplevel)"
+: > "$root/.hook-fired"
+HOOK
+chmod +x hooks/post-checkout
+git worktree add -q ../wt0 -b feat-zero main
+check "T0 hook executed" test -f ../wt0/.hook-fired
 
 echo "=== T1 worktree add from main keeps committed content only"
 reset_fixture; dirty_live
@@ -66,38 +89,25 @@ echo "=== T4 the primary checkout is unchanged"
 check "T4 tracked edit intact" grep -q v3-live-edit "$T/live/tracked.txt"
 check "T4 primary status intact" test "$(git -C "$T/live" status --porcelain | wc -l | tr -d ' ')" = 2
 
-echo "=== T5 a file checkout does not start the sandbox build"
+echo "=== T5 a file checkout starts no sandbox build"
 reset_fixture
 mkdir -p test
 cp /bin/echo test/build
 git add test/build && git commit -qm build
 git worktree add -q ../wt5 -b feat-e main
-for _ in $(seq 1 250); do
-  [[ -e ../wt5/.install-test-home.log ]] && break
-  sleep 0.02
-done
-check "T5 build precondition" test -e ../wt5/.install-test-home.log
-rm -f ../wt5/.install-test-home.log
 git -C ../wt5 checkout -q -- tracked.txt
-is_build_absent=1
-for _ in $(seq 1 50); do
-  [[ ! -e ../wt5/.install-test-home.log ]] || { is_build_absent=0; break; }
-  sleep 0.02
-done
-check "T5 no build" test "$is_build_absent" -eq 1
+check "T5 hook linked" test -L "$(git -C ../wt5 rev-parse --git-path hooks/post-checkout)"
+check "T5 no build" stays_absent ../wt5/.install-test-home.log
 check "T5 committed content" grep -q v2 ../wt5/tracked.txt
 
-echo "=== T6 a checkout starts the sandbox build"
+echo "=== T6 a branch checkout starts no sandbox build"
 reset_fixture
 mkdir -p test
 cp /bin/echo test/build
 git add test/build && git commit -qm build
 git worktree add -q ../wt6 -b feat-f main
-for _ in $(seq 1 250); do
-  [[ -e ../wt6/.install-test-home.log ]] && break
-  sleep 0.02
-done
-check "T6 build ran" test -e ../wt6/.install-test-home.log
+check "T6 hook linked" test -L "$(git -C ../wt6 rev-parse --git-path hooks/post-checkout)"
+check "T6 no build" stays_absent ../wt6/.install-test-home.log
 check "T6 clean destination" test -z "$(git -C ../wt6 status --porcelain)"
 
 echo "=== T7 a no-argument call does not copy primary changes"
@@ -123,17 +133,13 @@ check "T8 no unrelated copy" test ! -e ../wt8/unrelated.txt
 check "T8 no primary artifact" test ! -e agents/implementer
 check "T8 primary unchanged" test "$(git status --porcelain)" = "$primary_status"
 
-echo "=== T9 a primary invocation changes no checked-out content"
+echo "=== T9 a primary invocation starts no build"
 reset_fixture
 mkdir -p test
 cp /bin/echo test/build
 git add test/build && git commit -qm build
 ./hooks/post-checkout
-for _ in $(seq 1 250); do
-  [[ -e .install-test-home.log ]] && break
-  sleep 0.02
-done
-check "T9 build ran" test -e .install-test-home.log
+check "T9 no build" stays_absent .install-test-home.log
 check "T9 clean primary" test -z "$(git status --porcelain)"
 
 echo

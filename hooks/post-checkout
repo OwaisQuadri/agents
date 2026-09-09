@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# post-checkout starts test/build in the background after a branch checkout.
-# It never runs build_run or copies files between worktrees.
-# It changes no checked-out content; output goes to the ignored .install-test-home.log.
-set -euo pipefail
-
-is_branch_checkout="${3:-1}"
-[[ "$is_branch_checkout" == 1 ]] || exit 0
-
-repo_root="$(git rev-parse --show-toplevel)"
-if [[ -x "$repo_root/test/build" ]]; then
-  ("$repo_root/test/build" >"$repo_root/.install-test-home.log" 2>&1 &)
-fi
+# post-checkout stays inert for every Git checkout event.
+# It never starts a compiler or sandbox build, copies worktree files, or changes content.
+exit 0

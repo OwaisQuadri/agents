@@ -39,8 +39,11 @@ you lean on a price argument.
 Run the following command before a tier change and after a registry refresh:
 
 ```sh
-cargo run --quiet --manifest-path tools/tier-dispatch/Cargo.toml -- \
-  --verify-registry --tiers-file config/model-tiers.json
+binary="$(cargo build --release --quiet --message-format=json \
+  --manifest-path tools/tier-dispatch/Cargo.toml \
+  | jq -r 'select(.reason == "compiler-artifact" and .target.name == "tier-dispatch" and .executable != null) | .executable' \
+  | tail -n 1)"
+"$binary" --verify-registry --tiers-file config/model-tiers.json
 ```
 
 Exit 0 means every tier entry resolves in the registry. Exit 1 names each missing tier

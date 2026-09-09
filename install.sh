@@ -27,6 +27,7 @@ for arg in "$@"; do
     --test) IS_TEST=1; REPO_TARGET="$SCRIPT_DIR"; HOME_TARGET="$SCRIPT_DIR/.install-test-home" ;;
   esac
 done
+[[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
 SIMSLIM_PROFILE="$REPO_TARGET/config/simslim/main.json"
 if [[ -f "$SIMSLIM_PROFILE" ]]; then
   if ! command -v jq >/dev/null 2>&1; then
@@ -45,13 +46,43 @@ if [[ -f "$SIMSLIM_PROFILE" ]]; then
     exit 1
   fi
 fi
+if (( ! IS_DRY )); then
+  INSTALL_LOCK_DIR="$HOME_TARGET/.cache/agents"
+  INSTALL_LOCK_TIMEOUT_SECONDS="${INSTALL_LOCK_TIMEOUT_SECONDS:-1800}"
+  [[ "$INSTALL_LOCK_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || { echo "FATAL: INSTALL_LOCK_TIMEOUT_SECONDS must be a nonnegative integer." >&2; exit 2; }
+  mkdir -p "$INSTALL_LOCK_DIR"
+  exec 9>"$INSTALL_LOCK_DIR/install.lock"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! command -v lockf >/dev/null 2>&1; then
+      echo "FATAL: lockf is required to serialize installation on macOS." >&2
+      exit 1
+    elif ! lockf -s -t "$INSTALL_LOCK_TIMEOUT_SECONDS" 9; then
+      echo "FATAL: timed out waiting for $INSTALL_LOCK_DIR/install.lock; retry installation." >&2
+      exit 75
+    fi
+  elif ! command -v flock >/dev/null 2>&1; then
+    echo "FATAL: flock is required to serialize installation on this platform." >&2
+    exit 1
+  elif ! flock -w "$INSTALL_LOCK_TIMEOUT_SECONDS" 9; then
+    echo "FATAL: timed out waiting for $INSTALL_LOCK_DIR/install.lock; retry installation." >&2
+    exit 75
+  fi
+fi
 SKILLS_ROOT="$HOME_TARGET/.agents/skills"
 STAMP="$(date +%Y%m%d)"
 
 plan() { echo "plan: $*"; }
 
+INSTALL_TEMPORARY=""
+cleanup_install_temporary() {
+  [[ -z "$INSTALL_TEMPORARY" ]] || rm -f "$INSTALL_TEMPORARY"
+}
+trap cleanup_install_temporary EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 run() {
-  if (( IS_DRY )); then echo "dry:  $*"; else "$@"; fi
+  if (( IS_DRY )); then echo "dry:  $*"; else "$@" 9>&-; fi
 }
 
 # move (or copy, for single files) an existing path to a .pre-reset-<stamp> backup, verified.
@@ -100,20 +131,64 @@ link_config() {
   fi
 }
 
-# build_tool <crate-dir> <name> — cargo release build plus a ~/.local/bin symlink,
-# skipped with a warning when cargo is absent, a no-op when the crate is absent.
+release_binary_path() {
+  local crate="$1" name="$2" target_dir binary candidate
+  local -a candidates=()
+  if command -v cargo >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    target_dir="$(cd "$REPO_TARGET" && cargo metadata --format-version 1 --no-deps --manifest-path "$crate/Cargo.toml" 9>&- \
+      | jq -r '.target_directory')"
+  else
+    target_dir="${CARGO_TARGET_DIR:-$crate/target}"
+    [[ "$target_dir" == /* ]] || target_dir="$REPO_TARGET/$target_dir"
+  fi
+  [[ -z "${CARGO_BUILD_TARGET:-}" ]] || target_dir="$target_dir/$CARGO_BUILD_TARGET"
+  binary="$target_dir/release/$name"
+  if [[ ! -x "$binary" && -z "${CARGO_BUILD_TARGET:-}" ]]; then
+    for candidate in "$target_dir"/*/release/"$name"; do
+      [[ -x "$candidate" ]] && candidates+=("$candidate")
+    done
+    (( ${#candidates[@]} != 1 )) || binary="${candidates[0]}"
+  fi
+  printf '%s\n' "$binary"
+}
+
 build_tool() {
-  local crate="$1" name="$2"
+  local crate="$1" name="$2" built installed stale
   [[ -f "$crate/Cargo.toml" ]] || return 0
   if ! command -v cargo >/dev/null 2>&1; then
     echo "warn: cargo not found, skipping the $name build" >&2
     return 0
   fi
+  installed="$HOME_TARGET/.local/lib/agents-tools/$name"
   plan "build $crate (release)"
-  run cargo build --release --quiet --manifest-path "$crate/Cargo.toml"
+  if (( IS_DRY )); then
+    built="$(release_binary_path "$crate" "$name")"
+    run cargo build --release --quiet --manifest-path "$crate/Cargo.toml"
+  elif ! command -v jq >/dev/null 2>&1; then
+    echo "FATAL: jq is required to locate the $name Cargo artifact." >&2
+    exit 1
+  else
+    built="$(cd "$REPO_TARGET" && cargo build --release --quiet --message-format=json --manifest-path "$crate/Cargo.toml" 9>&- \
+      | jq -r --arg name "$name" 'select(.reason == "compiler-artifact" and .target.name == $name and .executable != null) | .executable' \
+      | tail -n 1)"
+    [[ -x "$built" ]] || { echo "FATAL: Cargo did not report the $name executable." >&2; exit 1; }
+  fi
+  plan "install $built -> $installed"
+  if (( ! IS_DRY )); then
+    mkdir -p "$(dirname "$installed")"
+    for stale in "$installed".tmp.*; do
+      rm -f "$stale"
+    done
+    if [[ ! -f "$installed" ]] || ! cmp -s "$built" "$installed"; then
+      INSTALL_TEMPORARY="$installed.tmp.$$"
+      install -m 755 "$built" "$INSTALL_TEMPORARY"
+      mv "$INSTALL_TEMPORARY" "$installed"
+      INSTALL_TEMPORARY=""
+    fi
+  fi
   plan "ensure $HOME_TARGET/.local/bin"
   run mkdir -p "$HOME_TARGET/.local/bin"
-  link "$HOME_TARGET/.local/bin/$name" "$crate/target/release/$name"
+  link "$HOME_TARGET/.local/bin/$name" "$installed"
 }
 
 # json_update <file> <jq-args...> — rewrite a JSON file ('{}' when absent) through a jq
@@ -154,7 +229,6 @@ retire_to_trash() {
   [[ "$actual_count" == "$expected_count" ]] || { echo "FATAL: retired path count mismatch for $src" >&2; exit 1; }
 }
 
-[[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
 (( IS_DRY )) && plan "dry run — printing, not executing"
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -166,12 +240,12 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     plan "skip SimSlim installation (sandbox install)"
   elif ! command -v brew >/dev/null 2>&1; then
     echo "warn: Homebrew not found, skipping SimSlim installation" >&2
-  elif brew list --formula mobai-app/tap/simslim >/dev/null 2>&1; then
+  elif brew list --formula mobai-app/tap/simslim 9>&- >/dev/null 2>&1; then
     plan "upgrade SimSlim through Homebrew"
-    brew upgrade mobai-app/tap/simslim || echo "warn: SimSlim upgrade failed" >&2
+    brew upgrade mobai-app/tap/simslim 9>&- || echo "warn: SimSlim upgrade failed" >&2
   else
     plan "install SimSlim through Homebrew"
-    brew install mobai-app/tap/simslim || echo "warn: SimSlim installation failed" >&2
+    brew install mobai-app/tap/simslim 9>&- || echo "warn: SimSlim installation failed" >&2
   fi
 else
   plan "skip SimSlim installation (macOS only)"
@@ -307,9 +381,7 @@ else
   fi
 fi
 
-# 7. self-installing pull hooks: a pull that changes the skill set re-runs this installer;
-#    post-checkout starts each worktree's sandbox build without copying checkout content;
-#    pre-push rejects any push that updates main, so main only moves through a PR
+# 7. self-installing pull hooks: pull updates rerun installation, while checkout does no build.
 if [[ -d "$REPO_TARGET/.git/hooks" ]]; then
   link "$REPO_TARGET/.git/hooks/post-merge" "$REPO_TARGET/install.sh"
   link "$REPO_TARGET/.git/hooks/post-rewrite" "$REPO_TARGET/install.sh"
@@ -324,8 +396,9 @@ done
 build_tool "$REPO_TARGET/skills/hq" hq-state
 
 TOOL_SYNC_CRATE="$REPO_TARGET/tools/tool-sync"
-TOOL_SYNC_BIN="$TOOL_SYNC_CRATE/target/release/tool-sync"
 build_tool "$TOOL_SYNC_CRATE" tool-sync
+TOOL_SYNC_BIN="$HOME_TARGET/.local/lib/agents-tools/tool-sync"
+[[ -x "$TOOL_SYNC_BIN" ]] || TOOL_SYNC_BIN="$(release_binary_path "$TOOL_SYNC_CRATE" tool-sync)"
 
 if [[ -f "$TOOL_SYNC_CRATE/Cargo.toml" && ! -x "$TOOL_SYNC_BIN" ]]; then
   echo "FATAL: tool-sync is not built; run: cargo build --release --manifest-path $TOOL_SYNC_CRATE/Cargo.toml" >&2
@@ -338,7 +411,7 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
   )
   (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
   plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
-  "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}"
+  "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}" 9>&-
 fi
 
 build_tool "$REPO_TARGET/tools/pr-review-filter" pr-review-filter
@@ -457,7 +530,7 @@ if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 && "$(uname
     exit 1
   fi
   plan "install pinned parakeet-mlx 0.5.2"
-  uv tool install --reinstall "parakeet-mlx==0.5.2"
+  uv tool install --reinstall "parakeet-mlx==0.5.2" 9>&-
 else
   plan "skip local transcription setup (dry run or sandbox install)"
 fi
@@ -557,7 +630,7 @@ else
     LABEL="$(basename "$PLIST_SRC" .plist)"
     PLIST_DEST="$LAUNCHD_AGENTS_DIR/$LABEL.plist"
     ALREADY_LOADED=0
-    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && ALREADY_LOADED=1
+    launchctl print "gui/$(id -u)/$LABEL" 9>&- >/dev/null 2>&1 && ALREADY_LOADED=1
     if [[ -f "$PLIST_DEST" ]] && diff -q "$PLIST_SRC" "$PLIST_DEST" >/dev/null 2>&1; then
       plan "ok   $LABEL launchd plist already current"
       continue
@@ -566,10 +639,10 @@ else
     if (( ! IS_DRY )); then
       mkdir -p "$LAUNCHD_AGENTS_DIR"
       cp "$PLIST_SRC" "$PLIST_DEST"
-      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
-      launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST"
+      launchctl bootout "gui/$(id -u)/$LABEL" 9>&- >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$PLIST_DEST" 9>&-
       if (( ! ALREADY_LOADED )); then
-        launchctl kickstart "gui/$(id -u)/$LABEL"
+        launchctl kickstart "gui/$(id -u)/$LABEL" 9>&-
         plan "kickstart $LABEL (first install on this device)"
       fi
     fi
