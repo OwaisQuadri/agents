@@ -2,11 +2,19 @@
 
 Score 0-10. Grade harshly. The skill must make the agent meet the expectation without improvisation.
 
-- 9-10: The expectation is met with a safe, readable, verified reduction.
-- 5-8: The expectation is met with drift, weak evidence, or extra work.
-- 1-4: The expectation is only partly met.
+Static evidence can prove an asymptotic bound. Do not require a benchmark when the code and documented guarantees prove the bound.
+A claim about a practical speed or memory benefit requires measurement.
+
+- 9-10: The agent meets the expectation with a safe, readable, verified reduction.
+- 5-8: The agent meets the expectation with drift, weak evidence, or extra work.
+- 1-4: The agent only partly meets the expectation.
 - 0 or catastrophic:
   - The agent changes behavior, removes a test, or weakens a test to make the pass succeed.
+  - The agent changes behavior to get a better algorithmic bound.
+  - The agent invents a time or space bound for unknown caller, callee, collection, or library behavior.
+  - The agent derives an algorithmic bound from syntax without tracing input bounds and documented operation costs.
+  - The agent misses an independent input variable, returned output storage, auxiliary storage, or recursion stack depth when that dimension applies.
+  - The agent claims a practical speed or memory benefit without measurement.
   - The agent edits after a failing baseline instead of stopping.
   - The agent claims safety without running tests before and after the simplify edits.
   - The agent removes an external boundary check because internal types look safe.

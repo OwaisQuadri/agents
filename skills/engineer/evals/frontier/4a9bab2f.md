@@ -8,7 +8,6 @@ description: >-
   work on (pick-task), brainstorming future work (ideate), and pure research questions
   with no code change attached (dispatch the research workflow directly).
 metadata:
-  minimum-tier: T3
   short-description: Research, plan, build, simplify, test, sign off, land — one task at a time
 ---
 
@@ -19,8 +18,8 @@ IN:  a task \u2014 a backend id + short/long from `/pick-task`, or a plain descr
      none is given, step 0 dispatches `/pick-task` and uses its pick
 OUT: the change landed through `/git-sync`, with a PR when the repo has a remote.
      Without a remote, `/git-sync` lands a local squash merge.
-     The landed change includes the signed manual-test checklist and applicable visual evidence.
-     The required `.context/<task-slug>/simplify.md` report remains local working evidence under `.context/` and is never staged.
+     It includes the signed manual-test checklist and applicable visual evidence.
+     It includes the required `.context/<task-slug>/simplify.md` report.
      Working notes stay in the gitignored `.context/<task-slug>/` directory.
 
 ## working notes
@@ -114,7 +113,7 @@ and fold the deviation back into `plan.md` rather than quietly absorbing it.
 
 Run `/simplify` on the completed implementation before any fresh-context test or review starts.
 
-Require `/simplify` to run its baseline, complexity review, final tests, formatter, and static checks. Fix a Simplify failure and rerun the affected check. Do not continue while a required check is failing.
+Require `/simplify` to run its baseline, complexity review, final tests, formatter, and static checks. Fix a Simplify failure and rerun the affected check. Stop only while a required check remains failing.
 
 Record the full simplify report in `.context/<task-slug>/simplify.md`. Continue after either a no-edit report or an accepted edit when all required checks pass.
 

@@ -8,19 +8,17 @@ description: >-
   work on (pick-task), brainstorming future work (ideate), and pure research questions
   with no code change attached (dispatch the research workflow directly).
 metadata:
-  minimum-tier: T3
-  short-description: Research, plan, build, simplify, test, sign off, land — one task at a time
+  short-description: Research, plan, build, test, sign off, land — one task at a time
 ---
 
 # engineer
 
 JOB: carry one task from a research base to a landed, signed-off change
-IN:  a task \u2014 a backend id + short/long from `/pick-task`, or a plain description; if
-     none is given, step 0 dispatches `/pick-task` and uses its pick
+IN:  a task \u2014 a backend id + short/long from `/pick-task`, or a plain description.
+     If no task exists, step 0 dispatches `/pick-task` and uses its pick.
 OUT: the change landed through `/git-sync`, with a PR when the repo has a remote.
      Without a remote, `/git-sync` lands a local squash merge.
-     The landed change includes the signed manual-test checklist and applicable visual evidence.
-     The required `.context/<task-slug>/simplify.md` report remains local working evidence under `.context/` and is never staged.
+     It includes the signed manual-test checklist and applicable visual evidence.
      Working notes stay in the gitignored `.context/<task-slug>/` directory.
 
 ## working notes
@@ -36,34 +34,34 @@ a step that touches tracked repo paths commits those real paths directly.
 No task on hand \u2192 dispatch `/pick-task`, use what it returns, continue. A task already
 in hand (an id, a clear description) skips straight to Research.
 
-A backend-tracked task (GitHub Issue, Linear item, `roadmap.json` entry) gets flipped
-to in-progress before Research starts: GitHub sets the project's native Status field
-(`task-graph`'s convention \u2014 `skills/task-graph/scripts/gh-issue-field.sh <id>
-Status in-progress`); Linear moves the issue to its "In
-Progress" state via MCP(Model Context Protocol); `roadmap.json` sets the entry's
-`status` field to `in progress`. A one-off description with no backend id has no
-status to flip \u2014 skip.
+Set a backend-tracked task (GitHub Issue, Linear item, `roadmap.json` entry) to in-progress before Research starts.
+For GitHub, set the project's native Status field with `skills/task-graph/scripts/gh-issue-field.sh <id> Status in-progress` (`task-graph`'s convention).
+For Linear, MCP(Model Context Protocol) moves the issue to its "In Progress" state.
+For `roadmap.json`, set the entry's `status` field to `in progress`.
+A one-off description with no backend id has no status to flip \u2014 skip.
 
 Record the id in `.context/branch-tickets.md` (append, one id per line; create the
-file if this is the first task the branch has picked up). This is how Close (step 7)
-finds every ticket the branch carries \u2014 including a second task picked up mid-branch
-(next paragraph) \u2014 without re-deriving it from memory.
+file if this is the first task the branch has picked up). This is how Close (step 7) finds every ticket that the branch carries.
+The record includes a second task that the branch picks up (next paragraph), without a memory-based derivation.
 
 **Folding a second ticket into the same branch.** Nothing here forces a new branch
-per task \u2014 engineer and `/git-sync` only branch away from main when work is starting
-from main itself (`/git-sync` step 3). Running engineer again for a new task while
-already on a feature branch with unfinished or unlanded work continues on that same
-branch by default: flip the new task's status the same way, append its id to
-`.context/branch-tickets.md` alongside the first, and carry it through Research \u2192
-Plan \u2192 Implement \u2192 Simplify \u2192 Test like any task. Both land through one Close.
+per task. Engineer and `/git-sync` only branch away from main when work starts
+from main itself (`/git-sync` step 3). Running engineer again for a new task continues on the same branch by default.
+
+This applies when that feature branch has unfinished or unlanded work.
+Flip the new task's status the same way.
+Append its id to `.context/branch-tickets.md` alongside the first.
+Carry it through Research \u2192 Plan \u2192 Implement \u2192 Simplify \u2192 Test like any task.
+Both land through one Close.
 
 ## 1. Research
 
-Dispatch the research workflow (`workflows/research-sweep/`) with a goal built from the
-task: what exists today, how it's currently built, what a change would touch, and
-whatever external angles the task needs (web, academic, design/UX(user experience),
-news \u2014 the workflow's plan node decides which apply). Write the returned findings
-blocks to `.context/<task-slug>/research.md`.
+Build a goal from the task for the research workflow (`workflows/research-sweep/`).
+The goal covers what exists today, how it is currently built, and what a change would touch.
+It also covers the external angles that the task needs (web, academic, design/UX(user experience), news).
+The workflow's plan node decides which angles apply.
+Dispatch the workflow with the goal.
+Write the returned findings blocks to `.context/<task-slug>/research.md`.
 
 **Check it before building on it.** Show the summary, wait for a go. A wrong finding
 caught here is the cheapest catch in the whole run \u2014 every step after this one plans
@@ -74,49 +72,50 @@ against it.
 Write `.context/<task-slug>/plan.md` covering, at minimum:
 
 - **UX(user experience) decisions** \u2014 the before/after, the chosen interaction pattern
-  and what was rejected, the intended feeling and action. Pull in `/vocabulary` for
+  and the rejected option, the intended feeling and action. Pull in `/vocabulary` for
   precise terms and `/show-me` for a before/after diagram where a picture says it
   faster than prose.
 - **Data-structure decisions** \u2014 every type, field, and persisted shape, declarations
   only (no bodies yet). Every externally-owned shape gets probed against the real
   thing, not read off documentation \u2014 paste the probe output beside the declaration.
   `/show-me` for the shape diagram when there's more than a couple of types in play.
-- **Harness-shaped tasks route through /ai-author first** — a checker in `tools/`, a
-  hook, or a skill/agent/workflow edit is harness-shaped. Such a task runs /ai-author's
+- **Harness-shaped tasks route through /ai-author first** — treat a checker in `tools/`, a
+  hook, or a skill/agent/workflow edit as harness-shaped. Such a task runs /ai-author's
   should-it-exist gate before you write this plan. /ai-author routes the work to
   tool-author, skill-author, agent-author, or workflow-author. Product-code tasks skip
   this bullet.
-- **TDD or not** \u2014 name the call and why: tests-first suits a shape with a clear
-  contract and edge cases worth pinning down before code exists; tests-after suits
-  exploratory or UI-heavy work where the shape itself is still moving. A tests-after
-  plan writes and runs its covering tests during Implement, before Simplify. Either way,
-  Test (step 5) still runs.
-- Anything in `invariants.md` (repo root) that bears on this task \u2014 read it here, the
-  same way any engineer would check standing rules before committing to a shape.
+- **TDD or not** \u2014 name the call and why.
+  Tests-first suits a shape with a clear contract and edge cases that need tests before code exists.
+  Tests-after suits exploratory or UI-heavy work where the shape itself is still moving.
+  Either way, Test (step 5) still runs.
+- Read anything in `invariants.md` (repo root) that bears on this task.
+  Check these standing rules here before you commit to a shape, as any engineer would.
 
-**Get feedback on the plan before building it.** If this session has
-`plannotator_submit_plan` available, write the plan and submit it through that tool \u2014
-its approve/deny-with-feedback loop (write, submit, revise on denial, resubmit) is the
-gate: UX and data-structure decisions live as sections in the one file it reviews, not
-separate bespoke protocols. Without that tool available, show `plan.md` directly and
-wait for an explicit yes before moving on. Either way: no manifest, no snapshot
-hashing \u2014 the plan file itself plus a one-line log of the verdict is the record.
+**Get feedback on the plan before building it.**
+
+If this session has `plannotator_submit_plan` available, write the plan and submit it through that tool.
+Its approve/deny-with-feedback loop is the gate.
+The loop requires you to write, submit, revise on denial, and resubmit.
+UX and data-structure decisions live as sections in the one file that it reviews, not separate bespoke protocols.
+
+Without that tool available, show `plan.md` directly and wait for an explicit yes before moving on.
+Either way, do not make a manifest or use snapshot hashing.
+The plan file and a one-line log of the verdict form the record.
 
 ## 3. Implement
 
 Build it. Default to simple and sequential \u2014 one continuous pass through the plan.
-Reach for `/task-graph` only when the task is genuinely large enough that disjoint-file
-parallel work pays for its own coordination cost; that's a deliberate, named call at
-this step, never the default path. When a build deviates from the plan, say so plainly
+Reach for `/task-graph` only when the task is large enough that disjoint-file parallel work covers its coordination cost.
+Make this a deliberate, named call at this step; never use it as the default path. When a build deviates from the plan, say so plainly
 and fold the deviation back into `plan.md` rather than quietly absorbing it.
 
 ## 4. Simplify
 
 Run `/simplify` on the completed implementation before any fresh-context test or review starts.
 
-Require `/simplify` to run its baseline, complexity review, final tests, formatter, and static checks. Fix a Simplify failure and rerun the affected check. Do not continue while a required check is failing.
+Require `/simplify` to run its baseline, complexity review, final tests, formatter, and static checks. Stop when any required check fails.
 
-Record the full simplify report in `.context/<task-slug>/simplify.md`. Continue after either a no-edit report or an accepted edit when all required checks pass.
+Record the full simplify report in `.context/<task-slug>/simplify.md`. Continue when the report makes no edit and all required checks pass.
 
 Test and review the post-simplify difference. The simplify checks never replace independent testing or review.
 
@@ -160,16 +159,19 @@ verdict. This is the last stop before the change leaves the machine.
 
 ## 7. Close
 
-Hand off to `/git-sync` for the whole landing sequence \u2014 committing, pushing, opening
-or updating the PR (or the local squash merge when there's no remote), and pruning
-branches main already contains. Pass `.context/<task-slug>/visual-evidence.jsonl` when
-it exists. Pass every id from `.context/branch-tickets.md` along: for each GitHub Issue
-id, `/create-pr` adds a `Closes #<id>` line to the PR
-body, which is what makes merging the PR auto-close the issue; for each
-`roadmap.json` id (no PR-merge equivalent exists there) flip its `status` to `done`
-as part of this same step, not left for a later run; a Linear item with no linked
-GitHub issue gets its state moved to "Done" directly via MCP(Model Context Protocol),
-same reasoning. Never reimplement any of that here.
+Hand off to `/git-sync` for the whole landing sequence.
+The sequence includes committing, pushing, opening or updating the PR (or the local squash merge when there is no remote).
+It also prunes the branches that main already contains. Pass `.context/<task-slug>/visual-evidence.jsonl` when
+it exists.
+
+Pass every id from `.context/branch-tickets.md` along.
+For each GitHub Issue id, `/create-pr` adds a `Closes #<id>` line to the PR body.
+This makes the PR merge auto-close the issue.
+
+For each `roadmap.json` id, flip its `status` to `done` as part of this same step.
+No PR-merge equivalent exists there, so do not leave this work for a later run.
+Move a Linear item with no linked GitHub issue to "Done" directly via MCP(Model Context Protocol), for the same reason.
+Never reimplement any of that here.
 
 ## evals
 
