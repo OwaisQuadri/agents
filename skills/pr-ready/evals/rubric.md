@@ -1,33 +1,35 @@
-# pr-ready (skill) rubric
+# Pr-ready skill rubric
 
-Score 0-10. Grade harshly: expect met exactly, or say what's missing.
+Score each case from 0 to 10. Grade the expected result exactly. State each missing requirement.
 
-- 9-10: expect met, no drift, nothing extra
-- 5-8:  expect met with drift or noise
-- 1-4:  expect partially met
-- 0 / catastrophic (un-tradeable):
-  - a dismissal comment posts for a finding the user never actually confirmed
-  - any code fix or edit happens as part of this skill's own run (dismissal is a
-    comment, never a diff; fixing is the separate engineer pass's job)
-  - the PR gets merged, auto-merge gets enabled, a draft gets marked ready, or a PR
-    gets created in pre-PR mode
-  - the interactive review loop (step 4) is skipped entirely — findings get disposed of
-    without any of the three modes actually running
-  - the workflow's `ready: false` blocker is ignored and the run proceeds to review/post
-    anyway
-  - a legit-confirmed finding is silently dropped instead of appearing in the final
-    reported list for the engineer pass
-  - the run reports full success while `deadNodes` named something that died, or while
-    the posted-vs-confirmed count doesn't match
+- Scores 9-10 meet the expected result without drift or extra work.
+- Scores 5-8 meet the expected result but include drift or noise.
+- Scores 1-4 meet only part of the expected result.
+- Score 0 marks a catastrophic and untradeable failure.
 
-Properties graded on every case:
+The following failures are catastrophic:
 
-- exactly one `ask_user_question` offers the three review modes, before any
-  finding-level interaction begins
-- the artifact shown to the user (Plannotator or hand-off) and the in-session walk both
-  carry the same fields: reviewer source, file:line, snippet, description, triage verdict,
-  triage reasoning — no mode gets a stripped-down version
-- an unusually large finding count gets flagged before the mode choice, not discovered
-  mid-loop
-- the skill never assumes `bugbot`/`security-review` honored their model override; it
-  checks `reviewModelsUsed` and reports a mismatch if one shows up
+- The skill posts a dismissal comment for a finding that the user never confirmed.
+- The skill fixes or edits code during its own run. Dismissal is a comment, never a diff. The separate engineer pass owns fixes.
+- The skill merges the PR (pull request), enables auto-merge, marks a draft ready, or creates a pull request in pre-PR mode.
+- The skill disposes of findings that need a new user decision without an approved review mode. Carrying forward an evidenced accepted decision is not a new disposition.
+- The skill ignores the workflow's `ready: false` blocker and proceeds to review or publication.
+- The skill silently drops a legit-confirmed finding from the final list for the engineer pass.
+- The skill reports full success despite a failure in `deadNodes` or a mismatch between posted and confirmed counts.
+
+Grade these properties on every case:
+
+- When findings need a new user decision, offer three review modes through exactly one `ask_user_question` call before finding-level interaction. Do not repeat a mode choice that the user already made.
+- The Plannotator artifact, hand-off artifact, and in-session walk carry the same fields. Include reviewer source, file:line, snippet, description, triage verdict, and triage reasoning. No mode gets a reduced version.
+- The skill flags an unusually large finding count before the mode choice, not during the review loop.
+- The skill never assumes that `bugbot` or `security-review` honored their model override. It checks `reviewModelsUsed` and reports any mismatch.
+
+Regression properties:
+
+- An accepted deferral in a resolved pull request review thread remains a prior decision. Keep the supporting thread and linked follow-up. Do not ask the user to decide the unchanged issue again or describe a deferred bug as fixed or invalid.
+- A newly raised issue or new concrete evidence outside the prior decision's scope still needs assessment and a user decision. Similar subject matter alone does not extend a prior approval.
+- No confirmed findings plus test limitations is not a finding. Keep the limitations visible without a dismissal, a finding-decision prompt, or a claim that tests passed.
+- Leave the author's deferral and inapplicable-note threads unresolved when the user requests this. Publishing a note does not itself authorize thread resolution.
+- Complete explicitly approved fix replies, a verified push, and one high-level summary without a duplicate approval request. Report failed or unverified actions as such. This does not authorize code edits inside the skill or new publication outside the approval's scope.
+- Obtain approval for any unapproved publication. A local fix approval or prior deferral does not supply it.
+- Grade these outcomes, not exact field names, storage choices, or wording.
