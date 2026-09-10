@@ -33,7 +33,7 @@ name = "pi-subagents"
 platforms = ["macos", "linux"]
 commands = []
 pi_package = "."
-source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "dd6c1cb006143f3b9b5d5b81a88e7e724397e631" }
+source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "c3e8f3098b9f043589a2d26ba8f3d88af1e49bcd" }
 installer = { command = "/bin/sh", args = ["-c", "npm ci && npm run bundle"], preview_args = ["-c", "npm --version"] }
 
 [[tools]]
