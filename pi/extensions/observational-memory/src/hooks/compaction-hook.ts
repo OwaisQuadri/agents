@@ -110,6 +110,25 @@ export function canSkipObserverWait(
 	return true;
 }
 
+async function waitForObserversIdle(runtime: Runtime, signal: AbortSignal | undefined): Promise<void> {
+	if (!signal) {
+		await runtime.whenObserversIdle();
+		return;
+	}
+	if (signal.aborted) throw signal.reason ?? new Error("Compaction cancelled");
+	let rejectAbort!: (reason: unknown) => void;
+	const abort = new Promise<void>((_resolve, reject) => {
+		rejectAbort = reject;
+	});
+	const onAbort = () => rejectAbort(signal.reason ?? new Error("Compaction cancelled"));
+	signal.addEventListener("abort", onAbort, { once: true });
+	try {
+		await Promise.race([runtime.whenObserversIdle(), abort]);
+	} finally {
+		signal.removeEventListener("abort", onAbort);
+	}
+}
+
 export function registerCompactionHook(pi: ExtensionAPI, runtime: Runtime): void {
 	pi.on("session_before_compact", async (event: any, ctx: any) => {
 		if (!runtime.enabled || runtime.config.passive) return undefined;
@@ -140,7 +159,7 @@ export function registerCompactionHook(pi: ExtensionAPI, runtime: Runtime): void
 			runtime.lastCompactionObserverWait = skip ? "skipped" : "waited";
 			if (!skip) {
 				if (hasUI) ctx.ui.notify("om: waiting for in-flight observers before folding…", "info");
-				await runtime.whenObserversIdle();
+				await waitForObserversIdle(runtime, event.signal);
 				branch = (ctx.sessionManager?.getBranch?.() as Entry[] | undefined) ?? (event.branchEntries as Entry[]);
 				snap = snapCutoff(branch, firstKeptEntryId, tailTokens);
 			}
@@ -162,6 +181,9 @@ export function registerCompactionHook(pi: ExtensionAPI, runtime: Runtime): void
 					details: projection.details,
 				},
 			};
+		} catch (error) {
+			if (event.signal?.aborted) return { cancel: true };
+			throw error;
 		} finally {
 			runtime.compactHookInFlight = false;
 		}

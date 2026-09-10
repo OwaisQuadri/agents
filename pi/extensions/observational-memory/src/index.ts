@@ -14,7 +14,7 @@ import { registerCompactCommand } from "./commands/compact.js";
 import { registerConsolidateCommand } from "./commands/consolidate.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerCompactionHook } from "./hooks/compaction-hook.js";
-import { registerCompactionTrigger } from "./hooks/compaction-trigger.js";
+import { publishCompactionPolicy, registerCompactionTrigger } from "./hooks/compaction-trigger.js";
 import { registerConsolidatorTrigger } from "./hooks/consolidator-trigger.js";
 import { registerObserverTrigger } from "./hooks/observer-trigger.js";
 import { OM_ENABLED, type Entry } from "./ledger/index.js";
@@ -59,6 +59,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 		runtime.applyContextWindow(ctx.model?.contextWindow);
 		const contextTokens = ctx.getContextUsage?.()?.tokens ?? null;
 		runtime.refreshFooterGauges(ctx.sessionManager.getBranch() as Entry[], contextTokens);
+		if (publishCompactionPolicy(pi, runtime, ctx)) return;
 		if (contextTokens == null || contextTokens < runtime.config.compactAtContextTokens || runtime.compactInFlight) return;
 		runtime.compactInFlight = true;
 		ctx.compact({
@@ -96,6 +97,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 				runtime.abortAllWorkers();
 				runtime.status.detach();
 			}
+			publishCompactionPolicy(pi, runtime, ctx);
 			runtime.refreshFooterGauges(ctx.sessionManager.getBranch() as Entry[], ctx.getContextUsage?.()?.tokens ?? null);
 			if (ctx.hasUI) ctx.ui.notify(`om ${next ? "enabled" : "disabled"}`, "info");
 		},
