@@ -38,7 +38,7 @@ A per-home lock serializes concurrent installer calls. The installer skips uncha
 | `skill-author` / `agent-author` / `workflow-author` | deep authoring craft per artifact type |
 | `agent-config-reset` | audit a sprawling agent setup and, gated on approval, reset it |
 | `create-pr` | commit, push, and open the pull request |
-| `engineer` | research → plan → implement → test → signoff → close for one picked task, gated at plan review and signoff, landed through `git-sync` |
+| `engineer` | research → plan → implement → simplify → test → signoff → close for one picked task, gated at plan review and signoff, landed through `git-sync` |
 | `pick-task` | interactively grills you and lands on one task to work on, from an existing backend or a hand-off to `ideate` |
 | `ideate` | brainstorm and file new work: research, lateral reframing, grilling, then a human-gated filing step |
 | `hq` | front door over every project: gates-first digest, worktree-isolated dispatch, drill-down into any project agent; two-stage launchd heartbeat keeps quiet cycles at zero tokens |
