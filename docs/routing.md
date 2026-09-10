@@ -191,6 +191,7 @@ The repository guidance tells the runner to flag a session below that tier.
 A floor goes on only where a cheaper model fails in a way the user cannot cheaply catch.
 That test, not seniority, decides:
 
+- T5 for `split-to-prs`, because its complete comparison selected the T5-T6 suffix.
 - T4 for judgment, taste, and ambiguity, where a wrong answer is expensive and no command
   proves it wrong. The four authoring skills, `agent-config-reset`, `byline`, `ladder`.
 - T3 for bounded work carrying real blast radius or structure a small model loses.

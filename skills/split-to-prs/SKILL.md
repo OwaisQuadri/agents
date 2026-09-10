@@ -1,0 +1,175 @@
+---
+name: split-to-prs
+description: Use when the user asks to split current work, a branch, or an existing Pull Request into small Pull Requests. Prefer a GitHub stack. Skip when the user wants one Pull Request without a split.
+metadata:
+  minimum-tier: T5
+  short-description: Split work into a GitHub Pull Request stack
+---
+
+# Split to Pull Requests
+
+JOB: Split one body of work into a safe GitHub Pull Request stack.
+IN: The repository state, the target branch, the work to split, and any open Pull Request.
+OUT: An approved stack with verified bases, or a plan that waits for approval.
+
+## hard rules
+
+- If the user requests only a plan, forbids execution, or has not approved execution, run no repository command.
+- Make no mutation in these cases. This ban includes fetches, backup refs, snapshots, patches, worktrees, and stack-plan files.
+- Describe each operation as proposed. Mark each result that the user did not supply as unavailable.
+- This caller constraint overrides all later permission for safety actions before approval.
+- After exact approval, stop if the repository, required files, remote, authentication, or GitHub state is unavailable.
+- Do not infer or fabricate execution. Preserve each supplied snapshot or reference and the existing Pull Request state.
+- Report the approved inventory and intended bases. Mark unavailable commits, URLs, checks, and GitHub base verification.
+- Report all remaining work and each exact blocker.
+- Use plain `git` and GitHub Command Line Interface (`gh`). Do not use Graphite.
+- Preserve all user work. Do not use commands that discard work or rewrite published history.
+- Create a recoverable snapshot before you move work.
+- Before approval, you may fetch dedicated refs, create backup refs, save external snapshots, and write `stack-plan.json`.
+- These safety actions must not move the source branch or source worktree. They must not publish anything.
+- Get approval before any branch or commit mutation, push, Pull Request mutation, or replacement mutation.
+- Stage only the named paths or hunks for one layer. Never use `git add .` or `git add -A`.
+- Make each layer small and coherent. A one-layer stack is valid when the work has one coherent slice.
+- Each dependency must point to an earlier layer.
+- Let independent roots use the target branch. Let parallel leaves share their closest required prerequisite branch.
+- Never add a false dependency to make the stack linear.
+- Prefer a stack unless the user asks for independent Pull Requests.
+
+## steps
+
+1. **Establish the state.** Record the original source `HEAD` before the fetch. Find the remote default branch when the user gives no target.
+   Fetch the target branch into a timestamped local ref without changing the working tree.
+   Record the fetched target tip from that ref. Compare it with `git ls-remote --heads origin <target>`.
+   When the tips differ, fetch the dedicated ref once more. Compare the tips again.
+   Stop if the second comparison still differs.
+   Set `work-base` to `git merge-base <original-source-HEAD> <fetched-target-tip>`. Verify that `work-base` resolves to a commit.
+   Inspect `git status --short --branch`, all diffs, untracked files, branches, worktrees, and commits against the fetched target tip.
+   Run `gh pr list --state open --json number,title,url,headRefName,baseRefName,isDraft`.
+   Find ownership files for all touched paths. Read the repository rules for Pull Request titles.
+   Read ticket context such as `.context/branch-tickets.md` when it exists. Account for each changed path and open Pull Request.
+
+2. **Save a snapshot.** Create a timestamped directory outside the repository. Record the original `HEAD`, branch, status, diffs, and untracked paths.
+   Use `git stash create "pre-split"` to capture tracked changes without changing the working tree.
+   When it returns an object, save that object under `refs/backup/pre-split-<timestamp>` with `git update-ref`.
+   Set `source-ref` to that verified backup reference. Otherwise, set `source-ref` to the recorded original `HEAD`.
+   No stash object on a clean tracked tree is valid. It is not a snapshot failure.
+   Copy each named untracked file into the snapshot directory without changing its repository path.
+   Verify `source-ref` and every copied file. Give the snapshot path, `source-ref`, `work-base`, and fetched target tip in the plan.
+   Preserve all unassigned untracked files only in the external snapshot. Never transfer them into a layer worktree.
+   Preserve the directory until every replacement Pull Request merges or the user approves cleanup.
+
+3. **Draft the stack.** Split by coherent behavior, reviewer ownership, and dependency order.
+   Keep a required foundation before every consumer. Never place a prerequisite after its consumer.
+   List a dependency only when one layer needs another. Let independent layers share a base when no dependency connects them.
+   Write `<snapshot>/stack-plan.json` before any batch action. Include the target, fetched target tip, `work-base`, and existing Pull Request decision.
+   Before approval, run `git diff --binary --unified=0 <work-base> <source-ref> > <snapshot>/source.patch`.
+   For each hunk, record its exact path and hunk header. Save its exact hunk block in a temporary file.
+   The hunk block starts at its `@@` header. It ends before the next hunk or file header.
+   Run `shasum -a 256 <hunk-block-file>` and record the digest in `stack-plan.json`.
+   For every layer, include its order, exact Pull Request title, branch, exact base, purpose, paths or hunk identifiers, checks, and dependencies.
+   Assign each approved untracked path to one layer or mark it as preserved but unassigned.
+   Preserve each required ticket identifier in its Pull Request title. Do not add ticket-system behavior unless repository guidance requires it.
+   Validate the required fields with `jq -e`. Validate that the dependency graph has no cycle.
+   Validate that each base is the target or the head branch of a declared prerequisite.
+   Show how the starting branch and working tree will change. Name all work that will remain after the stack.
+
+4. **Protect an existing Pull Request.** Compare its full diff and commits with the proposed layers.
+   Prefer reuse when the existing Pull Request is one coherent layer. State any proposed base or content change.
+   Otherwise, propose the replacement Pull Requests and the point when the old Pull Request can close.
+   Do not edit, rewrite, close, or replace the existing Pull Request before approval.
+
+5. **Request approval.** Present the complete numbered stack plan and the existing Pull Request decision.
+   Ask the user to approve each exact title, layer, order, base, branch, and replacement decision.
+   Treat a change to any approved value as a new plan.
+   Stop before all branch, commit, push, replacement, and Pull Request creation actions until approval is explicit.
+
+6. **Build the approved stack.** Build layer worktrees in dependency order.
+   Complete and verify every prerequisite commit before you create a child branch or worktree from it.
+   Run `git worktree add -b <approved-head> <worktree-path> <approved-base>` for the next eligible layer.
+   Require each new layer worktree to be clean before the transfer.
+   Never restore a complete tracked file from `source-ref` onto an advanced approved base.
+   Create the tracked work patch with `git diff --binary <work-base> <source-ref> -- <approved-paths>`.
+   A complete-file layer can use the full patch only when no prerequisite layer owns changes in those paths.
+   Copy `<snapshot>/source.patch` to `<layer.patch>` for every hunk layer.
+   Use exact file edits to retain only its approved hunk blocks under the correct file diff headers.
+   Remove every unrelated file section and hunk. Do not use `git add -p`.
+   When layers share a file, exclude all prerequisite hunk identifiers from every later approved set.
+   Recalculate each retained path, header, and SHA-256 digest from `<layer.patch>`.
+   Require the retained set to equal the approved set exactly. Require each identifier once and no extra hunk.
+   Confirm the installed syntax with `git apply -h` before you apply a patch.
+   Run `git -C <layer-worktree-path> apply --3way --index <layer.patch>` without an interactive prompt. Require exit status 0.
+   Run `git -C <layer-worktree-path> diff --name-only --diff-filter=U`. Require the command to return no paths.
+   If Git does not support an option, the apply fails, or an unmerged path remains, stop immediately and report the blocker.
+   Preserve the isolated worktree. Never fall back to a non-three-way apply or commit conflict markers.
+   Do not automatically clean or discard the conflict.
+   Copy each assigned untracked file from the external snapshot to its exact repository-relative path inside that layer's isolated worktree.
+   Stage only those named untracked paths with `git add -- <approved-untracked-paths>`.
+   Keep every preserved but unassigned untracked file outside all layer worktrees.
+   Inspect `git diff --cached --stat`, `git diff --cached`, `git diff`, and `git status --short` after each transfer.
+   Require the status to contain only that layer's approved transferred work.
+   Stop when the staged diff is empty or does not match the layer. Commit only the matching staged diff.
+   Confirm that the isolated worktree is clean after the commit. Run the planned checks before publication.
+
+7. **Publish with GitHub.** Publish layers in dependency order.
+   Confirm that each prerequisite branch exists remotely before a child uses it as a base.
+   Run `/create-pr` from that layer's clean isolated worktree after its commit.
+   Pass its approved title verbatim as an explicit user-approved title. Pass its exact base, ticket identifiers, and applicable visual-evidence manifest.
+   This isolation prevents residual tracked or untracked source work from entering a Pull Request.
+   Keep the split operation here. Let `/create-pr` own one Pull Request without a requested split.
+   Do not repeat `/create-pr` rules for the push, attribution, body, or visual evidence.
+   Keep the ban on force push. Do not close a replacement target until all replacements exist and their bases pass verification.
+
+8. **Update a published stack.** Append fix commits to published branches. Merge each updated prerequisite branch into its descendants.
+   Route each updated layer through `/create-pr` for a normal push. Do not rewrite published history.
+   When repository rules require one commit, propose replacement branches and Pull Requests behind approval.
+
+9. **Verify the stack.** Run `gh pr view <number> --json number,title,url,headRefName,baseRefName,state` for every layer.
+   Verify the exact approved title, head branch, and base branch for each Pull Request.
+   Verify that each base is the target or the head branch of a declared prerequisite.
+   Run `git rev-parse refs/heads/<branch>` for every published layer.
+   Run `git ls-remote --heads origin <branch>` to read its remote branch tip.
+   Compare the object identifiers from these explicit local and remote branch refs. Require them to match.
+   Do not rely only on a remote-tracking reference.
+   Report a failure instead of claiming completion.
+
+10. **Clean verified worktrees.** Start cleanup only after all publication checks pass for a layer.
+    Require `git status --short` to be empty in that layer worktree.
+    Verify that its `HEAD` and explicit local branch ref match the explicit remote branch tip.
+    Verify that its Pull Request metadata and base match the approved plan.
+    After all clean, tip, and Pull Request checks pass, run `git worktree remove <path>`.
+    Do not use `git worktree remove --force` or `rm -rf` for this cleanup.
+    Do not delete any local or remote branch.
+    Retain the worktree when any check fails. Report the failed check and retained path.
+
+## report
+
+For a report-only plan, report that each existing Pull Request stays unchanged and not closed.
+Report snapshot and recovery actions as proposed. If the user supplied them, label them as supplied.
+Report the intended stack and each intended base.
+Use supplied results only. Mark all other commits, URLs, checks, and GitHub base verification as unavailable.
+
+Report all remaining work and the blocker.
+
+Use this exact shape:
+
+```text
+snapshot: <path>; source-ref: <ref or none>; source-ref object: <identifier or none>; work-base: <identifier or unavailable>
+source repository: <final branch/HEAD/status or unavailable>
+snapshot verification: <exact result>; fetched target tip: <identifier or unavailable>; target-tip verification: <exact result or unavailable in report-only or blocked runs>
+preserved untracked: <assigned paths; unassigned paths; or none>
+target: <branch>
+stack:
+1. <title> | <head> -> intended <base> | actual GitHub base <base or unavailable> | <Pull Request URL or not created> | <commit identifier or not committed>
+2. <title> | <head> -> intended <base> | actual GitHub base <base or unavailable> | <Pull Request URL or not created> | <commit identifier or not committed>
+checks:
+- <layer or stack>: <command> -> <exact result>
+worktrees: <removed verified paths; retained paths and failed checks; none; or unavailable in report-only or blocked runs>
+existing Pull Request: <reused, unchanged and not closed, replaced after approval, or none>
+remaining work: <items or none>
+blocker: <reason or none>
+```
+
+## evals
+
+`evals/run.sh` checks the approval boundary, snapshot safety, stack order, base verification, and existing Pull Request handling.
+Run `evals/run.sh --tier T1` for the smallest model-backed check. Run `evals/run.sh` for the full tier set.
