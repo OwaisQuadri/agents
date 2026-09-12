@@ -12,6 +12,28 @@ fi
 has() {
   rg -q "$1" "$definition"
 }
+contains() {
+  rg -Fq -- "$1" "$definition"
+}
+
+write_authority=(
+  'Fetch the latest base branch from origin'
+  'resolve conflicts, preserving'
+  'Make the smallest safe change'
+  'Fix CI failures caused'
+  'Verify before pushing'
+  'merge the latest base'
+  'Stage only verified source fixes'
+  'Batch known fixes into one push'
+  'Integrate the latest remote state'
+  'verified fix commits'
+)
+for phrase in "${write_authority[@]}"; do
+  if contains "$phrase"; then
+    print -u2 "write-capable Ready instruction found: $phrase"
+    exit 1
+  fi
+done
 
 has 'missing input: repo_path' && has 'if \(!repo_path\) return' || { print -u2 'repo_path guard missing'; exit 1; }
 has 'T6_PRIMARY' && has 'T6_FALLBACK' && has 'T5_CHAIN' || { print -u2 'tier chains missing' ; exit 1; }
