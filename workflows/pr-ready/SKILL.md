@@ -33,7 +33,7 @@ REPORT: return findings, decision evidence, context path, model records, and inc
 ```
 
 The verified source snippets and cited decision links are the evidence for each finding.
-The discussion artifact includes the head commit and complete pagination status.
+The discussion artifact includes the remote repository, head ref, head revision, and complete pagination status.
 Missing context blocks a complete verdict. Thread resolution alone proves no accepted decision.
 
 ## Input contract
@@ -43,11 +43,13 @@ Dispatch through `SubagentWorkflow`:
 ```js
 SubagentWorkflow({
   scriptPath: '<repo>/workflows/pr-ready/pr-ready.workflow.js',
-  args: { repo_path: '<absolute repository path>', pr_number: 1364 },
+  args: { repo_path: '<absolute repository path>', repository: 'owner/name', pr_number: 1364 },
 })
 ```
 
-Supply `repo_path`. A missing path returns an error without dispatch.
+Supply `repo_path` and the GitHub `owner/name` as `repository`.
+A missing path returns an error without dispatch.
+A missing repository identity blocks PR mode.
 `pr_number` is optional. The Ready stage checks the current branch for an open PR when no number arrives.
 
 ## Discussion context
@@ -76,6 +78,9 @@ Author-only decision notes remain unchanged unless the user explicitly requests 
   ready: boolean,
   blocker_detail?: string,
   review_context_path?: string | null,
+  repository?: string | null,
+  head_ref?: string | null,
+  head_revision?: string | null,
   reviewModelsUsed?: { bugbot, security_review },
   triageModelUsed?: { model, effort, provider },
   findings: [{

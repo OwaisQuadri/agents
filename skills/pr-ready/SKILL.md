@@ -20,12 +20,13 @@ OUT: a review artifact, new decisions for the user, approved publication links, 
 ## 1. Resolve inputs
 
 Use the active repository unless the user names another path.
+Resolve its GitHub `owner/name` through a read-only command and pass it as `repository`.
 Pass a supplied PR number to the workflow.
 Otherwise leave `pr_number` unset. The Ready stage checks whether the current branch has an open PR.
 
 ## 2. Run the workflow
 
-Use `SubagentWorkflow` to dispatch `workflows/pr-ready/pr-ready.workflow.js` with `{ repo_path, pr_number }`.
+Use `SubagentWorkflow` to dispatch `workflows/pr-ready/pr-ready.workflow.js` with `{ repo_path, repository, pr_number }`.
 The Ready stage reports existing readiness blockers without changing code or Git references.
 The review and triage stages return findings without posting replies or changing thread states.
 

@@ -2,10 +2,12 @@
 set -euo pipefail
 here=${0:A:h}
 candidate=${1:-}
-write_authority_pattern='Fetch the latest base branch from origin|resolve conflicts, preserving|Make the smallest safe change|Fix CI failures caused|Verify before pushing|merge the latest base|Stage only verified source fixes|Batch known fixes into one push|Integrate the latest remote state|verified fix commits|(^|[^[:alnum:]_])(git[[:space:]]+(fetch|merge|rebase|add|commit|push)|(fetch|merge|rebase|commit|push|stage|edit|fix|resolve|update)[[:space:]]+(the|this|these|a|an|changes?|result|branch|base|code|source|files?|checks?|failures?)|commit[[:space:]]+(and|or)[[:space:]]+push)([^[:alnum:]_]|$)'
-write_prohibition_pattern='(^|[^[:alnum:]_])(do not|does not|don.t|never|must not|may not|cannot|can.t|without)([^[:alnum:]_]|$)'
+write_authority_pattern='Fetch the latest base branch from origin|Run the project.s local checks|resolve conflicts, preserving|Make the smallest safe change|Fix CI failures caused|Verify before pushing|merge the latest base|Stage only verified source fixes|Batch known fixes into one push|Integrate the latest remote state|verified fix commits|(^|[^[:alnum:]_])(git[[:space:]]+(fetch|merge|rebase|add|commit|push)|(fetch|merge|rebase|commit|push|stage|edit|fix|resolve|update)[[:space:]]+(the|this|these|a|an|changes?|result|branch|base|code|source|files?|checks?|failures?)|commit[[:space:]]+(and|or)[[:space:]]+push|run[[:space:]]+([^.;,]*[[:space:]])?(project|repository)[[:space:]]+(scripts?|tests?|checks?|commands?))([^[:alnum:]_]|$)'
+write_prohibition_pattern='(^|[^[:alnum:]_])(do not|does not|don.t|never|must not|may not|cannot|can.t|without|no[[:space:]]+[^[:space:]]+[[:space:]]+may)([^[:alnum:]_]|$)'
 first_write_authority() {
-  rg -n -i "$write_authority_pattern" "${1:--}" |
+  cat "${1:--}" |
+    sed -E $'s/[;,.]/\\\n/g; s/[[:space:]]+(but|then|instead|after|once|while|although|however)[[:space:]]+/\\\n/Ig' |
+    rg -n -i "$write_authority_pattern" |
     rg -vi "$write_prohibition_pattern" |
     head -n 1
 }
@@ -14,11 +16,23 @@ if [[ $candidate == --self-test ]]; then
     print -u2 'write-authority positive sample was not rejected'
     exit 1
   }
-  rg -qi "$write_authority_pattern" <<<'Do not commit or push.' || {
+  first_write_authority <<<'Do not push before checks pass; after they pass, update the branch and push the result.' >/dev/null || {
+    print -u2 'write-authority mixed sample was not rejected'
+    exit 1
+  }
+  first_write_authority <<<'Do not only inspect the conflict, instead edit the files and push the branch.' >/dev/null || {
+    print -u2 'write-authority comma sample was not rejected'
+    exit 1
+  }
+  first_write_authority <<<'Run project tests before review.' >/dev/null || {
+    print -u2 'project-command sample was not rejected'
+    exit 1
+  }
+  rg -qi "$write_authority_pattern" <<<'No stage may commit code or push the branch.' || {
     print -u2 'write-authority negative sample did not exercise the detector'
     exit 1
   }
-  if first_write_authority <<<'Do not commit or push.' >/dev/null; then
+  if first_write_authority <<<'No stage may commit code or push the branch.' >/dev/null; then
     print -u2 'write-authority negative sample was rejected'
     exit 1
   fi
@@ -26,12 +40,16 @@ if [[ $candidate == --self-test ]]; then
   exit 0
 fi
 incumbent=$here/../pr-ready.workflow.js
-if [[ -z $candidate || ${candidate:t} == SKILL.md || ${candidate:e} == md ]]; then
+if [[ -z $candidate || ${candidate:t} == SKILL.md ]]; then
   definition=$incumbent
 else
   definition=$candidate
 fi
 [[ -r $definition ]] || { print -u2 "workflow not found: $definition"; exit 1; }
+node -e 'const fs=require("fs"), A=Object.getPrototypeOf(async function(){}).constructor; new A("args", "agent", "phase", "parallel", "log", fs.readFileSync(process.argv[1], "utf8").replace(/^export const meta/m, "const meta"))' "$definition" || {
+  print -u2 'workflow syntax check failed'
+  exit 1
+}
 has() {
   rg -q "$1" "$definition"
 }
