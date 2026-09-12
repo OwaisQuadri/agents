@@ -96,25 +96,29 @@ if (ready.ready && ready.mode === 'pr' && !ready.review_context_path) {
   ready.ready = false
   ready.blocker_detail = 'missing PR discussion artifact'
 }
-if (ready.ready && ready.mode === 'pr' && (!ready.pr_number || !ready.repository || !ready.head_ref || !ready.head_revision)) {
+if (ready.mode === 'pr' && (!ready.pr_number || !ready.repository || !ready.head_ref || !ready.head_revision)) {
   ready.ready = false
   ready.blocker_detail = 'missing verified remote PR identity'
 }
-if (ready.ready && ready.mode === 'pr' && !repository_arg) {
+if (ready.mode === 'pr' && !repository_arg) {
   ready.ready = false
   ready.blocker_detail = 'missing expected GitHub repository identity'
 }
-if (ready.ready && repository_arg && ready.repository !== repository_arg) {
+if (ready.mode === 'pr' && repository_arg && ready.repository !== repository_arg) {
   ready.ready = false
   ready.blocker_detail = `remote repository identity mismatch: expected ${repository_arg}, received ${ready.repository}`
 }
-if (ready.ready && pr_number_arg && ready.pr_number !== Number(pr_number_arg)) {
+if (ready.mode === 'pr' && pr_number_arg && ready.pr_number !== Number(pr_number_arg)) {
   ready.ready = false
   ready.blocker_detail = `remote PR identity mismatch: requested #${pr_number_arg}, received #${ready.pr_number}`
 }
+if (ready.mode === 'pre-pr' && (ready.repository !== null || ready.pr_number !== null || ready.head_ref !== null || ready.head_revision !== null)) {
+  ready.ready = false
+  ready.blocker_detail = 'pre-PR mode remote identity mismatch'
+}
 log(`${ready.mode} mode${ready.pr_number ? ` (PR #${ready.pr_number})` : ''}: ${ready.ready ? 'ready' : 'blocked'} — ${ready.summary}`)
 if (!ready.ready) {
-  return { mode: ready.mode, pr_number: ready.pr_number, ready: false, blocker_detail: ready.blocker_detail, review_context_path: ready.review_context_path, repository: ready.repository, head_ref: ready.head_ref, head_revision: ready.head_revision, findings: [], deadNodes: [] }
+  return { mode: ready.mode, pr_number: ready.pr_number, ready: false, blocker_detail: ready.blocker_detail, review_context_path: ready.review_context_path, repository: ready.repository, head_ref: ready.head_ref, head_revision: ready.head_revision, findings: [], incomplete_reason: ready.blocker_detail, deadNodes: [] }
 }
 
 const DECISION_CONTEXT = ready.review_context_path
@@ -122,6 +126,30 @@ const DECISION_CONTEXT = ready.review_context_path
   : 'This is pre-PR mode. There is no PR discussion artifact.'
 
 const PROJECT_BRIEFING = `This review is read-only. Do not edit files. Do not update Git references. Do not change GitHub state. Do not run project scripts or tests. Inspect existing check evidence. Before judging anything, first read this project's own conventions: AGENTS.md at the repo root, and any dedicated security/privacy docs you find there (for example a SECURITY.md or docs covering security/privacy). Also skim real code in the areas this diff touches, so you review against how this project actually works, not generic defaults. This project treats user security and privacy as priority zero: user data is never something the app trades away, sells, or leaks, even incidentally — weight findings accordingly, and call out anything that risks that even if it is not a classic security bug.`
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    review: { type: 'string' },
+    identity_verified: { type: 'boolean' },
+    repository: { type: ['string', 'null'] },
+    pr_number: { type: ['integer', 'null'] },
+    head_ref: { type: ['string', 'null'] },
+    head_revision: { type: ['string', 'null'] },
+  },
+  required: ['review', 'identity_verified', 'repository', 'pr_number', 'head_ref', 'head_revision'],
+}
+
+function isIdentityVerified(result) {
+  if (!result || !result.identity_verified) return false
+  if (ready.mode !== 'pr') {
+    return result.repository === null && result.pr_number === null && result.head_ref === null && result.head_revision === null
+  }
+  return result.repository === repository_arg
+    && result.pr_number === ready.pr_number
+    && result.head_ref === ready.head_ref
+    && result.head_revision === ready.head_revision
+}
 
 function reviewPrompt() {
   const lines = [
@@ -133,7 +161,9 @@ function reviewPrompt() {
     lines.push(`Pull Request: #${ready.pr_number}`)
     lines.push(`Remote Head Ref: ${ready.head_ref}`)
     lines.push(`Remote Head Revision: ${ready.head_revision}`)
-    lines.push('Verify the repository, PR number, head ref, and head revision through read-only GitHub commands. Report an incomplete review if any value differs. Inspect that remote PR diff and source. Do not assume that local HEAD is the PR head.')
+    lines.push('Verify the repository, PR number, head ref, and head revision through read-only GitHub commands. Return those observed values and identity_verified. Set identity_verified=false if any value differs. Inspect that remote PR diff and source. Do not assume that local HEAD is the PR head.')
+  } else {
+    lines.push('Return repository, pr_number, head_ref, and head_revision as null with identity_verified=true.')
   }
   if (ready.diff_mode === 'branch changes' && ready.base_branch) lines.push(`Base Branch: ${ready.base_branch}`)
   lines.push(`Custom Instructions: ${PROJECT_BRIEFING}\n${DECISION_CONTEXT}\nReport concrete defects only. Keep clean-review statements and test limitations outside the findings list.`)
@@ -145,13 +175,13 @@ function reviewPrompt() {
 // doesn't also degrade security-review's independent attempt.
 async function dispatchReview(agentType, label) {
   const prompt = reviewPrompt()
-  let text = await agent(prompt, { label, phase: 'Review', agentType, model: T6_PRIMARY.model, effort: T6_PRIMARY.effort })
+  let result = await agent(prompt, { label, phase: 'Review', agentType, model: T6_PRIMARY.model, effort: T6_PRIMARY.effort, schema: REVIEW_SCHEMA })
   let modelUsed = T6_PRIMARY
-  if (!text) {
-    text = await agent(prompt, { label: `${label}-fallback`, phase: 'Review', agentType, model: T6_FALLBACK.model, effort: T6_FALLBACK.effort })
+  if (!isIdentityVerified(result)) {
+    result = await agent(prompt, { label: `${label}-fallback`, phase: 'Review', agentType, model: T6_FALLBACK.model, effort: T6_FALLBACK.effort, schema: REVIEW_SCHEMA })
     modelUsed = T6_FALLBACK
   }
-  return { source: agentType, text, modelUsed: text ? modelUsed : null }
+  return { source: agentType, text: isIdentityVerified(result) ? result.review : null, modelUsed: isIdentityVerified(result) ? modelUsed : null }
 }
 
 phase('Review')
@@ -180,6 +210,11 @@ const TRIAGE_SCHEMA = {
   properties: {
     is_complete: { type: 'boolean' },
     incomplete_reason: { type: 'string' },
+    identity_verified: { type: 'boolean' },
+    repository: { type: ['string', 'null'] },
+    pr_number: { type: ['integer', 'null'] },
+    head_ref: { type: ['string', 'null'] },
+    head_revision: { type: ['string', 'null'] },
     findings: {
       type: 'array',
       items: {
@@ -199,7 +234,7 @@ const TRIAGE_SCHEMA = {
       },
     },
   },
-  required: ['is_complete', 'incomplete_reason', 'findings'],
+  required: ['is_complete', 'incomplete_reason', 'identity_verified', 'repository', 'pr_number', 'head_ref', 'head_revision', 'findings'],
 }
 
 const triagePrompt = `Repository path: ${repo_path}
@@ -209,7 +244,7 @@ Remote Head Ref: ${ready.head_ref || '(pre-PR mode)'}
 Remote Head Revision: ${ready.head_revision || '(pre-PR mode)'}
 ${DECISION_CONTEXT}
 
-You are triaging code review findings for a PR-readiness pass. This triage is read-only. Do not edit files. Do not update Git references. Do not change GitHub state. Do not run project scripts or tests. In PR mode, verify the repository, PR number, head ref, and head revision through read-only GitHub commands. Set is_complete=false if any value differs. Inspect remote source with read-only GitHub commands. Do not assume that local HEAD is the PR head. Below are raw findings reports from two independent reviewers. For EVERY distinct finding either report raises, extract it and write a verdict: "legit" (a real issue within this PR's scope) or "not-legit" (invalid, out of scope, or moot in context). Every verdict needs its own reasoning and the offending snippet as evidence — never just a label; whoever reads this was not in the room and reviews your reasoning before acting on it. Preserve which reviewer (source) raised each finding.
+You are triaging code review findings for a PR-readiness pass. This triage is read-only. Do not edit files. Do not update Git references. Do not change GitHub state. Do not run project scripts or tests. In PR mode, verify the repository, PR number, head ref, and head revision through read-only GitHub commands. Return those observed values and identity_verified. Set identity_verified=false and is_complete=false if any value differs. In pre-PR mode, return repository, pr_number, head_ref, and head_revision as null with identity_verified=true. Inspect remote source with read-only GitHub commands. Do not assume that local HEAD is the PR head. Below are raw findings reports from two independent reviewers. For EVERY distinct finding either report raises, extract it and write a verdict: "legit" (a real issue within this PR's scope) or "not-legit" (invalid, out of scope, or moot in context). Every verdict needs its own reasoning and the offending snippet as evidence — never just a label; whoever reads this was not in the room and reviews your reasoning before acting on it. Preserve which reviewer (source) raised each finding.
 
 Check each claim against current source code. Keep factual validity separate from the release decision. Set decision to already-decided only when an accepted decision covers the finding and no new evidence changes its grounds. In decision_evidence, cite the exact decision source and explain the matching scope. Otherwise set decision to needs-review. Explain any concrete evidence that changes an earlier decision's grounds. Never infer acceptance from resolution state alone. Treat unclear decisions as needs-review.
 
@@ -227,7 +262,7 @@ let triageModelUsed = null
 for (const candidate of effectiveTriageChain) {
   const label = `triage-${effectiveTriageChain.indexOf(candidate)}`
   const result = await agent(triagePrompt, { label, phase: 'Triage', agentType: 'general-purpose', model: candidate.model, effort: candidate.effort, schema: TRIAGE_SCHEMA })
-  if (result) { triageResult = result; triageModelUsed = candidate; break }
+  if (isIdentityVerified(result)) { triageResult = result; triageModelUsed = candidate; break }
 }
 
 if (!triageResult || !triageResult.is_complete) {
