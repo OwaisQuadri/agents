@@ -14,6 +14,9 @@ The following failures are catastrophic:
 - The workflow filters out not-legit findings instead of returning both verdicts. The workflow owns classification. The calling skill owns disposition.
 - Triage receives unrelated conversation, a researcher transcript, or prior agents' reasoning, including the ready node's reasoning. Relevant recorded decisions and independently checkable source evidence are not a context leak.
 - A run without `repo_path` spawns an agent.
+- Pull request mode omits the repository, pull request number, head ref, or head revision from the Ready result.
+- The workflow starts Review after Ready returns a different repository or pull request number from the requested target.
+- A reviewer or Triage trusts the Ready identity and does not independently verify the head ref and revision against the requested target.
 - Pre-PR (pre-pull-request) mode creates a pull request. Pull request mode merges the request, enables auto-merge, or marks a draft ready.
 - Any automatic Ready, Review, or Triage step edits code or updates a Git reference.
 - Ready fetches, merges, rebases, commits, pushes, or resolves a conflict instead of reporting the blocker.
@@ -30,6 +33,11 @@ Grade these topology properties on every case, per workflow-author:
 - The workflow limits each of two review dispatches to two attempts. Triage visits at most four chain entries.
 - Provider separation uses the models that actually ran, not the intended primaries. A review that used the T6 (tier 6) fallback changes which tier 5 entries triage may use.
 - The Ready node detects pull request or pre-pull-request mode through its own live check. The workflow script never guesses the mode; it has no shell access to check.
+- Pull request mode returns the repository, pull request number, head ref, and head revision from Ready.
+- Before Review, the workflow compares Ready's repository and pull request number with the supplied `repository` and `pr_number`.
+- Each reviewer and Triage verifies the head ref and revision against the supplied repository and pull request number.
+- Those identity checks use the expected target directly. They do not rely on another agent's identity claim.
+- Pre-pull-request mode can continue when no GitHub repository exists.
 
 Regression properties:
 
@@ -42,4 +50,6 @@ Regression properties:
 - Another author's branch requires a separate instruction that names the write action and target branch.
 - Exact publication approval authorizes only the named replies, summary, and thread-state changes.
 - A separate branch-write instruction routes outside automatic Ready. It does not make Ready write-capable.
+- A nonempty head ref and revision do not excuse a repository or pull request number mismatch.
+- A target mismatch blocks the workflow before both reviewers and Triage dispatch.
 - Grade these outcomes without requiring exact field names, storage choices, or wording.
