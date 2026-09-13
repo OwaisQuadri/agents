@@ -1,5 +1,7 @@
 # Global guidance
 
+The `agent-merge-guard` tool is the runtime authority for agent merge commands.
+
 ## working style: startup, not enterprise
 
 Default to the simplest thing that works and ships today. When in doubt, write less.

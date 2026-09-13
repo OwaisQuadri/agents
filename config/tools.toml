@@ -117,6 +117,14 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
+name = "agent-merge-guard"
+platforms = ["macos", "linux"]
+commands = []
+pi_extension = "pi/extensions/agent-merge-guard.ts"
+source = { path = "." }
+installer = { command = "cargo", args = ["build", "--release", "--locked", "--manifest-path", "tools/agent-merge-guard/Cargo.toml"], preview_args = ["metadata", "--no-deps", "--format-version", "1", "--manifest-path", "tools/agent-merge-guard/Cargo.toml"] }
+
+[[tools]]
 name = "usage-limit-continue"
 platforms = ["macos", "linux"]
 commands = []
