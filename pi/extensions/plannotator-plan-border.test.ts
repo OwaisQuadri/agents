@@ -104,6 +104,7 @@ test("preserves rendered width at different terminal widths", () => {
 
 const extensionPath = new URL("./plannotator-plan-border.ts", import.meta.url);
 const policyPath = new URL("./plannotator-plan-border/policy.ts", import.meta.url);
+const activationPath = new URL("./plannotator-plan-border/activation.ts", import.meta.url);
 
 async function writeModule(root: string, name: string, source: string): Promise<void> {
 	const directory = join(root, "node_modules", ...name.split("/"));
@@ -117,6 +118,7 @@ async function createExtensionFixture() {
 	await mkdir(join(root, "plannotator-plan-border"));
 	await writeFile(join(root, "plannotator-plan-border.ts"), await readFile(extensionPath));
 	await writeFile(join(root, "plannotator-plan-border", "policy.ts"), await readFile(policyPath));
+	await writeFile(join(root, "plannotator-plan-border", "activation.ts"), await readFile(activationPath));
 	await writeModule(root, "@earendil-works/pi-coding-agent", `
 export class CustomEditor {
 	constructor(...args) { this.text = ""; this.options = args[3]; }
@@ -128,6 +130,7 @@ export class CustomEditor {
 }
 `);
 	await writeModule(root, "@earendil-works/pi-tui", "");
+	await writeModule(root, "@earendil-works/pi-ai", "export const Type = { Object: (value) => value };");
 	return { root, entry: pathToFileURL(join(root, "plannotator-plan-border.ts")).href };
 }
 
@@ -141,6 +144,7 @@ async function loadExtension() {
 }
 
 const plannotatorPlanBorder = await loadExtension();
+const { enterPlanMode } = await import(activationPath.href);
 
 test("registers only event wiring within the warm startup budget", async () => {
 	const fixture = await createExtensionFixture();
@@ -151,11 +155,19 @@ test("registers only event wiring within the warm startup budget", async () => {
 			const start = performance.now();
 			const module = await import(`${fixture.entry}?trial=${trial}`);
 			const imported = performance.now();
-			module.default({ on: (event: string) => events.push(event) });
+			const tools: unknown[] = [];
+			module.default({ on: (event: string) => events.push(event), registerTool: (tool: unknown) => tools.push(tool) });
 			await new Promise((resolve) => setTimeout(resolve, 0));
 			const elapsed = performance.now() - start;
 			console.log(`PI_TIMING=${process.env.PI_TIMING ?? "unset"} trial=${trial + 1} import=${(imported - start).toFixed(3)}ms factory=${(performance.now() - imported).toFixed(3)}ms combined=${elapsed.toFixed(3)}ms`);
 			assert.deepEqual(events, ["session_start", "message_end", "tool_result", "agent_end", "session_tree", "session_shutdown"]);
+			assert.deepEqual(tools[0], {
+				name: "plannotator_enter_plan_mode",
+				label: "Enter Plan Mode",
+				description: "Enter Plannotator plan mode before writing a plan.",
+				parameters: {},
+				execute: (tools[0] as { execute: unknown }).execute,
+			});
 			assert.ok(elapsed <= 50, `warm import and registration ${elapsed}ms exceeds 50ms`);
 		}
 	} finally {
@@ -186,7 +198,6 @@ function createEditor(): Editor {
 function createContext(entries: SessionEntry[], previousFactory?: (...args: unknown[]) => Editor) {
 	let currentFactory: ((...args: unknown[]) => Editor) | undefined = previousFactory;
 	let branchReads = 0;
-	const factoryChanges: Array<((...args: unknown[]) => Editor) | undefined> = [];
 	return {
 		mode: "tui",
 		sessionManager: {
@@ -200,12 +211,10 @@ function createContext(entries: SessionEntry[], previousFactory?: (...args: unkn
 			getEditorComponent: () => currentFactory,
 			setEditorComponent: (factory: ((...args: unknown[]) => Editor) | undefined) => {
 				currentFactory = factory;
-				factoryChanges.push(factory);
 			},
 		},
 		currentFactory: () => currentFactory,
 		branchReads: () => branchReads,
-		factoryChanges,
 		setCurrentFactory: (factory: (...args: unknown[]) => Editor) => {
 			currentFactory = factory;
 		},
@@ -218,6 +227,7 @@ function createRuntime() {
 		on: (event: string, handler: Handler) => {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
+		registerTool: () => undefined,
 	};
 	plannotatorPlanBorder(pi as never);
 	return {
@@ -226,6 +236,93 @@ function createRuntime() {
 		},
 	};
 }
+
+function createActivationRuntime(activeTools: string[] = []) {
+	const requests: unknown[] = [];
+	let activeToolReads = 0;
+	const pi = {
+		getActiveTools: () => {
+			activeToolReads += 1;
+			return activeTools;
+		},
+		events: { emit: (_channel: string, request: unknown) => requests.push(request) },
+	};
+	return {
+		activeToolReads: () => activeToolReads,
+		enter: (controller = new AbortController(), timeoutMs?: number) =>
+			enterPlanMode(pi, "call-1", controller.signal, timeoutMs),
+		requests,
+	};
+}
+
+test("enters plan mode without an event when submission is already active", async () => {
+	const runtime = createActivationRuntime(["read", "plannotator_submit_plan"]);
+	const outcome = await runtime.enter();
+	assert.deepEqual(outcome?.details, { isSuccess: true, status: "planning" });
+	assert.deepEqual(runtime.requests, []);
+});
+
+test("requests enter mode with the exact Plannotator request shape", async () => {
+	const activeTools = ["read"];
+	const runtime = createActivationRuntime(activeTools);
+	const pending = runtime.enter();
+	const request = runtime.requests[0] as { requestId: string; action: string; payload: unknown; respond: (value: unknown) => void };
+	assert.deepEqual({ requestId: request.requestId, action: request.action, payload: request.payload }, {
+		requestId: "call-1",
+		action: "plan-mode",
+		payload: { mode: "enter" },
+	});
+	activeTools.push("plannotator_submit_plan");
+	request.respond({ status: "handled", result: { phase: "planning" } });
+	assert.deepEqual((await pending)?.details, { isSuccess: true, status: "planning" });
+	assert.deepEqual(activeTools, ["read", "plannotator_submit_plan"]);
+	assert.equal(runtime.activeToolReads(), 2);
+});
+
+test("returns bounded activation failures", async () => {
+	for (const [response, status] of [
+		[{ status: "unavailable", error: "not ready" }, "unavailable"],
+		[{ status: "error", error: "x".repeat(200) }, "error"],
+		[{ status: "handled", result: null }, "malformed"],
+		[{ status: "handled", result: { phase: "idle" } }, "wrong-phase"],
+		[{ status: "handled", result: { phase: "planning" } }, "missing-tool"],
+	] as const) {
+		const runtime = createActivationRuntime();
+		const pending = runtime.enter();
+		(runtime.requests[0] as { respond: (value: unknown) => void }).respond(response);
+		const details = (await pending)?.details;
+		assert.equal(details?.isSuccess, false);
+		assert.equal(details?.status, status);
+		if (status === "error") assert.equal(details?.error.length, 160);
+	}
+});
+
+test("returns timeout and cancellation without accepting late responses", async () => {
+	const timeoutRuntime = createActivationRuntime();
+	const timeout = timeoutRuntime.enter(new AbortController(), 1);
+	assert.equal((await timeout)?.details.status, "timeout");
+
+	const cancellationRuntime = createActivationRuntime();
+	const controller = new AbortController();
+	const cancelled = cancellationRuntime.enter(controller);
+	const request = cancellationRuntime.requests[0] as { respond: (value: unknown) => void };
+	controller.abort();
+	request.respond({ status: "handled", result: { phase: "planning" } });
+	assert.equal((await cancelled)?.details.status, "cancelled");
+});
+
+test("settles once and treats repeated entry as already active", async () => {
+	const activeTools: string[] = [];
+	const runtime = createActivationRuntime(activeTools);
+	const pending = runtime.enter();
+	const request = runtime.requests[0] as { respond: (value: unknown) => void };
+	activeTools.push("plannotator_submit_plan");
+	request.respond({ status: "handled", result: { phase: "planning" } });
+	request.respond({ status: "error", error: "late" });
+	assert.equal((await pending)?.details.status, "planning");
+	assert.equal((await runtime.enter())?.details.status, "planning");
+	assert.equal(runtime.requests.length, 1);
+});
 
 test("decorates the existing editor and follows live phase state", async () => {
 	const entries = [phaseEntry("planning")];
