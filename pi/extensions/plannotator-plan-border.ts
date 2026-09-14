@@ -1,3 +1,4 @@
+import { Type } from "@earendil-works/pi-ai";
 import {
 	CustomEditor,
 	type ExtensionAPI,
@@ -5,6 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { TUI } from "@earendil-works/pi-tui";
 
+import { enterPlanMode } from "./plannotator-plan-border/activation.ts";
 import { getPlannotatorPhase, renderPlanningBorder } from "./plannotator-plan-border/policy.ts";
 
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
@@ -16,6 +18,14 @@ type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorCom
  * @throws Never.
  */
 export default function plannotatorPlanBorder(pi: ExtensionAPI): void {
+	pi.registerTool({
+		name: "plannotator_enter_plan_mode",
+		label: "Enter Plan Mode",
+		description: "Enter Plannotator plan mode before writing a plan.",
+		parameters: Type.Object({}),
+		execute: (toolCallId, _params, signal) => enterPlanMode(pi, toolCallId, signal),
+	});
+
 	let activeContext: ExtensionContext | undefined;
 	let activeTui: TUI | undefined;
 	let previousEditorFactory: EditorFactory | undefined;
