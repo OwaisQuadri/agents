@@ -29,6 +29,8 @@ Seven phases, one PR per run. Run the skill again for the next PR. This matches
 
 ## 0. Select
 
+Before you select or review a stack member, read https://docs.github.com/en/pull-requests/get-started/about-stacked-prs for guidance.
+
 A specific PR number skips straight to phase 1 with that number.
 
 Otherwise, run `tools/pr-review-filter --json --repo <owner/name>`. Omit `--repo` and
