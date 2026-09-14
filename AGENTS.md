@@ -171,6 +171,11 @@ Before writing any code comment, read ~/Documents/agents/docs/comment-style.md. 
 are a last resort and only its whitelisted shapes ship; a shape not on the list is
 proposed there first, never written ad hoc.
 
+## GitHub stacked Pull Requests
+
+Any skill or workflow that handles GitHub stacked Pull Requests must use
+https://docs.github.com/en/pull-requests/get-started/about-stacked-prs as its reference.
+
 ## public artifacts
 
 Issues, PRs, commit messages, and code in public repositories never carry private

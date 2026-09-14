@@ -14,6 +14,7 @@ OUT: An approved stack with verified bases, or a plan that waits for approval.
 
 ## hard rules
 
+- Read https://docs.github.com/en/pull-requests/get-started/about-stacked-prs before you make stack-specific decisions.
 - If the user requests only a plan, forbids execution, or has not approved execution, run no repository command.
 - Make no mutation in these cases. This ban includes fetches, backup refs, snapshots, patches, worktrees, and stack-plan files.
 - Describe each operation as proposed. Mark each result that the user did not supply as unavailable.
