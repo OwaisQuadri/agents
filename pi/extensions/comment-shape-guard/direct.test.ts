@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, lstat, symlink, link, rm, access } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, writeFile, lstat, symlink, link, rm, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -52,17 +52,84 @@ for (const edits of [[{ oldText: "missing", newText: "x" }], [{ oldText: "a", ne
 	});
 }
 
-test("missing parents, symbolic links and hard links are rejected", async (t) => {
+test("one or several missing parents are created before a validated destination write", async (t) => {
+	const { root } = await fixture(t);
+	for (const path of [join(root, "one", "new.ts"), join(root, "several", "nested", "new.ts")]) {
+		let candidate = "";
+		const operations = createOperations({ operation: "write", deadline: performance.now() + 20_000, validate: async (proposal) => {
+			candidate = proposal.proposed_text;
+			await assert.rejects(lstat(path), { code: "ENOENT" });
+		} });
+		await createWriteToolDefinition(root, { operations }).execute("id", { path, content: "x" });
+		assert.equal(candidate, "x");
+		assert.equal(await readFile(path, "utf8"), candidate);
+	}
+});
+
+for (const mode of ["expired", "aborted"] as const) {
+	test(`${mode} requests create no missing parent`, async (t) => {
+		const { root } = await fixture(t);
+		const parent = join(root, mode, "nested");
+		const path = join(parent, "new.ts");
+		const controller = new AbortController();
+		if (mode === "aborted") controller.abort();
+		let calls = 0;
+		const operations = createOperations({
+			operation: "write",
+			signal: controller.signal,
+			deadline: mode === "expired" ? performance.now() - 1 : performance.now() + 20_000,
+			validate: async () => { calls++; },
+		});
+		const execution = mode === "expired"
+			? createWriteToolDefinition(root, { operations }).execute("id", { path, content: "x" })
+			: operations.mkdir(parent);
+		await assert.rejects(execution, mode === "expired" ? /deadline/ : /aborted before commit/);
+		assert.equal(calls, 0);
+		await assert.rejects(lstat(parent), { code: "ENOENT" });
+	});
+}
+
+test("validation rejection leaves created parents but no destination file", async (t) => {
+	const { root } = await fixture(t);
+	const parent = join(root, "created");
+	const path = join(parent, "new.ts");
+	const operations = createOperations({ operation: "write", deadline: performance.now() + 20_000, validate: async () => { throw new Error("rule rejected"); } });
+	await assert.rejects(createWriteToolDefinition(root, { operations }).execute("id", { path, content: "x" }), /rule rejected/);
+	await access(parent);
+	await assert.rejects(lstat(path), { code: "ENOENT" });
+});
+
+test("a linked parent follows the installed Pi write behavior", async (t) => {
+	const { root } = await fixture(t);
+	const target = join(root, "target-parent");
+	const linked = join(root, "linked-parent");
+	await mkdir(target);
+	await symlink(target, linked);
+	const path = join(linked, "nested", "new.ts");
+	let canonicalPath = "";
+	const operations = createOperations({ operation: "write", deadline: performance.now() + 20_000, validate: async (proposal) => { canonicalPath = proposal.path; } });
+	await createWriteToolDefinition(root, { operations }).execute("id", { path, content: "x" });
+	assert.equal(canonicalPath, join(await realpath(target), "nested", "new.ts"));
+	assert.equal(await readFile(join(target, "nested", "new.ts"), "utf8"), "x");
+});
+
+test("existing parents succeed while links and invalid parent components reject", async (t) => {
 	const { root, path } = await fixture(t);
+	const existing = join(root, "new.ts");
 	const symbolic = join(root, "symbolic.ts");
 	const hard = join(root, "hard.ts");
 	await symlink(path, symbolic);
 	await link(path, hard);
-	for (const target of [symbolic, hard, join(root, "absent", "new.ts")]) {
-		const operations = createOperations({ operation: "write", deadline: performance.now() + 20_000, validate: async () => assert.fail("must not validate") });
-		await assert.rejects(createWriteToolDefinition(root, { operations }).execute("id", { path: target, content: "x" }));
+	let candidate = "";
+	const operations = createOperations({ operation: "write", deadline: performance.now() + 20_000, validate: async (proposal) => { candidate = proposal.proposed_text; } });
+	await createWriteToolDefinition(root, { operations }).execute("id", { path: existing, content: "x" });
+	assert.equal(await readFile(existing, "utf8"), candidate);
+	for (const target of [symbolic, hard, join(path, "new.ts")]) {
+		let calls = 0;
+		const rejecting = createOperations({ operation: "write", deadline: performance.now() + 20_000, validate: async () => { calls++; } });
+		await assert.rejects(createWriteToolDefinition(root, { operations: rejecting }).execute("id", { path: target, content: "x" }));
+		assert.equal(calls, 0);
 	}
-	await assert.rejects(access(join(root, "absent")));
 	assert.equal(await readFile(path, "utf8"), "alpha\nbeta\n");
 });
 

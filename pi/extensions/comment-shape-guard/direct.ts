@@ -1,5 +1,5 @@
 import { constants, type Stats } from "node:fs";
-import { access, lstat, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 export type Proposal = {
@@ -75,7 +75,7 @@ export function createOperations(options: Options) {
 	}
 	return {
 		access: (path: string) => checked(() => access(path, constants.R_OK | constants.W_OK)),
-		mkdir: async (_directory: string) => { check(); },
+		mkdir: async (directory: string) => { await checked(() => mkdir(directory, { recursive: true })); },
 		readFile: async (path: string): Promise<Buffer> => {
 			original = await snapshot(path);
 			if (!original) throw new Error("Target is missing; retry with an existing file.");
@@ -97,7 +97,7 @@ export function createOperations(options: Options) {
 			}
 			check();
 			try {
-				await writeFile(path, content, { encoding: "utf8", flag: initial === null ? "wx" : "w" });
+				await writeFile(canonicalPath, content, { encoding: "utf8", flag: initial === null ? "wx" : "w" });
 			} catch {
 				throw new Error("Filesystem write failed after validation; inspect the target before retrying. Disk may have changed.");
 			}

@@ -20,7 +20,7 @@ The existing comment extractor emits `start_line`, `end_line`, `kind`, and `text
 
 The extension reuses installed Pi edit matching, normalization, candidate reconstruction, and result rendering. Validation runs inside the supplied file-write operation against the exact proposed bytes. The existing per-path queue orders Pi mutations. It does not lock out external programs.
 
-The extension replaces both supplied write operations. Its directory operation creates nothing. The extension blocks a request whose parent directory does not exist. The extension rejects symbolic-link targets and regular files with multiple hard links. Unsupported operations return a reason before writing.
+The extension replaces both supplied write operations. Its directory operation recursively creates missing parent directories before canonicalization and validation. A later rejection can leave those directories in place, which matches the installed Pi write operation. The destination file remains absent until validation passes. The extension rejects symbolic-link targets and regular files with multiple hard links. Unsupported operations return a reason before writing.
 
 The extension checks original content and file identity again before writing. A detected conflict blocks the edit. This recheck does not provide an atomic comparison against external writers. The contract does not promise crash-safe direct writes.
 
@@ -115,7 +115,7 @@ A diagnostic must not repeat the matched private value. The path, line, rule ide
 
 The registry preserves existing comment extraction and the current three-line limit. Documentation blocks retain their current length exemption. Adjacent full-line comments retain their existing grouping behavior.
 
-For comment shape, `is_empty_rust_comment` in `registry.rs` blocks empty full-line Rust comments, including empty documentation comments. Every other selected comment requires the existing judgment worker or a verified cache decision. The registry supplies no local shape approvals. An uncertain local filter must not invent approval. Existing pass and block fixtures remain required parity tests.
+For comment shape, `is_empty_rust_comment` in `registry.rs` blocks empty full-line Rust comments, including empty documentation comments. A syntactically valid absolute-path interpreter directive on line one bypasses comment-shape judgment. A relative `#!` line remains an ordinary comment. Every other selected comment requires the existing judgment worker or a verified cache decision. An uncertain local filter must not invent approval. Existing pass and block fixtures remain required parity tests.
 
 A judgment receives the comment, following-code context, language, rule document, and versioned judgment configuration. Missing required rule documents block the request. A malformed worker decision is not a pass.
 

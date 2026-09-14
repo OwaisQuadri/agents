@@ -241,30 +241,278 @@ fn lang_for_extension(path: &str) -> Option<LanguageSpec> {
     Some(LanguageSpec { grammar, lexical })
 }
 
-/// An extensionless file is classified by its shebang, so hook scripts and other
-/// bare executables stay inside the budget too.
-fn lang_for_shebang(text: &str) -> Option<LanguageSpec> {
-    let first = text.lines().next()?;
-    if !first.starts_with("#!") {
+fn split_env_words(input: &str) -> Option<std::collections::VecDeque<String>> {
+    let mut words = std::collections::VecDeque::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut is_word_started = false;
+    let mut characters = input.chars();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            let escaped = characters.next()?;
+            if quote == Some('\'') && !matches!(escaped, '\'' | '\\') {
+                word.push(character);
+                word.push(escaped);
+            } else {
+                match escaped {
+                    'c' if quote != Some('"') => break,
+                    'f' => word.push('\u{000c}'),
+                    'n' => word.push('\n'),
+                    'r' => word.push('\r'),
+                    't' => word.push('\t'),
+                    'v' => word.push('\u{000b}'),
+                    '#' | '$' | '"' | '\'' | '\\' => word.push(escaped),
+                    '_' if quote == Some('"') => word.push(' '),
+                    '_' => {
+                        if is_word_started {
+                            words.push_back(std::mem::take(&mut word));
+                            is_word_started = false;
+                        }
+                        continue;
+                    }
+                    _ => return None,
+                }
+            }
+            is_word_started = true;
+        } else if let Some(mark) = quote {
+            if character == mark {
+                quote = None;
+            } else {
+                word.push(character);
+            }
+        } else if matches!(character, '\'' | '"') {
+            quote = Some(character);
+            is_word_started = true;
+        } else if matches!(character, ' ' | '\t') {
+            if is_word_started {
+                words.push_back(std::mem::take(&mut word));
+                is_word_started = false;
+            }
+        } else if character == '#' && !is_word_started {
+            break;
+        } else {
+            word.push(character);
+            is_word_started = true;
+        }
+    }
+    if quote.is_some() {
         return None;
     }
-    let (grammar, is_python) = if first.contains("python") {
-        (Some(Grammar::Python), true)
-    } else if first.contains("zsh") {
-        (Some(Grammar::Zsh), false)
-    } else if first.contains("ruby") {
-        (Some(Grammar::Ruby), false)
-    } else if first.contains("perl") {
-        (None, false)
-    } else if first.contains("sh") {
-        (Some(Grammar::Bash), false)
+    if is_word_started {
+        words.push_back(word);
+    }
+    Some(words)
+}
+
+fn executable_name(word: &str) -> Option<String> {
+    Path::new(word).file_name()?.to_str().map(str::to_owned)
+}
+
+fn is_env_assignment(word: &str) -> bool {
+    word.split_once('=')
+        .is_some_and(|(name, _)| !name.is_empty())
+}
+
+fn is_valid_env_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('=')
+}
+
+fn consume_env_short_options(
+    word: &str,
+    words: &mut std::collections::VecDeque<String>,
+) -> Option<()> {
+    let mut options = word.strip_prefix('-')?.chars();
+    while let Some(option) = options.next() {
+        match option {
+            'i' | 'v' => {}
+            'u' | 'C' | 'P' => {
+                let attached: String = options.collect();
+                let operand = if attached.is_empty() {
+                    words.pop_front()?
+                } else {
+                    attached
+                };
+                if (option == 'u' && !is_valid_env_name(&operand))
+                    || (matches!(option, 'C' | 'P') && operand.is_empty())
+                {
+                    return None;
+                }
+                return Some(());
+            }
+            'S' => {
+                let attached: String = options.collect();
+                let split = if attached.is_empty() {
+                    words.pop_front()?
+                } else {
+                    attached
+                };
+                let mut split_words = split_env_words(&split)?;
+                split_words.append(words);
+                *words = split_words;
+                return Some(());
+            }
+            _ => return None,
+        }
+    }
+    Some(())
+}
+
+fn shebang_interpreter(line: &str) -> Option<String> {
+    let directive = line.strip_prefix("#!")?.trim_start_matches([' ', '\t']);
+    let command_end = directive.find([' ', '\t']).unwrap_or(directive.len());
+    let command = &directive[..command_end];
+    if !command.starts_with('/') {
+        return None;
+    }
+    let name = executable_name(command)?;
+    if name != "env" {
+        return Some(name);
+    }
+
+    let arguments = directive[command_end..].trim_start_matches([' ', '\t']);
+    let mut words = if let Some(split) = arguments.strip_prefix("-S") {
+        split_env_words(split.trim_start())?
+    } else if let Some(split) = arguments.strip_prefix("--split-string=") {
+        split_env_words(split)?
+    } else if arguments == "--split-string" {
+        std::collections::VecDeque::new()
+    } else if let Some(split) = arguments
+        .strip_prefix("--split-string")
+        .filter(|split| matches!(split.as_bytes().first(), Some(b' ' | b'\t')))
+    {
+        split_env_words(split.trim_start())?
+    } else {
+        arguments
+            .split_ascii_whitespace()
+            .map(str::to_owned)
+            .collect()
+    };
+    let mut is_parsing_options = true;
+    while let Some(word) = words.pop_front() {
+        if is_parsing_options {
+            if word.starts_with('-') && !word.starts_with("--") {
+                consume_env_short_options(&word, &mut words)?;
+                continue;
+            }
+            match word.as_str() {
+                "--" => {
+                    is_parsing_options = false;
+                    continue;
+                }
+                "--unset" => {
+                    let name = words.pop_front()?;
+                    if !is_valid_env_name(&name) {
+                        return None;
+                    }
+                    continue;
+                }
+                "--chdir" => {
+                    if words.pop_front()?.is_empty() {
+                        return None;
+                    }
+                    continue;
+                }
+                "--ignore-environment" => continue,
+                _ if word.starts_with("--unset=") => {
+                    if !is_valid_env_name(word.strip_prefix("--unset=")?) {
+                        return None;
+                    }
+                    continue;
+                }
+                _ if word.starts_with("--chdir=") => {
+                    if word.strip_prefix("--chdir=")?.is_empty() {
+                        return None;
+                    }
+                    continue;
+                }
+                _ if word.starts_with('-') => return None,
+                _ => {}
+            }
+        }
+        if word.contains('=') {
+            if !is_env_assignment(&word) {
+                return None;
+            }
+            is_parsing_options = false;
+            continue;
+        }
+        if executable_name(&word).as_deref() == Some("uv")
+            && words.front().is_some_and(|next| next == "run")
+        {
+            words.pop_front();
+            return executable_name(&words.pop_front()?);
+        }
+        return executable_name(&word);
+    }
+    None
+}
+
+fn is_versioned_interpreter(name: &str, base: &str) -> bool {
+    name == base
+        || name.strip_prefix(base).is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix.split('.').all(|part| {
+                    !part.is_empty() && part.chars().all(|character| character.is_ascii_digit())
+                })
+        })
+}
+
+const BASH_INTERPRETERS: &[&str] = &["sh", "bash", "dash", "ksh", "ash", "mksh", "yash", "posh"];
+const HASH_INTERPRETERS: &[&str] = &["fish", "csh", "tcsh", "tclsh"];
+const JAVASCRIPT_INTERPRETERS: &[&str] = &["node", "deno", "bun"];
+
+fn is_interpreter_family(name: &str, bases: &[&str]) -> bool {
+    bases
+        .iter()
+        .any(|base| is_versioned_interpreter(name, base))
+}
+
+fn lang_for_shebang(text: &str) -> Option<LanguageSpec> {
+    let name = shebang_interpreter(text.lines().next()?)?;
+    if is_versioned_interpreter(&name, "python") {
+        return Some(LanguageSpec {
+            grammar: Some(Grammar::Python),
+            lexical: LexicalMode::Hash { is_python: true },
+        });
+    }
+    let spec = if is_versioned_interpreter(&name, "zsh") {
+        LanguageSpec {
+            grammar: Some(Grammar::Zsh),
+            lexical: LexicalMode::Hash { is_python: false },
+        }
+    } else if is_interpreter_family(&name, BASH_INTERPRETERS) {
+        LanguageSpec {
+            grammar: Some(Grammar::Bash),
+            lexical: LexicalMode::Hash { is_python: false },
+        }
+    } else if is_interpreter_family(&name, HASH_INTERPRETERS) {
+        LanguageSpec {
+            grammar: None,
+            lexical: LexicalMode::Hash { is_python: false },
+        }
+    } else if is_interpreter_family(&name, JAVASCRIPT_INTERPRETERS) {
+        LanguageSpec {
+            grammar: Some(Grammar::JavaScript),
+            lexical: LexicalMode::Slash { is_rust: false },
+        }
+    } else if is_versioned_interpreter(&name, "ruby") {
+        LanguageSpec {
+            grammar: Some(Grammar::Ruby),
+            lexical: LexicalMode::Hash { is_python: false },
+        }
+    } else if is_versioned_interpreter(&name, "perl") {
+        LanguageSpec {
+            grammar: None,
+            lexical: LexicalMode::Hash { is_python: false },
+        }
     } else {
         return None;
     };
-    Some(LanguageSpec {
-        grammar,
-        lexical: LexicalMode::Hash { is_python },
-    })
+    Some(spec)
+}
+
+fn is_interpreter_directive(line: &str) -> bool {
+    shebang_interpreter(line).is_some()
 }
 
 fn check_path(path: &Path, extractor: &mut CommentExtractor) -> Vec<String> {
@@ -313,6 +561,35 @@ pub fn extract(path: &str, text: &str) -> Option<Vec<CommentSpan>> {
 pub fn language(path: &str, text: &str) -> Option<tree_sitter::Language> {
     let spec = lang_for_extension(path).or_else(|| lang_for_shebang(text))?;
     spec.grammar.map(grammar_language)
+}
+
+/// Reports the language label used in semantic comment judgments.
+/// The inputs are the candidate path and complete source text.
+/// The output is a stable extension or interpreter-family label.
+/// This lookup cannot return an error.
+pub fn language_label(path: &str, text: &str) -> String {
+    if let Some(extension) = Path::new(path).extension().and_then(|value| value.to_str()) {
+        return extension.to_owned();
+    }
+    let Some(name) = text.lines().next().and_then(shebang_interpreter) else {
+        return "text".into();
+    };
+    for (bases, label) in [
+        (&["python"][..], "python"),
+        (&["ruby"][..], "ruby"),
+        (&["perl"][..], "perl"),
+        (JAVASCRIPT_INTERPRETERS, "js"),
+        (&["zsh"][..], "zsh"),
+        (&["fish"][..], "fish"),
+        (&["csh", "tcsh"][..], "csh"),
+        (&["tclsh"][..], "tcl"),
+        (BASH_INTERPRETERS, "sh"),
+    ] {
+        if is_interpreter_family(&name, bases) {
+            return label.into();
+        }
+    }
+    "text".into()
 }
 
 impl CommentExtractor {
@@ -437,24 +714,27 @@ fn is_full_line(bytes: &[u8], start_byte: usize) -> bool {
 }
 
 fn classify_comment(bytes: &[u8], mode: LexicalMode, start_line: usize) -> CommentKind {
-    let is_doc = match mode {
-        LexicalMode::Slash { is_rust } => {
-            if bytes.starts_with(b"//") {
-                if is_rust {
-                    bytes.starts_with(b"//!")
-                        || (bytes.starts_with(b"///") && !bytes.starts_with(b"////"))
+    let is_shebang =
+        start_line == 1 && std::str::from_utf8(bytes).is_ok_and(is_interpreter_directive);
+    let is_doc = is_shebang
+        || match mode {
+            LexicalMode::Slash { is_rust } => {
+                if bytes.starts_with(b"//") {
+                    if is_rust {
+                        bytes.starts_with(b"//!")
+                            || (bytes.starts_with(b"///") && !bytes.starts_with(b"////"))
+                    } else {
+                        bytes.starts_with(b"//!") || bytes.starts_with(b"///")
+                    }
                 } else {
-                    bytes.starts_with(b"//!") || bytes.starts_with(b"///")
+                    bytes.starts_with(b"/*!")
+                        || (bytes.starts_with(b"/**")
+                            && !bytes.starts_with(b"/***")
+                            && !bytes.starts_with(b"/**/"))
                 }
-            } else {
-                bytes.starts_with(b"/*!")
-                    || (bytes.starts_with(b"/**")
-                        && !bytes.starts_with(b"/***")
-                        && !bytes.starts_with(b"/**/"))
             }
-        }
-        LexicalMode::Hash { .. } => start_line == 1 && bytes.starts_with(b"#!"),
-    };
+            LexicalMode::Hash { .. } => false,
+        };
     if is_doc {
         CommentKind::Doc
     } else {
@@ -713,6 +993,7 @@ fn hash_comment_spans(text: &str, is_python: bool) -> Vec<CommentSpan> {
     let mut line = 1;
     let mut is_line_blank_so_far = true;
     let mut prev_is_boundary = true;
+    let is_first_line_shebang = text.lines().next().is_some_and(is_interpreter_directive);
     while i < chars.len() {
         let c = chars[i];
         match c {
@@ -723,7 +1004,7 @@ fn hash_comment_spans(text: &str, is_python: bool) -> Vec<CommentSpan> {
                 i += 1;
             }
             '#' if prev_is_boundary => {
-                let is_shebang = line == 1 && chars.get(i + 1) == Some(&'!');
+                let is_shebang = line == 1 && is_first_line_shebang;
                 let is_full_line = is_line_blank_so_far;
                 while i < chars.len() && chars[i] != '\n' {
                     i += 1;
@@ -1035,6 +1316,34 @@ mod tests {
     }
 
     #[test]
+    fn shell_heredoc_shebangs_are_not_comments() {
+        for text in [
+            "cat <<EOF\n#!/bin/zsh\nEOF\n",
+            "cat <<'EOF'\n#!/bin/zsh\nEOF\n",
+        ] {
+            assert!(spans(text, SHELL).is_empty());
+        }
+    }
+
+    #[test]
+    fn unsupported_or_later_shell_hash_bangs_are_plain_comments() {
+        for (text, line) in [
+            ("#! not an interpreter\necho ready\n", 1),
+            ("echo ready\n#! not a shebang\n", 2),
+        ] {
+            assert_eq!(
+                spans(text, SHELL),
+                vec![CommentSpan {
+                    start_line: line,
+                    end_line: line,
+                    kind: CommentKind::Plain,
+                    is_full_line: true,
+                }]
+            );
+        }
+    }
+
+    #[test]
     fn source_extensions_span_both_comment_families() {
         assert!(is_source_path("tools/foo/src/main.rs"));
         assert!(is_source_path("pi/extensions/guard.ts"));
@@ -1057,6 +1366,47 @@ mod tests {
             Some(Some(Grammar::Python))
         );
         assert_eq!(lang_for_shebang("plain text\n"), None);
+        assert_eq!(
+            extract("script", "#!/usr/bin/fish\n# one\n# two\n# three\n# four\n"),
+            Some(vec![
+                CommentSpan {
+                    start_line: 1,
+                    end_line: 1,
+                    kind: CommentKind::Doc,
+                    is_full_line: true,
+                },
+                CommentSpan {
+                    start_line: 2,
+                    end_line: 5,
+                    kind: CommentKind::Plain,
+                    is_full_line: true,
+                },
+            ])
+        );
+        assert_eq!(
+            extract(
+                "script",
+                "#!/usr/bin/env node\nclass A {\n#a = 1;\n#b = 2;\n#c = 3;\n#d = 4;\n}\n"
+            ),
+            Some(vec![])
+        );
+        assert_eq!(language_label("script", "#!/usr/bin/env node\n"), "js");
+        assert_eq!(language_label("script", "#!/usr/bin/fish\n"), "fish");
+        assert_eq!(language_label("script", "#!/usr/bin/pwsh\n"), "text");
+        assert_eq!(language_label("script", "#!/bin/tcsh\n"), "csh");
+        assert_eq!(language_label("script", "#!/usr/bin/tclsh8.6\n"), "tcl");
+        assert_eq!(language_label("script", "#!/usr/bin/ksh93\n"), "sh");
+        assert_eq!(language_label("script", "#!/usr/bin/env ruby3.1\n"), "ruby");
+        assert_eq!(
+            language_label("script", "#!/usr/bin/env perl5.36\n"),
+            "perl"
+        );
+        for directive in [
+            "#!/usr/bin/env -S uv run python3\n",
+            "#!/usr/bin/env -S /usr/bin/uv run python3\n",
+        ] {
+            assert_eq!(language_label("script", directive), "python");
+        }
     }
 
     #[test]
@@ -1372,9 +1722,54 @@ mod tests {
         let shebangs = [
             ("#!/usr/bin/env python3\n", Some(Grammar::Python)),
             ("#!/bin/bash\n", Some(Grammar::Bash)),
+            ("#!/usr/bin/bash5\n", Some(Grammar::Bash)),
             ("#!/usr/bin/env sh\n", Some(Grammar::Bash)),
             ("#!/bin/dash\n", Some(Grammar::Bash)),
+            ("#!/bin/ash\n", Some(Grammar::Bash)),
+            ("#!/bin/mksh\n", Some(Grammar::Bash)),
+            ("#!/usr/bin/ksh93\n", Some(Grammar::Bash)),
+            ("#!/bin/yash\n", Some(Grammar::Bash)),
+            ("#!/bin/posh\n", Some(Grammar::Bash)),
+            ("#!/bin/csh\n", None),
+            ("#!/bin/tcsh\n", None),
+            ("#!/usr/bin/tclsh8.6\n", None),
             ("#!/bin/zsh\n", Some(Grammar::Zsh)),
+            ("#!/usr/bin/fish\n", None),
+            ("#!/usr/bin/env fish python3\n", None),
+            ("#!/usr/bin/env --chdir python fish\n", None),
+            ("#!/usr/bin/env node\n", Some(Grammar::JavaScript)),
+            ("#!/usr/bin/env -S zsh -f\n", Some(Grammar::Zsh)),
+            ("#!/usr/bin/env -S -i python3\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -S -iv python3\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -iS python3\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -S -ivuFOO python3\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -S uv run python3\n", Some(Grammar::Python)),
+            (
+                "#!/usr/bin/env -S /usr/bin/uv run python3\n",
+                Some(Grammar::Python),
+            ),
+            (
+                "#!/usr/bin/env -S -- FOO=bar python3\n",
+                Some(Grammar::Python),
+            ),
+            ("#!/usr/bin/env -S -i\\_python3\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -S \\_python3\n", Some(Grammar::Python)),
+            (
+                "#!/usr/bin/env -S -P /usr/bin python3\n",
+                Some(Grammar::Python),
+            ),
+            ("#!/usr/bin/env - python3\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -S pyth'on'3 -O\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -S \"python3\" -O\n", Some(Grammar::Python)),
+            ("#!/usr/bin/env -Spython3 -O\n", Some(Grammar::Python)),
+            (
+                "#!/usr/bin/env --split-string=python3 -O\n",
+                Some(Grammar::Python),
+            ),
+            (
+                "#!/usr/bin/env -u PYTHON python3.12\n",
+                Some(Grammar::Python),
+            ),
             ("#!/usr/bin/env ruby\n", Some(Grammar::Ruby)),
             ("#!/home/shared/bin/ruby\n", Some(Grammar::Ruby)),
             ("#!/usr/bin/env perl\n", None),
@@ -1385,6 +1780,24 @@ mod tests {
                 lang_for_shebang(text).map(|spec| spec.grammar),
                 Some(grammar)
             );
+        }
+        for text in [
+            "#!/opt/tool --python\n",
+            "#!/usr/bin/pwsh\n",
+            "#!/usr/bin/env --mystery python fish\n",
+            "#!/opt/bin/python3evil\n",
+            "#!/opt/bin/ruby3beta\n",
+            "#!/usr/bin/env -S pyth\\on3\n",
+            "#!/usr/bin/env -S \"\" python3\n",
+            "#!/usr/bin/env -S # python3\n",
+            "#!/usr/bin/env --split-stringpython3\n",
+            "#!/usr/bin/env FOO=bar -i python3\n",
+            "#!/usr/bin/env -S =x python3\n",
+            "#!/usr/bin/python3\u{00a0}-O\n",
+            "#!/usr/bin/env -0 python3\n",
+            "#!/usr/bin/env --null python3\n",
+        ] {
+            assert_eq!(lang_for_shebang(text), None);
         }
     }
 

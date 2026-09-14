@@ -105,6 +105,39 @@ fn empty_comments_block_without_semantic_shortcuts() {
 }
 
 #[test]
+fn only_a_line_one_shebang_bypasses_comment_shape_judgment() {
+    let fixture = Fixture::new("'comment-shape'");
+    for candidate in [
+        "#!/bin/zsh\necho ready\n",
+        "#!/usr/bin/fish\necho ready\n",
+        "#!/opt/bin/python3evil\necho ready\n",
+    ] {
+        let shebang = fixture.run_path("x.sh", "", candidate, "write");
+        assert_eq!(shebang.decision, Decision::Pass);
+        assert!(shebang.judgments.is_empty());
+    }
+    let extensionless = fixture.run_path(
+        "script",
+        "",
+        "#!/usr/bin/env node\n// explains the value\nconst value = 1;\n",
+        "write",
+    );
+    assert_eq!(extensionless.decision, Decision::NeedsJudgment);
+    assert_eq!(extensionless.judgments.len(), 1);
+    assert_eq!(extensionless.judgments[0].line, 2);
+    assert_eq!(extensionless.judgments[0].input.language, "js");
+    for (candidate, line) in [
+        ("#! not an interpreter\necho ready\n", 1),
+        ("echo ready\n#! not a shebang\n", 2),
+    ] {
+        let result = fixture.run_path("x.sh", "", candidate, "write");
+        assert_eq!(result.decision, Decision::NeedsJudgment);
+        assert_eq!(result.judgments.len(), 1);
+        assert_eq!(result.judgments[0].line, line);
+    }
+}
+
+#[test]
 fn privacy_only_changed_lines_and_safe_diagnostics() {
     let fixture = Fixture::new("'privacy'");
     let private = ["10", "31", "29", "7"].join(".");
