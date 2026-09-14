@@ -552,7 +552,7 @@ export default function ragExtension(pi: ExtensionAPI, dependencies: RagDependen
 	let isMemorySessionActive = false;
 	let lastCoreError: string | undefined;
 	let recallController = new AbortController();
-	let pendingRecallQuery: string | undefined;
+	const pendingRecallQueries: string[] = [];
 
 	const startSession = () => openSharedSession({ connectSocket: connect, spawnDaemon, socketPath, timeouts });
 	const recallFor = async (query: string, signal: AbortSignal): Promise<string | undefined> => {
@@ -580,7 +580,7 @@ export default function ragExtension(pi: ExtensionAPI, dependencies: RagDependen
 		recallController.abort();
 		recallController = new AbortController();
 		lastCoreError = undefined;
-		pendingRecallQuery = undefined;
+		pendingRecallQueries.length = 0;
 	});
 	pi.on("session_shutdown", async () => {
 		if (isMemorySessionActive) {
@@ -589,19 +589,19 @@ export default function ragExtension(pi: ExtensionAPI, dependencies: RagDependen
 		}
 		recallController.abort();
 		lastCoreError = undefined;
-		pendingRecallQuery = undefined;
+		pendingRecallQueries.length = 0;
 		await closeSharedSession();
 	});
 	pi.on("input", (event) => {
-		if (event.streamingBehavior === undefined) {
-			const isRecallEligible = event.source === "interactive" && process.env.RAG_RECALL !== "0" && isMemorySessionActive && event.text.length > 0;
-			pendingRecallQuery = isRecallEligible ? event.text.slice(0, maximumRecallQueryLength) : undefined;
+		if (event.streamingBehavior === undefined && event.source === "interactive") {
+			pendingRecallQueries.length = 0;
+			const isRecallEligible = process.env.RAG_RECALL !== "0" && isMemorySessionActive && event.text.length > 0;
+			if (isRecallEligible) pendingRecallQueries.push(event.text.slice(0, maximumRecallQueryLength));
 		}
 		return { action: "continue" };
 	});
 	pi.on("before_agent_start", async (_event, ctx) => {
-		const query = pendingRecallQuery;
-		pendingRecallQuery = undefined;
+		const query = pendingRecallQueries.shift();
 		if (query === undefined) return;
 		const recallSignal = recallController.signal;
 		let core: string | undefined;

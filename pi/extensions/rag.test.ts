@@ -522,6 +522,17 @@ test("loads core memory before optional recall", async (context) => {
 		await fire("session_shutdown");
 		await fixture.close();
 	});
+	await context.test("keeps the user query when an extension input follows it", async () => {
+		const fixture = await makeFixture();
+		const { fire } = registerWith(fixture, undefined, undefined, undefined, async () => coreSuccess(""));
+		await fire("session_start");
+		await fire("input", { type: "input", text: "current query", source: "interactive" } satisfies InputEvent);
+		await fire("input", { type: "input", text: "", source: "extension" } satisfies InputEvent);
+		await fire("before_agent_start", beforeAgentStart("current query"), extensionContext());
+		assert.equal(fixture.requests()[3]?.params.arguments.query, "current query");
+		await fire("session_shutdown");
+		await fixture.close();
+	});
 	await context.test("does not reuse streaming input for a later idle turn", async () => {
 		const fixture = await makeFixture();
 		const { fire } = registerWith(fixture, undefined, undefined, undefined, async () => coreSuccess(""));
