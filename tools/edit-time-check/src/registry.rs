@@ -198,7 +198,7 @@ fn evaluate_inner(
                 let document = comment_document
                     .as_ref()
                     .ok_or(((*rule).into(), "missing comment rules".into()))?;
-                let language = language_label(&request.path, &request.proposed_text);
+                let language = comment_check::language_label(&request.path, &request.proposed_text);
                 let fixed_judgment_bytes = 256
                     + json_string_bound(document)
                     + json_string_bound(&judgment_configuration)
@@ -223,6 +223,12 @@ fn evaluate_inner(
                             response.diagnostics.push(diagnostic(request, start + 1, *rule, "Shorten this non-documentation comment to three lines or remove it."));
                         }
                     } else {
+                        if span.start_line == 1
+                            && span.kind == comment_check::CommentKind::Doc
+                            && lines.text[start].starts_with("#!")
+                        {
+                            continue;
+                        }
                         if language == "rs"
                             && span.is_full_line
                             && is_empty_rust_comment(&lines.text[start..end])
@@ -363,22 +369,6 @@ fn diagnostic(request: &Request, line: usize, rule: Rule, reason: &str) -> Diagn
         rule: rule.into(),
         reason: reason.into(),
     }
-}
-
-fn language_label(path: &str, text: &str) -> String {
-    Path::new(path)
-        .extension()
-        .and_then(|s| s.to_str())
-        .map(str::to_owned)
-        .unwrap_or_else(|| {
-            let first = text.lines().next().unwrap_or_default();
-            for language in ["python", "zsh", "ruby", "perl", "sh"] {
-                if first.starts_with("#!") && first.contains(language) {
-                    return language.into();
-                }
-            }
-            "text".into()
-        })
 }
 
 struct Lines<'a> {

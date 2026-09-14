@@ -52,6 +52,7 @@ cargo build --release --manifest-path tools/tool-wizard/Cargo.toml   # any tools
 
 # Pi extensions (Node test runner)
 node --test pi/extensions/telemetry.test.ts pi/extensions/telemetry.security.test.ts pi/extensions/telemetry.rpc.test.ts
+cargo build --release --manifest-path tools/edit-time-check/Cargo.toml && PI_PACKAGE_ROOT="$(npm root -g)/@earendil-works/pi-coding-agent" node --test pi/extensions/comment-shape-guard.test.ts $(git ls-files 'pi/extensions/comment-shape-guard/*.test.ts')
 # telemetry loads its store lazily: a corrupt telemetry.jsonl no longer aborts pi
 # startup; it surfaces as an extension_error on the first lifecycle event instead
 
