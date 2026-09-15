@@ -122,7 +122,7 @@ Use `--check` when you only want plan validation and rendering. That mode does n
 The tracked manifest installs `rag` on macOS and Linux. Its source uses this pinned revision:
 
 ```text
-6635b55b7e42ba3bb27cab314bd8e8a6f5b6ddac
+357f4440e14693e52a38228d79148ea21c9a826a
 ```
 
 The entry links the `rag` command into `$HOME/.local/bin/rag`. It also links `pi/extensions/rag.ts` into Pi's extension directory.
