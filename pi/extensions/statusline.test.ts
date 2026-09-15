@@ -246,10 +246,12 @@ async function captureUnhandled<T>(run: () => Promise<T>): Promise<{ result: T; 
 	}
 }
 
-type QuotaState = {
+type QuotaDisplay = {
 	provider: Provider;
 	usedPercent: number;
 };
+
+type QuotaState = Partial<Record<Provider, QuotaDisplay>>;
 
 function currentQuotaState(): QuotaState | undefined {
 	return (globalThis as { __owaisQuotaState?: QuotaState }).__owaisQuotaState;
@@ -259,13 +261,13 @@ function clearQuotaState(): void {
 	(globalThis as { __owaisQuotaState?: QuotaState }).__owaisQuotaState = undefined;
 }
 
-async function waitForQuotaState(provider: Provider, previous?: QuotaState): Promise<QuotaState> {
+async function waitForQuotaState(provider: Provider, previous?: QuotaDisplay): Promise<QuotaDisplay> {
 	const timeout = Date.now() + 100;
-	while (currentQuotaState()?.provider !== provider || currentQuotaState() === previous) {
+	while (!currentQuotaState()?.[provider] || currentQuotaState()?.[provider] === previous) {
 		if (Date.now() > timeout) throw new Error(`timed out waiting for ${provider} quota state`);
 		await sleep(0);
 	}
-	return currentQuotaState() as QuotaState;
+	return currentQuotaState()?.[provider] as QuotaDisplay;
 }
 
 function jsonResponse(payload: unknown) {
@@ -476,62 +478,244 @@ test("TC-06 Codex primary window updates shared quota state", async () => {
 	assert.equal(quota.usedPercent, 30);
 });
 
-test("TC-07 provider switch does not render stale session A usage", async () => {
+test("provider usage requests carry timeout signals", async () => {
 	clearQuotaState();
 	const api = createFakeExtensionAPI();
-	const sessionA = createMockContext({ provider: "anthropic" });
-	const sessionB = createMockContext({ provider: "openai-codex" });
-
-	sessionA.setProviderAuth("anthropic", "sk-ant-oat-session-a");
-	sessionB.setProviderAuth("openai-codex", makeOpenAICodexToken("account-openai-2"));
-
-	const restoreFetch = installMockFetch(async (input: RequestInfo | URL) => {
-		const url = requestUrl(input);
-		if (url.includes("api/oauth/usage")) {
-			return jsonResponse({
-				five_hour: { utilization: 95, resets_at: toIsoOffset(600) },
-				seven_day: { utilization: 20, resets_at: toIsoOffset(86400) },
-			});
-		}
-		if (url.includes("wham/usage")) {
-			const now = Math.floor(Date.now() / 1000);
-			return jsonResponse({
-				rate_limit: {
-					primary_window: {
-						used_percent: 30,
-						limit_window_seconds: 18000,
-						reset_at: now + 1800,
-						reset_after_seconds: 1800,
-					},
-					secondary_window: {
-						used_percent: 22,
-						limit_window_seconds: 604800,
-						reset_at: now + 7000,
-						reset_after_seconds: 7000,
-					},
-				},
-			});
-		}
-
-		throw new Error(`unexpected usage request: ${url}`);
+	const context = createMockContext();
+	context.setProviderAuth("anthropic", "sk-ant-oat-timeout");
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-timeout"));
+	const signals: Array<AbortSignal | null | undefined> = [];
+	const restoreFetch = installMockFetch(async (input, init) => {
+		signals.push(init?.signal);
+		return requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse({
+					five_hour: { utilization: 10, resets_at: toIsoOffset(3600) },
+					seven_day: null,
+				})
+			: jsonResponse(codexUsage(20, 7200));
 	});
 
 	statusline(api.api);
-	const handler = api.handler("model_select");
-	await invoke(handler, sessionA.ctx);
-	const anthropicQuota = await waitForQuotaState("anthropic");
+	await invoke(api.handler("model_select"), context.ctx);
+	await Promise.all([waitForQuotaState("anthropic"), waitForQuotaState("openai-codex")]);
 
-	sessionA.setActive(false);
-	await invoke(handler, sessionB.ctx);
-	const openaiQuota = await waitForQuotaState("openai-codex", anthropicQuota);
+	restoreFetch();
+
+	assert.equal(signals.length, 2);
+	assert.ok(signals.every((signal) => signal instanceof AbortSignal));
+});
+
+test("TC-07 provider switch retains both provider usage displays", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-session");
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-openai-2"));
+	const restoreFetch = installMockFetch(async (input: RequestInfo | URL) =>
+		requestUrl(input).includes("api/oauth/usage")
+			? jsonResponse({
+					five_hour: { utilization: 95, resets_at: toIsoOffset(600) },
+					seven_day: { utilization: 20, resets_at: toIsoOffset(86400) },
+				})
+			: jsonResponse(codexUsage(22, 7_000)),
+	);
+
+	statusline(api.api);
+	const handler = api.handler("model_select");
+	await invoke(handler, context.ctx);
+	const anthropicQuota = await waitForQuotaState("anthropic");
+	const openaiQuota = await waitForQuotaState("openai-codex");
+	context.setProvider("openai-codex");
+	await invoke(handler, context.ctx);
+	await sleep(0);
 
 	restoreFetch();
 
 	assert.equal(anthropicQuota.usedPercent, 95);
 	assert.equal(openaiQuota.usedPercent, 22);
+	assert.equal(currentQuotaState()?.anthropic?.usedPercent, 95);
+	assert.equal(currentQuotaState()?.["openai-codex"]?.usedPercent, 22);
 });
 
-test("TC-08 terminal resize rerenders shared quota state", async () => {
+test("TC-08 one provider refresh failure keeps its last display and updates the other", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-refresh-failure");
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-refresh-failure"));
+	const interval = installFakeSetInterval();
+	const calls = new Map<string, number>();
+	const restoreFetch = installMockFetch(async (input) => {
+		const url = requestUrl(input);
+		const provider = url.includes("api/oauth/usage") ? "anthropic" : "openai-codex";
+		const count = (calls.get(provider) ?? 0) + 1;
+		calls.set(provider, count);
+		if (provider === "anthropic") {
+			return count === 1 ? jsonResponse(anthropicUsage(50, 3_600)) : { ok: false, json: async () => ({}) };
+		}
+		return jsonResponse(codexUsage(count === 1 ? 30 : 44, 1_800));
+	});
+
+	statusline(api.api);
+	await invoke(api.handler("session_start"), context.ctx);
+	const firstAnthropic = await waitForQuotaState("anthropic");
+	const firstOpenAI = await waitForQuotaState("openai-codex");
+	interval.callback?.();
+	const secondOpenAI = await waitForQuotaState("openai-codex", firstOpenAI);
+
+	assert.equal(firstAnthropic.usedPercent, 50);
+	assert.equal(secondOpenAI.usedPercent, 44);
+	assert.equal(currentQuotaState()?.anthropic?.usedPercent, 50);
+
+	await invoke(api.handler("session_shutdown"), context.ctx);
+	interval.restore();
+	restoreFetch();
+});
+
+test("TC-09 failed refreshes remain throttled", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-throttle");
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-throttle"));
+	let fetchCalls = 0;
+	const restoreFetch = installMockFetch(async () => {
+		fetchCalls += 1;
+		return { ok: false, json: async () => ({}) };
+	});
+
+	statusline(api.api);
+	for (let index = 0; index < 5; index += 1) {
+		await invoke(api.handler("agent_settled"), context.ctx);
+	}
+	await sleep(0);
+	await sleep(0);
+
+	restoreFetch();
+	assert.equal(fetchCalls, 2);
+});
+
+test("TC-10 a late older response cannot replace newer provider usage", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-generation");
+	const interval = installFakeSetInterval();
+	let releaseFirst: () => void = () => {};
+	const firstGate = new Promise<void>((resolve) => {
+		releaseFirst = resolve;
+	});
+	let fetchCalls = 0;
+	const restoreFetch = installMockFetch(async () => {
+		fetchCalls += 1;
+		if (fetchCalls === 1) {
+			await firstGate;
+			return jsonResponse(anthropicUsage(11, 3_600));
+		}
+		return jsonResponse(anthropicUsage(99, 3_600));
+	});
+
+	statusline(api.api);
+	await invoke(api.handler("session_start"), context.ctx);
+	interval.callback?.();
+	const newest = await waitForQuotaState("anthropic");
+	releaseFirst();
+	await sleep(0);
+	await sleep(0);
+
+	assert.equal(newest.usedPercent, 99);
+	assert.equal(currentQuotaState()?.anthropic?.usedPercent, 99);
+	await invoke(api.handler("session_shutdown"), context.ctx);
+	interval.restore();
+	restoreFetch();
+});
+
+test("TC-11 one hung provider does not withhold the other provider display", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-hung");
+	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-hung"));
+	const interval = installFakeSetInterval();
+	const restoreFetch = installMockFetch(async (input) => {
+		if (requestUrl(input).includes("api/oauth/usage")) return await new Promise(() => {});
+		return jsonResponse(codexUsage(30, 1_800));
+	});
+
+	statusline(api.api);
+	await invoke(api.handler("session_start"), context.ctx);
+	const openai = await waitForQuotaState("openai-codex");
+
+	assert.equal(openai.usedPercent, 30);
+	assert.equal(currentQuotaState()?.anthropic, undefined);
+	await invoke(api.handler("session_shutdown"), context.ctx);
+	interval.restore();
+	restoreFetch();
+});
+
+test("TC-12 an old session response cannot match a new session generation", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-session-generation");
+	const interval = installFakeSetInterval();
+	let releaseFirst: () => void = () => {};
+	const firstGate = new Promise<void>((resolve) => {
+		releaseFirst = resolve;
+	});
+	let fetchCalls = 0;
+	const restoreFetch = installMockFetch(async () => {
+		fetchCalls += 1;
+		if (fetchCalls === 1) {
+			await firstGate;
+			return jsonResponse(anthropicUsage(11, 3_600));
+		}
+		return jsonResponse(anthropicUsage(99, 3_600));
+	});
+
+	statusline(api.api);
+	await invoke(api.handler("session_start"), context.ctx);
+	await invoke(api.handler("session_start"), context.ctx);
+	const newest = await waitForQuotaState("anthropic");
+	releaseFirst();
+	await sleep(0);
+	await sleep(0);
+
+	assert.equal(newest.usedPercent, 99);
+	assert.equal(currentQuotaState()?.anthropic?.usedPercent, 99);
+	await invoke(api.handler("session_shutdown"), context.ctx);
+	interval.restore();
+	restoreFetch();
+});
+
+test("TC-13 session shutdown rejects an in-flight response", async () => {
+	clearQuotaState();
+	const api = createFakeExtensionAPI();
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-shutdown");
+	const interval = installFakeSetInterval();
+	let releaseFetch: () => void = () => {};
+	const fetchGate = new Promise<void>((resolve) => {
+		releaseFetch = resolve;
+	});
+	const restoreFetch = installMockFetch(async () => {
+		await fetchGate;
+		return jsonResponse(anthropicUsage(70, 3_600));
+	});
+
+	statusline(api.api);
+	await invoke(api.handler("session_start"), context.ctx);
+	await invoke(api.handler("session_shutdown"), context.ctx);
+	releaseFetch();
+	await sleep(0);
+	await sleep(0);
+
+	assert.equal(currentQuotaState(), undefined);
+	interval.restore();
+	restoreFetch();
+});
+
+test("TC-14 terminal resize rerenders shared quota state", async () => {
 	clearQuotaState();
 	const restoreColumns = installTerminalColumns(80);
 	const api = createFakeExtensionAPI();
@@ -626,11 +810,99 @@ function codexUsage(usedPercent: number, resetOffsetSeconds: number) {
 }
 
 async function executeQuotaAdmission(): Promise<ToolResult> {
-	const context = createMockContext();
-	context.setProviderAuth("anthropic", "sk-ant-oat-test-token");
-	context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-test-id"));
-	return createQuotaAdmissionTool().execute("call", {}, undefined, undefined, context.ctx);
+	return withSettings(undefined, async (settingsPath) => {
+		const context = createMockContext();
+		context.setProviderAuth("anthropic", "sk-ant-oat-test-token");
+		context.setProviderAuth("openai-codex", makeOpenAICodexToken("account-test-id"));
+		return createQuotaAdmissionTool(settingsPath).execute("call", {}, undefined, undefined, context.ctx);
+	});
 }
+
+test("quota_admission cannot overwrite a newer footer refresh", async () => {
+	clearQuotaState();
+	const handlers = new Map<string, Handler>();
+	let quotaTool: RegisteredTool | undefined;
+	const api = {
+		on(event: string, handler: Handler) {
+			handlers.set(event, handler);
+		},
+		registerTool(value: RegisteredTool) {
+			quotaTool = value;
+		},
+	} as unknown as ExtensionAPI;
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-tool-race");
+	let releaseToolFetch: () => void = () => {};
+	const toolGate = new Promise<void>((resolve) => {
+		releaseToolFetch = resolve;
+	});
+	let fetchCalls = 0;
+	const restoreFetch = installMockFetch(async () => {
+		fetchCalls += 1;
+		if (fetchCalls === 1) {
+			await toolGate;
+			return jsonResponse(anthropicUsage(10, 3_600));
+		}
+		return jsonResponse(anthropicUsage(90, 3_600));
+	});
+
+	statusline(api);
+	assert.ok(quotaTool);
+	const toolResult = quotaTool.execute("call", {}, undefined, undefined, context.ctx);
+	await sleep(0);
+	await invoke(handlers.get("model_select") as Handler, context.ctx);
+	const newest = await waitForQuotaState("anthropic");
+	releaseToolFetch();
+	await toolResult;
+	await sleep(0);
+
+	assert.equal(newest.usedPercent, 90);
+	assert.equal(currentQuotaState()?.anthropic?.usedPercent, 90);
+	restoreFetch();
+});
+
+test("failed quota_admission does not discard an in-flight successful refresh", async () => {
+	clearQuotaState();
+	const handlers = new Map<string, Handler>();
+	let quotaTool: RegisteredTool | undefined;
+	const api = {
+		on(event: string, handler: Handler) {
+			handlers.set(event, handler);
+		},
+		registerTool(value: RegisteredTool) {
+			quotaTool = value;
+		},
+	} as unknown as ExtensionAPI;
+	const context = createMockContext({ provider: "anthropic" });
+	context.setProviderAuth("anthropic", "sk-ant-oat-tool-failure-race");
+	const interval = installFakeSetInterval();
+	let releaseRefresh: () => void = () => {};
+	const refreshGate = new Promise<void>((resolve) => {
+		releaseRefresh = resolve;
+	});
+	let fetchCalls = 0;
+	const restoreFetch = installMockFetch(async () => {
+		fetchCalls += 1;
+		if (fetchCalls === 1) {
+			await refreshGate;
+			return jsonResponse(anthropicUsage(55, 3_600));
+		}
+		return { ok: false, json: async () => ({}) };
+	});
+
+	statusline(api);
+	assert.ok(quotaTool);
+	await invoke(handlers.get("session_start") as Handler, context.ctx);
+	await sleep(0);
+	await quotaTool.execute("call", {}, undefined, undefined, context.ctx);
+	releaseRefresh();
+	const refreshed = await waitForQuotaState("anthropic");
+
+	assert.equal(refreshed.usedPercent, 55);
+	await invoke(handlers.get("session_shutdown") as Handler, context.ctx);
+	interval.restore();
+	restoreFetch();
+});
 
 function quotaAdmissionDetails(result: ToolResult): {
 	checkedAtEpochSeconds: number;

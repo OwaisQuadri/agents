@@ -370,14 +370,6 @@ source = { path = "." }
 installer = { command = "/usr/bin/true", args = [], preview_args = [] }
 
 [[tools]]
-name = "world-clock"
-platforms = ["macos", "linux"]
-commands = []
-pi_extension = "pi/extensions/world-clock.ts"
-source = { path = "." }
-installer = { command = "/usr/bin/true", args = [], preview_args = [] }
-
-[[tools]]
 name = "transcript-directed-video-processor"
 platforms = ["macos", "linux"]
 commands = []

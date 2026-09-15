@@ -18,6 +18,16 @@ type ProviderUsage = {
 
 type Provider = QuotaProvider;
 
+type QuotaDisplay = {
+	provider: Provider;
+	usedPercent: number;
+	pacePercent: number;
+	label: string;
+	reset: string;
+};
+
+type QuotaDisplayState = Partial<Record<Provider, QuotaDisplay>>;
+
 type ProviderAdmission = {
 	isFresh: boolean;
 	usedPercent: number | null;
@@ -54,6 +64,7 @@ type CodexUsageResponse = {
 
 const POLL_INTERVAL_MS = 10 * 60 * 1000;
 const MIN_FETCH_INTERVAL_MS = 60 * 1000;
+const PROVIDER_FETCH_TIMEOUT_MS = 30 * 1000;
 const ANTHROPIC_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const FIVE_HOUR_SECONDS = 5 * 3600;
@@ -125,6 +136,7 @@ async function fetchAnthropicUsage(ctx: ExtensionContext): Promise<ProviderUsage
 	if (!token || !token.startsWith("sk-ant-oat")) return null;
 
 	const response = await fetch(ANTHROPIC_USAGE_URL, {
+		signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
 		headers: {
 			Accept: "application/json",
 			Authorization: `Bearer ${token}`,
@@ -159,6 +171,7 @@ async function fetchCodexUsage(ctx: ExtensionContext): Promise<ProviderUsage | n
 	if (!accountId) return null;
 
 	const response = await fetch(CODEX_USAGE_URL, {
+		signal: AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS),
 		headers: {
 			Accept: "application/json",
 			Authorization: `Bearer ${token}`,
@@ -264,7 +277,22 @@ function quotaAdmissionFor(usage: ProviderUsage | null, nowSeconds: number): Pro
 
 export default function statusline(pi: ExtensionAPI, options: { settingsPath?: string } = {}) {
 	const usageByProvider = new Map<string, ProviderUsage>();
+	const requestGenerationByProvider = new Map<Provider, number>();
+	const acceptedGenerationByProvider = new Map<Provider, number>();
+	const lastFetchAtByProvider = new Map<string, number>();
 	const settingsPath = options.settingsPath ?? defaultSettingsPath();
+
+	function nextGeneration(provider: Provider): number {
+		const generation = (requestGenerationByProvider.get(provider) ?? 0) + 1;
+		requestGenerationByProvider.set(provider, generation);
+		return generation;
+	}
+
+	function acceptProviderUsage(provider: Provider, usage: ProviderUsage, generation: number): void {
+		if (generation < (acceptedGenerationByProvider.get(provider) ?? 0)) return;
+		acceptedGenerationByProvider.set(provider, generation);
+		usageByProvider.set(provider, usage);
+	}
 
 	pi.registerTool({
 		name: "quota_admission",
@@ -274,19 +302,23 @@ export default function statusline(pi: ExtensionAPI, options: { settingsPath?: s
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const fetched = await Promise.all(
 				PROVIDERS.map(async (provider) => {
+					const generation = nextGeneration(provider);
 					try {
 						const usage = provider === "anthropic" ? await fetchAnthropicUsage(ctx) : await fetchCodexUsage(ctx);
-						return [provider, usage] as const;
+						return [provider, usage, generation] as const;
 					} catch {
-						return [provider, null] as const;
+						return [provider, null, generation] as const;
 					}
 				}),
 			);
 			const nowSeconds = Math.round(Date.now() / 1000);
 			const overrideProvider = quotaOverrideFrom(settingsPath);
 			const providers = Object.fromEntries(
-				fetched.map(([provider, usage]) => {
-					if (usage) usageByProvider.set(provider, usage);
+				fetched.map(([provider, usage, generation]) => {
+					if (usage) {
+						acceptProviderUsage(provider, usage, generation);
+						lastFetchAtByProvider.set(provider, nowSeconds * 1000);
+					}
 					const admission = quotaAdmissionFor(usage, nowSeconds);
 					return [
 						provider,
@@ -302,42 +334,38 @@ export default function statusline(pi: ExtensionAPI, options: { settingsPath?: s
 				providers,
 			};
 			(globalThis as { __owaisQuotaAdmissionState?: QuotaAdmission }).__owaisQuotaAdmissionState = result;
+			render(ctx);
 			return {
 				content: [{ type: "text", text: JSON.stringify(result) }],
 				details: result,
 			};
 		},
 	});
-	const lastFetchAtByProvider = new Map<string, number>();
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 	let activeContext: ExtensionContext | null = null;
 
-	function activeProvider(ctx: ExtensionContext): "anthropic" | "openai-codex" | null {
-		const provider = ctx.model?.provider;
-		return provider === "anthropic" || provider === "openai-codex" ? provider : null;
-	}
-
 	function render(ctx: ExtensionContext) {
 		if (!isCtxActive(ctx)) return;
-		// isCtxActive already cleared staleness above -- anything thrown past this point is a genuine
-		// render fault, and the fire-and-forget call sites (refresh(), onResize) have no other catch.
 		try {
-			const provider = activeProvider(ctx);
-			const usage = provider ? usageByProvider.get(provider) : undefined;
-			const selected = usage ? selectWindow(usage) : null;
-			if (!provider || !selected) {
-				(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = undefined;
-				return;
-			}
 			const nowSeconds = Math.round(Date.now() / 1000);
-			const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
-			(globalThis as { __owaisQuotaState?: unknown }).__owaisQuotaState = {
-				provider,
-				usedPercent: Math.floor(selected.window.usedPercent),
-				pacePercent: Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)),
-				label: selected.label,
-				reset: selected.label === "5h" ? formatCalendarReset(selected.window.resetAtEpochSeconds || nowSeconds) : `in ${formatReset(diff)}`,
-			};
+			const state: QuotaDisplayState = {};
+			for (const provider of PROVIDERS) {
+				const usage = usageByProvider.get(provider);
+				const selected = usage ? selectWindow(usage) : null;
+				if (!selected) continue;
+				const diff = Math.max(0, (selected.window.resetAtEpochSeconds || nowSeconds) - nowSeconds);
+				state[provider] = {
+					provider,
+					usedPercent: Math.floor(selected.window.usedPercent),
+					pacePercent: Math.floor(pacePercent(selected.window, selected.label, nowSeconds, diff)),
+					label: selected.label,
+					reset: selected.label === "5h"
+						? formatCalendarReset(selected.window.resetAtEpochSeconds || nowSeconds)
+						: `${formatReset(diff)} left`,
+				};
+			}
+			(globalThis as { __owaisQuotaState?: QuotaDisplayState }).__owaisQuotaState =
+				Object.keys(state).length > 0 ? state : undefined;
 		} catch (error) {
 			console.error("[statusline] render failed:", error);
 		}
@@ -347,39 +375,35 @@ export default function statusline(pi: ExtensionAPI, options: { settingsPath?: s
 		if (activeContext) render(activeContext);
 	};
 
+	async function refreshProvider(ctx: ExtensionContext, provider: Provider, isForced: boolean): Promise<void> {
+		const now = Date.now();
+		if (!isForced && now - (lastFetchAtByProvider.get(provider) ?? 0) < MIN_FETCH_INTERVAL_MS) return;
+		lastFetchAtByProvider.set(provider, now);
+		const generation = nextGeneration(provider);
+		try {
+			const usage = provider === "anthropic" ? await fetchAnthropicUsage(ctx) : await fetchCodexUsage(ctx);
+			if (usage) acceptProviderUsage(provider, usage, generation);
+		} catch (error) {
+			if (isCtxActive(ctx)) console.error(`[statusline] ${provider} refresh failed:`, error);
+		} finally {
+			if (isCtxActive(ctx)) render(ctx);
+		}
+	}
+
 	async function refresh(ctx: ExtensionContext, isForced = false) {
 		if (!isCtxActive(ctx)) return;
-		// this whole body runs fire-and-forget (`void refresh(ctx)` at every call site below), so
-		// any throw past this point -- not just a fetch failure, which the inner catch already
-		// covers -- would otherwise escape as an unhandled rejection with a raw stack trace.
-		try {
-			const provider = activeProvider(ctx);
-			if (!provider) {
-				render(ctx);
-				return;
-			}
-			const now = Date.now();
-			if (!isForced && now - (lastFetchAtByProvider.get(provider) ?? 0) < MIN_FETCH_INTERVAL_MS) {
-				render(ctx);
-				return;
-			}
-			lastFetchAtByProvider.set(provider, now);
-			try {
-				const usage =
-					provider === "anthropic" ? await fetchAnthropicUsage(ctx) : await fetchCodexUsage(ctx);
-				if (usage) usageByProvider.set(provider, usage);
-			} catch {
-				// A fetch failure keeps the previous bar; the next poll retries.
-			}
-			if (!isCtxActive(ctx)) return;
-			render(ctx);
-		} catch (error) {
-			if (isCtxActive(ctx)) console.error("[statusline] refresh failed:", error);
-		}
+		await Promise.all(PROVIDERS.map((provider) => refreshProvider(ctx, provider, isForced)));
+		if (isCtxActive(ctx)) render(ctx);
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		activeContext = ctx;
+		usageByProvider.clear();
+		lastFetchAtByProvider.clear();
+		for (const provider of PROVIDERS) {
+			acceptedGenerationByProvider.set(provider, nextGeneration(provider));
+		}
+		(globalThis as { __owaisQuotaState?: QuotaDisplayState }).__owaisQuotaState = undefined;
 		void refresh(ctx);
 		if (pollInterval) clearInterval(pollInterval);
 		pollInterval = setInterval(() => void refresh(ctx, true), POLL_INTERVAL_MS);
@@ -401,6 +425,11 @@ export default function statusline(pi: ExtensionAPI, options: { settingsPath?: s
 			pollInterval = null;
 		}
 		activeContext = null;
+		usageByProvider.clear();
+		for (const provider of PROVIDERS) {
+			acceptedGenerationByProvider.set(provider, nextGeneration(provider));
+		}
+		(globalThis as { __owaisQuotaState?: QuotaDisplayState }).__owaisQuotaState = undefined;
 		process.stdout.off("resize", onResize);
 	});
 }

@@ -1,7 +1,3 @@
-// GH-75: a genuine, non-staleness error inside the refresh()/render() call chain must never
-// escape as an unhandled rejection. isCtxActive() only ever catches session staleness (a thrown
-// ctx.hasUI read) -- this file pins down the OTHER kind of fault: one thrown while ctx is still
-// active, from a call site that isCtxActive never touches (ctx.model, not ctx.hasUI).
 import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 import { test } from "node:test";
@@ -28,15 +24,15 @@ function createFakeExtensionAPI(): { api: ExtensionAPI; handler(event: string): 
 	};
 }
 
-// hasUI stays healthy (ctx is NOT stale) but reading ctx.model throws a genuine, unrelated
-// fault -- the exact shape isCtxActive's staleness-only guard was never meant to catch.
 function createFaultyActiveContext(): ExtensionContext {
 	return {
 		get hasUI() {
 			return true;
 		},
-		get model() {
-			throw new Error("boom: a real UI/config fault, not a stale session");
+		modelRegistry: {
+			async getProviderAuth(provider: string) {
+				return provider === "anthropic" ? { auth: { apiKey: "sk-ant-oat-fault" } } : null;
+			},
 		},
 		mode: "tui",
 	} as unknown as ExtensionContext;
@@ -56,11 +52,15 @@ async function captureUnhandled<T>(run: () => Promise<T>): Promise<{ result: T; 
 	}
 }
 
-test("GH-75: a non-staleness error reading ctx.model inside refresh() never escapes as an unhandled rejection", async () => {
+test("GH-75: a provider refresh error never escapes as an unhandled rejection", async () => {
 	const api = createFakeExtensionAPI();
 	const ctx = createFaultyActiveContext();
 	statusline(api.api);
 
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () => {
+		throw new Error("boom: a provider refresh fault, not a stale session");
+	};
 	const originalConsoleError = console.error;
 	const loggedErrors: unknown[][] = [];
 	console.error = (...args: unknown[]) => {
@@ -68,28 +68,30 @@ test("GH-75: a non-staleness error reading ctx.model inside refresh() never esca
 	};
 
 	const { rejections } = await captureUnhandled(async () => {
-		// session_start calls `void refresh(ctx)` fire-and-forget -- this is the exact
-		// call site the issue names.
 		await api.handler("session_start")({}, ctx);
 		await sleep(0);
 	});
-	// session_start also arms a real 10-minute setInterval; clear it or the process never exits.
 	await api.handler("session_shutdown")({}, ctx);
 
+	globalThis.fetch = originalFetch;
 	console.error = originalConsoleError;
 
-	assert.equal(rejections.length, 0, "the thrown ctx.model fault must be swallowed, not surfaced as an unhandled rejection");
+	assert.equal(rejections.length, 0, "the provider fault must be swallowed, not surfaced as an unhandled rejection");
 	assert.ok(
-		loggedErrors.some((args) => String(args[0]).includes("[statusline]")),
-		"a genuine fault is logged, not silently discarded",
+		loggedErrors.some((args) => args[0] === "[statusline] anthropic refresh failed:"),
+		"the provider-level guard logs the failed provider",
 	);
 });
 
-test("GH-75: the same non-staleness fault reached through model_select and agent_settled also never escapes", async () => {
+test("GH-75: the same provider fault from model_select and agent_settled never escapes", async () => {
 	const api = createFakeExtensionAPI();
 	const ctx = createFaultyActiveContext();
 	statusline(api.api);
 
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () => {
+		throw new Error("boom: a provider refresh fault, not a stale session");
+	};
 	const originalConsoleError = console.error;
 	console.error = () => {};
 
@@ -99,6 +101,7 @@ test("GH-75: the same non-staleness fault reached through model_select and agent
 		await sleep(0);
 	});
 
+	globalThis.fetch = originalFetch;
 	console.error = originalConsoleError;
 	assert.equal(rejections.length, 0);
 });

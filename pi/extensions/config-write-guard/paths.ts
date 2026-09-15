@@ -15,7 +15,6 @@ const protectedRelativePaths = [
 	[".pi", "agent", "plannotator.json"],
 	[".pi", "agent", "settings.json"],
 	[".pi", "agent", "themes", "owais.json"],
-	[".pi", "agent", "world-clock.json"],
 	[".pi", "extensions", "managed-config-guard"],
 	[".pi", "extensions", "managed-config-guard.test.ts"],
 	[".pi", "extensions", "managed-config-guard.ts"],

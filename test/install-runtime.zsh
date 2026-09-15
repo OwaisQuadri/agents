@@ -155,7 +155,13 @@ no_cargo=$(env -u CARGO_TARGET_DIR -u CARGO_BUILD_TARGET PATH="/usr/bin:/bin" HO
 check "prebuilt tool-sync works without Cargo" grep -q "tool-sync fallback ran" <(print -r -- "$no_cargo")
 check "no-Cargo install completes" grep -q "plan: done" <(print -r -- "$no_cargo")
 
-plan=$(HOME_TARGET="$fixture/home" "$repo/install.sh" --dry-run)
+mkdir -p "$fixture/home/.pi/agent/extensions"
+ln -s "$fixture/old-checkout/pi/extensions/world-clock.ts" "$fixture/home/.pi/agent/extensions/world-clock.ts"
+ln -s "$fixture/old-checkout/config/world-clock.json" "$fixture/home/.pi/agent/world-clock.json"
+plan=$(HOME_TARGET="$fixture/home" REPO_TARGET="$repo" "$repo/install.sh" --dry-run)
+check "retired world-clock extension is planned" grep -q "retire $fixture/home/.pi/agent/extensions/world-clock.ts" <(print -r -- "$plan")
+check "retired world-clock config is planned" grep -q "unlink retired $fixture/home/.pi/agent/world-clock.json" <(print -r -- "$plan")
+check "world-clock install is absent" test "$(print -r -- "$plan" | grep -c "world-clock.json ->" || true)" -eq 0
 check "stable binary directory planned" grep -q "$fixture/home/.local/lib/agents-tools/ste-check" <(print -r -- "$plan")
 check "command link uses stable binary" grep -q "$fixture/home/.local/bin/ste-check -> $fixture/home/.local/lib/agents-tools/ste-check" <(print -r -- "$plan")
 check "tool-sync stable binary is planned" grep -q "$fixture/home/.local/lib/agents-tools/tool-sync" <(print -r -- "$plan")
