@@ -168,12 +168,28 @@ function blend(start: string, end: string, fraction: number): string {
 	return `#${channels.join("")}`;
 }
 
-type QuotaState = {
-	provider: string;
+type QuotaProvider = "anthropic" | "openai-codex";
+
+type QuotaDisplay = {
+	provider: QuotaProvider;
 	usedPercent: number;
 	pacePercent: number;
 	label: string;
 	reset: string;
+};
+
+type QuotaDisplayState = Partial<Record<QuotaProvider, QuotaDisplay>>;
+
+type QuotaForm = {
+	text: string;
+	isOverPace: boolean;
+};
+
+type QuotaForms = {
+	full: QuotaForm;
+	compact: QuotaForm;
+	minimal: QuotaForm;
+	tiny: QuotaForm;
 };
 
 type OmFooterState = {
@@ -187,6 +203,8 @@ type OmFooterState = {
 };
 
 function splitLine(left: string, right: string, width: number): string {
+	if (!left) return " ".repeat(Math.max(0, width - visibleWidth(right))) + right;
+	if (!right) return left;
 	return left + " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right))) + right;
 }
 
@@ -203,23 +221,69 @@ export function omLabel(): string {
 	return `${next} -> ${pool}`;
 }
 
-type WorldClockState = {
-	render: (availableWidth: number) => string;
-};
-
-function worldClockLabel(availableWidth: number): string {
-	const state = (globalThis as { __owaisWorldClockState?: WorldClockState }).__owaisWorldClockState;
-	return state?.render(availableWidth) ?? "";
+function quotaForms(quota: QuotaDisplay, isLeft: boolean): QuotaForms {
+	const usage = `${quota.usedPercent}%/${quota.pacePercent}% ${quota.label}`;
+	const provider = quota.provider === "openai-codex" ? "OpenAI" : "Anthropic";
+	const providerMinimal = quota.provider === "openai-codex" ? "O" : "A";
+	const compactUsage = `${quota.usedPercent}/${quota.pacePercent} ${quota.label}`;
+	const compactReset = quota.reset
+		.replace(/^today at /, "")
+		.replace(/^tomorrow at /, "+1d ")
+		.replace(/ at /, " ")
+		.replace(/ left$/, "")
+		.replaceAll(".", "")
+		.replaceAll(" ", "");
+	const isOverPace = quota.usedPercent > quota.pacePercent;
+	const form = (text: string): QuotaForm => ({ text, isOverPace });
+	return {
+		full: form(isLeft
+			? `${usage} · ${provider} · ${quota.reset}`
+			: `${quota.reset} · ${provider} · ${usage}`),
+		compact: form(isLeft
+			? `${compactUsage} ${providerMinimal} ${compactReset}`
+			: `${compactReset} ${providerMinimal} ${compactUsage}`),
+		minimal: form(isLeft
+			? `${compactUsage} ${providerMinimal}`
+			: `${providerMinimal} ${compactUsage}`),
+		tiny: form(isLeft
+			? `${quota.usedPercent} ${providerMinimal}`
+			: `${providerMinimal} ${quota.usedPercent}`),
+	};
 }
 
-function quotaLabel(): { left: string; isOverPace: boolean } | undefined {
-	const quota = (globalThis as { __owaisQuotaState?: QuotaState }).__owaisQuotaState;
-	if (!quota) return undefined;
-	const provider = quota.provider === "openai-codex" ? "OpenAI" : "Claude";
-	return {
-		left: `${quota.usedPercent}%/${quota.pacePercent}% ${quota.label} · ${provider} quota · resets ${quota.reset}`,
-		isOverPace: quota.usedPercent > quota.pacePercent,
-	};
+/**
+ * Selects mirrored provider-usage forms that fit one footer row.
+ *
+ * @param state Available OpenAI Codex and Anthropic usage displays.
+ * @param width Maximum terminal display columns for the row.
+ * @returns Left and right forms that fit the width.
+ * @throws Never.
+ */
+export function selectQuotaRow(state: QuotaDisplayState | undefined, width: number): { left?: QuotaForm; right?: QuotaForm } {
+	const safeWidth = Math.max(0, width);
+	const leftForms = state?.["openai-codex"] ? quotaForms(state["openai-codex"], true) : undefined;
+	const rightForms = state?.anthropic ? quotaForms(state.anthropic, false) : undefined;
+	if (!leftForms && !rightForms) return {};
+
+	for (const tier of ["full", "compact", "minimal", "tiny"] as const) {
+		const left = leftForms?.[tier];
+		const right = rightForms?.[tier];
+		const gap = left && right ? 1 : 0;
+		if (visibleWidth(left?.text ?? "") + gap + visibleWidth(right?.text ?? "") <= safeWidth) return { left, right };
+	}
+
+	if (leftForms && rightForms) {
+		if (safeWidth < 3) return {};
+		return {
+			left: { ...leftForms.minimal, text: "O" },
+			right: { ...rightForms.minimal, text: "A" },
+		};
+	}
+	const forms = leftForms ?? rightForms;
+	if (!forms || safeWidth === 0) return {};
+	const isLeft = leftForms !== undefined;
+	const selected = { ...forms.minimal, text: truncateSegmentText(forms.minimal.text, safeWidth) };
+	return isLeft ? { left: selected } : { right: selected };
 }
 
 function activityColor(elapsedSeconds: number): string {
@@ -591,19 +655,15 @@ export default function owaisFooter(pi: ExtensionAPI): void {
 							fgHex(contextColor((usage.tokens / ctx.model.contextWindow) * 100), `${Math.round((usage.tokens / ctx.model.contextWindow) * 100)}%`) +
 							theme.fg("muted", `/${formatTokens(ctx.model.contextWindow)}`)
 						: theme.fg("muted", "context unknown");
-					const quota = quotaLabel();
 					const lines = [splitLine(context, theme.fg("muted", omLabel()), width)];
-					let quotaLeft = "";
-					if (quota) {
-						const usageText = quota.left.match(/^\d+%/)?.[0] ?? "";
-						quotaLeft = quota.isOverPace
-							? fgHex("#f28b9a", usageText) + theme.fg("muted", quota.left.slice(usageText.length))
-							: theme.fg("muted", quota.left);
-					}
-					const availableRightWidth = Math.max(0, width - visibleWidth(quotaLeft) - 1);
-					const worldClock = worldClockLabel(availableRightWidth);
-					if (quotaLeft || worldClock) {
-						lines.push(splitLine(quotaLeft, worldClock, width));
+					const quotaState = (globalThis as { __owaisQuotaState?: QuotaDisplayState }).__owaisQuotaState;
+					const quota = selectQuotaRow(quotaState, width);
+					const renderQuota = (form: QuotaForm | undefined): string => {
+						if (!form) return "";
+						return form.isOverPace ? fgHex("#f28b9a", form.text) : theme.fg("muted", form.text);
+					};
+					if (quota.left || quota.right) {
+						lines.push(splitLine(renderQuota(quota.left), renderQuota(quota.right), width));
 					}
 					return lines;
 				},

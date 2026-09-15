@@ -547,6 +547,10 @@ for obsolete in \
   "$HOME_TARGET"/.pi/agent/extensions/voice.ts.pre-reset-*; do
   retire_pi_extension "$obsolete"
 done
+PI_WORLD_CLOCK_EXTENSION_PATH="$HOME_TARGET/.pi/agent/extensions/world-clock.ts"
+if [[ -L "$PI_WORLD_CLOCK_EXTENSION_PATH" && "$(readlink "$PI_WORLD_CLOCK_EXTENSION_PATH")" == */pi/extensions/world-clock.ts ]]; then
+  retire_pi_extension "$PI_WORLD_CLOCK_EXTENSION_PATH"
+fi
 PI_EVENT_TIMESTAMP_PATH="$HOME_TARGET/.pi/agent/extensions/event-timestamps.ts"
 if [[ -L "$PI_EVENT_TIMESTAMP_PATH" && "$(readlink "$PI_EVENT_TIMESTAMP_PATH")" == "$REPO_TARGET/pi/extensions/event-timestamps.ts" ]]; then
   retire_pi_extension "$PI_EVENT_TIMESTAMP_PATH"
@@ -559,7 +563,11 @@ if [[ "$HOME_TARGET" == "$HOME" && "$IS_DRY" == 0 && "$IS_TEST" == 0 ]]; then
   retire_to_trash "$HOME_TARGET/.pi/agent/extensions/spinner-preview.ts"
 fi
 
-link_config "$REPO_TARGET/config/world-clock.json" "$HOME_TARGET/.pi/agent/world-clock.json" "world-clock configuration link"
+PI_WORLD_CLOCK_CONFIG_PATH="$HOME_TARGET/.pi/agent/world-clock.json"
+if [[ -L "$PI_WORLD_CLOCK_CONFIG_PATH" && "$(readlink "$PI_WORLD_CLOCK_CONFIG_PATH")" == */config/world-clock.json ]]; then
+  plan "unlink retired $PI_WORLD_CLOCK_CONFIG_PATH"
+  run rm "$PI_WORLD_CLOCK_CONFIG_PATH"
+fi
 
 PI_LEGACY_COMPACT_PATH="$HOME_TARGET/.pi/agent/extensions/compact-path.ts"
 if [[ -L "$PI_LEGACY_COMPACT_PATH" && "$(readlink "$PI_LEGACY_COMPACT_PATH")" == "$REPO_TARGET/pi/extensions/compact-path.ts" ]]; then

@@ -21,20 +21,16 @@ async function writeModule(root: string, name: string, source: string): Promise<
 }
 
 async function loadExtensions() {
-	const root = await mkdtemp(join(tmpdir(), "owais-footer-world-clock-"));
-	for (const name of ["owais-footer.ts", "world-clock.ts"]) {
-		await writeFile(join(root, name), await readFile(join(extensionDirectory, name)));
-	}
+	const root = await mkdtemp(join(tmpdir(), "owais-footer-usage-"));
+	await writeFile(join(root, "owais-footer.ts"), await readFile(join(extensionDirectory, "owais-footer.ts")));
 	await mkdir(join(root, "live-diff"), { recursive: true });
 	await writeFile(join(root, "live-diff", "engine.ts"), await readFile(join(extensionDirectory, "live-diff", "engine.ts")));
 	await writeModule(root, "@earendil-works/pi-tui", tuiModule);
 	await writeModule(root, "@earendil-works/pi-coding-agent", codingAgentModule);
 	const suffix = `${Date.now()}-${Math.random()}`;
 	const footer = await import(`${pathToFileURL(join(root, "owais-footer.ts")).href}?${suffix}`);
-	const clock = await import(`${pathToFileURL(join(root, "world-clock.ts")).href}?${suffix}`);
 	return {
 		footer,
-		clock,
 		dispose: () => rm(root, { recursive: true, force: true }),
 	};
 }
@@ -140,32 +136,37 @@ test("renders the compact Git label and linked pull request", async () => {
 	}
 });
 
-test("keeps the world-clock row visible when no quota state is set", async () => {
+test("mirrors OpenAI and Anthropic usage around the row spacer", async () => {
+	const extensions = await loadExtensions();
+	try {
+		const row = extensions.footer.selectQuotaRow({
+			"openai-codex": { provider: "openai-codex", usedPercent: 66, pacePercent: 42, label: "7d", reset: "4d 15h left" },
+			anthropic: { provider: "anthropic", usedPercent: 66, pacePercent: 42, label: "7d", reset: "4d 15h left" },
+		}, 160);
+		assert.equal(row.left?.text, "66%/42% 7d · OpenAI · 4d 15h left");
+		assert.equal(row.right?.text, "4d 15h left · Anthropic · 66%/42% 7d");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("renders mirrored provider usage through the footer component", async () => {
 	const extensions = await loadExtensions();
 	const handlers = new Map<string, (...args: any[]) => unknown>();
 	let footer: { dispose?(): void; render(width: number): string[] } | undefined;
-	const theme = {
-		fg(_color: string, text: string) {
-			return text;
-		},
-	};
+	const theme = { fg(_color: string, text: string) { return text; } };
 	const api = {
-		on(event: string, handler: (...args: any[]) => unknown) {
-			handlers.set(event, handler);
-		},
+		on(event: string, handler: (...args: any[]) => unknown) { handlers.set(event, handler); },
 		events: { on: () => () => {} },
-		async exec() {
-			return { code: 1, stdout: "" };
-		},
+		async exec() { return { code: 1, stdout: "" }; },
 	};
 	const ctx = {
 		mode: "tui",
 		cwd: "/Users/user/project",
 		model: { provider: "test", id: "model", contextWindow: 1 },
 		thinkingLevel: "off",
-		getContextUsage() {
-			return undefined;
-		},
+		sessionManager: { getEntries: () => [] },
+		getContextUsage() { return undefined; },
 		ui: {
 			setFooter(factory: (tui: unknown, theme: typeof theme, footerData: { onBranchChange(callback: () => void): () => void }) => { dispose?(): void; render(width: number): string[] }) {
 				footer = factory({ requestRender() {} }, theme, { onBranchChange: () => () => {} });
@@ -174,18 +175,73 @@ test("keeps the world-clock row visible when no quota state is set", async () =>
 			setWorkingVisible() {},
 		},
 	};
-	const worldClockState = globalThis as typeof globalThis & { __owaisWorldClockState?: { render(availableWidth: number): string } };
+	const quotaState = globalThis as typeof globalThis & { __owaisQuotaState?: Record<string, unknown> };
 	try {
-		worldClockState.__owaisWorldClockState = { render: () => "12:00 Local" };
+		quotaState.__owaisQuotaState = {
+			"openai-codex": { provider: "openai-codex", usedPercent: 66, pacePercent: 42, label: "7d", reset: "4d 15h left" },
+			anthropic: { provider: "anthropic", usedPercent: 66, pacePercent: 42, label: "7d", reset: "4d 15h left" },
+		};
 		extensions.footer.default(api);
 		await handlers.get("session_start")?.({}, ctx);
-		const lines = footer?.render(80) ?? [];
-		assert.equal(lines.length, 2);
-		assert.match(lines[1] ?? "", /12:00 Local/);
+		const full = footer?.render(160)[1]?.replace(/\x1b\[[0-9;]*m/g, "") ?? "";
+		const narrow = footer?.render(48)[1]?.replace(/\x1b\[[0-9;]*m/g, "") ?? "";
+		assert.match(full, /^66%\/42% 7d · OpenAI · 4d 15h left +4d 15h left · Anthropic · 66%\/42% 7d$/);
+		assert.equal(full.length, 160);
+		assert.equal(narrow.length, 48);
+		assert.match(narrow, /^66\/42 7d O 4d15h +4d15h A 66\/42 7d$/);
 	} finally {
-		delete worldClockState.__owaisWorldClockState;
+		delete quotaState.__owaisQuotaState;
 		footer?.dispose?.();
 		await handlers.get("session_shutdown")?.({}, ctx);
+		await extensions.dispose();
+	}
+});
+
+test("keeps five-hour reset details in both 48-column widgets", async () => {
+	const extensions = await loadExtensions();
+	try {
+		const row = extensions.footer.selectQuotaRow({
+			"openai-codex": { provider: "openai-codex", usedPercent: 88, pacePercent: 42, label: "5h", reset: "today at 6:56 p.m." },
+			anthropic: { provider: "anthropic", usedPercent: 88, pacePercent: 42, label: "5h", reset: "today at 6:56 p.m." },
+		}, 48);
+		assert.equal(row.left?.text, "88/42 5h O 6:56pm");
+		assert.equal(row.right?.text, "6:56pm A 88/42 5h");
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("keeps either provider visible when the other has no data", async () => {
+	const extensions = await loadExtensions();
+	try {
+		const anthropic = extensions.footer.selectQuotaRow({
+			anthropic: { provider: "anthropic", usedPercent: 35, pacePercent: 50, label: "5h", reset: "today at 4:30 PM" },
+		}, 80);
+		assert.equal(anthropic.left, undefined);
+		assert.match(anthropic.right?.text ?? "", /Anthropic/);
+	} finally {
+		await extensions.dispose();
+	}
+});
+
+test("degrades both provider widgets without exceeding narrow widths", async () => {
+	const extensions = await loadExtensions();
+	try {
+		const state = {
+			"openai-codex": { provider: "openai-codex", usedPercent: 66, pacePercent: 42, label: "7d", reset: "4d 15h left" },
+			anthropic: { provider: "anthropic", usedPercent: 66, pacePercent: 42, label: "7d", reset: "4d 15h left" },
+		};
+		for (const width of [72, 48, 24, 12, 3]) {
+			const row = extensions.footer.selectQuotaRow(state, width);
+			const combined = `${row.left?.text ?? ""}${row.left && row.right ? " " : ""}${row.right?.text ?? ""}`;
+			assert.ok(combined.length <= width, `${combined} must fit ${width}`);
+			assert.ok(row.left);
+			assert.ok(row.right);
+		}
+		for (const width of [0, 1, 2]) {
+			assert.deepEqual(extensions.footer.selectQuotaRow(state, width), {});
+		}
+	} finally {
 		await extensions.dispose();
 	}
 });
@@ -230,25 +286,6 @@ test("maps pull request states to the required colors", async () => {
 		assert.equal(extensions.footer.pullRequestTone({ ...pullRequest, state: "CLOSED", mergeStateStatus: "UNKNOWN" }), "error");
 		assert.equal(extensions.footer.pullRequestTone({ ...pullRequest, state: "MERGED", mergeStateStatus: "UNKNOWN" }), "purple");
 		assert.equal(extensions.footer.pullRequestTone({ ...pullRequest, isDraft: true, state: "OPEN", mergeStateStatus: "CLEAN" }), "muted");
-	} finally {
-		await extensions.dispose();
-	}
-});
-
-test("renders local time bold in the default color and other times muted", async () => {
-	const extensions = await loadExtensions();
-	try {
-		const local = extensions.clock.renderClock({
-			is12Hour: false,
-			zones: [{ name: "Local", zone: "local", color: "#82b8ff" }],
-		}, 120);
-		const remote = extensions.clock.renderClock({
-			is12Hour: false,
-			zones: [{ name: "GMT", zone: "Etc/GMT", color: "#8ee7f5" }],
-		}, 120);
-
-		assert.match(local, /\x1b\[39m\x1b\[1m \d{1,2}:\d{2}/);
-		assert.match(remote, /\x1b\[38;2;125;142;174m \d{1,2}:\d{2}/);
 	} finally {
 		await extensions.dispose();
 	}
