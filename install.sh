@@ -410,8 +410,20 @@ elif [[ -x "$TOOL_SYNC_BIN" ]]; then
     --home "$HOME_TARGET"
   )
   (( IS_DRY )) && TOOL_SYNC_ARGS+=(--dry-run)
+  TOOL_SYNC_PATH="$PATH"
+  if (( IS_TEST )) && ! (( IS_DRY )); then
+    TEST_BIN_DIR="$HOME_TARGET/.test-bin"
+    run mkdir -p "$TEST_BIN_DIR"
+    run ln -sfn /usr/bin/true "$TEST_BIN_DIR/launchctl"
+    TOOL_SYNC_PATH="$TEST_BIN_DIR:$PATH"
+  fi
+  TOOL_SYNC_ENV=(env "PATH=$TOOL_SYNC_PATH")
+  if (( IS_TEST )) && [[ "$(uname -s)" == "Darwin" ]] && command -v xcrun >/dev/null 2>&1; then
+    TOOL_SYNC_SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+    [[ -n "$TOOL_SYNC_SDKROOT" ]] && TOOL_SYNC_ENV+=("SDKROOT=$TOOL_SYNC_SDKROOT")
+  fi
   plan "sync tools: $TOOL_SYNC_BIN ${TOOL_SYNC_ARGS[*]}"
-  "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}" 9>&-
+  "${TOOL_SYNC_ENV[@]}" "$TOOL_SYNC_BIN" "${TOOL_SYNC_ARGS[@]}" 9>&-
 fi
 
 build_tool "$REPO_TARGET/tools/pr-review-filter" pr-review-filter
