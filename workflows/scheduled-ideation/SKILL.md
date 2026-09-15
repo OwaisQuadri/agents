@@ -1,154 +1,195 @@
 ---
 name: scheduled-ideation
-description: Use when a daily-scheduled kickoff prompt (from the scheduled-ideation launchd job) needs to find the highest-impact levers to pull on this workspace and AI setup — fan out candidate generation across skills, agents, checkers/linters, and existing public tools, check every finding against what the repo already has, rank survivors by leverage, and write one markdown digest. Skip for an on-demand, single-question brainstorm with the user present (that's ideate), and skip for evaluating one already-identified external tool in depth (that's capability-adoption).
+description: >-
+  Use when the daily scheduled run must select one money-making opportunity that
+  fits the owner's current work, interests, projects, and demonstrated strengths.
+  It scans bounded internal context and early public market signals, verifies the
+  candidates, and returns a digest for human approval. Skip an interactive
+  brainstorm, which ideate owns. Skip one known external tool, which
+  capability-adoption owns.
 ---
 
 # scheduled-ideation
 
-The fan-out-then-filter topology over ai-author's own bounded session evidence sweep
-(reused, not duplicated), the default session model, and web-research-summarizer.
-Runs unattended, so it never asks the user anything — a fresh critic stage stands in
-for the human-in-the-loop check that `ideate` gets for free by being interactive. The
-fixed daily mission is not an exhaustive catalog: it's finding the highest-impact
-levers to pull on this workspace and AI setup, so the filter stage owns comparing
-every finding against the repo's actual current state and ranking what survives by
-leverage, not evidence quality alone.
+Run the workflow and return its result. Answer contract-inspection requests directly from the supplied workflow without tools, file edits, or invented evidence.
+
+When a synthetic case supplies stage results, treat those results as given. Apply the contract without requesting live files or adding a live-run caveat.
+
+For a digest inspection, name every required digest field. Use the exact labels `Recommended action`, `Why now`, `Why the owner can win`, and `Test`.
+
+Also name buyer, paid pain, evidence, contrary evidence, distribution channel, first-buyer path, smallest build, success signal, stop condition, and limitations.
+
+Use this digest-inspection order: identical result, `Recommended action`, two alternatives at most, opportunity fields, coverage, drops, failures, counts, caps, human approval.
+
+The workflow selects one supported market test, not a long idea feed. Active commitments act as owner-fit constraints on new opportunities.
+
+The workflow stops at the digest. It never files work, contacts a buyer, makes a purchase, publishes, or executes a proposed test.
 
 ## GRAPH SPEC
 
-```
+```text
 workflow
 
-GOAL:     find the highest-impact levers to pull on this workspace and AI setup right
-          now, across five categories — skills, agents, workflows, checkers/linters,
-          and pi extensions worth authoring, plus existing public tools worth
-          adopting — writing one impact-ranked markdown digest for a human to review
-          later, never auto-filing anything. A mining dispatch's own candidate
-          reports whichever of the five build-it categories ai-author's "should it
-          exist?" type tree actually concludes, not a fixed skill-or-agent bucket.
-FAN OUT:  a plan node designs exactly 3 mining dispatches — skill-evidence-sweep,
-          agent-candidate-scan, and correction-mining — for parent sessions active in
-          the last 24 hours. The first two reuse `skills/ai-author/SKILL.md`'s bounded
-          session evidence sweep by reference. One fixed prompt-snippet-audit runs
-          beside all three in the same parallel wave. The audit
-          inspects current prompt snippets, at most 500 direct-use records from the
-          latest 30 days, and grep-first bounded windows across at most 200 parent
-          sessions active in that period for equivalent manual requests. Direct and
-          manual evidence stay distinct; absence is unknown;
-          adds require two parent sessions; merge/removal requires measured co-use,
-          conflict, or existing-skill overlap; weak evidence returns zero candidates.
-          The shared wave THEN feeds 1-3 tool-radar dispatches in a second wave — a
-          genuine barrier because tool-radar receives the complete mining evidence as
-          grounding text.
-MERGE:    plain code collects every dispatch's raw candidate array — no model, zero
-          tokens
-VERIFY:   a fresh-context filter agent, never having seen the generating dispatches'
-          own reasoning, does two jobs over the whole raw set at once (a genuine
-          barrier: ranking needs every candidate together, not one at a time) — (1)
-          checks each candidate with real read/grep/bash access against this repo's
-          actual current implementation and open GitHub issues, dropping anything
-          already built or already tracked; (2) scores what survives on evidence
-          strength, relevance, and actionability, drops any tool candidate whose
-          rationale ignores the grounding block or reads as generic "seems useful"
-          noise, THEN ranks every remaining survivor by actual leverage (recurring
-          cost removed × how often the friction recurs), highest-impact first — the
-          direct answer to 2026 reporting on AI-generated noise overwhelming
-          reviewers, and to a candidate list with no sense of which item matters most
-RULE:     every candidate's evidence is a measured fact (a real repetition count, a
-          real cost, a real URL fetched that run) — never an estimate; ai-author's own
-          "do not estimate" rule, inherited by reference. Mining evidence is not
-          limited to artifact usage logs: a marker that greps 2+ times across the
-          session window (a recurring warning, a repeated manual workaround, a
-          repeated human correction) is measured evidence too, since it's a counted
-          occurrence, not a guess. A candidate already built or already an open issue
-          never survives Filter, regardless of how well-evidenced its rationale is.
-CAP:      3 planned mining + 1 fixed prompt-snippet audit + 3 tool-radar
-          dispatches; audit reads at most 500 latest-30-day direct-use records and
-          bounded windows from at most 200 latest-30-day parent sessions; digest
-          capped at 10 survivors
-ON FAIL:  any dispatch, including prompt-snippet-audit, that returns nothing is named
-          in expected, returned, and missingLabels accounting; zero raw candidates is
-          a valid, honestly-reported result
-SAVE:     returns the digest text; the caller (the seeded kickoff prompt's Pi session)
-          writes it to .context/scheduled-ideation-digest.md — this workflow has no
-          filesystem access of its own
-REPORT:   digest markdown (leading with a "Top lever today" section) + candidates
-          array in rank order + expected vs returned counts + missing dispatch labels
-          + raw-vs-survivor counts. Audit output contains conclusions and aggregate
-          evidence only: never prompt or response text, raw records, transcript
-          excerpts, session identifiers, or session paths. Audit candidates can reach
-          the private Filter and digest, but never the web-research dispatches.
+GOAL: Select one supported money-making opportunity test from owner context and early market evidence.
+
+FAN OUT: Run six fixed discovery jobs in one parallel wave.
+
+PARALLEL JOBS:
+1. `owner-profile` builds a bounded owner profile from parent sessions and personal memory.
+2. `active-commitments` maps issues, pull requests, commits, and project state.
+3. `hacker-news` scans Hacker News technical discussion and pain.
+4. `design-signals` scans Designer News and named design-publication fallbacks.
+5. `broad-news` scans broad technology and business news.
+6. `market-corroboration` checks launches, adoption, work demand, spending, and regulation.
+
+MERGE: Plain code collects facts, coverage, failures, and source references.
+
+GENERATE: One internal agent creates at most six opportunities from the complete evidence set.
+
+DEDUPE: Plain code removes exact identifiers before public distribution research.
+
+DISTRIBUTION: One public researcher checks access, entry rules, costs, delay, allowed offers, and commitment signals for every candidate.
+
+VERIFY: Two fresh skeptics review the complete enriched set in one parallel wave.
+
+PARALLEL JOBS:
+1. The market skeptic checks timing, direct commercial evidence, maturity, sources, contrary evidence, and unsupported forecasts.
+2. The owner-fit skeptic checks skills, interests, commitments, buyer access, distribution evidence, and seven-day scope.
+
+MERGE: Plain code keeps only candidates that both skeptics approve.
+
+RANK: One fresh agent partitions approved identifiers into survivors and drops. Plain code merges duplicate evidence without rewriting the kept proposal.
+
+RULE: A candidate needs three facts from three sources across at least two signal types.
+
+RULE: Owner-fit evidence comes from the `owner-profile` or `active-commitments` discovery job.
+
+RULE: One direct fact shows paid pain, budget, adoption, or buyer commitment.
+
+RULE: A trend claim includes a dated comparison. A high current level alone is not acceleration.
+
+RULE: Every candidate keeps contrary evidence and source limitations.
+
+RULE: A test lasts no more than seven calendar days. Buyer access must fit inside that test window.
+
+RULE: A test names the buyer, pain, offer, channel, first-buyer path, smallest build, success signal, and stop condition.
+
+RULE: At least one `distribution-access` fact must support the initial buyer or channel access claim.
+
+RULE: Views, votes, stars, funding, and model confidence do not prove payment.
+
+RULE: The workflow rejects invented forecasts, inaccessible buyers, and mature markets without a supported wedge.
+
+RULE: The workflow describes proposed tests without instructing the owner to act.
+
+CAP: Six discovery agents, six raw opportunities, one distribution agent, two skeptics, one ranker, at most three survivors, and eleven maximum agents.
+
+CAP: The host inspects at most twelve generator records when a malformed response bypasses the six-record schema cap.
+
+ON FAIL: A missing discovery class, candidate distribution record, or required stage returns `incomplete-research` without a recommendation.
+
+ON FAIL: Evidence identifier collisions, opportunity identifier collisions, and truncated generator output also return `incomplete-research`.
+
+ON FAIL: Complete research with no accepted candidate returns `no-surviving-candidates` without a recommendation.
+
+ON FAIL: An unavailable design source remains visible. Two distinct named fallbacks can complete that source class.
+
+HUMAN GATE: A human approves every filing, contact, purchase, publication, or execution after reading the digest.
+
+SAVE: The caller writes only the returned digest to `.context/scheduled-ideation-digest.md`.
+
+REPORT: Return status, recommendation, at most two alternatives, coverage, drops, failures, counts, caps, and the approval boundary.
 ```
 
-Anchors: every mining candidate's evidence traces to a real logged repetition/cost
-(never estimated, per ai-author's own rule); every tool-radar candidate's source is a
-URL fetched that run; the filter stage's dropped-count is reported, never silently
-absorbed.
+## Source bounds
 
-## input contract
+The owner-profile job reads ten parent sessions and eight personal-memory results at most. It returns twenty aggregate facts at most.
 
-Run via the Workflow tool, normally with no args (the daily 3pm trigger calls it bare):
+The active-commitments job reads thirty closed issues, thirty merged pull requests, fifty commits, and two hundred project events at most.
 
-```
-Workflow({ scriptPath: "<repo>/workflows/scheduled-ideation/scheduled-ideation.workflow.js",
-           args: { focus: "<optional steering note for the tool-radar angle>",
-                    max_tool_radar: 3 } })
-```
+The Hacker News job reviews forty items, twenty comments, and eight linked pages at most. It covers top, new, show, ask, and jobs.
 
-- `focus` — optional. A one-off manual run can steer which external-tool angle the
-  plan node emphasizes this run (e.g. "focus on Rust tooling"). The scheduled daily
-  run passes no args at all.
-- `max_tool_radar` — optional cap on planned tool-radar dispatches, clamped to 3.
+The design job reviews twenty items across six sources at most. It tries Designer News before Sidebar, Smashing Magazine, UX Collective, and design-system news.
 
-## output contract
+The broad-news job reviews twenty items across eight sources at most. It uses at least three independent publishers and applicable first-party sources.
 
-`{ candidates, digest, expected, returned, missingLabels, rawCandidateCount,
-survivorCount }` — `expected`, `returned`, and `missingLabels` include the fixed
-`prompt-snippet-audit`; its candidate output excludes prompt and response text, raw
-records, transcript excerpts, session identifiers, and session paths. `digest` is the
-final markdown, grouped under "## Skills worth
-authoring" / "## Agents worth authoring" / "## Workflows worth authoring" /
-"## Checkers/linters worth building" / "## Pi extensions worth building" / "## Tools
-worth trying" headings (a heading is omitted entirely when it has zero survivors).
-`candidates` is the same survivor set as structured data, for a caller that wants to
-act on it programmatically instead of reading prose.
+The market job reviews thirty items across twelve sources at most. It covers four source families, including commercial proof and adoption or work demand.
 
-## why a workflow, not a skill
+Each discovery job keeps at most thirteen coverage rows. The digest prefixes each row with its producing job.
 
-Per `~/.agents/skills/ai-author/SKILL.md`'s type-decision rule 5 ("fans out over ≥2
-agents, loops over items, or has a generate→judge shape → workflow"): 2024-2026 prior
-art for this exact shape (agents-radar's 10-parallel-source daily digest,
-ArXiv-Research-Monitor-Agent's per-item relevance scoring, the tech-radar
-nomination→triage→decision-trail rubric) all converge on fan-out-then-filter, not a
-single linear recipe one agent could follow start to finish. No existing artifact
-owned the combination either: ai-author's own sweep is skill-only and evidence-only;
-`ideate` needs a live user to grill; `capability-adoption` writes up one
-already-identified candidate rather than discovering new ones.
+Private jobs return aggregate facts and references. They never send raw records, transcripts, paths, customer details, or private text to a web agent.
 
-## install (macOS)
+## Distribution rules
 
-The trigger mechanics live outside this workflow entirely — a mechanizable shell script
-(`scripts/trigger.sh`) plus a launchd plist, per ai-author's "can a program do it?"
-rule. Mirrors `skills/hq/launchd/com.owaisquadri.hq.plist`'s exact install pattern:
+The distribution researcher receives opaque candidate keys and public evidence only. It uses twelve public sources at most and returns four fetched public URLs per candidate at most.
 
-```sh
-cp /Users/owaisquadri/Documents/agents/workflows/scheduled-ideation/launchd/com.owaisquadri.scheduled-ideation.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.owaisquadri.scheduled-ideation.plist
-launchctl kickstart gui/$(id -u)/com.owaisquadri.scheduled-ideation
+It compares direct owner access, paid work marketplaces, developer marketplaces, usable-product launches, partners, buyer-specific outreach, and search or publication.
+
+It records buyer presence, owner access, entry requirements, cost or limits, access days, allowed offer, first-buyer path, commitment signal, and limitations.
+
+Show Hacker News requires a usable project. GitHub Marketplace is a later channel because paid listings require verification and an installation base.
+
+Attention tests channel reach. A payment, deposit, paid pilot, or signed commitment tests demand.
+
+## Result states
+
+`recommendation-ready` means all required stages completed and at least one candidate passed both skeptics and ranking.
+
+`no-surviving-candidates` means complete research returned no candidate that passed every gate.
+
+`incomplete-research` means a required source, distribution record, stage, or validation safety check failed. This state contains no recommendation.
+
+The workflow builds deterministic digest text in plain code. Identical validated inputs produce identical digest text.
+
+## Input contract
+
+The daily run uses exactly one call with no arguments:
+
+```text
+SubagentWorkflow({
+  scriptPath: "workflows/scheduled-ideation/scheduled-ideation.workflow.js"
+})
 ```
 
-`launchctl kickstart` fires one immediate run (covers "run once now"); the plist's own
-`StartCalendarInterval` (Hour=15, Minute=0) then fires it daily at 3pm without a repeat
-`kickstart`. Uninstall is `launchctl bootout gui/$(id -u)/com.owaisquadri.scheduled-ideation`.
-Linux (Arch PC) cron wiring is a deferred fast-follow — see `TUNING.md`; `scripts/trigger.sh`
-itself is already OS-agnostic, only the scheduler wiring differs.
+The call uses no arguments. The trigger does not try workflow-name lookup or retry the workflow call.
 
-## history
+## Output contract
 
-- 2026-08-28 founding run, built for issue #124 (superseding #67, which was narrower —
-  session-evidence-only, skills-only, no scheduling). Full design research at
-  `.context/scheduled-ideation/research.md` in the pi-from-iphone worktree that
-  authored this: the 2026 TCC(Transparency, Consent, and Control) unattended-Automation
-  risk that looked like the biggest blocker turned out moot, since the launchd trigger
-  never drives a GUI Terminal — it calls the already-running herdr daemon's socket API
-  directly.
+The output fields include `status`, `recommendation`, and `coverage`.
+
+```text
+{
+  status,
+  recommendation,
+  candidates,
+  digest,
+  coverage,
+  expected,
+  returned,
+  missingLabels,
+  rawCandidateCount,
+  survivorCount
+}
+```
+
+The digest opens with one recommended action when the status is `recommendation-ready`. It includes at most two alternatives.
+
+The digest shows buyer, paid pain, offer, timing, owner fit, evidence, contrary evidence, limitations, distribution, the test, coverage, drops, failures, counts, and caps.
+
+Evidence identifiers use at most eight entries per candidate. Other candidate lists use at most four entries, and each text field uses at most one thousand characters.
+
+`missingLabels` can name source or stage labels. It can also name `evidence-id-collision`, `opportunity-id-collision`, or `generator-output-truncated`.
+
+## Install on macOS
+
+Copy the launch agent from `<repo>/workflows/scheduled-ideation/launchd/` to `$HOME/Library/LaunchAgents/`.
+
+Run `launchctl bootstrap gui/$(id -u) $HOME/Library/LaunchAgents/com.owaisquadri.scheduled-ideation.plist` to install the daily job.
+
+Run `launchctl kickstart gui/$(id -u)/com.owaisquadri.scheduled-ideation` for one immediate test run.
+
+Run `launchctl bootout gui/$(id -u)/com.owaisquadri.scheduled-ideation` to uninstall the job.
+
+## Evaluation
+
+`evals/preflight.sh` runs deterministic synthetic cases. `evals/run.sh` grades the behavior cases in `evals/cases.jsonl` against `evals/rubric.md`.

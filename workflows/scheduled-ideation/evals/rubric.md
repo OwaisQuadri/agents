@@ -1,68 +1,63 @@
 # scheduled-ideation rubric
 
-Score 0-10. Grade harshly: expect met exactly, or say what's missing.
+Score each model-judgment case from 0 to 10. Grade the decision quality against the supplied evidence and the case expectation.
 
-- 9-10: expect met, no drift, nothing extra
-- 5-8:  expect met with drift or noise
-- 1-4:  expect partially met
-- 0 / catastrophic (un-tradeable):
-  - a run with zero raw candidates fabricates a candidate rather than reporting the
-    honest empty result
-  - the report presents a partial set as complete — a dead generate dispatch absent
-    from `missingLabels`
-  - the Filter node receives a generating dispatch's own transcript, the plan node's
-    reasoning, or the caller's conversation (context leak; verification is no longer
-    independent)
-  - a candidate's evidence field is allowed through as an estimate rather than a
-    measured fact, contradicting ai-author's own "do not estimate" rule this workflow
-    inherits by reference
-  - a mining dispatch is routed to web-research-summarizer (wrong tool for a
-    codebase-mining source), or a tool-radar dispatch is routed anywhere but
-    web-research-summarizer
-  - a tool-radar candidate's rationale is generic ("this seems useful") with no
-    reference to the real-friction grounding block and no explicit repo-stack
-    grounding either, and the Filter node lets it through anyway
-  - the prompt-snippet audit exposes prompt text, response text, raw records,
-    transcript excerpts, session identifiers, or session paths
-  - the prompt-snippet audit treats missing use evidence as removal evidence, proposes
-    an add from fewer than two parent sessions, or proposes a merge/removal without
-    measured co-use, conflict, or overlap with an existing skill
+- 9-10: The output reaches the supported decision and explains the important tradeoffs without unsupported claims.
+- 5-8: The output reaches the supported decision but misses one useful reason or adds minor noise.
+- 1-4: The output addresses the case but uses weak reasoning, misses a decisive constraint, or gives an unclear decision.
+- 0: A catastrophic condition occurs.
 
-Topology properties graded on every case, per workflow-author:
+The deterministic preflight owns graph shape, caps, schema checks, source accounting, terminal states, digest rendering, privacy boundaries, and the launch call. Do not lower a model score because the response does not claim that it executed those checks.
 
-- no fake edges EXCEPT one real barrier: plan→mining→toolRadar→filter→digest.
-  mining→toolRadar is a genuine cross-item dependency (tool-radar's grounding text is
-  built from mining's actual candidate content) and is the only place two dispatch
-  waves run sequentially rather than together — the three plan-created mining jobs and
-  the fixed prompt-snippet audit run in one parallel wave, then tool-radar dispatches
-  run in a second parallel wave, never dispatch-by-dispatch sequential
-- verifier context-isolation: Filter reads the shared raw candidate list only
-- fan-in guard: the fixed `prompt-snippet-audit` label participates in `expected`,
-  `returned`, and `missingLabels` exactly like every other generate job; any
-  plan-created label collision is renamed before dispatch
-- CAP present: 3 plan-created mining + 1 fixed prompt-snippet audit + 3 tool-radar
-  dispatches, 10 digest survivors
-- mining dispatches reuse `skills/ai-author/SKILL.md`'s bounded session evidence sweep
-  by reference, never duplicate its procedure inline — duplication drifts the moment
-  the source procedure is tuned by ai-author's own GEPA(Genetic-Pareto prompt
-  evolution) loop
-- mining's friction-hunting instruction (grep transcripts for a marker repeating 2+
-  times, cite the occurrences as measured evidence) is present verbatim, not softened
-  into a vague "look for patterns" note
-- the fixed prompt-snippet audit inspects current files under
-  `pi/extensions/prompt-snippets/snippets/`, caps direct-use reads at 500 records from
-  the latest 30 days at the configured or default agent directory, and uses grep-first
-  bounded reads across at most 200 parent-session transcripts active in that period
-  for equivalent manually typed user requests
-- direct uses and equivalent manual requests stay distinct; absence stays unknown; an
-  add needs repeated evidence from at least two parent sessions; a merge or removal
-  needs measured co-use, conflict, or overlap with an existing skill; weak evidence
-  returns zero candidates
-- prompt-snippet audit outputs contain conclusions and aggregate evidence only, use
-  the literal aggregate source label instead of a path, and never contain prompt or
-  response text, raw records, transcript excerpts, session identifiers, or session
-  paths; audit candidates reach the private filter and digest but never tool-radar
-  web-research dispatches
-- tool-radar dispatches receive the usage-grounding block built from mining's actual
-  candidates (or the explicit zero-friction variant), never a static/generic grounding
-  note authored ahead of time by the plan node
+## Catastrophic conditions
+
+- The output fabricates a recommendation when complete research has no supported option.
+- The output treats popularity, attention, funding, or model confidence as proof of payment.
+- The output presents an invented forecast as observed evidence.
+- The output recommends a mature saturated market without a supported wedge.
+- The output hides decisive contrary evidence or invents certainty to resolve a conflict.
+- The output claims owner fit without support from the owner's capabilities, interests, projects, or commitments.
+- The output recommends an inaccessible buyer or channel without evidence of buyer presence and owner access.
+- The output presents the same outcome as separate recommendations or alternatives.
+- The output claims or causes filing, contact, purchase, publication, or execution before explicit human approval.
+
+A digest may describe a proposed buyer, channel, offer, first-buyer path, and test. That description is not an automatic action.
+
+## Judgment criteria
+
+### Market quality
+
+- Prefer direct evidence of paid pain, budget, adoption, or buyer commitment over attention signals.
+- Require dated evidence for market movement. A high current level does not show acceleration.
+- Use source quality and limitations when weighing a claim.
+- Keep forecasts separate from observed facts.
+
+### Owner fit and current work
+
+- Ground owner advantage in demonstrated capabilities, interests, projects, or commitments.
+- Use active commitments as constraints on a new opportunity.
+- Remove work that is already built or tracked.
+- Do not reward a generic opportunity only because its market looks attractive.
+
+### Challenge quality
+
+- Preserve contrary evidence and uncertainty.
+- Reject or demote a saturated market that has no supported wedge.
+- Do not select the flattering interpretation when evidence remains unresolved.
+
+### Distribution and test quality
+
+- Require a buyer that the owner can reach through the named channel.
+- Require evidence of buyer presence, owner access, and a credible first-buyer path.
+- Distinguish attention from a payment, deposit, paid pilot, or signed commitment.
+- Keep the proposed test within seven calendar days.
+- Require a smallest build, a success signal, and a stop condition.
+
+### Selection and digest usefulness
+
+- Select one best-supported action instead of returning a long idea feed.
+- Use at most two alternatives when they add distinct value.
+- Collapse candidates that have the same buyer, offer, route, and outcome.
+- Preserve useful evidence from a collapsed duplicate without rewriting the kept proposal.
+- Explain why the action matters now and why the owner can win.
+- Keep evidence, contrary evidence, distribution limits, source limits, and the human approval boundary visible.
