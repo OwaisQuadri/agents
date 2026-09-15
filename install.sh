@@ -28,6 +28,75 @@ for arg in "$@"; do
   esac
 done
 [[ -d "$REPO_TARGET/skills" ]] || { echo "FATAL: $REPO_TARGET/skills not found (set REPO_TARGET)" >&2; exit 1; }
+PI_MCP_SOURCE="$REPO_TARGET/config/pi-mcp.json"
+PI_MCP_SHARED="$HOME_TARGET/.config/mcp/mcp.json"
+PI_MCP_AGENT_DIR="$HOME_TARGET/.pi/agent"
+if [[ "$HOME_TARGET" == "$HOME" && -n "${PI_CODING_AGENT_DIR:-}" ]]; then
+  if [[ "$PI_CODING_AGENT_DIR" != /* && "$PI_CODING_AGENT_DIR" != "~/"* ]]; then
+    echo "FATAL: PI_CODING_AGENT_DIR must be absolute or start with ~/" >&2
+    exit 1
+  fi
+  PI_MCP_AGENT_DIR="$PI_CODING_AGENT_DIR"
+fi
+PI_MCP_AGENT_DIR="${PI_MCP_AGENT_DIR/#\~/$HOME_TARGET}"
+PI_MCP_OVERRIDE="$PI_MCP_AGENT_DIR/mcp.json"
+if [[ -f "$PI_MCP_SOURCE" && "${PI_MCP_CONFIG_MODE:-}" == "exclusive" ]]; then
+  echo "FATAL: PI_MCP_CONFIG_MODE=exclusive does not load $PI_MCP_SHARED" >&2
+  exit 1
+fi
+PI_MCP_OVERRIDE_PATHS=(
+  "$HOME_TARGET/.agents/mcp.json"
+  "$HOME_TARGET/.agents/mcp/mcp.json"
+  "$PI_MCP_OVERRIDE"
+)
+if command -v jq >/dev/null 2>&1 && [[ -f "$PI_MCP_SOURCE" ]]; then
+  jq empty "$PI_MCP_SOURCE" || { echo "FATAL: $PI_MCP_SOURCE must use strict JSON without comments or trailing commas" >&2; exit 1; }
+  jq -s -e 'length == 1' "$PI_MCP_SOURCE" >/dev/null || { echo "FATAL: $PI_MCP_SOURCE must contain exactly one JSON object" >&2; exit 1; }
+  jq -e '.mcpServers | type == "object" and (keys | length > 0) and all(.[]; . == {"url":"https://mcp.linear.app/mcp"}) and (keys | all(startswith("linear-") and (length > 7)))' "$PI_MCP_SOURCE" >/dev/null \
+    || { echo "FATAL: $PI_MCP_SOURCE must contain credential-free Linear server entries" >&2; exit 1; }
+  PI_MCP_MANAGED_NAMES="$(jq -c '.mcpServers | keys' "$PI_MCP_SOURCE")"
+  for PI_MCP_EARLY_PATH in "$PI_MCP_SHARED" "${PI_MCP_OVERRIDE_PATHS[@]}"; do
+    if [[ -L "$PI_MCP_EARLY_PATH" && ! -e "$PI_MCP_EARLY_PATH" ]]; then
+      [[ "$PI_MCP_EARLY_PATH" == "$PI_MCP_OVERRIDE" && "$(readlink "$PI_MCP_EARLY_PATH")" == */config/pi-mcp.json ]] && continue
+      echo "FATAL: $PI_MCP_EARLY_PATH is a dangling link" >&2
+      exit 1
+    fi
+    [[ -e "$PI_MCP_EARLY_PATH" ]] || continue
+    [[ -f "$PI_MCP_EARLY_PATH" ]] || { echo "FATAL: $PI_MCP_EARLY_PATH is not a file" >&2; exit 1; }
+    jq empty "$PI_MCP_EARLY_PATH" || { echo "FATAL: $PI_MCP_EARLY_PATH must use strict JSON without comments or trailing commas" >&2; exit 1; }
+    jq -s -e 'length == 1' "$PI_MCP_EARLY_PATH" >/dev/null || { echo "FATAL: $PI_MCP_EARLY_PATH must contain exactly one JSON object" >&2; exit 1; }
+    jq -e 'type == "object" and ((has("mcpServers") | not) or (.mcpServers == null) or ((.mcpServers | type) == "object")) and ((has("mcp-servers") | not) or (.["mcp-servers"] == null) or ((.["mcp-servers"] | type) == "object"))' "$PI_MCP_EARLY_PATH" >/dev/null \
+      || { echo "FATAL: $PI_MCP_EARLY_PATH has an invalid server map" >&2; exit 1; }
+    [[ "$PI_MCP_EARLY_PATH" == "$PI_MCP_SHARED" ]] && continue
+    if [[ "$PI_MCP_EARLY_PATH" == "$PI_MCP_OVERRIDE" ]]; then
+      jq -e --argjson managed "$PI_MCP_MANAGED_NAMES" '
+        ((if .mcpServers != null then .mcpServers else (.["mcp-servers"] // {}) end) | to_entries) as $entries
+        | [
+            $entries[] as $entry
+            | select($managed | index($entry.key))
+            | select(
+                (($entry.value | type) != "object")
+                or (($entry.value.url? != null) and ($entry.value.url != "https://mcp.linear.app/mcp"))
+                or (((($entry.value | keys) - ["directTools", "url"]) | length) != 0)
+                or (
+                  ($entry.value.directTools? != null)
+                  and (($entry.value.directTools | type) != "boolean")
+                  and (
+                    (($entry.value.directTools | type) != "array")
+                    or (($entry.value.directTools | all(.[]; type == "string")) | not)
+                  )
+                )
+              )
+          ]
+        | length == 0
+      ' "$PI_MCP_EARLY_PATH" >/dev/null \
+        || { echo "FATAL: $PI_MCP_EARLY_PATH overrides a managed Model Context Protocol transport" >&2; exit 1; }
+    else
+      jq -e --argjson managed "$PI_MCP_MANAGED_NAMES" '[((if .mcpServers != null then .mcpServers else (.["mcp-servers"] // {}) end) | keys[]) as $name | select($managed | index($name))] | length == 0' "$PI_MCP_EARLY_PATH" >/dev/null \
+        || { echo "FATAL: $PI_MCP_EARLY_PATH overrides a managed Model Context Protocol server" >&2; exit 1; }
+    fi
+  done
+fi
 SIMSLIM_PROFILE="$REPO_TARGET/config/simslim/main.json"
 if [[ -f "$SIMSLIM_PROFILE" ]]; then
   if ! command -v jq >/dev/null 2>&1; then
@@ -455,6 +524,34 @@ link_config "$SIMSLIM_PROFILE" "$HOME_TARGET/.config/simslim/main.json" "SimSlim
 link_config "$REPO_TARGET/config/pi-transcribe.json" "$HOME_TARGET/.pi/agent/pi-transcribe.json" "Pi transcription configuration link"
 link_config "$REPO_TARGET/config/plannotator.json" "$HOME_TARGET/.pi/agent/plannotator.json" "Plannotator configuration link"
 link_config "$REPO_TARGET/config/pi-keybindings.json" "$HOME_TARGET/.pi/agent/keybindings.json" "Pi keybindings link"
+if [[ -L "$PI_MCP_OVERRIDE" && "$(readlink "$PI_MCP_OVERRIDE")" == */config/pi-mcp.json ]]; then
+  backup "$PI_MCP_OVERRIDE"
+fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "warn: jq not found, skipping managed Model Context Protocol configuration" >&2
+elif [[ ! -f "$PI_MCP_SOURCE" ]]; then
+  echo "warn: $PI_MCP_SOURCE not found, skipping managed Model Context Protocol configuration" >&2
+else
+  PI_MCP_CURRENT='{}'
+  [[ ! -e "$PI_MCP_SHARED" ]] || PI_MCP_CURRENT="$(cat "$PI_MCP_SHARED")"
+  PI_MCP_UPDATED="$(jq -s '.[0] as $current | .[1] as $managed | if $current.mcpServers != null then $current + {mcpServers: ($current.mcpServers + $managed.mcpServers)} else ($current | del(.["mcp-servers"])) + {mcpServers: (($current["mcp-servers"] // {}) + $managed.mcpServers)} end' <(printf '%s' "$PI_MCP_CURRENT") "$PI_MCP_SOURCE")"
+  if [[ ! -L "$PI_MCP_SHARED" && "$(printf '%s' "$PI_MCP_UPDATED" | jq -S .)" == "$(printf '%s' "$PI_MCP_CURRENT" | jq -S .)" ]]; then
+    plan "ok   $PI_MCP_SHARED managed Model Context Protocol servers"
+    (( IS_DRY )) || run chmod 600 "$PI_MCP_SHARED"
+  elif (( IS_DRY )); then
+    backup "$PI_MCP_SHARED"
+    plan "merge $PI_MCP_SOURCE -> $PI_MCP_SHARED"
+  else
+    run mkdir -p "$(dirname "$PI_MCP_SHARED")"
+    INSTALL_TEMPORARY="$(mktemp "$PI_MCP_SHARED.tmp.XXXXXX")"
+    printf '%s\n' "$PI_MCP_UPDATED" > "$INSTALL_TEMPORARY"
+    [[ ! -f "$PI_MCP_SHARED" || -L "$PI_MCP_SHARED" ]] || run chmod 600 "$PI_MCP_SHARED"
+    backup "$PI_MCP_SHARED"
+    plan "merge $PI_MCP_SOURCE -> $PI_MCP_SHARED"
+    run mv "$INSTALL_TEMPORARY" "$PI_MCP_SHARED"
+    INSTALL_TEMPORARY=""
+  fi
+fi
 
 GIT_DELTA_SOURCE="$REPO_TARGET/config/git-delta.gitconfig"
 if [[ ! -f "$GIT_DELTA_SOURCE" ]]; then

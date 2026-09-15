@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { classifyCheckoutCommand } from "./config-write-guard/bash-intent.ts";
-import { isPathInsideRoot, isProtectedConfigPath, protectedConfigRoots } from "./config-write-guard/paths.ts";
+import { isPathInsideRoot, isProtectedConfigPath, piAgentDirectory, protectedConfigRoots } from "./config-write-guard/paths.ts";
 import { blockedConfigToolCall, type GuardContext } from "./config-write-guard/policy.ts";
 
 const home = "/tmp/config-write-guard-home";
@@ -159,13 +159,17 @@ for (const isWrapped of [false, true]) {
 }
 test("protects only Pi-managed destinations", () => {
 	assert.deepEqual(protectedConfigRoots(home), [
+		"/tmp/config-write-guard-home/.agents/mcp.json",
+		"/tmp/config-write-guard-home/.agents/mcp/mcp.json",
 		"/tmp/config-write-guard-home/.agents/skills",
 		"/tmp/config-write-guard-home/.config/herdr/config.toml",
+		"/tmp/config-write-guard-home/.config/mcp/mcp.json",
 		"/tmp/config-write-guard-home/.config/simslim",
 		"/tmp/config-write-guard-home/.pi/agent/AGENTS.md",
 		"/tmp/config-write-guard-home/.pi/agent/agents",
 		"/tmp/config-write-guard-home/.pi/agent/extensions",
 		"/tmp/config-write-guard-home/.pi/agent/keybindings.json",
+		"/tmp/config-write-guard-home/.pi/agent/mcp.json",
 		"/tmp/config-write-guard-home/.pi/agent/models.json",
 		"/tmp/config-write-guard-home/.pi/agent/pi-transcribe.json",
 		"/tmp/config-write-guard-home/.pi/agent/plannotator.json",
@@ -177,6 +181,34 @@ test("protects only Pi-managed destinations", () => {
 	]);
 });
 
+test("protects a configured Pi agent directory", () => {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = "/tmp/custom-pi-agent";
+	try {
+		assert.equal(protectedConfigRoots(home).includes("/tmp/custom-pi-agent/mcp.json"), true);
+		assert.match(blockedConfigToolCall("write", { path: "/tmp/custom-pi-agent/mcp.json" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "printf x > /tmp/custom-pi-agent/mcp.json" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf /tmp/custom-pi-agent/" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf /tmp/custom-pi-agent/*" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "mv /tmp/custom-pi-agent /tmp/custom-pi-agent.bak" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf /tmp/custom-pi-agent*" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf /tmp/custom-pi-agent/{mcp.json}" }, home) ?? "", /Blocked/);
+		process.env.PI_CODING_AGENT_DIR = "~/custom-agent";
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf ~/custom-agent/*" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf $HOME/custom-agent/*.json" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "mv ~/custom-agent ~/custom-agent.bak" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf ~/custom-agent*" }, home) ?? "", /Blocked/);
+		assert.match(blockedConfigToolCall("bash", { command: "rm -rf $HOME/custom-agent*" }, home) ?? "", /Blocked/);
+		process.env.PI_CODING_AGENT_DIR = "relative-agent";
+		assert.equal(piAgentDirectory(home), resolve("relative-agent"));
+		process.env.PI_CODING_AGENT_DIR = "~";
+		assert.equal(piAgentDirectory(home), home);
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	}
+});
+
 test("blocks managed files and descendants without blocking siblings", () => {
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/custom-header.ts`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/../extensions/custom-header.ts`, home), true);
@@ -184,6 +216,11 @@ test("blocks managed files and descendants without blocking siblings", () => {
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/extensions/AGENTS.md`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/herdr/config.toml`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.agents/mcp.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.agents/mcp/mcp.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.pi/agent/mcp.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.config/mcp/mcp.json`, home), true);
+	assert.equal(isProtectedConfigPath(`${home}/.config/mcp/other.json`, home), false);
 	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/main.json`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/simslim/feature.json`, home), true);
 	assert.equal(isProtectedConfigPath(`${home}/.config/herdr/session.json`, home), false);
@@ -220,6 +257,29 @@ test("blocks managed file writes and destination shell commands", () => {
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > ~/.pi/agent/settings.json" }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: "printf x > $HOME/.agents/skills/new/SKILL.md" }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/herdr/config.toml` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/mcp/mcp.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: "printf x > ~/.config/mcp/mcp.json" }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp/` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp/..` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp/*` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp*` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mc*` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/*/mcp.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp*/mcp.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/m*/mcp.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp/*.json` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp/mcp*` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/mcp/{mcp.json}` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/{mcp,herdr}` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `mv ${home}/.config/mcp ${home}/.config/mcp.bak` }, home) ?? "", /Blocked/);
+	assert.equal(blockedConfigToolCall("bash", { command: `rm -f ${home}/.config/mcp/mcp.json.pre-reset-20260914` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/mcp/other.json` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/mcp-other/mcp.json` }, home), undefined);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/nvim*` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `mv ${home}/.config/gh* /tmp/` }, home) ?? "", /Blocked/);
+	assert.match(blockedConfigToolCall("bash", { command: `rm -rf ${home}/.config/*/*` }, home) ?? "", /Blocked/);
+	assert.equal(blockedConfigToolCall("bash", { command: `ls ${home}/.config/*` }, home), undefined);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `printf x > ${home}/.config/simslim/main.json && echo done` }, home) ?? "", /Blocked/);
 	assert.match(blockedConfigToolCall("bash", { command: `tee ${home}/.config/simslim/main.json < feature.json` }, home) ?? "", /Blocked/);
@@ -241,6 +301,7 @@ test("blocks managed file writes and destination shell commands", () => {
 
 test("allows read-only bash access to managed config", () => {
 	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.pi/agent/settings.json` }, home), undefined);
+	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.config/mcp/mcp.json` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `less ${home}/.pi/agent/extensions/AGENTS.md` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `ls -la ${home}/.pi/agent/extensions` }, home), undefined);
 	assert.equal(blockedConfigToolCall("bash", { command: `cat ${home}/.pi/agent/settings.json | less` }, home), undefined);
@@ -767,7 +828,7 @@ test("recalculates and clears primary-origin authorization for every session lif
 	const extensionRoot = fileURLToPath(new URL("../..", import.meta.url));
 	const linkedWorktreeRoot = join(extensionRoot, ".worktrees", "linked");
 	configWriteGuard(harness.api, (root) => [root, linkedWorktreeRoot]);
-	const externalDirectory = mkdtempSync(join(tmpdir(), "config-write-guard-external-"));
+	const externalDirectory = mkdtempSync("/tmp/config-write-guard-external-");
 	try {
 		for (const reason of ["startup", "new", "resume", "fork", "reload"] as const) {
 			harness.fire("session_start", { type: "session_start", reason }, extensionRoot);
