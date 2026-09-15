@@ -79,7 +79,7 @@ The managed upstream stack pins these immutable revisions:
 
 - `OwaisQuadri/pi-subagents` at `17308cfad322d6d238381586f575769d921ad6ae`.
   It provides a live subagent viewer, inline steering, and durable tool output blocks.
-- `backnotprop/plannotator` at `d749c55c027ad033c76684b8445afd485fa9a4d3`.
+- `backnotprop/plannotator` at `421c6af4cde06e8c12e75b3c6a86e6765f469009`.
 - `humanlayer/skills` at `3c2629142c5d437428269b1b722b08c0b87f574d`.
 - `mattpocock/skills` at `068b6e0c62393147daf03530149cdce209c93da8`.
 
@@ -141,7 +141,7 @@ while read -r name revision; do
   test -z "$(git -C "$HOME/.cache/tool-sync/$name" status --porcelain)"
 done <<'REVISIONS'
 pi-subagents 17308cfad322d6d238381586f575769d921ad6ae
-plannotator d749c55c027ad033c76684b8445afd485fa9a4d3
+plannotator 421c6af4cde06e8c12e75b3c6a86e6765f469009
 humanlayer-skills 3c2629142c5d437428269b1b722b08c0b87f574d
 mattpocock-skills 068b6e0c62393147daf03530149cdce209c93da8
 REVISIONS
