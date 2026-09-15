@@ -121,7 +121,7 @@ log "typing kickoff prompt into pane $AGENT_PANE"
 #    kickoff prompt below heads that off: it names the one real, fast location up
 #    front (OS temp dir, not root) so Pi never needs to invent the slow search.
 KICKOFF_TASKFILE_HINT='If the workflow'"'"'s own completion notification arrives truncated and get_subagent_result then reports the task was cleaned up, do NOT search from filesystem root -- that stalls for many minutes. The full result is already on disk under the OS temp dir (not /), several directories down, ending in a tasks folder holding a file named after the task id with a .workflow.jsonl suffix -- find that one specific file under the temp dir only, then read the digest field from its last JSON line.'
-KICKOFF="Run workflows/scheduled-ideation/ (the Workflow tool, no args needed) and write its returned digest verbatim to $DIGEST_PATH in this worktree. This is the scheduled ideation run started at $RUN_STAMP. $KICKOFF_TASKFILE_HINT"
+KICKOFF="Call SubagentWorkflow once with scriptPath \"workflows/scheduled-ideation/scheduled-ideation.workflow.js\" and no arguments. Write its returned digest verbatim to $DIGEST_PATH in this worktree. This is the scheduled ideation run started at $RUN_STAMP. $KICKOFF_TASKFILE_HINT"
 "$HERDR" pane send-text "$AGENT_PANE" "$KICKOFF"
 
 log "confirming the agent actually started working"
