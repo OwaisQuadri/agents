@@ -77,8 +77,10 @@ The `herdr-state` extension gives Pi a read-only view into the running Herdr ses
 
 The managed upstream stack pins these immutable revisions:
 
-- `OwaisQuadri/pi-subagents` at `17308cfad322d6d238381586f575769d921ad6ae`.
+- `OwaisQuadri/pi-subagents` at `207b8965a46d4a6cc1c10b50b78572c7c524360d`.
   It provides a live subagent viewer, inline steering, and durable tool output blocks.
+- `nicobailon/pi-mcp-adapter` at `74c5233c63ad0096077df925fd6135c3bf6b8c6b`.
+  It gives Pi lazy access to configured Model Context Protocol servers.
 - `backnotprop/plannotator` at `421c6af4cde06e8c12e75b3c6a86e6765f469009`.
 - `humanlayer/skills` at `3c2629142c5d437428269b1b722b08c0b87f574d`.
 - `mattpocock/skills` at `068b6e0c62393147daf03530149cdce209c93da8`.
@@ -99,9 +101,15 @@ REPO_TARGET="$PWD" ./install.sh
 The `config-write-guard` extension blocks Pi `edit` and `write` calls to managed destinations.
 It also blocks shell commands that name a managed destination. Shell commands cannot prove read-only access.
 The guarded paths include `~/.agents/skills`, Pi agents, Pi extensions, and Pi settings.
-They also include `~/.config/herdr/config.toml` and `~/.config/simslim/main.json`.
+They also include the Model Context Protocol override files under `~/.agents` and the Pi agent directory, `~/.config/herdr/config.toml`, `~/.config/mcp/mcp.json`, and `~/.config/simslim/main.json`. Write-capable shell commands cannot use wildcards under `~/.config`; read-only wildcard commands remain available.
 
 The source extensions provide `ask_user_question`, the `owais` theme, a custom header, and prompt snippets. Press `Alt+S` or run `/snippets` to choose snippets for the next message.
+
+The managed `config/pi-mcp.json` file configures the `linear-pillars` server. The installer merges its entries into `~/.config/mcp/mcp.json`, preserves other shared servers, and backs up that file before a change. Managed and higher-priority global files must use strict JSON without comments or trailing commas. Higher-priority global files must not redefine a managed server transport. The Pi adapter can store a `directTools` choice for that server.
+
+A custom `PI_CODING_AGENT_DIR` must be absolute or start with `~/`. Do not set `PI_MCP_CONFIG_MODE=exclusive`; that mode does not read the managed shared file.
+
+Run `/mcp-auth linear-pillars` once and approve the Pillars workspace before first use. The adapter stores its credentials in the operating system credential store. To add another workspace, add another `linear-<name>` server entry and run the installer again.
 
 ### Private telemetry
 
@@ -140,7 +148,8 @@ while read -r name revision; do
   test "$(git -C "$HOME/.cache/tool-sync/$name" rev-parse HEAD)" = "$revision"
   test -z "$(git -C "$HOME/.cache/tool-sync/$name" status --porcelain)"
 done <<'REVISIONS'
-pi-subagents 17308cfad322d6d238381586f575769d921ad6ae
+pi-subagents 207b8965a46d4a6cc1c10b50b78572c7c524360d
+pi-mcp-adapter 74c5233c63ad0096077df925fd6135c3bf6b8c6b
 plannotator 421c6af4cde06e8c12e75b3c6a86e6765f469009
 humanlayer-skills 3c2629142c5d437428269b1b722b08c0b87f574d
 mattpocock-skills 068b6e0c62393147daf03530149cdce209c93da8
@@ -148,6 +157,9 @@ REVISIONS
 
 test -L "$HOME/.pi/agent/extensions/pi-subagents"
 test "$(realpath "$HOME/.pi/agent/extensions/pi-subagents")" = "$(realpath "$HOME/.cache/tool-sync/pi-subagents")"
+test -L "$HOME/.pi/agent/extensions/pi-mcp-adapter"
+test "$(realpath "$HOME/.pi/agent/extensions/pi-mcp-adapter")" = "$(realpath "$HOME/.cache/tool-sync/pi-mcp-adapter")"
+jq -e '.mcpServers["linear-pillars"] == {"url":"https://mcp.linear.app/mcp"}' "$HOME/.config/mcp/mcp.json"
 test "$(readlink "$HOME/.pi/agent/extensions/pi-extension")" = "$HOME/.cache/tool-sync/plannotator/apps/pi-extension"
 test "$(readlink "$HOME/.pi/agent/extensions/telemetry.ts")" = "$PWD/pi/extensions/telemetry.ts"
 test "$(readlink "$HOME/.agents/skills/show-me")" = "$HOME/.cache/tool-sync/humanlayer-skills/plugins/show-me/skills/show-me"

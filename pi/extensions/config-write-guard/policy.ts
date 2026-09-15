@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 import { bashCommandWritesProtectedPath, classifyCheckoutCommand, staticZshPayload } from "./bash-intent.ts";
-import { isPathInsideRoot, isProtectedConfigPath } from "./paths.ts";
+import { isPathInsideRoot, isProtectedConfigPath, piAgentDirectory } from "./paths.ts";
 
 type FileToolInput = { path: string };
 type BashToolInput = { command: string };
@@ -68,7 +68,19 @@ function escapeRegExp(literal: string): string {
 function pathReferencePattern(home: string, username = currentUsername()): RegExp {
 	const escapedHome = escapeRegExp(home);
 	const tildeForms = username !== undefined ? `~(?:${escapeRegExp(username)})?` : "~";
-	return new RegExp(`(?:${escapedHome}|\\$HOME|\\$\\{HOME\\}|${tildeForms})/+(?:(?:\\.agents|\\.pi|\\.config/herdr)(?:/|\\b)|\\.config/simslim(?:/|(?![A-Za-z0-9._-])))`);
+	const homeForms = `(?:${escapedHome}|\\$HOME|\\$\\{HOME\\}|${tildeForms})`;
+	const shellDelimiter = `(?=$|[\\s;&|"')])`;
+	const managedPathGlobSegment = `[^/\\s;&|"')]*[?*\\[\\{][^/\\s;&|"')]*`;
+	const managedPathGlob = `${managedPathGlobSegment}${shellDelimiter}`;
+	const configGlobPath = `[^\\s;&|"')]*[?*\\[\\{][^\\s;&|"')]*${shellDelimiter}`;
+	const managedMcpSuffix = `(?:/mcp\\.json(?:/|(?![A-Za-z0-9._-]))|/\\.\\.?(?:/|${shellDelimiter})|/${managedPathGlob}|/?${shellDelimiter})`;
+	const defaultPiAgentDirectory = resolve(home, ".pi", "agent");
+	const customPiAgentDirectory = piAgentDirectory(home);
+	const customRelativePath = relative(home, customPiAgentDirectory);
+	const customIsInsideHome = customRelativePath === "" || (!customRelativePath.startsWith("../") && customRelativePath !== ".." && !isAbsolute(customRelativePath));
+	const customHomePath = customRelativePath === "" ? "" : `/+${shellPathPattern(customRelativePath)}`;
+	const customPiMcpPattern = customPiAgentDirectory === defaultPiAgentDirectory ? "" : `|${shellPathPattern(customPiAgentDirectory)}(?:${managedMcpSuffix}|${managedPathGlob})${customIsInsideHome ? `|${homeForms}${customHomePath}(?:${managedMcpSuffix}|${managedPathGlob})` : ""}`;
+	return new RegExp(`(?:${homeForms}/+(?:(?:\\.agents|\\.pi|\\.config/herdr)(?:/|\\b)|\\.config/(?:mcp${managedMcpSuffix}|${configGlobPath})|\\.config/simslim(?:/|(?![A-Za-z0-9._-])))${customPiMcpPattern})`);
 }
 
 function shellPathPattern(path: string): string {

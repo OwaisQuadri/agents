@@ -37,6 +37,14 @@ source = { url = "https://github.com/OwaisQuadri/pi-subagents.git", revision = "
 installer = { command = "/bin/sh", args = ["-c", "npm ci && npm run bundle"], preview_args = ["-c", "npm --version"] }
 
 [[tools]]
+name = "pi-mcp-adapter"
+platforms = ["macos", "linux"]
+commands = []
+pi_package = "."
+source = { url = "https://github.com/nicobailon/pi-mcp-adapter.git", revision = "74c5233c63ad0096077df925fd6135c3bf6b8c6b" }
+installer = { command = "npm", args = ["ci", "--omit=dev"], preview_args = ["--version"] }
+
+[[tools]]
 name = "plannotator"
 platforms = ["macos", "linux"]
 commands = []
