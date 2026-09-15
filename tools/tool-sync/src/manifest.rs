@@ -717,6 +717,13 @@ installer = { command = "/usr/bin/true", args = [], preview_args = [] }
             .expect("rag tool exists");
         assert_eq!(tool.platforms, [Platform::Macos, Platform::Linux]);
         assert_eq!(tool.commands, [PathBuf::from("rag")]);
+        assert_eq!(
+            tool.source,
+            ToolSource::Git {
+                url: "https://github.com/OwaisQuadri/rag.git".to_owned(),
+                revision: "357f4440e14693e52a38228d79148ea21c9a826a".to_owned(),
+            }
+        );
         assert!(tool.mcp_server.is_none());
         assert_eq!(
             tool.pi_extension.as_deref(),
